@@ -1,27 +1,51 @@
-import { useCallback, useRef, useState } from 'react'
-import { sessions as mockSessions } from './mocks/sessions'
-import { demoMessages, messagesBySession } from './mocks/messages'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { powerCurve, voltageCurve } from './mocks/curves'
 import type { Attachment, Message, MessageHandlers, ResultTab, Session } from './types'
 import { useMediaQuery } from './hooks/useMediaQuery'
+import { createSession, listMessages, listSessions, postMessage } from './api/client'
+import { subscribeEvents } from './api/events'
 import Sidebar from './components/Sidebar'
 import Composer, { type PendingAttachment } from './components/Composer'
 import ResultPanel from './components/ResultPanel'
 import MessageItem from './components/messages/MessageItem'
 import { ChevronDownIcon, PanelLeftIcon, PanelRightIcon } from './components/icons'
 
+// 附件上传端点尚未实现（阶段4），这里仍是 mock，仅本地展示。
 const MOCK_FILES: Attachment[] = [
   { fileName: '城区配电网模型.case', fileSize: '2.4 MB', fileType: 'case' },
   { fileName: '负荷曲线.csv', fileSize: '184 KB', fileType: 'csv' },
   { fileName: '拓扑校验报告.pdf', fileSize: '1.1 MB', fileType: 'pdf' },
 ]
 
-const DEFAULT_SESSION_ID = mockSessions[0]?.id ?? ''
+// 乐观消息的临时 id 前缀：发送时先本地展示，等后端经 SSE 回传真实 id 后替换。
+const LOCAL_USER = 'local-user-'
+const LOCAL_ATT = 'local-att-'
+
+// 把一条新事件合并进消息列表：
+//  - user 事件 → 替换第一条乐观 user（FIFO，与发送顺序一致）
+//  - progress → 按 taskId 归并（替换而非追加，api-design §5.4）
+//  - 其它 → 按 id 去重后追加
+function appendEvent(list: Message[], msg: Message): Message[] {
+  if (msg.type === 'user') {
+    const idx = list.findIndex((m) => m.type === 'user' && m.id.startsWith(LOCAL_USER))
+    if (idx >= 0) {
+      const next = list.slice()
+      next[idx] = msg
+      return next
+    }
+  }
+  if (msg.type === 'progress') {
+    const rest = list.filter((m) => !(m.type === 'progress' && m.taskId === msg.taskId))
+    return [...rest, msg]
+  }
+  if (list.some((m) => m.id === msg.id)) return list
+  return [...list, msg]
+}
 
 function App() {
-  const [sessions, setSessions] = useState<Session[]>(mockSessions)
-  const [selectedId, setSelectedId] = useState<string | null>(DEFAULT_SESSION_ID)
-  const [messages, setMessages] = useState<Message[]>(messagesBySession[DEFAULT_SESSION_ID] ?? demoMessages)
+  const [sessions, setSessions] = useState<Session[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [messages, setMessages] = useState<Message[]>([])
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [panelOpen, setPanelOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<ResultTab>('curves')
@@ -33,6 +57,8 @@ function App() {
 
   const toastTimer = useRef<number | undefined>(undefined)
   const fileIndex = useRef(0)
+  const selectedIdRef = useRef<string | null>(null)
+  const closeEventsRef = useRef<(() => void) | null>(null)
 
   const notify = useCallback((text: string) => {
     setToast(text)
@@ -40,60 +66,135 @@ function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 2200)
   }, [])
 
-  const selectSession = (id: string) => {
-    setSelectedId(id)
-    setMessages(messagesBySession[id] ?? [])
-    setPanelOpen(false)
-  }
+  const closeEvents = useCallback(() => {
+    closeEventsRef.current?.()
+    closeEventsRef.current = null
+  }, [])
 
-  const newSession = () => {
-    const s: Session = {
-      id: `s-${Date.now()}`,
-      title: '新的仿真',
-      status: 'running',
-      updatedAt: new Date().toISOString(),
+  // 订阅某会话的 SSE 事件流。回放完成后再订阅，避免 api-design §6 的竞态。
+  const openEvents = useCallback(
+    (id: string) => {
+      closeEvents()
+      closeEventsRef.current = subscribeEvents(id, (msg) => {
+        setMessages((prev) => appendEvent(prev, msg))
+      })
+    },
+    [closeEvents],
+  )
+
+  const selectSession = useCallback(
+    async (id: string) => {
+      if (selectedIdRef.current === id) return
+      selectedIdRef.current = id
+      setSelectedId(id)
+      setMessages([])
+      setPanelOpen(false)
+      try {
+        const list = await listMessages(id)
+        if (selectedIdRef.current !== id) return // 已切换走，丢弃过期回放
+        setMessages(list)
+      } catch (err) {
+        if (selectedIdRef.current === id) {
+          notify(err instanceof Error ? err.message : '加载消息失败')
+        }
+      }
+      openEvents(id)
+    },
+    [notify, openEvents],
+  )
+
+  const newSession = useCallback(async () => {
+    try {
+      const s = await createSession('新的仿真')
+      setSessions((prev) => [s, ...prev])
+      selectedIdRef.current = s.id
+      setSelectedId(s.id)
+      setMessages([])
+      setPanelOpen(false)
+      setActiveTab('curves')
+      openEvents(s.id)
+    } catch (err) {
+      notify(err instanceof Error ? err.message : '新建会话失败')
     }
-    setSessions((prev) => [s, ...prev])
-    setSelectedId(s.id)
-    setMessages([])
-    setPanelOpen(false)
-    setActiveTab('curves')
-  }
+  }, [notify, openEvents])
 
   const renameSession = (id: string, title: string) => {
+    // 阶段4：后端暂无 PATCH /api/sessions/{id}，仅本地生效，刷新后恢复。
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)))
   }
 
   const deleteSession = (id: string) => {
+    // 阶段4：后端暂无 DELETE /api/sessions/{id}，仅本地生效，刷新后恢复。
     const remaining = sessions.filter((s) => s.id !== id)
     setSessions(remaining)
     if (selectedId === id) {
       const next = remaining[0] ?? null
+      selectedIdRef.current = next?.id ?? null
       setSelectedId(next?.id ?? null)
-      setMessages(next ? (messagesBySession[next.id] ?? []) : [])
+      setMessages([])
       setPanelOpen(false)
+      if (next) void selectSession(next.id)
     }
   }
 
   const send = () => {
     const text = draft.trim()
-    if (!text && attachments.length === 0) return
+    if ((!text && attachments.length === 0) || !selectedId) return
     const ts = new Date().toISOString()
-    const out: Message[] = []
-    if (text) out.push({ id: `u-${Date.now()}`, type: 'user', timestamp: ts, content: text })
+    const optimistic: Message[] = []
+    if (text) {
+      optimistic.push({ id: `${LOCAL_USER}${Date.now()}`, type: 'user', timestamp: ts, content: text })
+    }
     for (const a of attachments) {
-      out.push({
-        id: `a-${Date.now()}-${a.id}`,
+      optimistic.push({
+        id: `${LOCAL_ATT}${Date.now()}-${a.id}`,
         type: 'attachment',
         timestamp: ts,
         file: { fileName: a.fileName, fileSize: a.fileSize, fileType: a.fileType },
       })
     }
-    setMessages((prev) => [...prev, ...out])
+
+    const prevDraft = draft
+    const prevAttachments = attachments
+
+    setMessages((prev) => [...prev, ...optimistic])
     setDraft('')
     setAttachments([])
-    // 真实后端接入点：在此把 text + attachments 提交给后端，并订阅 SSE 流式返回消息。
+
+    // 仅文本触发后端；附件上传端点未实现（阶段4），附件仅本地展示。
+    if (!text) return
+    void postMessage(selectedId, text).catch((err) => {
+      notify(err instanceof Error ? err.message : '发送失败')
+      setMessages((prev) =>
+        prev.filter((m) => !m.id.startsWith(LOCAL_USER) && !m.id.startsWith(LOCAL_ATT)),
+      )
+      setDraft(prevDraft)
+      setAttachments(prevAttachments)
+    })
   }
+
+  // 初始：加载会话列表并选中第一条。
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const list = await listSessions()
+        if (cancelled) return
+        setSessions(list)
+        if (list.length > 0) await selectSession(list[0].id)
+      } catch (err) {
+        if (!cancelled) notify(err instanceof Error ? err.message : '加载会话失败')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [selectSession, notify])
+
+  // 卸载时关闭 SSE。
+  useEffect(() => {
+    return () => closeEvents()
+  }, [closeEvents])
 
   const addAttachment = () => {
     const f = MOCK_FILES[fileIndex.current % MOCK_FILES.length]
