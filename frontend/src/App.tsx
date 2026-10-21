@@ -92,7 +92,9 @@ function App() {
       try {
         const list = await listMessages(id)
         if (selectedIdRef.current !== id) return // 已切换走，丢弃过期回放
-        setMessages(list)
+        // 回放同样走 appendEvent 折叠：progress 按 taskId 归并（api-design §5.4），
+        // 避免刷新后同一任务的多条 progress 渲染成多张进度卡。
+        setMessages(list.reduce<Message[]>((acc, msg) => appendEvent(acc, msg), []))
       } catch (err) {
         if (selectedIdRef.current === id) {
           notify(err instanceof Error ? err.message : '加载消息失败')
