@@ -1,6 +1,7 @@
 import type { CurveData, ResultTab } from '../types'
 import LineChart from './charts/LineChart'
-import { XIcon } from './icons'
+import Markdown from './Markdown'
+import { DownloadIcon, XIcon } from './icons'
 
 interface ResultPanelProps {
   open: boolean
@@ -8,8 +9,15 @@ interface ResultPanelProps {
   overlay: boolean
   onTabChange: (tab: ResultTab) => void
   onClose: () => void
-  voltageCurve: CurveData
-  powerCurve: CurveData
+  curves: CurveData | null
+  curvesLoading: boolean
+  curvesError: string | null
+  reportTaskId: string | null
+  reportText: string | null
+  reportFilename: string | null
+  reportLoading: boolean
+  reportError: string | null
+  onDownloadReport: (taskId: string) => void
 }
 
 const TABS: { key: ResultTab; label: string }[] = [
@@ -26,6 +34,7 @@ interface LogEntry {
   text: string
 }
 
+// 运行日志暂无后端端点，保留静态演示样例。
 const LOGS: LogEntry[] = [
   { time: '09:12:03', level: 'info', text: 'inspect_model 完成：model ok' },
   { time: '09:12:05', level: 'info', text: 'run_simulation 提交任务 sim_20261021_001' },
@@ -42,54 +51,75 @@ const LEVEL_CLS: Record<LogLevel, string> = {
   error: 'text-red-600',
 }
 
-function PanelBody({
-  activeTab,
-  voltageCurve,
-  powerCurve,
-}: {
-  activeTab: ResultTab
-  voltageCurve: CurveData
-  powerCurve: CurveData
-}) {
+function Hint({ children }: { children: string }) {
+  return <div className="px-4 py-8 text-center text-sm text-slate-400">{children}</div>
+}
+
+function Loading() {
+  return <div className="px-4 py-8 text-center text-sm text-slate-400">加载中…</div>
+}
+
+function ErrorBox({ message }: { message: string }) {
+  return <div className="m-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{message}</div>
+}
+
+function PanelBody(props: ResultPanelProps) {
+  const {
+    activeTab,
+    curves,
+    curvesLoading,
+    curvesError,
+    reportTaskId,
+    reportText,
+    reportFilename,
+    reportLoading,
+    reportError,
+    onDownloadReport,
+  } = props
+
   if (activeTab === 'curves') {
+    if (curvesLoading) return <Loading />
+    if (curvesError) return <ErrorBox message={curvesError} />
+    if (!curves) {
+      return <Hint>先在对话里点击某次仿真结果的「查看曲线」。</Hint>
+    }
     return (
       <div className="space-y-5 p-4">
         <section>
-          <h3 className="mb-2 text-sm font-medium text-slate-700">24 小时电压曲线（两条馈线）</h3>
-          <LineChart data={voltageCurve} height={280} />
-        </section>
-        <section>
-          <h3 className="mb-2 text-sm font-medium text-slate-700">24 小时有功功率曲线</h3>
-          <LineChart data={powerCurve} height={280} />
+          <h3 className="mb-2 text-sm font-medium text-slate-700">
+            {curves.variable}曲线（{curves.series.length} 条馈线）
+          </h3>
+          <LineChart data={curves} height={280} />
         </section>
       </div>
     )
   }
 
   if (activeTab === 'report') {
+    if (!reportTaskId) {
+      return <Hint>先在对话里点击某次仿真结果的「下载报告」，或先查看曲线。</Hint>
+    }
+    if (reportLoading) return <Loading />
+    if (reportError) return <ErrorBox message={reportError} />
+    if (reportText === null) {
+      return <Hint>该任务暂无报告。</Hint>
+    }
     return (
-      <div className="space-y-4 p-4 text-sm leading-relaxed text-slate-600">
-        <h3 className="text-base font-semibold text-slate-800">城区配电网 24 小时时序仿真报告</h3>
-        <div className="rounded-lg bg-slate-50 p-3">
-          <div className="text-xs font-medium text-slate-400">任务编号</div>
-          <div className="font-mono text-xs text-slate-700">sim_20261021_001</div>
+      <div className="space-y-4 p-4">
+        <div className="flex items-center gap-2">
+          <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800">
+            {reportFilename ?? '仿真报告'}
+          </h3>
+          <button
+            type="button"
+            onClick={() => onDownloadReport(reportTaskId)}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
+          >
+            <DownloadIcon className="h-3.5 w-3.5" />
+            下载
+          </button>
         </div>
-        <section>
-          <h4 className="mb-1 font-medium text-slate-700">关键指标</h4>
-          <ul className="list-inside list-disc space-y-1">
-            <li>最大电压：1.082 p.u.（≤ 1.10 限值内）</li>
-            <li>最小电压：0.941 p.u.（低于 0.95 限值，越限）</li>
-            <li>越限节点：3 个</li>
-            <li>累计越限时长：2.5 h</li>
-          </ul>
-        </section>
-        <section>
-          <h4 className="mb-1 font-medium text-slate-700">结论与建议</h4>
-          <p>
-            越限集中在光伏出力退出后的晚高峰（18:00–21:00），末端节点电压跌落明显。建议在节点
-            N-23 增配无功补偿，或调整主变分接头以提升电压水平。
-          </p>
-        </section>
+        <Markdown>{reportText}</Markdown>
       </div>
     )
   }
@@ -110,7 +140,7 @@ function PanelBody({
 }
 
 export default function ResultPanel(props: ResultPanelProps) {
-  const { open, activeTab, overlay, onTabChange, onClose, voltageCurve, powerCurve } = props
+  const { open, activeTab, overlay, onTabChange, onClose } = props
 
   const header = (
     <div className="flex h-11 shrink-0 items-center gap-1 border-b border-slate-200 px-2">
@@ -146,7 +176,7 @@ export default function ResultPanel(props: ResultPanelProps) {
         <aside className="fixed inset-y-0 right-0 z-40 flex w-[380px] max-w-[92vw] flex-col border-l border-slate-200 bg-white shadow-2xl">
           {header}
           <div className="flex-1 overflow-y-auto">
-            <PanelBody activeTab={activeTab} voltageCurve={voltageCurve} powerCurve={powerCurve} />
+            <PanelBody {...props} />
           </div>
         </aside>
       </>
@@ -160,7 +190,7 @@ export default function ResultPanel(props: ResultPanelProps) {
       <div className="flex h-full w-[380px] flex-col">
         {header}
         <div className="flex-1 overflow-y-auto">
-          <PanelBody activeTab={activeTab} voltageCurve={voltageCurve} powerCurve={powerCurve} />
+          <PanelBody {...props} />
         </div>
       </div>
     </aside>

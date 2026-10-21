@@ -47,7 +47,7 @@ export default function ResultCard({
       <div className="mt-3.5 flex gap-2">
         <button
           type="button"
-          onClick={handlers.onViewCurves}
+          onClick={() => handlers.onViewCurves(message.taskId)}
           className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-600"
         >
           <ChartIcon className="h-3.5 w-3.5" />

@@ -108,7 +108,7 @@ export type ResultTab = 'curves' | 'report' | 'logs'
 
 // ---- 消息组件需要的外部动作（查看曲线 / 下载报告 / 轻提示）----
 export interface MessageHandlers {
-  onViewCurves: () => void
+  onViewCurves: (taskId: string) => void
   onDownloadReport: (taskId: string) => void
   notify: (text: string) => void
 }

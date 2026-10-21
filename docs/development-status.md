@@ -21,7 +21,7 @@
 | 模块 | 状态 | 说明 |
 |---|---|---|
 | 前端静态骨架 | ✅ 完成 | 6 类消息组件、三栏布局、ECharts 曲线、侧栏分组/重命名/删除、结果面板 |
-| 前端接入真实后端 | ✅ 阶段 1–3 完成 | `api/client.ts`、`api/events.ts`、`App.tsx` 已接线（见 §5） |
+| 前端接入真实后端 | ✅ 阶段 1–5 完成 | `api/client.ts`、`api/events.ts`、`App.tsx` 已接线，含重命名/删除/附件/曲线/报告（见 §5） |
 | 后端分层架构 | ✅ 第 1–4 步完成 | adapters/application/tools/agent/api 已落地，SSE 流式可跑通 |
 | 后端数据库 | ✅ 完成 | 6 张表 + models + 仓储 `find/rename/delete/latest_status` 已齐 |
 | 后端真实引擎接入 | ✅ 第 4 步完成 | `adapters::ProcessEngine` 起 `tensoreval` 子进程（`TENSOREVAL_BIN` 选择，未设置回退 stub）+ 任务状态机 + 限流信号量 |
@@ -119,10 +119,10 @@ frontend/src/
 ├── App.tsx             # 全部状态与接线（见下）
 ├── types/index.ts      # ★ 权威类型定义（Session / Message 6 类 / CurveData / 回调）
 ├── api/                # 新增：后端接入层
-│   ├── client.ts       #   listSessions/createSession/listMessages/postMessage + ApiError
+│   ├── client.ts       #   listSessions/createSession/renameSession/deleteSession/listMessages/postMessage/uploadAttachment/fetchCurves/fetchReport + ApiError
 │   └── events.ts       #   subscribeEvents(sessionId, onMessage) → SSE，返回关闭函数
 ├── hooks/useMediaQuery.ts
-├── mocks/              # sessions.ts/messages.ts 已无引用（保留作 6 类消息样例）；curves.ts 仍在用
+├── mocks/              # sessions.ts/messages.ts/curves.ts 已无引用（保留作样例）
 ├── components/
 │   ├── Sidebar.tsx / Composer.tsx / ResultPanel.tsx / Markdown.tsx / icons.tsx
 │   ├── charts/LineChart.tsx   # ECharts 直连，props 传 CurveData，支持 dataZoom/legend/resize
@@ -142,13 +142,15 @@ frontend/src/
 - **SSE 生命周期**：`openEvents(id)` 在回放完成后调用；切换会话 / 卸载时 `closeEvents()` 关闭。
   用 `selectedIdRef` 避免异步回放竞态（过期结果丢弃）。
 
-### 前端阶段 4 缺口（本地兜底，未碰后端）
+### 前端阶段 4–5 接入（已完成后端第 5 步的接线）
 
-- **重命名/删除**：后端无 `PATCH/DELETE /api/sessions/{id}`，现为**本地乐观**（刷新失效），
-  `App.tsx` 内已注释标注。
-- **附件上传**：无上传端点，`Composer` 附件芯片仍 mock 本地展示，`send()` 仅文本触发 POST。
-- **曲线/报告**：`ResultPanel` 曲线暂用 `mocks/curves.ts`；`ResultCard` 的真实 `taskId` 留作
-  后续 fetch 接入点。
+- **重命名/删除**：`PATCH/DELETE /api/sessions/{id}` 真持久化；`App.tsx` 乐观更新、失败回滚
+  （重命名回滚到旧列表，删除失败重拉会话列表）。
+- **附件上传**：`Composer` 纸夹 → 真实文件选择 → `POST .../attachments`（multipart 字段 `file`），
+  201 返回 attachment 消息经 `appendEvent` 落地；SSE 广播同一条按 id 去重。
+- **曲线/报告**：`ResultCard` 的「查看曲线」/「下载报告」按 `taskId` 调 `GET /api/tasks/{id}/curves`、
+  `/report`；`ResultPanel` 曲线/报告标签页按需拉取（报告 Markdown 内联渲染 + 下载）。日志标签页
+  暂无后端端点，保留静态样例。
 
 ---
 

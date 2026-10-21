@@ -1,25 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { powerCurve, voltageCurve } from './mocks/curves'
-import type { Attachment, Message, MessageHandlers, ResultTab, Session } from './types'
+import type { CurveData, Message, MessageHandlers, ResultTab, Session } from './types'
 import { useMediaQuery } from './hooks/useMediaQuery'
-import { createSession, listMessages, listSessions, postMessage } from './api/client'
+import {
+  createSession,
+  deleteSession as deleteSessionApi,
+  fetchCurves,
+  fetchReport,
+  listMessages,
+  listSessions,
+  postMessage,
+  renameSession as renameSessionApi,
+  uploadAttachment,
+} from './api/client'
 import { subscribeEvents } from './api/events'
 import Sidebar from './components/Sidebar'
-import Composer, { type PendingAttachment } from './components/Composer'
+import Composer from './components/Composer'
 import ResultPanel from './components/ResultPanel'
 import MessageItem from './components/messages/MessageItem'
 import { ChevronDownIcon, PanelLeftIcon, PanelRightIcon } from './components/icons'
 
-// 附件上传端点尚未实现（阶段4），这里仍是 mock，仅本地展示。
-const MOCK_FILES: Attachment[] = [
-  { fileName: '城区配电网模型.case', fileSize: '2.4 MB', fileType: 'case' },
-  { fileName: '负荷曲线.csv', fileSize: '184 KB', fileType: 'csv' },
-  { fileName: '拓扑校验报告.pdf', fileSize: '1.1 MB', fileType: 'pdf' },
-]
-
 // 乐观消息的临时 id 前缀：发送时先本地展示，等后端经 SSE 回传真实 id 后替换。
 const LOCAL_USER = 'local-user-'
-const LOCAL_ATT = 'local-att-'
 
 // 把一条新事件合并进消息列表：
 //  - user 事件 → 替换第一条乐观 user（FIFO，与发送顺序一致）
@@ -50,13 +51,22 @@ function App() {
   const [panelOpen, setPanelOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<ResultTab>('curves')
   const [draft, setDraft] = useState('')
-  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const [toast, setToast] = useState<string | null>(null)
+
+  // 结果面板数据：按 taskId 拉取真实曲线 / 报告。
+  const [resultTaskId, setResultTaskId] = useState<string | null>(null)
+  const [curves, setCurves] = useState<CurveData | null>(null)
+  const [curvesLoading, setCurvesLoading] = useState(false)
+  const [curvesError, setCurvesError] = useState<string | null>(null)
+  const [reportText, setReportText] = useState<string | null>(null)
+  const [reportFilename, setReportFilename] = useState<string | null>(null)
+  const [reportLoading, setReportLoading] = useState(false)
+  const [reportError, setReportError] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
 
   const isNarrow = useMediaQuery('(max-width: 1279px)')
 
   const toastTimer = useRef<number | undefined>(undefined)
-  const fileIndex = useRef(0)
   const selectedIdRef = useRef<string | null>(null)
   const closeEventsRef = useRef<(() => void) | null>(null)
 
@@ -82,6 +92,17 @@ function App() {
     [closeEvents],
   )
 
+  const resetPanel = useCallback(() => {
+    setResultTaskId(null)
+    setCurves(null)
+    setCurvesError(null)
+    setReportText(null)
+    setReportFilename(null)
+    setReportError(null)
+    setReportLoading(false)
+    setCurvesLoading(false)
+  }, [])
+
   const selectSession = useCallback(
     async (id: string) => {
       if (selectedIdRef.current === id) return
@@ -89,6 +110,7 @@ function App() {
       setSelectedId(id)
       setMessages([])
       setPanelOpen(false)
+      resetPanel()
       try {
         const list = await listMessages(id)
         if (selectedIdRef.current !== id) return // 已切换走，丢弃过期回放
@@ -102,7 +124,7 @@ function App() {
       }
       openEvents(id)
     },
-    [notify, openEvents],
+    [notify, openEvents, resetPanel],
   )
 
   const newSession = useCallback(async () => {
@@ -113,20 +135,27 @@ function App() {
       setSelectedId(s.id)
       setMessages([])
       setPanelOpen(false)
+      resetPanel()
       setActiveTab('curves')
       openEvents(s.id)
     } catch (err) {
       notify(err instanceof Error ? err.message : '新建会话失败')
     }
-  }, [notify, openEvents])
+  }, [notify, openEvents, resetPanel])
 
-  const renameSession = (id: string, title: string) => {
-    // 阶段4：后端暂无 PATCH /api/sessions/{id}，仅本地生效，刷新后恢复。
-    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)))
+  const renameSession = async (id: string, title: string) => {
+    const prev = sessions
+    setSessions((list) => list.map((s) => (s.id === id ? { ...s, title } : s)))
+    try {
+      const updated = await renameSessionApi(id, title)
+      setSessions((list) => list.map((s) => (s.id === updated.id ? updated : s)))
+    } catch (err) {
+      setSessions(prev)
+      notify(err instanceof Error ? err.message : '重命名失败')
+    }
   }
 
-  const deleteSession = (id: string) => {
-    // 阶段4：后端暂无 DELETE /api/sessions/{id}，仅本地生效，刷新后恢复。
+  const deleteSession = async (id: string) => {
     const remaining = sessions.filter((s) => s.id !== id)
     setSessions(remaining)
     if (selectedId === id) {
@@ -135,45 +164,119 @@ function App() {
       setSelectedId(next?.id ?? null)
       setMessages([])
       setPanelOpen(false)
+      resetPanel()
       if (next) void selectSession(next.id)
+    }
+    try {
+      await deleteSessionApi(id)
+    } catch (err) {
+      notify(err instanceof Error ? err.message : '删除失败')
+      // 删除失败：重拉会话列表，恢复被乐观移除的会话。
+      void listSessions().then(setSessions).catch(() => {})
     }
   }
 
   const send = () => {
     const text = draft.trim()
-    if ((!text && attachments.length === 0) || !selectedId) return
+    if (!text || !selectedId) return
     const ts = new Date().toISOString()
-    const optimistic: Message[] = []
-    if (text) {
-      optimistic.push({ id: `${LOCAL_USER}${Date.now()}`, type: 'user', timestamp: ts, content: text })
+    const optimistic: Message = {
+      id: `${LOCAL_USER}${Date.now()}`,
+      type: 'user',
+      timestamp: ts,
+      content: text,
     }
-    for (const a of attachments) {
-      optimistic.push({
-        id: `${LOCAL_ATT}${Date.now()}-${a.id}`,
-        type: 'attachment',
-        timestamp: ts,
-        file: { fileName: a.fileName, fileSize: a.fileSize, fileType: a.fileType },
-      })
-    }
-
     const prevDraft = draft
-    const prevAttachments = attachments
 
-    setMessages((prev) => [...prev, ...optimistic])
+    setMessages((prev) => [...prev, optimistic])
     setDraft('')
-    setAttachments([])
 
-    // 仅文本触发后端；附件上传端点未实现（阶段4），附件仅本地展示。
-    if (!text) return
     void postMessage(selectedId, text).catch((err) => {
       notify(err instanceof Error ? err.message : '发送失败')
-      setMessages((prev) =>
-        prev.filter((m) => !m.id.startsWith(LOCAL_USER) && !m.id.startsWith(LOCAL_ATT)),
-      )
+      setMessages((prev) => prev.filter((m) => !m.id.startsWith(LOCAL_USER)))
       setDraft(prevDraft)
-      setAttachments(prevAttachments)
     })
   }
+
+  // 附件上传：multipart → 201 返回 attachment 消息；SSE 也会广播同一条（appendEvent 按 id 去重）。
+  const uploadFiles = async (files: File[]) => {
+    if (!selectedId) return
+    setUploading(true)
+    try {
+      for (const file of files) {
+        try {
+          const msg = await uploadAttachment(selectedId, file)
+          setMessages((prev) => appendEvent(prev, msg))
+        } catch (err) {
+          notify(err instanceof Error ? err.message : `上传 ${file.name} 失败`)
+        }
+      }
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  // 结果面板：按 taskId 拉真实曲线。
+  const loadCurves = useCallback(async (taskId: string) => {
+    setResultTaskId(taskId)
+    setActiveTab('curves')
+    setPanelOpen(true)
+    setCurves(null)
+    setCurvesError(null)
+    setCurvesLoading(true)
+    try {
+      setCurves(await fetchCurves(taskId))
+    } catch (err) {
+      setCurvesError(err instanceof Error ? err.message : '加载曲线失败')
+    } finally {
+      setCurvesLoading(false)
+    }
+  }, [])
+
+  // 结果面板：按 taskId 拉真实报告（Markdown 文本）。
+  const loadReport = useCallback(async (taskId: string) => {
+    setResultTaskId(taskId)
+    setReportText(null)
+    setReportFilename(null)
+    setReportError(null)
+    setReportLoading(true)
+    try {
+      const { blob, filename } = await fetchReport(taskId)
+      setReportFilename(filename)
+      setReportText(await blob.text())
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : '加载报告失败')
+    } finally {
+      setReportLoading(false)
+    }
+  }, [])
+
+  const downloadReport = useCallback(
+    async (taskId: string) => {
+      try {
+        const { blob, filename } = await fetchReport(taskId)
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+      } catch (err) {
+        notify(err instanceof Error ? err.message : '下载报告失败')
+      }
+    },
+    [notify],
+  )
+
+  const changeTab = useCallback(
+    (tab: ResultTab) => {
+      setActiveTab(tab)
+      if (tab === 'report' && resultTaskId) void loadReport(resultTaskId)
+    },
+    [resultTaskId, loadReport],
+  )
 
   // 初始：加载会话列表并选中第一条。
   useEffect(() => {
@@ -198,18 +301,13 @@ function App() {
     return () => closeEvents()
   }, [closeEvents])
 
-  const addAttachment = () => {
-    const f = MOCK_FILES[fileIndex.current % MOCK_FILES.length]
-    fileIndex.current += 1
-    setAttachments((prev) => [...prev, { ...f, id: `att-${Date.now()}-${prev.length}` }])
-  }
-
   const handlers: MessageHandlers = {
-    onViewCurves: () => {
-      setPanelOpen(true)
-      setActiveTab('curves')
+    onViewCurves: (taskId) => {
+      void loadCurves(taskId)
     },
-    onDownloadReport: (taskId) => notify(`下载报告 ${taskId}（mock）`),
+    onDownloadReport: (taskId) => {
+      void downloadReport(taskId)
+    },
     notify,
   }
 
@@ -279,9 +377,8 @@ function App() {
           value={draft}
           onChange={setDraft}
           onSend={send}
-          attachments={attachments}
-          onAddAttachment={addAttachment}
-          onRemoveAttachment={(id) => setAttachments((prev) => prev.filter((a) => a.id !== id))}
+          uploading={uploading}
+          onUploadFiles={uploadFiles}
         />
       </main>
 
@@ -289,10 +386,17 @@ function App() {
         open={panelOpen}
         activeTab={activeTab}
         overlay={isNarrow}
-        onTabChange={setActiveTab}
+        onTabChange={changeTab}
         onClose={() => setPanelOpen(false)}
-        voltageCurve={voltageCurve}
-        powerCurve={powerCurve}
+        curves={curves}
+        curvesLoading={curvesLoading}
+        curvesError={curvesError}
+        reportTaskId={resultTaskId}
+        reportText={reportText}
+        reportFilename={reportFilename}
+        reportLoading={reportLoading}
+        reportError={reportError}
+        onDownloadReport={downloadReport}
       />
 
       {toast && (
