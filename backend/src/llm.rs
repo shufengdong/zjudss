@@ -21,7 +21,8 @@ impl LlmConfig {
     pub fn from_env() -> Self {
         Self {
             provider: std::env::var("LLM_PROVIDER").unwrap_or_else(|_| "deepseek".to_string()),
-            model: std::env::var("LLM_MODEL").unwrap_or_else(|_| "deepseek-chat".to_string()),
+            model: std::env::var("LLM_MODEL")
+                .unwrap_or_else(|_| rig::providers::deepseek::DEEPSEEK_V4_PRO.to_string()),
         }
     }
 }
@@ -29,13 +30,17 @@ impl LlmConfig {
 #[derive(Debug)]
 pub enum LlmError {
     UnsupportedProvider(String),
+    OpenAiNotImplemented,
     Provider(String),
 }
 
 impl std::fmt::Display for LlmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LlmError::UnsupportedProvider(p) => write!(f, "provider '{p}' not implemented"),
+            LlmError::UnsupportedProvider(p) => write!(f, "不支持的 provider: {p}"),
+            LlmError::OpenAiNotImplemented => {
+                write!(f, "OpenAI provider 尚未接入，请设置 LLM_PROVIDER=deepseek 或实现此分支")
+            }
             LlmError::Provider(e) => write!(f, "provider 初始化失败: {e}"),
         }
     }
@@ -52,6 +57,7 @@ pub fn build_agent(config: &LlmConfig, tools: Vec<RegisteredTool>) -> Result<Age
                 .map_err(|e| LlmError::Provider(e.to_string()))?;
             client.chat(&config.model)
         }
+        "openai" => return Err(LlmError::OpenAiNotImplemented),
         other => return Err(LlmError::UnsupportedProvider(other.to_string())),
     };
 
