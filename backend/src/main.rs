@@ -1,95 +1,36 @@
 //! 配电网仿真智能体后端。
 //!
-//! 工具用 rig 的 `#[rig_tool]` 宏定义，agent 由 `llm::build_agent` 依据
-//! `LLM_PROVIDER` / `LLM_MODEL` 构建。对外暴露最小 HTTP 接口：
-//! `GET /health` 健康检查，`POST /api/chat` 对话。
+//! 分层：`api`（HTTP/SSE）→ `application`（编排/事件）→ `tools`/`adapters`（内核边界）
+//! → `db`（持久）。入口只负责装配 `AppState`、应用迁移、挂路由。
+//!
+//! 当前进度（`docs/architecture.md` §12）：第 1~3 步已落地；第 4 步（真实引擎子进程
+//! `adapters::ProcessEngine` + 任务状态机 + 限流）已落地，引擎由 `TENSOREVAL_BIN` 选择，
+//! 未设置时回退 stub；第 5 步（曲线/报告端点、会话状态推导、重命名/删除/附件上传、
+//! metrics 真实值）已落地。
 
+mod adapters;
+mod agent;
+mod api;
+mod application;
 mod db;
-mod llm;
+mod tools;
 
-use axum::{
-    Json, Router,
-    http::StatusCode,
-    routing::{get, post},
-};
-use rig::rig_tool;
-use rig::tool::{RegisteredTool, ToolExecutionError};
-use serde::Deserialize;
-
-use llm::LlmConfig;
-
-/// 检查模型文件，返回检查结果（当前硬编码，后续改走适配器层）。
-#[rig_tool(description = "检查一个配电网仿真模型文件，返回检查结果")]
-fn inspect_model(path: String) -> Result<String, ToolExecutionError> {
-    eprintln!("[tool] inspect_model 被调用，path = {path}");
-    Ok("model ok".to_string())
-}
-
-/// 启动一次仿真，返回任务 ID（当前硬编码）。
-#[rig_tool(description = "启动一次配电网仿真，返回任务 ID")]
-fn run_simulation(model_path: String, duration_seconds: u64) -> Result<String, ToolExecutionError> {
-    eprintln!(
-        "[tool] run_simulation 被调用，model_path = {model_path}, duration_seconds = {duration_seconds}"
-    );
-    Ok("task-0001".to_string())
-}
-
-#[derive(Deserialize)]
-struct ChatRequest {
-    message: String,
-}
-
-async fn health() -> &'static str {
-    "ok"
-}
-
-async fn chat(Json(req): Json<ChatRequest>) -> (StatusCode, Json<serde_json::Value>) {
-    // 每个请求按当前环境变量构建 agent，便于 provider 切换与错误返回。
-    let config = LlmConfig::from_env();
-    let tools = vec![
-        RegisteredTool::from_tool(InspectModel),
-        RegisteredTool::from_tool(RunSimulation),
-    ];
-
-    let agent = match llm::build_agent(&config, tools) {
-        Ok(agent) => agent,
-        Err(err) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": err.to_string() })),
-            );
-        }
-    };
-
-    match agent.prompt(req.message).max_turns(8).await {
-        Ok(reply) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "reply": reply.output() })),
-        ),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err.to_string() })),
-        ),
-    }
-}
-
+use application::AppState;
 #[tokio::main]
 async fn main() {
     if let Err(err) = run().await {
-        // 用 Display 打印可读错误（例如 provider 未接入 / 不支持的提示），并保留非零退出码。
         eprintln!("错误: {err}");
         std::process::exit(1);
     }
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // 加载 backend/.env（不存在也不报错，允许直接用 shell 里 export 的变量）
     dotenvy::dotenv().ok();
 
-    let config = LlmConfig::from_env();
+    let config = agent::LlmConfig::from_env();
     eprintln!("[config] provider = {}, model = {}", config.provider, config.model);
 
-    // 建立 SQLite 连接池并应用嵌入式迁移。
+    // SQLite 连接池 + 嵌入式迁移。
     let database_url =
         std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://backend.db".to_string());
     let pool = db::establish_pool(&database_url)?;
@@ -99,10 +40,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     eprintln!("[db] ready at {database_url}");
 
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/api/chat", post(chat))
-        .with_state(pool);
+    // 全局状态：DB 仓储 / 事件总线 / 引擎适配器（env 选择）/ 限流信号量。
+    let engine = adapters::engine_from_env();
+    eprintln!(
+        "[config] engine = {}",
+        if std::env::var("TENSOREVAL_BIN").is_ok() {
+            "process"
+        } else {
+            "stub"
+        }
+    );
+    let state = AppState::new(pool, engine, config);
+
+    let app = api::router().with_state(state);
 
     let addr = "127.0.0.1:8080";
     let listener = tokio::net::TcpListener::bind(addr).await?;

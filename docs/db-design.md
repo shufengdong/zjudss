@@ -45,6 +45,12 @@ dataframe_schema_reference、validation_and_troubleshooting、catalog/*）。
 
 ### 0.3 任务生命周期：引擎无状态/无进度，生命周期由后端编排
 
+- 执行是**同步、进程级单线程**：`tensoreval` 入口是普通 `fn main()`（无 `#[tokio::main]`），
+  全程无 `.await` / `thread::spawn` / `rayon::par_*`；一次进程 = 一次 case，跑完即退出，
+  求解期间阻塞发起方。
+- 限定：`mems` crate 依赖里虽有 `rayon` 与可选 `tokio`，但那是给 Web 服务主程序
+  （`tools` feature）用的，CLI 不启动 tokio 运行时；polars 内部可能做数据级并行，属库
+  实现细节、不可依赖。
 - 引擎**没有** task_id、异步进度、阶段状态机的概念。它要么一次跑完（退出码 0 + 结果表），
   要么失败（退出码非 0 + `diagnostics`/`events` 或解析错误）。`summary.converged` 是收敛的
   唯一权威信号。
@@ -63,6 +69,15 @@ dataframe_schema_reference、validation_and_troubleshooting、catalog/*）。
 | 错误码 | 适配器翻译内核错误码 | 稳定 `category/code` + 诊断 message | 保留：错误码翻译仍在适配器，`error_json` 存结构化诊断 |
 
 > 对 DB 设计本身影响不大，但必须写清楚：不要把 `task_id`、异步进度误当成引擎能力。
+
+### 0.5 并发与限流：同步阻塞带来的编排约束
+
+- 引擎是**同步批处理**而非常驻服务：求解为 CPU 密集的阻塞计算，一个进程同一时刻只算一个
+  case。
+- 后端并发跑仿真必须**排队/限流**（信号量或任务队列，例如同时最多 N 个引擎子进程），否则
+  多个子进程抢占 CPU 核，反而变慢。
+- 这也是「曲线存文件、DB 只存元数据」的同一推理起点：把一次性的同步计算包装成有状态、
+  可追溯的异步任务，责任在后端编排层，不在引擎。
 
 ---
 

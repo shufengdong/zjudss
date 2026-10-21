@@ -1,7 +1,8 @@
-//! LLM 配置与 agent 构建。
+//! Agent 层：provider 选择 + preamble + agent 组装（由原 `llm.rs` 迁移）。
 //!
 //! provider 选择与 agent 组装解耦：`build_agent` 只在 match 分支内做 provider 选择，
 //! preamble / tools / temperature 都在分支之外，保证多个 provider 共用同一份组装逻辑。
+//! 流式驱动（`run_channel`）在 `application::chat` 层做（architecture §8）。
 
 use rig::tool::server::ToolServer;
 use rig::tool::RegisteredTool;

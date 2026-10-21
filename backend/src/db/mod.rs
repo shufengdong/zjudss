@@ -5,6 +5,7 @@
 //! `PRAGMA`（WAL / 外键 / busy_timeout / synchronous），见 `docs/db-design.md` §3.2。
 
 pub mod models;
+pub mod repo;
 pub mod schema;
 
 use diesel::connection::SimpleConnection;

@@ -24,6 +24,12 @@ npm run build        # 构建
 - `frontend/`：React + TypeScript 前端，使用 ECharts 绘制曲线，通过 Vite 把 `/api` 代理到后端。
 - `backend/src/adapters/`：仿真内核适配器层，所有对内核 API 的调用都收敛在这里，是内核与外界的唯一边界。
 
+## 文档与当前状态
+
+- **新开的 agent 先读 `docs/development-status.md`**：已完成 / 待做 / 关键决策的速览，以及前后端字段命名对齐清单。
+- 设计文档：`docs/architecture.md`（分层与机制）、`docs/api-design.md`（前后端契约，前端开发 agent 的单点契约）、`docs/db-design.md`（数据库）、`docs/frontend-design.md`（前端功能设计，**后端 agent 对接必读**）。
+- **前后端契约**：字段命名以 `frontend/src/types/index.ts` 为权威，后端已对齐（见 api-design §8）；后端待办见 `docs/frontend-design.md` §4。
+
 ## 仿真内核 API 调用形态
 
 - 仿真内核源码与 API 文档当前**尚未纳入本仓库**；调用契约以适配器层为准，随内核接入逐步固化。
