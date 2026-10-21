@@ -5,6 +5,11 @@ backend/target/
 node_modules/
 frontend/dist/
 
+# TypeScript / Vite 构建产物
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
 # IDE / OS
 .idea/
 .DS_Store
