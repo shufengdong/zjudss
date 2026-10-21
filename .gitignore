@@ -1,0 +1,14 @@
+# Rust
+backend/target/
+
+# Node
+node_modules/
+frontend/dist/
+
+# IDE / OS
+.idea/
+.DS_Store
+*.log
+
+# 环境变量（含密钥，不提交；.env.example 作为模板提交）
+.env
