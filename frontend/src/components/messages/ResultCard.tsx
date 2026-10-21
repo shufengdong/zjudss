@@ -1,6 +1,12 @@
 import type { MessageHandlers, ResultMessage } from '../../types'
 import { ChartIcon, DownloadIcon } from '../icons'
 
+// 电压等标幺指标做显示层四舍五入：真实内核返回长浮点（如 0.881936848419229），
+// 直接上屏难读，统一按 3 位小数展示（与历史 mock 精度一致）。
+function fmtPu(v: number): string {
+  return v.toFixed(3)
+}
+
 function Metric({
   label,
   value,
@@ -39,8 +45,8 @@ export default function ResultCard({
         <span className="ml-auto font-mono text-xs text-slate-400">{message.taskId}</span>
       </div>
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-        <Metric label="最大电压" value={metrics.maxVoltage} unit="p.u." />
-        <Metric label="最小电压" value={metrics.minVoltage} unit="p.u." warning={metrics.minVoltage < 0.95} />
+        <Metric label="最大电压" value={fmtPu(metrics.maxVoltage)} unit="p.u." />
+        <Metric label="最小电压" value={fmtPu(metrics.minVoltage)} unit="p.u." warning={metrics.minVoltage < 0.95} />
         <Metric label="越限节点数" value={metrics.violationNodes} unit="个" warning={metrics.violationNodes > 0} />
         <Metric label="越限时长" value={metrics.violationDuration} />
       </div>

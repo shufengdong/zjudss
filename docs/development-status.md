@@ -117,6 +117,12 @@ backend/src/
   `POST /api/sessions/{id}/attachments`（multipart 上传 → 回发 `attachment` 消息）。
 - **隐患修复**：`messages.task_id` 随 progress/result 落库；`EventBus` 注销防泄漏；404 由
   `RepoError::NotFound` 映射；`tool-call.args` 收口归一为对象（永不为 null）。
+- **端到端已验证（2026-10-22）**：真实 `tensoreval` 跑 `ieee13_daily_qsts.rss` 全链路通——`inspect`
+  校验 194 条语句、`run_simulation` 产出 `qsts_*` CSV、metrics/curves/report 均正确（单测 13 个全过）。
+  **已知待办（后端）**：① 实际 `.env` 未配 `TENSOREVAL_CWD`（端到端需注入该变量，否则 `.rss` 内
+  `import_dss` 相对路径按 `backend/` 解析失败）；② agent 系统提示词不含模型/脚本路径，需消息显式给
+  绝对路径；③ 电压曲线按 16 母线×相位展开成 41 条序列，图例拥挤，建议后端只挑代表性母线；④
+  `maxVoltage` 走源母线归一近似（结果目录无 `*_bus.csv` 的 `voltage_base_v`）。
 
 ---
 
@@ -162,6 +168,8 @@ frontend/src/
 - **曲线/报告**：`ResultCard` 的「查看曲线」/「下载报告」按 `taskId` 调 `GET /api/tasks/{id}/curves`、
   `/report`；`ResultPanel` 曲线/报告标签页按需拉取（报告 Markdown 内联渲染 + 下载）。日志标签页
   暂无后端端点，保留静态样例。
+- **指标显示四舍五入**：`ResultCard` 对电压等标幺指标按 3 位小数展示（`fmtPu`），真实内核返回的
+  长浮点（如 `0.881936848419229`）不再直接上屏。
 
 ---
 
