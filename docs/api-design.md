@@ -368,22 +368,25 @@ data: {"type":"user","id":"14","timestamp":"...","content":"..."}
 ```json
 {
   "variable": "电压",
-  "unit": "p.u.",
-  "timeAxis": ["00:00", "00:15", "…"],
+  "unit": "V",
+  "timeAxis": ["3600", "7200", "10800"],
   "series": [
-    { "name": "bus1.1", "values": [1.02, 1.01, "…"] }
+    { "name": "SourceBus.1", "values": [66395.7, 66395.7, 66395.7] }
   ]
 }
 ```
 
-- 数据来源是引擎 `--result-dir` 落盘的 CSV（`db-design.md` §5.2「曲线存文件」）。内核曲线 CSV
-  格式尚未固化，后端用**尽力启发式**解析（时间列 `{time,time_s,t}` 否则合成下标；系列键由
-  `{bus,phase,element,name,feeder}` 拼 `.`；值列 `{v_mag,v,p,q,value}`），失败软回退。真实格式
-  落地时只改 `adapters/process.rs` 的解析函数，出网形状不变。
+- 数据来源是引擎 `--result-dir` 落盘的 CSV（`db-design.md` §5.2「曲线存文件」）。内核 QSTS 曲线 CSV
+  已实测对齐：结果文件名 = RSS 变量名（如 `qsts_voltage.csv`），电压表列为
+  `bus,phase,v_re,v_im,v_mag,v_ang[,time,load_multiplier,generation_multiplier]`，**`v_mag` 单位是 V
+  （相电压），非标幺**。后端启发式解析：时间列 `{time,time_s,t}`（有则以其为 X 轴、按
+  `{bus,phase,element,name,feeder}` 拼系列，每系列跨时步取一列值）；无时间列则每行一个点、合成下标。
+  值列 `{v_mag,v,p,q,value}`，`v_mag`→`("电压","V")`。失败软回退，真实格式变化只改 `process.rs` 解析函数。
 
 ### 9.2 `GET /api/tasks/{id}/report` — 报告下载
 
-- `reports/{task_id}.md` 存在则返回；否则由 `summary.csv` 合成一份 Markdown 兜底；都没有则 `404`。
+- `reports/{task_id}.md` 存在则返回；否则由结果目录的 summary CSV（`summary.csv` 或 `*_summary.csv`）
+  合成一份 Markdown 兜底；都没有则 `404`。
 
 ### 9.3 对前端契约的影响
 

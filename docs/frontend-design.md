@@ -32,13 +32,13 @@ interface Session {
 | `result` | `taskId: string`<br>`title: string`<br>`metrics: { maxVoltage, minVoltage, violationNodes, violationDuration }` | `maxVoltage/minVoltage/violationNodes` 为 number，`violationDuration` 为**字符串**（展示文本，如 `"0 h"`） |
 | `attachment` | `file: { fileName, fileSize, fileType }` | 全为字符串 |
 
-### 1.3 曲线 `CurveData`（`/curves` 端点目标形状，尚未定稿）
+### 1.3 曲线 `CurveData`（`/curves` 端点目标形状，已定稿，见 api-design §9）
 
 ```ts
 interface CurveData {
   variable: string      // 如 "电压"
-  unit: string          // 如 "p.u."
-  timeAxis: string[]    // 时间轴刻度
+  unit: string          // 电压表 v_mag 为 "V"（伏特），非 p.u.
+  timeAxis: string[]    // 时间轴刻度（QSTS 为各时步秒值，如 "3600"/"7200"/"10800"）
   series: { name: string; values: number[] }[]  // 每条馈线/母线一条
 }
 ```
@@ -80,8 +80,8 @@ user → tool-call(running) → [progress…] → tool-call(success|failed) → 
 | `GET /api/sessions/{id}/messages` | — | `{ messages: Message[] }` | 有序（id 升序），与 SSE 同构 |
 | `POST /api/sessions/{id}/messages` | `{ message: string }` | 202 `{ ok: true }` | 前端不等结果，靠 SSE |
 | `GET /api/sessions/{id}/events` | — | SSE，`event: message`，`data` 为单行 JSON | 前端用 `EventSource.onmessage`，事件名须为 `message` |
-| `GET /api/tasks/{id}/curves` | — | `CurveData` | **未实现**（形状未定稿） |
-| `GET /api/tasks/{id}/report` | — | 报告文件 | **未实现** |
+| `GET /api/tasks/{id}/curves` | — | `CurveData` | 已实现（形状见 §1.3 / api-design §9） |
+| `GET /api/tasks/{id}/report` | — | 报告文件 | 已实现（Markdown 下载） |
 
 **错误约定**：非 2xx 统一返回 `{ "error": "<可读信息>" }`，前端读取 `error` 展示。
 
@@ -97,7 +97,8 @@ user → tool-call(running) → [progress…] → tool-call(success|failed) → 
       `ToolCallCard` 直接 `Object.entries(message.args)` 不会再抛异常。
 - [x] **会话 `status` 动态化**：`GET /api/sessions` 按该会话最新任务状态推导
       （`running`/`failed`/`completed`）。
-- [x] **`result.metrics` 真实值**：由适配器聚合 `summary`/曲线 CSV（尽力解析，取不到回退 `0.0`/`"0 h"`）。
+- [x] **`result.metrics` 真实值**：由适配器聚合 QSTS 结果 CSV（`*_summary.csv` 多行按最坏情形取、
+      `load_state.v_min_pu` 取 min 电压、`voltage.v_mag` 按源母线归一到 p.u.），取不到回退 `0.0`/`"0 h"`。
 - [x] **重命名 / 删除端点**：已补 `PATCH/DELETE /api/sessions/{id}`。前端可把本地乐观切换为真持久化。
 - [x] **文件上传端点**：已补 `POST /api/sessions/{id}/attachments`（multipart 字段 `file`），
       回发一条 `attachment` 消息（落库 + SSE）。

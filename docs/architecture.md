@@ -351,9 +351,13 @@ backend/src/
 2. `application/`（AppState / EventBus）+ `api/`（SSE + 消息回放）—— ✅ 已落地；
 3. `tools/` 有状态化 + `agent/` 的 `run_channel` 驱动 —— ✅ 已落地；
 4. 接入真实引擎子进程 + 状态机 + 限流 —— ✅ 已落地（`adapters::ProcessEngine`，见下）；
-5. 曲线/报告端点的数据聚合 —— 待做。
+5. 曲线/报告端点的数据聚合 —— ✅ 已落地（`read_curves`/`read_report`，见 development-status §4）。
 
-> 第 4 步落地说明：引擎二进制当前为 Windows 目标（`tensoreval.exe`），本机无法直接运行，
-> 故 `ProcessEngine` 由 `TENSOREVAL_BIN` 环境变量选择，未设置时回退 `StubEngine`；部署时把
-> `TENSOREVAL_BIN` 指向原生 `tensoreval` 即切换。任务状态机落 `simulation_tasks`
-> （pending → running → succeeded/failed），限流用 `AppState.semaphore`（4 并发）。
+> 第 4 步落地说明：`ProcessEngine` 由 `TENSOREVAL_BIN` 环境变量选择，未设置时回退 `StubEngine`；
+> `TENSOREVAL_CWD` 指定引擎工作目录（`.rss` 内 `import_dss` 的相对路径按此解析，本地指内核仓库根）。
+> 任务状态机落 `simulation_tasks`（pending → running → succeeded/failed），限流用 `AppState.semaphore`（4 并发）。
+>
+> 真实内核 QSTS 契约（实测）：`inspect` 走 `--dss-to-rss --check --study snapshot`；时序仿真由 `.rss`
+> 脚本（`import_dss` + `solution` + `load_shape` + `ds_radial_qsts` 请求 `bus_phase,load_state,summary`）
+> 驱动，结果 CSV 名 = RSS 变量名（`qsts_summary.csv` 等），`summary` 每时步一行、适配器按最坏情形聚合。
+> 详见 `docs/development-status.md` §4。

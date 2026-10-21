@@ -174,10 +174,20 @@ pub struct ReportFile {
 }
 
 /// 数据/结果根目录（读 `DATA_DIR`，缺省 `"data"`），供引擎与上传路径共用。
+///
+/// 返回**绝对路径**：结果目录要传给引擎的 `--result-dir`，引擎工作目录可能被
+/// `TENSOREVAL_CWD` 改到别处，相对路径会跟着漂移，故在此归一为绝对路径。
 pub fn resolve_data_dir() -> PathBuf {
-    std::env::var("DATA_DIR")
+    let dir = std::env::var("DATA_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("data"))
+        .unwrap_or_else(|_| PathBuf::from("data"));
+    if dir.is_absolute() {
+        dir
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(dir)
+    }
 }
 
 /// 仿真内核适配器接口：内核与外界的唯一边界。

@@ -90,7 +90,9 @@ impl Tool for RunSimulationTool {
     type Error = AdapterError;
 
     fn description(&self) -> String {
-        "对配电网模型执行时序仿真，返回 task_id 与关键指标（电压越限等）。".to_string()
+        "对配电网模型执行时序（QSTS）仿真，返回 task_id 与关键指标（损耗/电压越限等）。\
+         时序仿真由 .rss 脚本驱动：脚本需 import_dss 导入模型，并用 ds_radial_qsts 请求 \
+         bus_phase,load_state,summary 三个结果表，适配器据此聚合指标。".to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -103,15 +105,15 @@ impl Tool for RunSimulationTool {
                 },
                 "script_path": {
                     "type": "string",
-                    "description": "仿真脚本路径（.rss / .rssbundle）"
+                    "description": "时序仿真脚本路径（.rss）；须经 import_dss 导入模型，并以 ds_radial_qsts 请求 bus_phase,load_state,summary 结果表才能产出电压/越限指标"
                 },
                 "duration_s": {
                     "type": "number",
-                    "description": "仿真时长（秒）"
+                    "description": "仿真时长（秒）；当前由 .rss 脚本的 solution/load_shape 决定，此参数仅作记录"
                 },
                 "step_s": {
                     "type": "number",
-                    "description": "仿真步长（秒）"
+                    "description": "仿真步长（秒）；当前由 .rss 脚本的 solution 决定，此参数仅作记录"
                 }
             },
             "required": ["model_path"]
@@ -197,7 +199,9 @@ impl Tool for RunSimulationTool {
                 script_path,
                 model_path: args.model_path,
                 result_dir,
-                results: vec!["summary".to_string()],
+                // 结果表名随 RSS 变量名而定（如 qsts_summary/qsts_voltage/qsts_load_state），
+                // 留空表示收集全部 CSV，解析时按后缀/列名容错识别。
+                results: vec![],
             })
             .await;
 

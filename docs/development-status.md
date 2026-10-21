@@ -92,6 +92,17 @@ backend/src/
 
 - **真实引擎子进程**：`adapters/process.rs` 的 `ProcessEngine` 起 `tensoreval`（`--df --result-dir`），
   `TENSOREVAL_BIN` 未设置时回退 `StubEngine`；错误码翻译到 `ErrorCategory`。
+- **真实内核 QSTS 契约（2026-10-22 实测对齐）**：
+  - `inspect` → `tensoreval --dss-to-rss --check --study snapshot <model.dss>`（静态潮流校验）。
+  - 时序仿真由 `.rss` 脚本驱动：`import_dss` + `solution`(DAILY) + `load_shape` + `ds_radial_qsts`
+    请求 `bus_phase,load_state,summary`（示例 `eig-rs/sparrowzz/dss/ieee13_daily_qsts.rss`）。
+  - 结果 CSV 名 = RSS 变量名（`qsts_summary.csv`/`qsts_voltage.csv`/`qsts_load_state.csv`），非固定
+    `summary.csv`；适配器按后缀/列名容错识别。
+  - `summary` 为**每时步一行**，适配器按最坏情形聚合：`converged` AND、损耗/越限取最大值、
+    `violation_duration = 越限步数 × 步长`。
+  - 电压：`min_voltage` 取 `load_state.v_min_pu`（标幺，精确）；`max_voltage` 由 `voltage.v_mag`（单位
+    V）按源母线归一（单电压等级精确、多电压等级近似）。
+  - 环境变量新增 `TENSOREVAL_CWD`：`.rss` 内 `import_dss` 相对路径按此目录解析（本地指内核仓库根）。
 - **任务状态机**：`TaskRepo` 落 `simulation_tasks`（`pending→running→succeeded/failed`、阶段
   `model_check→script_gen→running→collecting`），`task_id` = `simulation_tasks.id`。
 - **限流接入**：`AppState.semaphore`（=4）沿 `ChatService → ToolServices → RunSimulationTool`
