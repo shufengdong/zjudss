@@ -1,5 +1,6 @@
 //! HTTP 层：axum 路由、handler、DTO 与 SSE。
 
+mod analysis;
 mod auth;
 mod datasets;
 mod events;
@@ -16,6 +17,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 
 use crate::adapters::AdapterError;
+use crate::application::AnalysisError;
 use crate::application::AppError;
 use crate::application::AppState;
 use crate::application::ArtifactError;
@@ -209,6 +211,19 @@ impl From<DatasetError> for ApiError {
         }
     }
 }
+impl From<AnalysisError> for ApiError {
+    fn from(error: AnalysisError) -> Self {
+        match error.code {
+            "analysis_not_found" | "dataset_not_found" => Self::not_found("资源不存在"),
+            code => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: error.message,
+                code,
+                details: error.details,
+            },
+        }
+    }
+}
 
 async fn health() -> &'static str {
     "ok"
@@ -242,4 +257,6 @@ pub fn router() -> Router<AppState> {
         .route("/api/datasets/{id}", get(datasets::metadata))
         .route("/api/datasets/{id}/rows", get(datasets::rows))
         .route("/api/datasets/{id}/download", get(datasets::download))
+        .route("/api/analysis-runs/{id}", get(analysis::get))
+        .route("/api/dataset-views/{id}/data", get(analysis::view_data))
 }

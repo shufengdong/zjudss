@@ -1,3 +1,4 @@
+mod analysis;
 mod artifact;
 mod dataset;
 mod ingestion;
@@ -8,6 +9,7 @@ mod storage_scope;
 mod task;
 mod workspace;
 
+pub use analysis::AnalysisRepo;
 pub use artifact::{ArtifactDraft, ArtifactRepo};
 pub use dataset::DatasetRepo;
 pub use ingestion::{IngestionItemDraft, IngestionRecord, IngestionRepo};

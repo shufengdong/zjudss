@@ -3,6 +3,7 @@
 //! `AppState` 是 axum 的共享状态（连接池、仓储、事件总线、引擎适配器、限流信号量）；
 //! `EventBus` 按 session 广播事件供 SSE 订阅；`ChatService` 编排一次 agent 对话。
 
+pub mod analysis;
 pub mod artifacts;
 pub mod chat;
 pub mod datasets;
@@ -12,6 +13,7 @@ pub mod ingestion;
 pub mod model_patch;
 pub mod scheduler;
 pub mod simulations;
+pub mod visualization;
 pub mod workspace;
 
 use std::path::PathBuf;
@@ -26,13 +28,16 @@ use crate::auth::AuthConfig;
 use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
-    ArtifactRepo, DatasetRepo, IngestionRepo, MessageRepo, SessionRepo, SimulationRepo,
-    StorageScopeRepo, TaskRepo, WorkspaceRepo,
+    AnalysisRepo, ArtifactRepo, DatasetRepo, IngestionRepo, MessageRepo, SessionRepo,
+    SimulationRepo, StorageScopeRepo, TaskRepo, WorkspaceRepo,
 };
 use crate::engine_resources::{EngineKnowledge, EngineResourceSnapshot};
 use crate::ingestion::ArchiveLimits;
 use crate::storage::ArtifactStore;
 
+pub use analysis::{
+    AnalysisError, AnalysisInput, AnalysisOutcome, AnalysisRequest, AnalysisService,
+};
 pub use artifacts::{
     ArtifactError, ArtifactMetadata, ArtifactRef, ArtifactService, GcReport, StorageLimits,
     StorageUsage,
@@ -69,6 +74,7 @@ pub struct AppState {
     pub model_patch_service: ModelPatchService,
     pub dataset_service: DatasetService,
     pub simulation_service: SimulationService,
+    pub analysis_service: AnalysisService,
     pub engine_snapshot: Arc<EngineResourceSnapshot>,
     pub agent_knowledge: Arc<AgentKnowledge>,
     pub events: EventBus,
@@ -236,6 +242,16 @@ impl AppState {
             agent_knowledge.clone(),
             data_dir.clone(),
         );
+        let analysis_service = AnalysisService::new(
+            AnalysisRepo::new(pool.clone()),
+            DatasetRepo::new(pool.clone()),
+            artifact_service.clone(),
+            message_repo.clone(),
+            events.clone(),
+            engine.clone(),
+            agent_knowledge.clone(),
+            data_dir.clone(),
+        );
         Self {
             pool,
             session_repo,
@@ -248,6 +264,7 @@ impl AppState {
             model_patch_service,
             dataset_service,
             simulation_service,
+            analysis_service,
             engine_snapshot,
             agent_knowledge,
             events,

@@ -1184,3 +1184,8 @@ artifact 的重复引用继续可用。上传、仿真和结果分析的提交�
 仿真和分析输出先进入 staging，只有在提交 artifact/dataset 的事务内通过配额检查才发布成功消息；
 并发提交必须对同一计费主体串行或使用原子条件更新。首版不设置自动过期天数，删除会话后由 GC 在
 引用归零时释放额度。
+
+结果分析通过 `run_result_analysis` 工具创建持久化 analysis run，输入只接受有序的 dataset ID/alias；
+实际 RSS 脚本、agent bundle/skill refs 和引擎合同随运行保存。`GET /api/analysis-runs/{id}` 恢复运行与
+派生数据集，`GET /api/dataset-views/{id}/data` 返回经过预算校验的视图投影。视图仅支持
+line/bar/scatter/heatmap/boxplot/histogram 六类受控 spec，不接受 ECharts option 或 formatter。

@@ -89,6 +89,17 @@ pub struct DatasetDownload {
     pub file_name: String,
     pub media_type: &'static str,
 }
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatasetViewData {
+    pub view_id: String,
+    pub dataset_id: String,
+    pub kind: String,
+    pub spec: Value,
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<Value>>,
+    pub diagnostics: BTreeMap<String, u64>,
+}
 
 #[derive(Clone)]
 pub struct DatasetService {
@@ -105,6 +116,18 @@ impl DatasetService {
         task_id: i32,
     ) -> Result<Vec<DatasetMetadata>, DatasetError> {
         let rows = self.repo.list_task(&p.access, task_id).await?;
+        let mut out = Vec::new();
+        for d in rows {
+            out.push(self.metadata_from(p, d).await?);
+        }
+        Ok(out)
+    }
+    pub async fn list_analysis(
+        &self,
+        p: &Principal,
+        id: i32,
+    ) -> Result<Vec<DatasetMetadata>, DatasetError> {
+        let rows = self.repo.list_analysis(&p.access, id).await?;
         let mut out = Vec::new();
         for d in rows {
             out.push(self.metadata_from(p, d).await?);
@@ -235,6 +258,58 @@ impl DatasetService {
             path,
             file_name: format!("{}-{}.parquet", d.id, safe),
             media_type: "application/vnd.apache.parquet",
+        })
+    }
+    pub async fn view_data(
+        &self,
+        p: &Principal,
+        view_id: i32,
+    ) -> Result<DatasetViewData, DatasetError> {
+        let (view, d) = self.repo.find_view(&p.access, view_id).await?;
+        let spec: Value = serde_json::from_str(&view.spec_json)
+            .map_err(|e| DatasetError::Storage(e.to_string()))?;
+        let schema: Vec<DatasetColumn> = serde_json::from_str(&d.schema_json)
+            .map_err(|e| DatasetError::Storage(e.to_string()))?;
+        let (_, plan) =
+            crate::application::visualization::VisualizationValidator::parse_and_validate(
+                &schema,
+                d.row_count as u64,
+                &spec,
+                crate::application::visualization::VisualizationBudgets::default(),
+            )
+            .map_err(|e| DatasetError::InvalidPage(e.to_string()))?;
+        let path = self.path(p, &d).await?;
+        let batches = ParquetInspector::projection(&path, &plan.columns, 0, d.row_count as usize)
+            .map_err(|e| DatasetError::Storage(e.to_string()))?;
+        let names = batches
+            .first()
+            .map(|b| {
+                b.schema()
+                    .fields()
+                    .iter()
+                    .map(|f| f.name().clone())
+                    .collect()
+            })
+            .unwrap_or(plan.columns);
+        let mut rows = Vec::new();
+        let mut diagnostics = BTreeMap::new();
+        for batch in batches {
+            for row in 0..batch.num_rows() {
+                let mut values = Vec::new();
+                for array in batch.columns() {
+                    values.push(value(array.as_ref(), row, &mut diagnostics)?);
+                }
+                rows.push(values);
+            }
+        }
+        Ok(DatasetViewData {
+            view_id: view.id.to_string(),
+            dataset_id: d.id.to_string(),
+            kind: view.kind,
+            spec,
+            columns: names,
+            rows,
+            diagnostics,
         })
     }
 }

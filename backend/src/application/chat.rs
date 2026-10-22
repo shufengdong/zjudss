@@ -40,6 +40,7 @@ pub struct ChatService {
     agent_knowledge: Arc<crate::agent::knowledge::AgentKnowledge>,
     simulations: crate::application::SimulationService,
     datasets: crate::application::DatasetService,
+    analysis: crate::application::AnalysisService,
 }
 
 impl ChatService {
@@ -60,6 +61,7 @@ impl ChatService {
             agent_knowledge: state.agent_knowledge.clone(),
             simulations: state.simulation_service.clone(),
             datasets: state.dataset_service.clone(),
+            analysis: state.analysis_service.clone(),
         }
     }
 
@@ -77,6 +79,7 @@ impl ChatService {
             engine: self.engine.clone(),
             writer: writer.clone(),
             session_id,
+            request_message_id: prompt_id,
             task_repo: self.task_repo.clone(),
             semaphore: self.semaphore.clone(),
             scope: self.principal.access.clone(),
@@ -89,6 +92,7 @@ impl ChatService {
             loaded_skills: Arc::new(tokio::sync::Mutex::new(BTreeSet::new())),
             simulations: self.simulations.clone(),
             datasets: self.datasets.clone(),
+            analysis: self.analysis.clone(),
         });
         let tools = tools::build_tools(services);
 

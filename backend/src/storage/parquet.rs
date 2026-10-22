@@ -98,10 +98,10 @@ impl ParquetInspector {
         offset: usize,
         limit: usize,
     ) -> Result<Vec<RecordBatch>, ParquetError> {
-        if limit == 0 || limit > 10_000 {
+        if limit == 0 || limit > 100_000 {
             return Err(ParquetError::new(
                 "parquet_page_invalid",
-                "limit 必须在 1..=10000",
+                "limit 必须在 1..=100000",
             ));
         }
         let file = std::fs::File::open(path)

@@ -103,4 +103,77 @@ impl DatasetRepo {
         .await
         .map_err(RepoError::Join)?
     }
+    pub async fn list_analysis(
+        &self,
+        scope: &AccessScope,
+        analysis_id: i32,
+    ) -> RepoResult<Vec<ResultDataset>> {
+        let pool = self.pool.clone();
+        let scope = scope.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut c = pool.get().map_err(RepoError::Pool)?;
+            let sessions = schema::sessions::table
+                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
+                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .select(schema::sessions::id);
+            schema::result_analysis_runs::table
+                .filter(schema::result_analysis_runs::id.eq(analysis_id))
+                .filter(schema::result_analysis_runs::session_id.eq_any(sessions))
+                .select(schema::result_analysis_runs::id)
+                .first::<i32>(&mut c)
+                .optional()?
+                .ok_or(RepoError::NotFound)?;
+            Ok(schema::result_datasets::table
+                .filter(schema::result_datasets::analysis_run_id.eq(analysis_id))
+                .order(schema::result_datasets::id.asc())
+                .load(&mut c)?)
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+    pub async fn find_view(
+        &self,
+        scope: &AccessScope,
+        id: i32,
+    ) -> RepoResult<(DatasetView, ResultDataset)> {
+        let pool = self.pool.clone();
+        let scope = scope.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut c = pool.get().map_err(RepoError::Pool)?;
+            let view = schema::dataset_views::table
+                .find(id)
+                .first::<DatasetView>(&mut c)
+                .optional()?
+                .ok_or(RepoError::NotFound)?;
+            let d = schema::result_datasets::table
+                .find(view.dataset_id)
+                .first::<ResultDataset>(&mut c)?;
+            Self::ensure_scope(&mut c, &scope, &d)?;
+            Ok((view, d))
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+    pub async fn session_id(&self, scope: &AccessScope, dataset_id: i32) -> RepoResult<i32> {
+        let dataset = self.find(scope, dataset_id).await?;
+        let pool = self.pool.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            if let Some(id) = dataset.task_id {
+                Ok(schema::simulation_tasks::table
+                    .find(id)
+                    .select(schema::simulation_tasks::session_id)
+                    .first(&mut conn)?)
+            } else if let Some(id) = dataset.analysis_run_id {
+                Ok(schema::result_analysis_runs::table
+                    .find(id)
+                    .select(schema::result_analysis_runs::session_id)
+                    .first(&mut conn)?)
+            } else {
+                Err(RepoError::NotFound)
+            }
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
 }

@@ -211,6 +211,7 @@ fn services(app: &TestApp, session_id: i32) -> Arc<ToolServices> {
             app.state.events.clone(),
         ),
         session_id,
+        request_message_id: 0,
         task_repo: app.state.task_repo.clone(),
         semaphore: Arc::new(Semaphore::new(1)),
         scope: p.access.clone(),
@@ -223,6 +224,7 @@ fn services(app: &TestApp, session_id: i32) -> Arc<ToolServices> {
         loaded_skills: Arc::new(Mutex::new(BTreeSet::new())),
         simulations: app.state.simulation_service.clone(),
         datasets: app.state.dataset_service.clone(),
+        analysis: app.state.analysis_service.clone(),
     })
 }
 

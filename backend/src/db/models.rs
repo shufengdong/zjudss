@@ -3,10 +3,10 @@
 // Diesel 2.x：派生宏（Queryable/Insertable）只从 crate 根重导出（默认 feature
 // `with-deprecated`），prelude 仅含 trait 与 DSL；故显式导入。
 use super::schema::{
-    artifacts, curve_data, dataframe_bindings, ingestion_artifacts, ingestions, messages,
-    model_versions, result_analysis_inputs, result_datasets, sessions, simulation_tasks,
-    storage_scope_artifacts, storage_scopes, task_files, task_results, version_artifacts,
-    workspaces,
+    artifacts, curve_data, dataframe_bindings, dataset_views, ingestion_artifacts, ingestions,
+    messages, model_versions, result_analysis_inputs, result_analysis_runs, result_datasets,
+    sessions, simulation_tasks, storage_scope_artifacts, storage_scopes, task_files, task_results,
+    version_artifacts, workspaces,
 };
 #[allow(deprecated)]
 use diesel::{Insertable, Queryable};
@@ -385,6 +385,24 @@ pub struct ResultAnalysisRun {
     pub finished_at_ms: Option<i64>,
 }
 
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = result_analysis_runs)]
+pub struct NewResultAnalysisRun {
+    pub session_id: i32,
+    pub request_message_id: Option<i32>,
+    pub intent_json: String,
+    pub script_artifact_id: i32,
+    pub status: String,
+    pub stage: String,
+    pub error_json: Option<String>,
+    pub agent_bundle_version: String,
+    pub agent_skill_refs_json: String,
+    pub engine_contract_version: String,
+    pub created_at_ms: i64,
+    pub started_at_ms: Option<i64>,
+    pub finished_at_ms: Option<i64>,
+}
+
 #[derive(Queryable, Insertable, Debug, Clone)]
 #[diesel(table_name = result_analysis_inputs)]
 pub struct ResultAnalysisInput {
@@ -392,6 +410,17 @@ pub struct ResultAnalysisInput {
     pub dataset_id: i32,
     pub alias: String,
     pub ordinal: i32,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = dataset_views)]
+pub struct NewDatasetView {
+    pub dataset_id: i32,
+    pub name: String,
+    pub kind: String,
+    pub spec_json: String,
+    pub is_default: bool,
+    pub created_at_ms: i64,
 }
 
 // ---- messages ----

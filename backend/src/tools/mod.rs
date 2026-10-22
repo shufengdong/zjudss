@@ -7,6 +7,7 @@
 
 pub mod activate_model_version;
 pub mod confirm_dataframe_mapping;
+pub mod create_dataset_view;
 pub mod import_example;
 pub mod inspect_example;
 pub mod inspect_workspace;
@@ -16,6 +17,7 @@ pub mod modify_model;
 pub mod read_engine_doc_section;
 pub mod remove_model_input;
 pub mod replace_model_input;
+pub mod run_result_analysis;
 pub mod run_study;
 pub mod search_engine_docs;
 pub mod search_examples;
@@ -30,8 +32,8 @@ use tokio::sync::{Mutex, Semaphore};
 use crate::adapters::SimEngine;
 use crate::agent::knowledge::AgentKnowledge;
 use crate::application::{
-    DatasetService, EventWriter, ExampleImportService, ModelPatchService, SimulationService,
-    WorkspaceService,
+    AnalysisService, DatasetService, EventWriter, ExampleImportService, ModelPatchService,
+    SimulationService, WorkspaceService,
 };
 use crate::auth::{AccessScope, Principal};
 use crate::db::repositories::TaskRepo;
@@ -43,6 +45,7 @@ pub struct ToolServices {
     pub engine: Arc<dyn SimEngine>,
     pub writer: EventWriter,
     pub session_id: i32,
+    pub request_message_id: i32,
     pub task_repo: TaskRepo,
     pub semaphore: Arc<Semaphore>,
     pub scope: AccessScope,
@@ -55,6 +58,7 @@ pub struct ToolServices {
     pub loaded_skills: Arc<Mutex<BTreeSet<String>>>,
     pub simulations: SimulationService,
     pub datasets: DatasetService,
+    pub analysis: AnalysisService,
 }
 
 impl ToolServices {
@@ -82,6 +86,12 @@ pub fn build_tools(services: Arc<ToolServices>) -> Vec<RegisteredTool> {
         RegisteredTool::from_tool(load_agent_skill::LoadAgentSkillTool::new(services.clone())),
         RegisteredTool::from_tool(run_study::RunStudyTool::new(services.clone())),
         RegisteredTool::from_tool(list_result_datasets::ListResultDatasetsTool::new(
+            services.clone(),
+        )),
+        RegisteredTool::from_tool(run_result_analysis::RunResultAnalysisTool::new(
+            services.clone(),
+        )),
+        RegisteredTool::from_tool(create_dataset_view::CreateDatasetViewTool::new(
             services.clone(),
         )),
         RegisteredTool::from_tool(search_engine_docs::SearchEngineDocsTool::new(
