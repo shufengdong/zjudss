@@ -223,13 +223,16 @@ impl IngestionRepo {
         .map_err(RepoError::Join)?
     }
 
-    pub async fn add_normalized(
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_derived(
         &self,
         ingestion_id: i32,
         source: &IngestionArtifact,
         artifact_id: i32,
         file_name: String,
-        sheet_name: String,
+        relative_path: Option<String>,
+        role: String,
+        sheet_name: Option<String>,
         now_ms: i64,
     ) -> RepoResult<IngestionArtifact> {
         let pool = self.pool.clone();
@@ -242,11 +245,12 @@ impl IngestionRepo {
                     client_file_id: source.client_file_id,
                     artifact_id,
                     file_name,
-                    relative_path: source.relative_path,
-                    media_type: Some("application/vnd.apache.parquet".to_string()),
-                    role: "normalized".to_string(),
+                    relative_path,
+                    media_type: (role == "normalized")
+                        .then(|| "application/vnd.apache.parquet".to_string()),
+                    role,
                     source_artifact_id: Some(source.artifact_id),
-                    sheet_name: Some(sheet_name),
+                    sheet_name,
                     status: "ready".to_string(),
                     error_code: None,
                     error_message: None,

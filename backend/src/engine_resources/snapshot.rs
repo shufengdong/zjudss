@@ -30,6 +30,7 @@ pub struct EngineResourceSnapshot {
     pub contract_version: String,
     pub catalog_schema_version: u32,
     pub source_root: PathBuf,
+    pub engine_root: PathBuf,
     pub catalog_json: serde_json::Value,
     pub functions_json: serde_json::Value,
     pub catalog_bytes: BTreeMap<String, Vec<u8>>,

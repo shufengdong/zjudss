@@ -11,7 +11,7 @@ use backend::auth::AuthConfig;
 use backend::catalog::SchemaCatalog;
 use backend::config::RuntimeConfig;
 use backend::db::{self, DbPool};
-use backend::engine_resources::{EngineResourceRegistry, ResourceContract};
+use backend::engine_resources::{EngineResourceRegistry, ResourceContract, SourceFileSpec};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
@@ -43,6 +43,24 @@ impl TestApp {
         std::fs::write(dss_root.join("docs/catalog/dataframes.json"), dataframes).unwrap();
         std::fs::write(dss_root.join("docs/catalog/functions.json"), functions).unwrap();
         std::fs::write(dss_root.join("docs/guide.md"), guide).unwrap();
+        std::fs::create_dir_all(dss_root.join("models/demo")).unwrap();
+        std::fs::create_dir_all(engine_root.join("psa/tests/bmopf")).unwrap();
+        std::fs::create_dir_all(engine_root.join("sparrowzz/rspower/lib")).unwrap();
+        let demo_rss = b"a=import_dss(\"sparrowzz/dss/models/demo/master.dss\");\nb=import_bmopf(\"psa/tests/bmopf/demo.json\");\nc=read(\"sparrowzz/rspower/lib/helper.csv\");\n";
+        let master = b"Redirect child.dss\n";
+        std::fs::write(dss_root.join("demo.rss"), demo_rss).unwrap();
+        std::fs::write(dss_root.join("models/demo/master.dss"), master).unwrap();
+        std::fs::write(
+            dss_root.join("models/demo/child.dss"),
+            b"New Circuit.demo\n",
+        )
+        .unwrap();
+        std::fs::write(engine_root.join("psa/tests/bmopf/demo.json"), b"{}\n").unwrap();
+        std::fs::write(
+            engine_root.join("sparrowzz/rspower/lib/helper.csv"),
+            b"id\n1\n",
+        )
+        .unwrap();
 
         let config = RuntimeConfig::from_values(
             root.path(),
@@ -70,7 +88,10 @@ impl TestApp {
                 functions_sha256: hash(functions),
                 docs_tree_sha256: format!("{:x}", docs_hash.finalize()),
                 doc_paths: vec!["docs/guide.md".into()],
-                root_rss: vec![],
+                root_rss: vec![SourceFileSpec {
+                    path: "demo.rss".into(),
+                    sha256: hash(demo_rss),
+                }],
                 bundles: vec![],
             },
             &HashSet::new(),
@@ -82,6 +103,7 @@ impl TestApp {
             SchemaCatalog::from_snapshot(&engine_snapshot, "test-contract")
                 .expect("load isolated schema catalog"),
         );
+        let engine_snapshot = std::sync::Arc::new(engine_snapshot);
         let pool = db::establish_pool(&config.database_url).expect("create test database pool");
         {
             let mut conn = pool.get().expect("checkout test database");
@@ -100,8 +122,15 @@ impl TestApp {
             scheduler,
             backend::application::StorageLimits::default(),
             catalog,
+            engine_snapshot,
             config.upload_single_file_limit_bytes,
             config.upload_batch_limit_bytes,
+            backend::ingestion::ArchiveLimits {
+                max_entries: config.archive_max_entries,
+                max_expanded_bytes: config.archive_max_expanded_bytes,
+                max_compression_ratio: config.archive_max_compression_ratio,
+                max_file_bytes: config.upload_single_file_limit_bytes,
+            },
         );
         let router = backend::build_router(state.clone());
 

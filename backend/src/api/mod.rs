@@ -153,6 +153,12 @@ impl From<IngestionError> for ApiError {
                 code: "upload_too_large",
                 details: None,
             },
+            IngestionError::Format(error) => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: error.to_string(),
+                code: "invalid_model_archive",
+                details: Some(serde_json::json!({ "reason": error.code() })),
+            },
             IngestionError::Artifact(error) => error.into(),
             IngestionError::Workspace(error) => error.into(),
             IngestionError::Repository(error) => error.into(),

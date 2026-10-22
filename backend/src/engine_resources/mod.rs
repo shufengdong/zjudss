@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::agent::knowledge::AgentKnowledge;
 
-pub use examples::EngineExample;
+pub use examples::{EngineExample, ExampleSourceFile};
 pub use knowledge::{DocSearchHit, DocSection, EngineKnowledge};
 use snapshot::EmbeddedExampleSources;
 pub use snapshot::{EngineResourceSnapshot, ResourceContract, SourceFileSpec};
@@ -193,6 +193,7 @@ impl EngineResourceRegistry {
             contract_version: contract.contract_version,
             catalog_schema_version: contract.catalog_schema_version,
             source_root: dss_root,
+            engine_root,
             catalog_json,
             functions_json,
             catalog_bytes: BTreeMap::from([

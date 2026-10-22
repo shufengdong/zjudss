@@ -5,6 +5,7 @@ use backend::auth::AuthConfig;
 use backend::catalog::SchemaCatalog;
 use backend::config::RuntimeConfig;
 use backend::engine_resources::EngineResourceRegistry;
+use backend::ingestion::ArchiveLimits;
 use backend::{adapters, build_router, db};
 
 #[tokio::main]
@@ -26,6 +27,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         &engine_resources,
         &engine_resources.contract_version,
     )?);
+    let engine_resources = std::sync::Arc::new(engine_resources);
     eprintln!(
         "[config] provider = {}, model = {}",
         llm.provider, llm.model
@@ -73,8 +75,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         scheduler,
         storage_limits,
         catalog,
+        engine_resources,
         runtime.upload_single_file_limit_bytes,
         runtime.upload_batch_limit_bytes,
+        ArchiveLimits {
+            max_entries: runtime.archive_max_entries,
+            max_expanded_bytes: runtime.archive_max_expanded_bytes,
+            max_compression_ratio: runtime.archive_max_compression_ratio,
+            max_file_bytes: runtime.upload_single_file_limit_bytes,
+        },
     );
 
     let addr = "127.0.0.1:8080";

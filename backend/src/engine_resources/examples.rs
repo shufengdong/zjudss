@@ -22,6 +22,15 @@ pub struct EngineExample {
     pub tree_hash: String,
     pub importable: bool,
     pub diagnostics: Vec<String>,
+    #[serde(skip)]
+    pub files: Vec<ExampleSourceFile>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExampleSourceFile {
+    pub virtual_path: String,
+    pub source_path: String,
+    pub sha256: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,8 +77,13 @@ pub(crate) fn load_examples(
             ));
         }
         let mut diagnostics = Vec::new();
-        let dependencies =
-            discover_rss_dependencies(engine_root, dss_root, &bytes, &mut diagnostics);
+        let dependencies = discover_rss_dependencies(engine_root, &path, &bytes, &mut diagnostics);
+        let entry_source = format!("sparrowzz/dss/{}", spec.path);
+        let mut files = vec![ExampleSourceFile {
+            virtual_path: entry_source.clone(),
+            source_path: entry_source,
+            sha256: spec.sha256.clone(),
+        }];
         let mut total = bytes.len() as u64;
         let mut tree = Sha256::new();
         tree.update(spec.path.as_bytes());
@@ -77,9 +91,25 @@ pub(crate) fn load_examples(
         for dependency in &dependencies {
             let data = std::fs::read(dependency).map_err(EngineResourceError::io)?;
             total += data.len() as u64;
-            tree.update(dependency.to_string_lossy().as_bytes());
+            let relative = dependency
+                .strip_prefix(engine_root)
+                .map_err(|_| {
+                    EngineResourceError::new(
+                        "example_path_invalid",
+                        dependency.display().to_string(),
+                    )
+                })?
+                .to_string_lossy()
+                .replace('\\', "/");
+            tree.update(relative.as_bytes());
             tree.update(&data);
+            files.push(ExampleSourceFile {
+                virtual_path: relative.clone(),
+                source_path: relative,
+                sha256: format!("{:x}", Sha256::digest(&data)),
+            });
         }
+        files.sort_by(|left, right| left.virtual_path.cmp(&right.virtual_path));
         examples.push(EngineExample {
             id,
             title: path
@@ -97,6 +127,7 @@ pub(crate) fn load_examples(
             tree_hash: format!("{:x}", tree.finalize()),
             importable: diagnostics.is_empty(),
             diagnostics,
+            files,
         });
     }
     for spec in bundle_specs {
@@ -113,8 +144,22 @@ pub(crate) fn load_examples(
         let mut diagnostics = Vec::new();
         let mut total = bytes.len() as u64;
         let mut tree = Sha256::new();
-        tree.update(&bytes);
         let mut entry_found = false;
+        let manifest_source = manifest_path
+            .strip_prefix(engine_root)
+            .map_err(|_| {
+                EngineResourceError::new(
+                    "example_path_invalid",
+                    manifest_path.display().to_string(),
+                )
+            })?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let mut files = vec![ExampleSourceFile {
+            virtual_path: "manifest.json".to_string(),
+            source_path: manifest_source,
+            sha256: spec.sha256.clone(),
+        }];
         for file in &manifest.files {
             safe_relative(&file.path)?;
             let path = safe_file(bundle_root, &file.path)?;
@@ -128,6 +173,21 @@ pub(crate) fn load_examples(
                     if file.path == manifest.entry {
                         entry_found = true;
                     }
+                    let source_path = path
+                        .strip_prefix(engine_root)
+                        .map_err(|_| {
+                            EngineResourceError::new(
+                                "example_path_invalid",
+                                path.display().to_string(),
+                            )
+                        })?
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    files.push(ExampleSourceFile {
+                        virtual_path: file.path.clone(),
+                        source_path,
+                        sha256: hash,
+                    });
                 }
                 Ok(_) => diagnostics.push(format!("hash mismatch: {}", file.path)),
                 Err(_) => diagnostics.push(format!("missing file: {}", file.path)),
@@ -167,6 +227,7 @@ pub(crate) fn load_examples(
             tree_hash: format!("{:x}", tree.finalize()),
             importable: diagnostics.is_empty(),
             diagnostics,
+            files,
         });
     }
     Ok(examples)
@@ -202,32 +263,78 @@ fn safe_relative(path: &str) -> Result<(), EngineResourceError> {
 
 fn discover_rss_dependencies(
     engine_root: &Path,
-    dss_root: &Path,
+    entry_path: &Path,
     bytes: &[u8],
     diagnostics: &mut Vec<String>,
 ) -> Vec<PathBuf> {
-    let text = String::from_utf8_lossy(bytes);
     let mut dependencies = Vec::new();
-    for token in text.split(['"', '\'']) {
-        let lower = token.to_ascii_lowercase();
-        if !(lower.ends_with(".dss") || lower.ends_with(".csv") || lower.ends_with(".json"))
-            || token.contains("://")
-        {
-            continue;
-        }
-        let candidate = if token.starts_with("sparrowzz/") || token.starts_with("psa/") {
-            engine_root.join(token)
-        } else {
-            dss_root.join(token)
-        };
-        match candidate.canonicalize() {
-            Ok(path) if path.starts_with(engine_root) && path.is_file() => dependencies.push(path),
-            _ => diagnostics.push(format!("missing dependency: {token}")),
+    let mut visited = HashSet::new();
+    let mut queue = vec![(entry_path.to_path_buf(), bytes.to_vec())];
+    while let Some((current, data)) = queue.pop() {
+        let text = String::from_utf8_lossy(&data);
+        for token in dependency_tokens(&text) {
+            if token.contains("://") {
+                diagnostics.push(format!("external dependency: {token}"));
+                continue;
+            }
+            let candidate = if token.starts_with("sparrowzz/") || token.starts_with("psa/") {
+                engine_root.join(&token)
+            } else {
+                current.parent().unwrap_or(engine_root).join(&token)
+            };
+            match candidate.canonicalize() {
+                Ok(path) if path.starts_with(engine_root) && path.is_file() => {
+                    if visited.insert(path.clone()) {
+                        match std::fs::read(&path) {
+                            Ok(bytes) => {
+                                dependencies.push(path.clone());
+                                queue.push((path, bytes));
+                            }
+                            Err(_) => diagnostics.push(format!("missing dependency: {token}")),
+                        }
+                    }
+                }
+                _ => diagnostics.push(format!("missing dependency: {token}")),
+            }
         }
     }
     dependencies.sort();
-    dependencies.dedup();
     dependencies
+}
+
+fn dependency_tokens(text: &str) -> Vec<String> {
+    let mut tokens: Vec<String> = text
+        .split(['"', '\''])
+        .enumerate()
+        .filter_map(|(index, token)| {
+            (index % 2 == 1 && is_dependency(token)).then(|| token.to_string())
+        })
+        .collect();
+    for line in text.lines() {
+        let mut words = line.split_whitespace();
+        if words.next().is_some_and(|word| {
+            word.eq_ignore_ascii_case("redirect") || word.eq_ignore_ascii_case("compile")
+        }) {
+            if let Some(path) = words
+                .next()
+                .map(|word| word.trim_matches(['"', '\'', '(', ')']))
+            {
+                if is_dependency(path) {
+                    tokens.push(path.to_string());
+                }
+            }
+        }
+    }
+    tokens.sort();
+    tokens.dedup();
+    tokens
+}
+
+fn is_dependency(token: &str) -> bool {
+    let lower = token.to_ascii_lowercase();
+    [".dss", ".csv", ".json", ".rss"]
+        .iter()
+        .any(|suffix| lower.ends_with(suffix))
 }
 
 fn infer_study(path: &str) -> String {

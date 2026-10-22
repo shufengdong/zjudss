@@ -10,7 +10,10 @@ use crate::auth::Principal;
 use crate::catalog::{SchemaCatalog, infer_tables};
 use crate::db::models::{IngestionArtifact, NewIngestion};
 use crate::db::repositories::{IngestionItemDraft, IngestionRecord, IngestionRepo, RepoError};
-use crate::ingestion::{TableSchema, TabularFormat, TabularInspector, normalize_excel_to_parquet};
+use crate::ingestion::{
+    ArchiveExtractor, ArchiveLimits, BundleValidator, ExtractedTree, IngestionFormatError,
+    RssInspector, TableSchema, TabularFormat, TabularInspector, normalize_excel_to_parquet,
+};
 use crate::storage::StagedArtifact;
 
 use super::{
@@ -91,6 +94,7 @@ pub enum IngestionError {
     Artifact(ArtifactError),
     Repository(RepoError),
     Workspace(WorkspaceError),
+    Format(IngestionFormatError),
 }
 
 impl std::fmt::Display for IngestionError {
@@ -103,6 +107,7 @@ impl std::fmt::Display for IngestionError {
             Self::Artifact(error) => write!(f, "{error}"),
             Self::Repository(error) => write!(f, "{error}"),
             Self::Workspace(error) => write!(f, "{error}"),
+            Self::Format(error) => write!(f, "{error}"),
         }
     }
 }
@@ -128,6 +133,11 @@ impl From<WorkspaceError> for IngestionError {
         Self::Workspace(value)
     }
 }
+impl From<IngestionFormatError> for IngestionError {
+    fn from(value: IngestionFormatError) -> Self {
+        Self::Format(value)
+    }
+}
 
 #[derive(Clone)]
 pub struct IngestionService {
@@ -138,6 +148,7 @@ pub struct IngestionService {
     messages: MessageRepo,
     events: EventBus,
     workspace_locks: Arc<Mutex<HashMap<i32, Arc<Mutex<()>>>>>,
+    archive_limits: ArchiveLimits,
 }
 
 impl IngestionService {
@@ -148,6 +159,7 @@ impl IngestionService {
         catalog: Arc<SchemaCatalog>,
         messages: MessageRepo,
         events: EventBus,
+        archive_limits: ArchiveLimits,
     ) -> Self {
         Self {
             repo,
@@ -157,6 +169,7 @@ impl IngestionService {
             messages,
             events,
             workspace_locks: Arc::new(Mutex::new(HashMap::new())),
+            archive_limits,
         }
     }
 
@@ -332,6 +345,7 @@ impl IngestionService {
         if let Err(error) = self.process_inner(&principal, ingestion_id).await {
             let code = match &error {
                 IngestionError::Workspace(WorkspaceError::VersionConflict) => "version_conflict",
+                IngestionError::Format(error) => error.code(),
                 _ => "ingestion_failed",
             };
             let stages = failed_stages();
@@ -347,6 +361,29 @@ impl IngestionService {
                 )
                 .await;
             if let Ok(record) = self.repo.find(&principal.access, ingestion_id).await {
+                let writer = self.writer(&principal, record.session_id);
+                for (item, artifact) in &record.items {
+                    if item.role == "uploaded" && item.status != "ready" {
+                        let _ = self
+                            .repo
+                            .set_item_status(
+                                item.id,
+                                "failed",
+                                Some((code.to_string(), error.to_string())),
+                                now_ms(),
+                            )
+                            .await;
+                        let _ = writer
+                            .attachment(
+                                attachment(item, artifact.size_bytes),
+                                record.ingestion.client_batch_id.clone(),
+                                item.client_file_id.clone(),
+                                ingestion_id.to_string(),
+                                UploadStatus::Failed,
+                            )
+                            .await;
+                    }
+                }
                 let _ = self
                     .writer(&principal, record.session_id)
                     .progress(
@@ -418,6 +455,17 @@ impl IngestionService {
             .join(ingestion_id.to_string());
         std::fs::create_dir_all(&temp)
             .map_err(|error| IngestionError::InvalidUpload(error.to_string()))?;
+        if record.items.iter().any(|(item, _)| {
+            item.role == "uploaded"
+                && (matches!(extension(&item.file_name), Some("rss" | "zip"))
+                    || item.relative_path.as_deref().is_some_and(|path| {
+                        path.ends_with("manifest.json") || path.contains(".rssbundle/")
+                    }))
+        }) {
+            return self
+                .process_model_tree(principal, &record, &writer, scope.id, &temp)
+                .await;
+        }
         let mut prepared: Vec<(
             IngestionArtifact,
             ArtifactRef,
@@ -504,7 +552,7 @@ impl IngestionService {
                                     Ok(normalized) => {
                                         let mut normalized_item = match self
                                             .repo
-                                            .add_normalized(
+                                            .add_derived(
                                                 ingestion_id,
                                                 item,
                                                 normalized.id,
@@ -512,7 +560,9 @@ impl IngestionService {
                                                     "{}-{}.parquet",
                                                     item.file_name, sheet.sheet_name
                                                 ),
-                                                sheet.sheet_name.clone(),
+                                                item.relative_path.clone(),
+                                                "normalized".into(),
+                                                Some(sheet.sheet_name.clone()),
                                                 now_ms(),
                                             )
                                             .await
@@ -770,6 +820,273 @@ impl IngestionService {
         Ok(())
     }
 
+    async fn process_model_tree(
+        &self,
+        principal: &Principal,
+        record: &IngestionRecord,
+        writer: &EventWriter,
+        scope_id: i32,
+        temp: &Path,
+    ) -> Result<(), IngestionError> {
+        let sources: Vec<_> = record
+            .items
+            .iter()
+            .filter(|(item, _)| item.role == "uploaded")
+            .collect();
+        let zip_sources: Vec<_> = sources
+            .iter()
+            .filter(|(item, _)| extension(&item.file_name) == Some("zip"))
+            .collect();
+        let mut path_entries: Vec<(
+            String,
+            IngestionArtifact,
+            ArtifactRef,
+            Option<(i32, String)>,
+        )> = Vec::new();
+        if zip_sources.is_empty() {
+            for (item, artifact) in &sources {
+                let relative = item
+                    .relative_path
+                    .clone()
+                    .unwrap_or_else(|| item.file_name.clone());
+                crate::ingestion::safe_relative(&relative)?;
+                path_entries.push((
+                    relative,
+                    (*item).clone(),
+                    ArtifactRef::from((*artifact).clone()),
+                    None,
+                ));
+            }
+        } else {
+            if zip_sources.len() != 1 || sources.len() != 1 {
+                return Err(IngestionFormatError::new(
+                    "archive_batch_invalid",
+                    "ZIP 必须作为批次中的唯一源文件",
+                )
+                .into());
+            }
+            let (source_item, source_artifact) = zip_sources[0];
+            let zip_path = self
+                .artifacts
+                .store()
+                .resolve(&source_artifact.storage_path)
+                .map_err(ArtifactError::from)?;
+            let tree =
+                ArchiveExtractor::extract(&zip_path, &temp.join("archive"), self.archive_limits)?;
+            let mut staged_files = Vec::with_capacity(tree.files.len());
+            for file in tree.files.values() {
+                let source = std::fs::File::open(&file.path)
+                    .map_err(|error| IngestionError::InvalidUpload(error.to_string()))?;
+                let staged = self
+                    .artifacts
+                    .store()
+                    .stage(
+                        source,
+                        crate::storage::StageLimits {
+                            max_bytes: self.archive_limits.max_file_bytes,
+                        },
+                    )
+                    .map_err(ArtifactError::from)?;
+                staged_files.push((file.relative_path.clone(), staged));
+            }
+            let mut committed = Vec::with_capacity(staged_files.len());
+            for (relative, staged) in staged_files {
+                match self
+                    .artifacts
+                    .commit(
+                        scope_id,
+                        staged,
+                        ArtifactMetadata {
+                            format: extension(&relative).unwrap_or("file").to_string(),
+                            media_type: None,
+                        },
+                    )
+                    .await
+                {
+                    Ok(artifact) => committed.push((relative, artifact)),
+                    Err(error) => {
+                        for (_, artifact) in &committed {
+                            let _ = self.artifacts.release(scope_id, artifact.id).await;
+                        }
+                        return Err(error.into());
+                    }
+                }
+            }
+            for (relative, artifact) in committed {
+                let derived = self
+                    .repo
+                    .add_derived(
+                        record.ingestion.id,
+                        source_item,
+                        artifact.id,
+                        Path::new(&relative)
+                            .file_name()
+                            .and_then(|value| value.to_str())
+                            .unwrap_or("file")
+                            .to_string(),
+                        Some(relative.clone()),
+                        "extracted".into(),
+                        None,
+                        now_ms(),
+                    )
+                    .await?;
+                path_entries.push((
+                    relative,
+                    derived,
+                    artifact,
+                    Some((source_artifact.id, source_artifact.sha256.clone())),
+                ));
+            }
+        }
+
+        let tree = ExtractedTree::from_files(
+            temp.to_path_buf(),
+            path_entries.iter().map(|(relative, _, artifact, _)| {
+                let path = self
+                    .artifacts
+                    .store()
+                    .resolve(&artifact.relative_path)
+                    .expect("CAS path is safe");
+                (relative.clone(), path)
+            }),
+        )?;
+        self.set_stage(principal, record, 1, None).await?;
+        let has_manifest = tree
+            .files
+            .keys()
+            .any(|path| path == "manifest.json" || path.ends_with("/manifest.json"));
+        let (source_kind, entry, diagnostics, model_manifest) = if has_manifest {
+            let bundle = BundleValidator::validate(&tree)?;
+            let entry = if bundle.root_prefix.is_empty() {
+                bundle.manifest.entry.clone()
+            } else {
+                format!("{}/{}", bundle.root_prefix, bundle.manifest.entry)
+            };
+            (
+                SourceKind::Rssbundle,
+                entry,
+                bundle.diagnostics,
+                bundle.canonical_manifest,
+            )
+        } else {
+            let entries: Vec<_> = tree
+                .files
+                .keys()
+                .filter(|path| path.to_ascii_lowercase().ends_with(".rss"))
+                .cloned()
+                .collect();
+            if entries.len() != 1 {
+                return Err(IngestionFormatError::new(
+                    "rss_entry_count_invalid",
+                    entries.len().to_string(),
+                )
+                .into());
+            }
+            let report = RssInspector::inspect(&entries[0], &tree)?;
+            (
+                SourceKind::Rss,
+                entries[0].clone(),
+                report.diagnostics.clone(),
+                serde_json::to_value(report).unwrap(),
+            )
+        };
+        self.set_stage(principal, record, 2, None).await?;
+        let mut inputs = base_inputs(
+            &self.workspaces,
+            &principal.access,
+            record.ingestion.base_version_id,
+        )
+        .await?;
+        path_entries.sort_by(|left, right| left.0.cmp(&right.0));
+        for (relative, item, artifact, _source) in path_entries {
+            inputs.push(VersionInputDraft {
+                artifact_id: artifact.id,
+                sha256: artifact.sha256,
+                role: if relative == entry {
+                    "entry".into()
+                } else if relative.ends_with("manifest.json") {
+                    "manifest".into()
+                } else {
+                    "data".into()
+                },
+                relative_path: Some(relative),
+                display_name: item.file_name,
+                // Archive provenance remains on ingestion_items. Keeping it out of the
+                // immutable model input makes an uploaded directory and its ZIP form
+                // produce the same canonical model content hash.
+                source_artifact_id: None,
+                source_artifact_sha256: None,
+                sheet_name: None,
+                binding: None,
+            });
+        }
+        self.set_stage(principal, record, 3, None).await?;
+        let missing = diagnostics.clone();
+        let version = self
+            .workspaces
+            .publish_version(
+                &principal.access,
+                record.ingestion.workspace_id,
+                record.ingestion.base_version_id,
+                VersionDraft {
+                    status: if diagnostics.is_empty() {
+                        ModelVersionStatus::Ready
+                    } else {
+                        ModelVersionStatus::Collecting
+                    },
+                    source_kind,
+                    origin: VersionOrigin::Upload,
+                    manifest: json!({
+                        "entryPath": entry,
+                        "model": model_manifest,
+                        "diagnostics": diagnostics,
+                        "missing": missing,
+                        "recognizedTables": [],
+                        "ambiguities": [],
+                    }),
+                    patch: None,
+                    inputs,
+                },
+            )
+            .await?;
+        for (item, artifact) in sources {
+            self.repo
+                .set_item_status(item.id, "ready", None, now_ms())
+                .await?;
+            writer
+                .attachment(
+                    attachment(item, artifact.size_bytes),
+                    record.ingestion.client_batch_id.clone(),
+                    item.client_file_id.clone(),
+                    record.ingestion.id.to_string(),
+                    UploadStatus::Ready,
+                )
+                .await?;
+        }
+        let stages = done_stages();
+        self.repo
+            .set_ingestion_status(
+                record.ingestion.id,
+                "succeeded",
+                serde_json::to_string(&stages).unwrap(),
+                Some(version.id),
+                None,
+                now_ms(),
+            )
+            .await?;
+        writer
+            .progress(
+                OperationRef {
+                    kind: OperationKind::Ingestion,
+                    id: record.ingestion.id.to_string(),
+                },
+                stages,
+            )
+            .await?;
+        let _ = std::fs::remove_dir_all(temp);
+        Ok(())
+    }
+
     fn writer(&self, principal: &Principal, session_id: i32) -> EventWriter {
         EventWriter::new(
             principal.access.clone(),
@@ -925,6 +1242,24 @@ fn tabular_format(name: &str) -> Option<TabularFormat> {
         "xls" => Some(TabularFormat::Xls),
         "xlsx" => Some(TabularFormat::Xlsx),
         "parquet" => Some(TabularFormat::Parquet),
+        _ => None,
+    }
+}
+fn extension(name: &str) -> Option<&'static str> {
+    match Path::new(name)
+        .extension()?
+        .to_str()?
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "rss" => Some("rss"),
+        "zip" => Some("zip"),
+        "json" => Some("json"),
+        "dss" => Some("dss"),
+        "csv" => Some("csv"),
+        "xls" => Some("xls"),
+        "xlsx" => Some("xlsx"),
+        "parquet" => Some("parquet"),
         _ => None,
     }
 }

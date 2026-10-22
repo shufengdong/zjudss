@@ -6,6 +6,7 @@
 pub mod artifacts;
 pub mod chat;
 mod events;
+pub mod example_import;
 pub mod ingestion;
 pub mod scheduler;
 pub mod workspace;
@@ -24,6 +25,8 @@ use crate::db::repositories::{
     ArtifactRepo, IngestionRepo, MessageRepo, SessionRepo, StorageScopeRepo, TaskRepo,
     WorkspaceRepo,
 };
+use crate::engine_resources::{EngineKnowledge, EngineResourceSnapshot};
+use crate::ingestion::ArchiveLimits;
 use crate::storage::ArtifactStore;
 
 pub use artifacts::{
@@ -37,6 +40,7 @@ pub use events::{
     ResultColumn, ResultOutputRef, Stage, StageStatus, ToolStatus, UploadStatus, VisualizationKind,
     ms_to_iso, now_ms,
 };
+pub use example_import::{ExampleImportError, ExampleImportService};
 pub use ingestion::{AcceptedBatch, IngestionError, IngestionService, UploadBatch, UploadFile};
 pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
 pub use workspace::{
@@ -54,6 +58,7 @@ pub struct AppState {
     pub artifact_service: ArtifactService,
     pub workspace_service: WorkspaceService,
     pub ingestion_service: IngestionService,
+    pub example_import_service: ExampleImportService,
     pub events: EventBus,
     pub engine: Arc<dyn SimEngine>,
     pub llm: LlmConfig,
@@ -129,6 +134,19 @@ impl AppState {
             "embedded-test",
             &serde_json::json!({"schema_version":2,"frames":{"table":{"required":{"id":"str"}}}}),
         ).expect("内置最小 catalog 有效"));
+        let engine_snapshot = Arc::new(EngineResourceSnapshot {
+            id: "embedded-empty".into(),
+            contract_version: "embedded-test".into(),
+            catalog_schema_version: 2,
+            source_root: data_dir.clone(),
+            engine_root: data_dir.clone(),
+            catalog_json: serde_json::json!({}),
+            functions_json: serde_json::json!({}),
+            catalog_bytes: Default::default(),
+            documents: Default::default(),
+            knowledge: EngineKnowledge::from_documents(&[]),
+            examples: vec![],
+        });
         Self::new_with_resources(
             pool,
             engine,
@@ -138,8 +156,10 @@ impl AppState {
             scheduler,
             storage_limits,
             catalog,
+            engine_snapshot,
             50 * 1024 * 1024,
             500 * 1024 * 1024,
+            ArchiveLimits::default(),
         )
     }
 
@@ -153,8 +173,10 @@ impl AppState {
         scheduler: RunScheduler,
         storage_limits: StorageLimits,
         catalog: Arc<SchemaCatalog>,
+        engine_snapshot: Arc<EngineResourceSnapshot>,
         upload_single_file_limit_bytes: u64,
         upload_batch_limit_bytes: u64,
+        archive_limits: ArchiveLimits,
     ) -> Self {
         let session_repo = SessionRepo::new(pool.clone());
         let message_repo = MessageRepo::new(pool.clone());
@@ -177,6 +199,13 @@ impl AppState {
             catalog,
             message_repo.clone(),
             events.clone(),
+            archive_limits,
+        );
+        let example_import_service = ExampleImportService::new(
+            engine_snapshot,
+            artifact_service.clone(),
+            workspace_service.clone(),
+            upload_single_file_limit_bytes,
         );
         Self {
             pool,
@@ -186,6 +215,7 @@ impl AppState {
             artifact_service,
             workspace_service,
             ingestion_service,
+            example_import_service,
             events,
             engine,
             llm,
