@@ -229,3 +229,16 @@
   fixtures:
     - integration-tests/fixtures/results/single/manifest.json
     - integration-tests/fixtures/results/multi/manifest.json
+- id: E2E-SERVER-001
+  source: docs/integration-testing-design.md#31-e2e-server
+  title: 隔离的端到端服务与安全控制面
+  layers: [api, backend]
+  lanes: [pr]
+  tests:
+    - { runner: rust, file: backend/tests/e2e_server.rs, name: e2e_server_uses_temp_db_and_data_dir }
+    - { runner: rust, file: backend/tests/e2e_server.rs, name: control_routes_require_token }
+    - { runner: rust, file: backend/tests/e2e_server.rs, name: control_routes_enqueue_scenarios_and_release_known_barriers }
+    - { runner: rust, file: backend/tests/e2e_server.rs, name: control_routes_are_absent_from_production_router }
+    - { runner: rust, file: backend/tests/e2e_server.rs, name: server_rejects_non_loopback_bind }
+  assertions: [e2e 服务只监听 loopback 并以 token 保护控制面且生产路由不暴露测试端点]
+  fixtures: []

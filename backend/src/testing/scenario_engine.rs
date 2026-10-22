@@ -26,7 +26,7 @@ pub struct DatasetFixture {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum EngineScenario {
     Success(Vec<DatasetFixture>),
     InspectFailure,
@@ -39,10 +39,11 @@ pub enum EngineScenario {
     Symlink,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RecordedEngineCall {
     pub operation: String,
-    pub mode: Option<RunMode>,
+    pub mode: Option<String>,
     pub input_tree: PathBuf,
     pub result_dir: PathBuf,
 }
@@ -164,7 +165,7 @@ impl ScenarioEngine {
             .expect("engine calls")
             .push(RecordedEngineCall {
                 operation: "run".into(),
-                mode: Some(spec.mode),
+                mode: Some(format!("{:?}", spec.mode).to_ascii_lowercase()),
                 input_tree: spec.input_tree.clone(),
                 result_dir: spec.result_dir.clone(),
             });

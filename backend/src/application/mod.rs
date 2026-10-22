@@ -116,6 +116,99 @@ impl AppState {
         )
     }
 
+    #[cfg(feature = "e2e-test")]
+    pub fn new_for_e2e(
+        pool: DbPool,
+        data_dir: PathBuf,
+        agent_factory: Arc<dyn AgentFactory>,
+        engine: Arc<dyn SimEngine>,
+        auth: AuthConfig,
+    ) -> Self {
+        use sha2::{Digest, Sha256};
+
+        use crate::engine_resources::{EngineExample, ExampleSourceFile};
+
+        let engine_root = data_dir
+            .parent()
+            .unwrap_or(&data_dir)
+            .join("engine-fixture");
+        let relative = "sparrowzz/dss/examples/e2e-demo.rss";
+        let source = engine_root.join(relative);
+        std::fs::create_dir_all(source.parent().expect("example parent"))
+            .expect("create e2e example directory");
+        let source_bytes = b"result = 1\n";
+        std::fs::write(&source, source_bytes).expect("write e2e example");
+        let source_hash = format!("{:x}", Sha256::digest(source_bytes));
+        let docs = vec![(
+            "docs/e2e-guide.md".to_string(),
+            "# E2E guide\nUse deterministic scenarios.".to_string(),
+        )];
+        let catalog_value = serde_json::json!({
+            "schema_version": 2,
+            "frames": {"bus": {"required": {"id": "str"}}}
+        });
+        let catalog = Arc::new(
+            SchemaCatalog::from_value("e2e-contract", &catalog_value).expect("e2e catalog valid"),
+        );
+        let engine_snapshot = Arc::new(EngineResourceSnapshot {
+            id: "e2e-snapshot".into(),
+            contract_version: "e2e-contract".into(),
+            catalog_schema_version: 2,
+            source_root: engine_root.join("sparrowzz/dss"),
+            engine_root: engine_root.clone(),
+            catalog_json: catalog_value,
+            functions_json: serde_json::json!({"schema_version": 2, "frame_functions": []}),
+            catalog_bytes: Default::default(),
+            documents: std::collections::BTreeMap::from([(
+                docs[0].0.clone(),
+                docs[0].1.as_bytes().to_vec(),
+            )]),
+            knowledge: EngineKnowledge::from_documents(&docs),
+            examples: vec![EngineExample {
+                id: "e2e-demo".into(),
+                title: "E2E demo".into(),
+                source_kind: "rss".into(),
+                entry_path: "examples/e2e-demo.rss".into(),
+                study_type: "power_flow".into(),
+                solver: None,
+                required_features: vec![],
+                file_count: 1,
+                size_bytes: source_bytes.len() as u64,
+                tree_hash: source_hash.clone(),
+                importable: true,
+                diagnostics: vec![],
+                files: vec![ExampleSourceFile {
+                    virtual_path: relative.into(),
+                    source_path: relative.into(),
+                    sha256: source_hash,
+                }],
+            }],
+        });
+        Self::new_with_resources_and_agent_factory(
+            pool,
+            engine,
+            agent_factory,
+            data_dir,
+            auth,
+            RunScheduler::new(4, 2, 16),
+            StorageLimits {
+                artifact_limit: 100,
+                byte_limit: 64 * 1024 * 1024,
+                warning_ratio: 0.8,
+            },
+            catalog,
+            engine_snapshot,
+            2 * 1024 * 1024,
+            8 * 1024 * 1024,
+            ArchiveLimits {
+                max_entries: 100,
+                max_expanded_bytes: 16 * 1024 * 1024,
+                max_compression_ratio: 20,
+                max_file_bytes: 2 * 1024 * 1024,
+            },
+        )
+    }
+
     pub fn new_with_data_dir(
         pool: DbPool,
         engine: Arc<dyn SimEngine>,
