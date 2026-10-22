@@ -1,7 +1,9 @@
 use backend::agent::LlmConfig;
+use backend::agent::knowledge::AgentKnowledge;
 use backend::application::{AppState, RunScheduler, StorageLimits};
 use backend::auth::AuthConfig;
 use backend::config::RuntimeConfig;
+use backend::engine_resources::EngineResourceRegistry;
 use backend::{adapters, build_router, db};
 
 #[tokio::main]
@@ -16,9 +18,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     dotenvy::dotenv().ok();
     let runtime = RuntimeConfig::from_env()?;
     let llm = LlmConfig::from_env();
+    let knowledge = AgentKnowledge::load_embedded(&runtime.agent_bundle_version)?;
+    let engine_resources = EngineResourceRegistry::load(&runtime.tensoreval_cwd)?;
+    let snapshot_path = EngineResourceRegistry::publish(&engine_resources, &runtime.data_dir)?;
     eprintln!(
         "[config] provider = {}, model = {}",
         llm.provider, llm.model
+    );
+    eprintln!(
+        "[config] agent bundle = {}, engine resources = {} ({})",
+        knowledge.manifest.agent_bundle_version,
+        engine_resources.id,
+        snapshot_path.display()
     );
 
     let pool = db::establish_pool(&runtime.database_url)?;

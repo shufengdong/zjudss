@@ -1,9 +1,10 @@
 # Agent Prompt 与领域技能设计
 
-> 状态：v2 目标设计，尚未实现。
+> 状态：v2 Task 7 已实现资源合同、启动 preflight、文档/案例快照、领域技能 bundle 和表头推断；
+> 工具接入与按 run 记录技能引用在后续任务完成。
 > 适用范围：zjudss 后端通过 rig 0.45 构建的配电网仿真 agent。
 > 引擎知识源：`${TENSOREVAL_CWD}/sparrowzz/dss/docs/`，当前核对版本固定到 eig-rs superproject commit
-> `02718c716a31417dc5c1a717d77327749ae60b97` 及其 sparrowzz submodule commit
+> `ce9c0cc0c71ed0e3469e99ecf43b73d33c4e34bf` 及其 sparrowzz submodule commit
 > `d6a502d3cd1eef7285da284173663cc9764bbd54`。
 
 ## 1. 当前实现与术语
@@ -49,13 +50,16 @@ Markdown 知识模块。
 Markdown。zjudss 不硬编码 `../eig-rs` 相对路径；统一从配置后的
 `${TENSOREVAL_CWD}/sparrowzz/dss` 建立只读快照，并记录来源 commit、相对路径与 SHA-256。
 
-当前固定 catalog 为 schema version 2；外层 eig-rs commit 通过 Git tree 指向上述 sparrowzz commit：
+当前固定 catalog 为 schema version 2；外层 eig-rs commit 通过 Git tree 指向上述 sparrowzz commit。
+资源固化时 `dss_to_rss.md` 和 `opendss_compatibility_matrix.md` 含未提交修改，因此 manifest 显式记录
+`sourceDirty: true` 并锁定整个 docs tree hash；运行目录只要再发生变化，启动 preflight 就会失败：
 
 - `dataframes.json` SHA-256：`ead67bd4354e0acb99a957c4f96fd80f85e96268a7a190fb36ac65cce98cd471`
 - `functions.json` SHA-256：`d84b715c62b79ba95931b04e2df1c351928c02c8124b73f18b709f2430331496`
 
-开发工作区里的 eig-rs 可能含未提交修改，因此有 Git 元数据时必须同时记录 HEAD、submodule commit 和
-dirty 状态；发布合同从指定 Git 对象读取，或逐文件验证运行目录 hash，不能默认为当前工作树就是发布事实。
+案例 allowlist 从 sparrowzz commit 的 Git 对象生成，固定为 16 个根 RSS 和 37 个 bundle。工作树中
+额外的未提交 bundle 不进入快照。开发工作区里的 eig-rs 可能含未提交修改，因此 manifest 同时记录
+HEAD、submodule commit、dirty 状态和逐类内容 hash，不能默认为当前工作树就是发布事实。
 
 ## 4. v2 资源布局
 

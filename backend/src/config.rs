@@ -32,6 +32,7 @@ pub struct RuntimeConfig {
     pub owner_artifact_limit: u64,
     pub owner_storage_limit_bytes: u64,
     pub storage_warning_ratio: f64,
+    pub agent_bundle_version: String,
 }
 
 #[derive(Debug)]
@@ -164,6 +165,7 @@ impl RuntimeConfig {
                 20 * 1024 * MIB,
             )?,
             storage_warning_ratio: ratio(&values, "STORAGE_WARNING_RATIO", 0.8)?,
+            agent_bundle_version: get("AGENT_BUNDLE_VERSION").unwrap_or("v2.0.0").to_string(),
         })
     }
 }

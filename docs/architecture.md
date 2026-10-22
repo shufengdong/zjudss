@@ -142,8 +142,8 @@ v2 不在应用内维护账号密码，而是使用部署实例身份或可信�
 
 rig 不会自动扫描本项目的 prompt/skill 文件；当前组装入口都由代码显式提供：
 
-- **系统提示词**：`AgentBuilder::preamble()`（字符串）。当前是 `agent/mod.rs` 里一句简短的
-  `SYSTEM_PROMPT`，缺领域知识。
+- **系统提示词**：`resources/agent/v2/system.md` 通过 `include_str!` 编译进后端，并由
+  `AgentBuilder::preamble()` 注入；skill index 作为固定静态 context 注入。
 - **工具（可执行动作）**：Rust `Tool` 实现（`#[rig_tool]` 或手动 impl），`description()` 自动进模型
   schema，不等同于本文定义的领域技能。
 - **上下文知识**：`AgentBuilder::context()`（静态）/ `dynamic_context()`（动态检索）。
@@ -155,7 +155,7 @@ rig 不会自动扫描本项目的 prompt/skill 文件；当前组装入口都�
 `dataframe_schema_reference.md`（结果表与单位）、`rss_language_reference.md` 与
 `rsdss_function_reference.md`（DataFrame 筛选、连接、聚合和脚本语法）、`simulation_recipes.md`（配方）。
 
-**v2 落地方式**：系统规则与领域技能编译进后端；引擎文档、机器合同和案例从
+**v2 已实现的资源层**：系统规则与领域技能编译进后端；引擎文档、机器合同和案例从
 `${TENSOREVAL_CWD}/sparrowzz/dss` 在启动 preflight 中生成只读快照，分层注入：
 
 | 层 | 来源 | 内容 |
@@ -168,7 +168,7 @@ rig 不会自动扫描本项目的 prompt/skill 文件；当前组装入口都�
 | 案例目录 | resource snapshot 的 `examples.json` | 已验证 RSS/rssbundle 的说明、能力要求、依赖闭包和 hash |
 | 工具说明 | `Tool::description()` | 代码内，不进文件 |
 
-每轮只注入精简技能索引；需要生成或诊断脚本时先调用 `load_agent_skill`，再按需调用
+当前每轮只注入精简技能索引；后续工具任务在需要生成或诊断脚本时调用 `load_agent_skill`，再按需调用
 `search_engine_docs/read_engine_doc_section`。脚本写工具检查本轮已加载的技能，catalog 和脚本验证器仍
 对最终输出做确定性校验。后端不硬编码 `../eig-rs`，只读取配置根内允许的 docs/catalog/examples；运行
 期间使用已发布 snapshot，防止文件变化造成同一进程内合同漂移。具体来源、资源布局、案例导入、版本字段

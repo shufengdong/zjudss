@@ -1,0 +1,219 @@
+use std::path::Path;
+
+use calamine::{Data, Reader, open_workbook_auto};
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColumnSchema {
+    pub name: String,
+    pub dtype: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSchema {
+    pub name: String,
+    pub columns: Vec<ColumnSchema>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabularFormat {
+    Csv,
+    Xls,
+    Xlsx,
+    Parquet,
+}
+
+#[derive(Debug)]
+pub struct TabularError {
+    code: &'static str,
+    message: String,
+}
+
+impl TabularError {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+    pub fn code(&self) -> &'static str {
+        self.code
+    }
+}
+
+impl std::fmt::Display for TabularError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.code, self.message)
+    }
+}
+impl std::error::Error for TabularError {}
+
+pub struct TabularInspector;
+
+impl TabularInspector {
+    pub fn inspect(path: &Path, format: TabularFormat) -> Result<Vec<TableSchema>, TabularError> {
+        match format {
+            TabularFormat::Csv => inspect_csv(path),
+            TabularFormat::Xls | TabularFormat::Xlsx => inspect_excel(path),
+            TabularFormat::Parquet => inspect_parquet(path),
+        }
+    }
+}
+
+fn inspect_csv(path: &Path) -> Result<Vec<TableSchema>, TabularError> {
+    let mut reader = csv::ReaderBuilder::new()
+        .flexible(true)
+        .from_path(path)
+        .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+    let headers = reader
+        .headers()
+        .map_err(|error| TabularError::new("tabular_header_invalid", error.to_string()))?
+        .clone();
+    if headers.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut kinds = vec![Observed::Unknown; headers.len()];
+    for row in reader.records().take(100) {
+        let row =
+            row.map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+        for (index, value) in row.iter().enumerate().take(kinds.len()) {
+            kinds[index] = kinds[index].merge(observe_text(value));
+        }
+    }
+    Ok(vec![TableSchema {
+        name: path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("table")
+            .to_string(),
+        columns: headers
+            .iter()
+            .zip(kinds)
+            .map(|(name, kind)| ColumnSchema {
+                name: name.to_string(),
+                dtype: kind.name().to_string(),
+            })
+            .collect(),
+    }])
+}
+
+fn inspect_excel(path: &Path) -> Result<Vec<TableSchema>, TabularError> {
+    let mut workbook = open_workbook_auto(path)
+        .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+    let names = workbook.sheet_names().to_vec();
+    let mut tables = Vec::new();
+    for name in names {
+        let range = workbook
+            .worksheet_range(&name)
+            .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+        let mut rows = range
+            .rows()
+            .filter(|row| row.iter().any(|cell| !matches!(cell, Data::Empty)));
+        let Some(header) = rows.next() else {
+            continue;
+        };
+        let headers: Vec<String> = header.iter().map(ToString::to_string).collect();
+        if headers.iter().all(|value| value.trim().is_empty()) {
+            continue;
+        }
+        let mut kinds = vec![Observed::Unknown; headers.len()];
+        for row in rows.take(100) {
+            for (index, cell) in row.iter().enumerate().take(kinds.len()) {
+                kinds[index] = kinds[index].merge(observe_cell(cell));
+            }
+        }
+        tables.push(TableSchema {
+            name,
+            columns: headers
+                .into_iter()
+                .zip(kinds)
+                .map(|(name, kind)| ColumnSchema {
+                    name,
+                    dtype: kind.name().to_string(),
+                })
+                .collect(),
+        });
+    }
+    Ok(tables)
+}
+
+fn inspect_parquet(path: &Path) -> Result<Vec<TableSchema>, TabularError> {
+    let file = std::fs::File::open(path)
+        .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+        .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+    let columns = builder
+        .schema()
+        .fields()
+        .iter()
+        .map(|field| ColumnSchema {
+            name: field.name().to_string(),
+            dtype: field.data_type().to_string(),
+        })
+        .collect();
+    Ok(vec![TableSchema {
+        name: path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("table")
+            .to_string(),
+        columns,
+    }])
+}
+
+#[derive(Clone, Copy)]
+enum Observed {
+    Unknown,
+    Bool,
+    Int,
+    Float,
+    String,
+}
+
+impl Observed {
+    fn merge(self, next: Self) -> Self {
+        use Observed::*;
+        match (self, next) {
+            (Unknown, value) | (value, Unknown) => value,
+            (left, right) if left as u8 == right as u8 => left,
+            (Int, Float) | (Float, Int) => Float,
+            _ => String,
+        }
+    }
+    fn name(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Bool => "bool",
+            Self::Int => "int64",
+            Self::Float => "float64",
+            Self::String => "string",
+        }
+    }
+}
+
+fn observe_text(value: &str) -> Observed {
+    let value = value.trim();
+    if value.is_empty() {
+        Observed::Unknown
+    } else if value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false") {
+        Observed::Bool
+    } else if value.parse::<i64>().is_ok() {
+        Observed::Int
+    } else if value.parse::<f64>().is_ok() {
+        Observed::Float
+    } else {
+        Observed::String
+    }
+}
+
+fn observe_cell(cell: &Data) -> Observed {
+    match cell {
+        Data::Empty => Observed::Unknown,
+        Data::Bool(_) => Observed::Bool,
+        Data::Int(_) => Observed::Int,
+        Data::Float(_) | Data::DateTime(_) | Data::DateTimeIso(_) | Data::DurationIso(_) => {
+            Observed::Float
+        }
+        Data::String(_) | Data::Error(_) => Observed::String,
+    }
+}

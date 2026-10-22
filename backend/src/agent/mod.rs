@@ -4,12 +4,14 @@
 //! preamble / tools / temperature 都在分支之外，保证多个 provider 共用同一份组装逻辑。
 //! 流式驱动（`run_channel`）在 `application::chat` 层做（architecture §8）。
 
-use rig::tool::server::ToolServer;
 use rig::tool::RegisteredTool;
+use rig::tool::server::ToolServer;
 use rig::{Agent, AgentBuilder};
 
-const SYSTEM_PROMPT: &str =
-    "你是配电网仿真智能体助手。根据用户请求，选择合适的工具完成模型检查或仿真任务。";
+pub mod knowledge;
+
+const SYSTEM_PROMPT: &str = include_str!("../../resources/agent/v2/system.md");
+const SKILL_INDEX: &str = include_str!("../../resources/agent/v2/skill-index.json");
 
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
@@ -40,7 +42,10 @@ impl std::fmt::Display for LlmError {
         match self {
             LlmError::UnsupportedProvider(p) => write!(f, "不支持的 provider: {p}"),
             LlmError::OpenAiNotImplemented => {
-                write!(f, "OpenAI provider 尚未接入，请设置 LLM_PROVIDER=deepseek 或实现此分支")
+                write!(
+                    f,
+                    "OpenAI provider 尚未接入，请设置 LLM_PROVIDER=deepseek 或实现此分支"
+                )
             }
             LlmError::Provider(e) => write!(f, "provider 初始化失败: {e}"),
         }
@@ -70,6 +75,7 @@ pub fn build_agent(config: &LlmConfig, tools: Vec<RegisteredTool>) -> Result<Age
 
     Ok(AgentBuilder::new(model)
         .preamble(SYSTEM_PROMPT)
+        .context(SKILL_INDEX)
         .temperature(0.3)
         .tool_server_handle(server.run())
         .build())

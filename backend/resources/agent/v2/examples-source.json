@@ -1,0 +1,220 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "d6a502d3cd1eef7285da284173663cc9764bbd54",
+  "rootRss": [
+    {
+      "path": "4bus_daily_qsts.rss",
+      "sha256": "fc7dbd1fe9def17dd702651877317b413391797808ef15c13b2c0e3489a1c7e2"
+    },
+    {
+      "path": "4bus_dy_run.rss",
+      "sha256": "0991d6d7a69b27ed5bded66e5ee4cc2a02f9343ae4676b7d4a4c21cfc1add5f8"
+    },
+    {
+      "path": "IEEE13Nodeckt_harmonic_run.rss",
+      "sha256": "932cf2c02f6c79b02033f6bd12ab5064ea1727393c42c46b18bd99f6d6726b43"
+    },
+    {
+      "path": "bmopf_4bus_power_flow.rss",
+      "sha256": "991b27d2f2153637fd644e35bd8ce0f5551f7045afb94d4e91a888adc80d84f4"
+    },
+    {
+      "path": "bmopf_ieee13_power_flow.rss",
+      "sha256": "350eae1c09e6629eed5941570438646a2cc1e6fddb462716ae26ebf714d4cda1"
+    },
+    {
+      "path": "bmopf_ieee34_power_flow.rss",
+      "sha256": "79da09ea6671a56baa830f1576b300d1bf5cee64004ae0210ccb9aa7a4324f4d"
+    },
+    {
+      "path": "case14_4bus_master_slave_pf.rss",
+      "sha256": "b61cfcd4954ff5b145e69aada2522c352e6bd784776384d1c8dffa9175c87dd8"
+    },
+    {
+      "path": "ieee123_power_flow.rss",
+      "sha256": "8cb4c7b6225fa2af107e441b4f196941e0f722bf8d0810ef0b2bda0875bde14b"
+    },
+    {
+      "path": "ieee13_daily_qsts.rss",
+      "sha256": "fe4d87fd2a3cc64fe22941cd7bcc919ee35a0facb5edd7ad581b73a13329ff50"
+    },
+    {
+      "path": "ieee13_harmonic.rss",
+      "sha256": "f549b1b91d3c1dccaac5fa243c53db97b43307156a91345eec328599e4b64694"
+    },
+    {
+      "path": "ieee13_power_flow.rss",
+      "sha256": "bd4590a11656724547d4fbd24ec7fb6d402744b5302b066cbb10fb3ad05c35b4"
+    },
+    {
+      "path": "ieee13_short_circuit.rss",
+      "sha256": "d29c115f97f2c56e1117a253b2beaacd146098229bc2571731ffd39a7601f65c"
+    },
+    {
+      "path": "ieee34Mod1_harmonic_run.rss",
+      "sha256": "6a911239856c076c27cbb03021de11cb139fc386fc9bc083309964825ef6dfa5"
+    },
+    {
+      "path": "ieee34_harmonic.rss",
+      "sha256": "edc5ef5c0e2eaf3a99f0894ec45e01b6193f0948d64bbbdebe90420fd6b228b6"
+    },
+    {
+      "path": "ieee34_power_flow.rss",
+      "sha256": "5be6876f6b2481c90af53a6bd7d4134d08fe6582d442063e97924c9736e54f56"
+    },
+    {
+      "path": "ieee34_short_circuit.rss",
+      "sha256": "44204b3f602eb142761cbc173427b11dc735fc585277ee27be36cf9c2e6f45d9"
+    }
+  ],
+  "bundles": [
+    {
+      "path": "rssbundle/EPRITestCircuits/epri_dpv/J1/Master_noPV.rssbundle/manifest.json",
+      "sha256": "49278654b50c24345966e46497013ccce19528fe4e810f54dd706d58f277ab58"
+    },
+    {
+      "path": "rssbundle/EPRITestCircuits/epri_dpv/J1/Master_withPV.rssbundle/manifest.json",
+      "sha256": "df308826b3bc860e5bda5c1ed0a815baf86e8ec052eeaa6e2ea35ae0e3c6174b"
+    },
+    {
+      "path": "rssbundle/Examples/FreqScan/Run_Scan.rssbundle/manifest.json",
+      "sha256": "de7230c4205b21e8100b0c111e6d057185dbdebc4567fc6a5d9a241b034eba53"
+    },
+    {
+      "path": "rssbundle/Examples/HarmonicsTMode/IEEE_519.rssbundle/manifest.json",
+      "sha256": "9364279f871ae4ee099af4a771f5db551cf09eaaa7753bff56961482b5c40ff3"
+    },
+    {
+      "path": "rssbundle/Examples/HarmonicsVariableLoad/IEEE_519.rssbundle/manifest.json",
+      "sha256": "bc1d9f282cce9d3ca1e751c4502fdb69841da0a9bbc8d26ab176936673f09caa"
+    },
+    {
+      "path": "rssbundle/Examples/Microgrid/GridFormingInverter/GFM_IEEE123/Run_IEEE123Bus_GFMSnap-A.rssbundle/manifest.json",
+      "sha256": "587e9daf77567c82438f3317147ad59c27cb5fee96254d6c6b3a80c20bb6b89b"
+    },
+    {
+      "path": "rssbundle/Examples/Microgrid/GridFormingInverter/GFM_IEEE8500/Run_8500Node_Unbal.rssbundle/manifest.json",
+      "sha256": "a85ff378d6ee1fc4a7ada62efbf096d9e60bdcbf09a61057b298e7db1bca2521"
+    },
+    {
+      "path": "rssbundle/Examples/Microgrid/GridFormingInverter/GFM_IEEE8500/Run_RecloserSiting.rssbundle/manifest.json",
+      "sha256": "144fe1751304f8a0ec1ed5f03a9f17e89510ded0fb2af2fe64ddee694fe07409"
+    },
+    {
+      "path": "rssbundle/Examples/Scripts/IEEE-TIA-LV Model/Split-Phase_IEEE_TIA.rssbundle/manifest.json",
+      "sha256": "7a25e6eaf467702545140812f6e29a58e4b1af3cd7adba89fae26f21476971be"
+    },
+    {
+      "path": "rssbundle/Examples/Scripts/IEEE-TIA-LV Model/master_large.rssbundle/manifest.json",
+      "sha256": "1e69c439ca10859421cc5290b0a8c963d4066898d61dfdb2ab818a4ebe48a825"
+    },
+    {
+      "path": "rssbundle/Examples/Scripts/IEEE-TIA-LV Model/master_large_1phase.rssbundle/manifest.json",
+      "sha256": "3c08e8bf9c195ec3965cdecc9a678f59adcacc443218e89b5e82463a85c3ec30"
+    },
+    {
+      "path": "rssbundle/Examples/Scripts/IEEE-TIA-LV Model/master_small.rssbundle/manifest.json",
+      "sha256": "edf45d9ea9d726c5a91de94875774c710dea6f4e70202783f4fb19c3827a340f"
+    },
+    {
+      "path": "rssbundle/Examples/Scripts/IEEE-TIA-LV Model/master_small_1phase.rssbundle/manifest.json",
+      "sha256": "bde6de9334fe416562ad3988aee380b574e3c7c568b72983d72d554566dde17d"
+    },
+    {
+      "path": "rssbundle/Examples/VSConverter/SG2012.rssbundle/manifest.json",
+      "sha256": "dc9478609c5de1569b3efd2150907c82fbe29a3730f8c237ad2045040c86f1f6"
+    },
+    {
+      "path": "rssbundle/Examples/WampServer/testcommandline.rssbundle/manifest.json",
+      "sha256": "7ed8572dc0bd483060c47aaf0c05419f3616a32b0b236a9b32b986391f78e406"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/123Bus/P174_Run_SolarRamp.rssbundle/manifest.json",
+      "sha256": "735d385feb35a5d2a0511b3af796dc322bbe0b5e10688347c9f2f4c1695ce5bf"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/123Bus/P174_Run_VoltageProfile.rssbundle/manifest.json",
+      "sha256": "c1d51df2ff4a8d4e8ebde5871114dc84b305b590b3eafd960ee895353c0d7560"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/123Bus/Run_IEEE123Bus.rssbundle/manifest.json",
+      "sha256": "a30420112afb83ff1cd97ecc6cf8203bd48e83aa04e23fe0dd4e058f2622c987"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/123Bus/SolarRamp.rssbundle/manifest.json",
+      "sha256": "9f77ed816102c97dd94fbe44ff540c2abdd962ea67e61509f51edd381e5cd1e3"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/13Bus/IEEE13Nodeckt.rssbundle/manifest.json",
+      "sha256": "aaa57b61bbbd48f0c04109e0ff3da39745e2af7ba5b78a06815ed28844dfd508"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/34Bus/Run_IEEE34Mod1.rssbundle/manifest.json",
+      "sha256": "e47fafafed37405f182a2df76507daee4ab95943816bf830cb532722404e0c30"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/34Bus/Run_IEEE34Mod2.rssbundle/manifest.json",
+      "sha256": "790de1eed6b15a5c882feb60e95214f3bfb5800213da55bfae02e14259e4abf0"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/37Bus/ieee37.rssbundle/manifest.json",
+      "sha256": "e2415d4b4db27a4997498dfe44d90c3139a82d09eecd93705464c1aa3d36f370"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/4Bus-DY-Bal/4Bus-DY-Bal.rssbundle/manifest.json",
+      "sha256": "93761088243a20f82e258b820bf158cd7cbb697baa594d278d82f513bc6e518c"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/4Bus-GrdYD-Bal/4Bus-GrdYD-Bal.rssbundle/manifest.json",
+      "sha256": "7ccfdef3a558055b8bb9c266add3efcdfddba6b49f3a27f89d24bba2662aaeb7"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/4Bus-OYOD-Bal/4Bus-OYOD-Bal.rssbundle/manifest.json",
+      "sha256": "2d024d4d2ed716521b67d950ca0bdd94ccc31b1ee08ab295c465fc435aca91dd"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/4Bus-YD-Bal/4Bus-YD-Bal.rssbundle/manifest.json",
+      "sha256": "f40847f08ce245ded066d6e8b44fb1afadfa1ff61ac041d575003e63aac535ef"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/4Bus-YY-Bal/4Bus-YY-Bal.rssbundle/manifest.json",
+      "sha256": "a882906c21b4219ceb490b4ccef589cee66a566671fff01ece6802cb1ea2d14a"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/4Bus-YYD/YYD-Master-step1.rssbundle/manifest.json",
+      "sha256": "9b69fda8420d47eb9c399355595ba1672ee37c75e50cbf5f32881a0f363fff98"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/8500-Node/P174_Run_Voltage_Profile.rssbundle/manifest.json",
+      "sha256": "2c39837bdd63369f42a8004292874eee644b18bacbceec25df4f173d4621c2f8"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/8500-Node/Run_8500Node.rssbundle/manifest.json",
+      "sha256": "69c2fc856576898a8811b7828103444c090538aa82b998c0b25b444c2d17f4af"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/8500-Node/Run_8500Node_Unbal.rssbundle/manifest.json",
+      "sha256": "0576536aef53ab09cfc7db5ce368b06a0250db0affcf171c72fcd1fb297624d3"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/8500-Node/Run_RecloserSiting.rssbundle/manifest.json",
+      "sha256": "1365953deecadce51415d53067acc57eca7f664018e6c88f6622681ab1e827e4"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/IEEE 30 Bus/Run_IEEE30.rssbundle/manifest.json",
+      "sha256": "1bf6da193acfcf867639179a1b9638e2fca80d57881da3dbde24dfe1498a3606"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/ShortCircuitCases/IEEE123Master-SC.rssbundle/manifest.json",
+      "sha256": "1c134a712867a2551f2e07d73efb10e2b95ff998cbd20e5c34e4ae558c7dd9a9"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/ShortCircuitCases/ieee34Mod2_SC_Case_II.rssbundle/manifest.json",
+      "sha256": "a97c510a8f4f12cfa04267636c4248a811839986ce2bf6c92a25d657165740f1"
+    },
+    {
+      "path": "rssbundle/IEEETestCases/ShortCircuitCases/ieee37_SC_Currents.rssbundle/manifest.json",
+      "sha256": "02f1dca10c971ca01671ff183b7a50280eef576cfb1022fddcfd42f6277a93cd"
+    }
+  ]
+}
