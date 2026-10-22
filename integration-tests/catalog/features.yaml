@@ -202,3 +202,16 @@
   tests: [{ runner: rust, file: backend/tests/agent_factory.rs, name: deepseek_factory_rejects_unknown_provider }]
   assertions: [未知 provider 返回稳定错误且不发起外部请求]
   fixtures: []
+- id: SCRIPTED-LLM-001
+  source: docs/integration-testing-design.md#32-scripted-llm
+  title: Scripted LLM 经 Rig 全路径执行工具和故障
+  layers: [agent, api]
+  lanes: [pr]
+  tests:
+    - { runner: rust, file: backend/tests/scripted_agent.rs, name: scripted_tool_call_runs_registered_tool_and_persists_events }
+    - { runner: rust, file: backend/tests/scripted_agent.rs, name: unknown_tool_and_malformed_args_end_with_readable_error }
+    - { runner: rust, file: backend/tests/scripted_agent.rs, name: missing_skill_is_a_failed_tool_result }
+    - { runner: rust, file: backend/tests/scripted_agent.rs, name: provider_error_releases_scheduler_permit }
+    - { runner: rust, file: backend/tests/scripted_agent.rs, name: barrier_holds_and_releases_agent_run_without_sleep }
+  assertions: [脚本响应经过真实 Rig 工具分派和消息持久化且错误释放调度许可]
+  fixtures: []

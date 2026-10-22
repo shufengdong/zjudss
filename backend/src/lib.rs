@@ -12,6 +12,8 @@ pub mod db;
 pub mod engine_resources;
 pub mod ingestion;
 pub mod storage;
+#[cfg(feature = "e2e-test")]
+pub mod testing;
 pub mod tools;
 
 use axum::Router;
