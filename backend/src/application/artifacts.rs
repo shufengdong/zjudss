@@ -6,6 +6,19 @@ use crate::storage::{ArtifactStore, StagedArtifact, StorageError};
 
 pub use crate::db::repositories::{StorageLimits, StorageUsage};
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageUsageSummary {
+    pub scope: String,
+    pub artifact_limit: i64,
+    pub byte_limit: i64,
+    pub warning_ratio: f64,
+    pub artifact_count: i64,
+    pub logical_bytes: i64,
+    pub is_warning: bool,
+    pub is_exceeded: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct ArtifactMetadata {
     pub format: String,
@@ -138,6 +151,27 @@ impl ArtifactService {
 
     pub async fn get_usage(&self, scope_id: i32) -> Result<StorageUsage, ArtifactError> {
         self.scopes.usage(scope_id).await.map_err(Into::into)
+    }
+
+    pub async fn usage_for(
+        &self,
+        reference: &StorageScopeRef,
+    ) -> Result<StorageUsageSummary, ArtifactError> {
+        let scope = self.resolve_scope(reference).await?;
+        let usage = self.get_usage(scope.id).await?;
+        let artifact_ratio = usage.used_artifacts as f64 / usage.artifact_limit as f64;
+        let byte_ratio = usage.used_bytes as f64 / usage.byte_limit as f64;
+        Ok(StorageUsageSummary {
+            scope: reference.kind.clone(),
+            artifact_limit: usage.artifact_limit,
+            byte_limit: usage.byte_limit,
+            warning_ratio: usage.warning_ratio,
+            artifact_count: usage.used_artifacts,
+            logical_bytes: usage.used_bytes,
+            is_warning: artifact_ratio >= usage.warning_ratio || byte_ratio >= usage.warning_ratio,
+            is_exceeded: usage.used_artifacts >= usage.artifact_limit
+                || usage.used_bytes >= usage.byte_limit,
+        })
     }
 
     pub async fn find_owned(

@@ -9,6 +9,7 @@ pub mod activate_model_version;
 pub mod compare_simulations;
 pub mod confirm_dataframe_mapping;
 pub mod create_dataset_view;
+pub mod get_storage_usage;
 pub mod import_example;
 pub mod inspect_example;
 pub mod inspect_workspace;
@@ -30,14 +31,14 @@ mod support;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use rig::tool::RegisteredTool;
+use rig::tool::{RegisteredTool, Tool};
 use tokio::sync::{Mutex, Semaphore};
 
 use crate::adapters::SimEngine;
 use crate::agent::knowledge::AgentKnowledge;
 use crate::application::{
-    AnalysisService, ComparisonService, DatasetService, EventWriter, ExampleImportService,
-    HistoryService, ModelPatchService, SimulationService, WorkspaceService,
+    AnalysisService, ArtifactService, ComparisonService, DatasetService, EventWriter,
+    ExampleImportService, HistoryService, ModelPatchService, SimulationService, WorkspaceService,
 };
 use crate::auth::{AccessScope, Principal};
 use crate::db::repositories::TaskRepo;
@@ -65,6 +66,7 @@ pub struct ToolServices {
     pub analysis: AnalysisService,
     pub comparisons: ComparisonService,
     pub history: HistoryService,
+    pub artifact_service: ArtifactService,
 }
 
 impl ToolServices {
@@ -83,59 +85,42 @@ impl ToolServices {
     }
 }
 
-/// 每请求装配一套有状态工具（§5）。
-pub fn build_tools(services: Arc<ToolServices>) -> Vec<RegisteredTool> {
-    vec![
-        RegisteredTool::from_tool(inspect_workspace::InspectWorkspaceTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(load_agent_skill::LoadAgentSkillTool::new(services.clone())),
-        RegisteredTool::from_tool(run_study::RunStudyTool::new(services.clone())),
-        RegisteredTool::from_tool(list_result_datasets::ListResultDatasetsTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(run_result_analysis::RunResultAnalysisTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(create_dataset_view::CreateDatasetViewTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(compare_simulations::CompareSimulationsTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(search_chat_history::SearchChatHistoryTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(read_chat_context::ReadChatContextTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(list_simulation_history::ListSimulationHistoryTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(search_engine_docs::SearchEngineDocsTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(read_engine_doc_section::ReadEngineDocSectionTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(search_examples::SearchExamplesTool::new(services.clone())),
-        RegisteredTool::from_tool(inspect_example::InspectExampleTool::new(services.clone())),
-        RegisteredTool::from_tool(import_example::ImportExampleTool::new(services.clone())),
-        RegisteredTool::from_tool(confirm_dataframe_mapping::ConfirmDataframeMappingTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(replace_model_input::ReplaceModelInputTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(remove_model_input::RemoveModelInputTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(activate_model_version::ActivateModelVersionTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(activate_model_version::RollbackModelVersionTool::new(
-            services.clone(),
-        )),
-        RegisteredTool::from_tool(modify_model::ModifyModelTool::new(services)),
-    ]
+macro_rules! define_tool_registry {
+    ($( $module:ident :: $tool:ident ),+ $(,)?) => {
+        pub fn registered_tool_names() -> &'static [&'static str] {
+            &[$(<$module::$tool as Tool>::NAME),+]
+        }
+
+        /// 每请求装配一套有状态工具（§5）。
+        pub fn build_tools(services: Arc<ToolServices>) -> Vec<RegisteredTool> {
+            vec![$(
+                RegisteredTool::from_tool($module::$tool::new(services.clone()))
+            ),+]
+        }
+    };
 }
+
+define_tool_registry!(
+    inspect_workspace::InspectWorkspaceTool,
+    search_examples::SearchExamplesTool,
+    inspect_example::InspectExampleTool,
+    import_example::ImportExampleTool,
+    remove_model_input::RemoveModelInputTool,
+    replace_model_input::ReplaceModelInputTool,
+    confirm_dataframe_mapping::ConfirmDataframeMappingTool,
+    modify_model::ModifyModelTool,
+    activate_model_version::ActivateModelVersionTool,
+    activate_model_version::RollbackModelVersionTool,
+    run_study::RunStudyTool,
+    list_result_datasets::ListResultDatasetsTool,
+    run_result_analysis::RunResultAnalysisTool,
+    create_dataset_view::CreateDatasetViewTool,
+    compare_simulations::CompareSimulationsTool,
+    list_simulation_history::ListSimulationHistoryTool,
+    search_chat_history::SearchChatHistoryTool,
+    read_chat_context::ReadChatContextTool,
+    get_storage_usage::GetStorageUsageTool,
+    load_agent_skill::LoadAgentSkillTool,
+    search_engine_docs::SearchEngineDocsTool,
+    read_engine_doc_section::ReadEngineDocSectionTool,
+);

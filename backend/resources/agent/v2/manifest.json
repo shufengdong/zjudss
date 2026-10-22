@@ -28,6 +28,7 @@
     "activate_model_version",
     "rollback_model_version",
     "run_study",
+    "list_result_datasets",
     "run_result_analysis",
     "create_dataset_view",
     "compare_simulations",

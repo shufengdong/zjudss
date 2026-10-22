@@ -72,3 +72,19 @@
   tests: [{ runner: rust, file: backend/tests/history_search.rs, name: task_filters_work_and_missing_fts_does_not_break_plain_history_reads }]
   assertions: [FTS 故障不影响普通历史读取]
   fixtures: []
+- id: AGENT-TOOL-001
+  source: docs/integration-testing-design.md#52-全部-agent-工具和-skill
+  title: Agent manifest 与运行时工具双向一致
+  layers: [agent]
+  lanes: [pr]
+  tests: [{ runner: rust, file: backend/tests/tool_manifest.rs, name: manifest_allowed_tools_equal_runtime_registry }]
+  assertions: [manifest 和运行时注册表包含同一组 22 个工具]
+  fixtures: []
+- id: STORAGE-TOOL-001
+  source: docs/integration-testing-design.md#52-全部-agent-工具和-skill
+  title: Agent 只能读取当前存储 scope 用量
+  layers: [agent]
+  lanes: [pr]
+  tests: [{ runner: rust, file: backend/tests/tool_manifest.rs, name: get_storage_usage_returns_current_scope_only }]
+  assertions: [存储用量工具不合并其他 owner 的 artifact 和字节]
+  fixtures: []

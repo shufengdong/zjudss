@@ -227,6 +227,7 @@ fn services(app: &TestApp, session_id: i32) -> Arc<ToolServices> {
         analysis: app.state.analysis_service.clone(),
         comparisons: app.state.comparison_service.clone(),
         history: app.state.history_service.clone(),
+        artifact_service: app.state.artifact_service.clone(),
     })
 }
 

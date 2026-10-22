@@ -43,6 +43,7 @@ pub struct ChatService {
     analysis: crate::application::AnalysisService,
     comparisons: crate::application::ComparisonService,
     history: crate::application::HistoryService,
+    artifact_service: crate::application::ArtifactService,
 }
 
 impl ChatService {
@@ -66,6 +67,7 @@ impl ChatService {
             analysis: state.analysis_service.clone(),
             comparisons: state.comparison_service.clone(),
             history: state.history_service.clone(),
+            artifact_service: state.artifact_service.clone(),
         }
     }
 
@@ -99,6 +101,7 @@ impl ChatService {
             analysis: self.analysis.clone(),
             comparisons: self.comparisons.clone(),
             history: self.history.clone(),
+            artifact_service: self.artifact_service.clone(),
         });
         let tools = tools::build_tools(services);
 

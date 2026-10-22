@@ -42,7 +42,7 @@ pub use analysis::{
 };
 pub use artifacts::{
     ArtifactError, ArtifactMetadata, ArtifactRef, ArtifactService, GcReport, StorageLimits,
-    StorageUsage,
+    StorageUsage, StorageUsageSummary,
 };
 pub use chat::ChatService;
 pub use comparisons::{ComparisonError, ComparisonService};
