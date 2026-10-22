@@ -5,6 +5,7 @@ mod auth;
 mod comparisons;
 mod datasets;
 mod events;
+mod examples;
 mod ingestions;
 mod sessions;
 mod storage;
@@ -269,6 +270,8 @@ pub fn router() -> Router<AppState> {
         .route("/health", get(health))
         .route("/api/me", get(auth::me))
         .route("/api/storage-usage", get(storage::usage))
+        .route("/api/examples", get(examples::list))
+        .route("/api/examples/{id}", get(examples::get))
         .route("/api/sessions", get(sessions::list).post(sessions::create))
         .route("/api/history/search", get(sessions::search_history))
         .route(
@@ -289,6 +292,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/sessions/{id}/versions", get(workspaces::versions))
         .route("/api/versions/{id}", get(workspaces::version))
         .route("/api/tasks/{id}", get(tasks::get))
+        .route("/api/sessions/{id}/tasks", get(tasks::list_session))
         .route("/api/tasks/{id}/datasets", get(tasks::datasets))
         .route("/api/datasets/{id}", get(datasets::metadata))
         .route("/api/datasets/{id}/rows", get(datasets::rows))

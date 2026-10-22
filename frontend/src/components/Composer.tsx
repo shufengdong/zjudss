@@ -19,6 +19,7 @@ export default function Composer({
 }: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const directoryRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const el = textareaRef.current
@@ -47,6 +48,7 @@ export default function Composer({
     <div className="border-t border-slate-200 bg-white px-4 py-3">
       <div className="flex items-end gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 transition-colors focus-within:border-brand-400">
         <input ref={fileRef} type="file" multiple className="hidden" onChange={handleFiles} />
+        <input ref={directoryRef} type="file" multiple className="hidden" onChange={handleFiles} {...{webkitdirectory:''}} />
         <button
           type="button"
           onClick={() => fileRef.current?.click()}
@@ -56,6 +58,8 @@ export default function Composer({
         >
           <PaperclipIcon className="h-5 w-5" />
         </button>
+        <button type="button" onClick={()=>directoryRef.current?.click()} disabled={uploading}
+          className="mb-0.5 shrink-0 text-[11px] text-slate-400 hover:text-brand-600 disabled:opacity-40" title="上传文件夹">文件夹</button>
         <textarea
           ref={textareaRef}
           value={value}

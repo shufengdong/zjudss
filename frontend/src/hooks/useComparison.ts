@@ -1,0 +1,2 @@
+import{useEffect,useState}from'react';import{getComparison}from'../api/client';import type{TaskComparison}from'../types'
+export function useComparison(id:string|null){const[value,setValue]=useState<TaskComparison|null>(null),[error,setError]=useState<string|null>(null);useEffect(()=>{setValue(null);setError(null);if(id)void getComparison(id).then(setValue).catch(e=>setError(e instanceof Error?e.message:'比较加载失败'))},[id]);return{value,error}}

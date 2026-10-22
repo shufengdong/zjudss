@@ -1,5 +1,5 @@
 import type { MessageHandlers, ResultMessage } from '../../types'
-import { ChartIcon, DownloadIcon } from '../icons'
+import { ChartIcon } from '../icons'
 
 export default function ResultCard({
   message,
@@ -30,24 +30,13 @@ export default function ResultCard({
           ))}
         </div>
       )}
-      {message.taskId && (
+      {message.outputs.length > 0 && (
         <div className="mt-3.5 flex gap-2">
-          <button
-            type="button"
-            onClick={() => handlers.onViewCurves(message.taskId!)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-600"
-          >
-            <ChartIcon className="h-3.5 w-3.5" />
-            查看结果
-          </button>
-          <button
-            type="button"
-            onClick={() => handlers.onDownloadReport(message.taskId!)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
-          >
-            <DownloadIcon className="h-3.5 w-3.5" />
-            下载报告
-          </button>
+          {message.outputs.map(output=><button key={output.datasetId} type="button"
+            onClick={() => handlers.onOpenDataset(output.datasetId)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-600">
+            <ChartIcon className="h-3.5 w-3.5" />查看 {output.name}
+          </button>)}
         </div>
       )}
     </div>

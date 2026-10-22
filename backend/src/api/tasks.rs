@@ -3,7 +3,8 @@ use crate::application::{AppState, ms_to_iso};
 use crate::auth::CurrentPrincipal;
 use crate::db::repositories::SimulationRepo;
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
+use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -66,6 +67,52 @@ pub async fn get(
         started_at: t.started_at_ms.map(ms_to_iso),
         finished_at: t.finished_at_ms.map(ms_to_iso),
     }))
+}
+
+#[derive(Deserialize)]
+pub struct TaskListQuery {
+    limit: Option<i64>,
+}
+
+pub async fn list_session(
+    State(s): State<AppState>,
+    CurrentPrincipal(p): CurrentPrincipal,
+    Path(session_id): Path<i32>,
+    Query(query): Query<TaskListQuery>,
+) -> Result<Json<Vec<TaskDto>>, ApiError> {
+    let tasks = s
+        .history_service
+        .list_simulations(&p, session_id, query.limit.unwrap_or(50))
+        .await?;
+    Ok(Json(tasks.into_iter().map(task_dto).collect()))
+}
+
+fn task_dto(t: crate::db::models::SimulationTask) -> TaskDto {
+    TaskDto {
+        id: t.id.to_string(),
+        session_id: t.session_id.to_string(),
+        status: t.status,
+        stage: t.stage,
+        study_type: t.study_type.unwrap_or_default(),
+        study_spec: t
+            .study_spec_json
+            .as_deref()
+            .and_then(|v| serde_json::from_str(v).ok())
+            .unwrap_or(Value::Null),
+        model_version_id: t.model_version_id.map(|v| v.to_string()).unwrap_or_default(),
+        script_artifact_id: t.script_artifact_id.map(|v| v.to_string()).unwrap_or_default(),
+        agent_bundle_version: t.agent_bundle_version.unwrap_or_default(),
+        agent_skill_refs: t
+            .agent_skill_refs_json
+            .as_deref()
+            .and_then(|v| serde_json::from_str(v).ok())
+            .unwrap_or_else(|| serde_json::json!([])),
+        engine_contract_version: t.engine_contract_version.unwrap_or_default(),
+        error: t.error_json.as_deref().and_then(|v| serde_json::from_str(v).ok()),
+        created_at: ms_to_iso(t.created_at_ms),
+        started_at: t.started_at_ms.map(ms_to_iso),
+        finished_at: t.finished_at_ms.map(ms_to_iso),
+    }
 }
 pub async fn datasets(
     State(s): State<AppState>,

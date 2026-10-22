@@ -1,118 +1,63 @@
-// HTTP 客户端：封装后端 REST 端点（契约见 docs/api-design.md）。
-//
-// 字段命名与 frontend/src/types/index.ts 完全一致（后端按 api-design §8 对齐），
-// 因此这里的返回值直接复用前端类型，不做任何转换。
+import type {
+  AnalysisRun, DatasetMetadata, DatasetPage, DatasetViewData, ExampleDetail, ExampleSummary,
+  HistoryHit, Ingestion, Message, MessagePage, Principal, Session, SimulationTask, StorageUsage,
+  TaskComparison, Workspace,
+} from '../types'
 
-import type { CurveData, Message, Session } from '../types'
-
-/** 非 2xx 响应统一抛出的错误；`error` 字段来自后端统一错误体 `{ "error": "..." }`。 */
 export class ApiError extends Error {
-  status: number
-
-  constructor(status: number, message: string) {
-    super(message)
-    this.name = 'ApiError'
-    this.status = status
+  constructor(public status:number, message:string, public code?:string, public details?:unknown) {
+    super(message); this.name='ApiError'
   }
 }
-
-/** 从失败响应里尽力解析后端统一错误体 `{ "error": "..." }`，构造 ApiError。 */
-async function errorFrom(res: Response): Promise<ApiError> {
-  let message = `请求失败（${res.status}）`
+async function errorFrom(res:Response) {
   try {
-    const body = (await res.json()) as { error?: string }
-    if (typeof body.error === 'string') message = body.error
-  } catch {
-    // 忽略非 JSON 响应体
-  }
-  return new ApiError(res.status, message)
+    const body=await res.json() as {error?:string;code?:string;details?:unknown}
+    return new ApiError(res.status,body.error??`请求失败（${res.status}）`,body.code,body.details)
+  } catch { return new ApiError(res.status,`请求失败（${res.status}）`) }
 }
-
-/** 基础请求：默认按 JSON 解析；multipart 时不手写 Content-Type；非 2xx 抛 ApiError。 */
-async function request<T>(
-  url: string,
-  init: RequestInit = {},
-  parse: (res: Response) => Promise<T> = (res) => res.json() as Promise<T>,
-): Promise<T> {
-  const headers = new Headers(init.headers)
-  if (init.body !== undefined && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
-    headers.set('Content-Type', 'application/json')
-  }
-  const res = await fetch(url, { ...init, headers })
-  if (!res.ok) throw await errorFrom(res)
+export async function request<T>(url:string,init:RequestInit={},parse:(r:Response)=>Promise<T>=(r)=>r.json() as Promise<T>):Promise<T>{
+  const headers=new Headers(init.headers)
+  if(init.body!==undefined&&!(init.body instanceof FormData)&&!headers.has('Content-Type')) headers.set('Content-Type','application/json')
+  const res=await fetch(url,{...init,headers})
+  if(!res.ok) throw await errorFrom(res)
   return parse(res)
 }
-
-interface SessionListResponse {
-  sessions: Session[]
+const params=(values:Record<string,string|number|undefined|null>)=>{
+  const p=new URLSearchParams()
+  Object.entries(values).forEach(([k,v])=>{if(v!==undefined&&v!==null&&v!=='')p.set(k,String(v))})
+  const value=p.toString(); return value?`?${value}`:''
 }
-
-interface MessagesResponse {
-  messages: Message[]
+export const getPrincipal=()=>request<Principal>('/api/me')
+export const listSessions=async()=>(await request<{sessions:Session[]}>('/api/sessions')).sessions
+export const createSession=(title='')=>request<Session>('/api/sessions',{method:'POST',body:JSON.stringify({title})})
+export const renameSession=(id:string,title:string)=>request<Session>(`/api/sessions/${id}`,{method:'PATCH',body:JSON.stringify({title})})
+export const deleteSession=async(id:string)=>request<void>(`/api/sessions/${id}`,{method:'DELETE'},async()=>undefined)
+export const listMessages=(id:string,q:{beforeId?:string;aroundId?:string;limit?:number}={})=>
+  request<MessagePage<Message>>(`/api/sessions/${id}/messages${params(q)}`)
+export const postMessage=async(id:string,message:string)=>request<{ok:boolean}>(`/api/sessions/${id}/messages`,{method:'POST',body:JSON.stringify({message})})
+export async function uploadFiles(sessionId:string,batchId:string,files:{id:string;file:File;relativePath?:string}[]) {
+  const form=new FormData(); form.append('clientBatchId',batchId)
+  const paths:Record<string,string>={}
+  files.forEach(({id,file,relativePath})=>{form.append(`file.${id}`,file);if(relativePath)paths[id]=relativePath})
+  form.append('relativePaths',JSON.stringify(paths))
+  return request<{ok:boolean;ingestionId:string;accepted:unknown[]}>(`/api/sessions/${sessionId}/attachments`,{method:'POST',body:form})
 }
-
-/** GET /api/sessions：会话列表（按最近活跃排序）。 */
-export async function listSessions(): Promise<Session[]> {
-  const data = await request<SessionListResponse>('/api/sessions')
-  return data.sessions
-}
-
-/** POST /api/sessions：新建会话。 */
-export async function createSession(title: string): Promise<Session> {
-  return request<Session>('/api/sessions', {
-    method: 'POST',
-    body: JSON.stringify({ title }),
-  })
-}
-
-/** PATCH /api/sessions/{id}：重命名，返回更新后的会话。 */
-export async function renameSession(sessionId: string, title: string): Promise<Session> {
-  return request<Session>(`/api/sessions/${sessionId}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ title }),
-  })
-}
-
-/** DELETE /api/sessions/{id}：删除会话（204，无响应体）。 */
-export async function deleteSession(sessionId: string): Promise<void> {
-  await request<void>(`/api/sessions/${sessionId}`, { method: 'DELETE' }, async () => undefined)
-}
-
-/** POST /api/sessions/{id}/attachments：multipart 上传（字段名 `file`），返回 attachment 消息。 */
-export async function uploadAttachment(sessionId: string, file: File): Promise<Message> {
-  const form = new FormData()
-  form.append('file', file)
-  return request<Message>(`/api/sessions/${sessionId}/attachments`, {
-    method: 'POST',
-    body: form,
-  })
-}
-
-/** GET /api/sessions/{id}/messages：回放历史消息（与 SSE 同构）。 */
-export async function listMessages(sessionId: string): Promise<Message[]> {
-  const data = await request<MessagesResponse>(`/api/sessions/${sessionId}/messages`)
-  return data.messages
-}
-
-/** POST /api/sessions/{id}/messages：发用户消息 → 触发 agent，返回 202。 */
-export async function postMessage(sessionId: string, message: string): Promise<void> {
-  await request<{ ok: boolean }>(`/api/sessions/${sessionId}/messages`, {
-    method: 'POST',
-    body: JSON.stringify({ message }),
-  })
-}
-
-/** GET /api/tasks/{id}/curves：任务结果曲线；无数据 → 404。 */
-export async function fetchCurves(taskId: string): Promise<CurveData> {
-  return request<CurveData>(`/api/tasks/${taskId}/curves`)
-}
-
-/** GET /api/tasks/{id}/report：下载报告文件（二进制），返回 Blob 与文件名。 */
-export async function fetchReport(taskId: string): Promise<{ blob: Blob; filename: string }> {
-  const res = await fetch(`/api/tasks/${taskId}/report`)
-  if (!res.ok) throw await errorFrom(res)
-  const blob = await res.blob()
-  const cd = res.headers.get('Content-Disposition') ?? ''
-  const match = /filename="?([^";]+)"?/.exec(cd)
-  return { blob, filename: match?.[1] ?? `report-${taskId}.md` }
+export const getIngestion=async(id:string)=>(await request<{ingestion:Ingestion}>(`/api/ingestions/${id}`)).ingestion
+export const getWorkspace=(id:string)=>request<Workspace>(`/api/sessions/${id}/workspace`)
+export const listExamples=(filters:{query?:string;studyType?:string;sourceKind?:string;limit?:number}={})=>
+  request<{engineResourceSnapshot:string;examples:ExampleSummary[];nextCursor:null}>(`/api/examples${params(filters)}`)
+export const getExample=(id:string)=>request<ExampleDetail>(`/api/examples/${id}`)
+export const searchHistory=async(query:string)=>(await request<{items:HistoryHit[]}>(`/api/history/search${params({query})}`)).items
+export const listTasks=(sessionId:string)=>request<SimulationTask[]>(`/api/sessions/${sessionId}/tasks`)
+export const getTask=(id:string)=>request<SimulationTask>(`/api/tasks/${id}`)
+export const listTaskDatasets=(id:string)=>request<DatasetMetadata[]>(`/api/tasks/${id}/datasets`)
+export const getDataset=(id:string)=>request<DatasetMetadata>(`/api/datasets/${id}`)
+export const getDatasetRows=(id:string,q:{cursor?:string;limit?:number;columns?:string}={})=>request<DatasetPage>(`/api/datasets/${id}/rows${params(q)}`)
+export const getDatasetView=(id:string)=>request<DatasetViewData>(`/api/dataset-views/${id}/data`)
+export const getAnalysis=(id:string)=>request<AnalysisRun>(`/api/analysis-runs/${id}`)
+export const getComparison=(id:string)=>request<TaskComparison>(`/api/task-comparisons/${id}`)
+export const getStorageUsage=()=>request<StorageUsage>('/api/storage-usage')
+export async function downloadDataset(id:string,name='dataset'){
+  const res=await fetch(`/api/datasets/${id}/download`); if(!res.ok)throw await errorFrom(res)
+  return {blob:await res.blob(),filename:`${name}.parquet`}
 }

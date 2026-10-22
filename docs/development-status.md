@@ -23,29 +23,29 @@
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
-| 前端静态骨架 | ✅ v2 协议已接入 | 8 类消息、按 operation/callId 归并、可恢复 SSE；工作区和通用结果组件待后续任务 |
-| 前端接入真实后端 | ✅ 阶段 1–5 完成 | `api/client.ts`、`api/events.ts`、`App.tsx` 已接线，含重命名/删除/附件/曲线/报告（见 §5） |
-| 后端分层架构 | ✅ v2 Tasks 1–11 完成 | 身份、调度、SSE、artifact、不可变工作区、引擎知识、模型摄取、工作区工具与 Parquet v2 内核边界已落地 |
-| 后端数据库 schema | 🚧 v2 实施中 | 已增加 storage scope、artifact、workspaces/model_versions、ingestions、版本输入绑定和全链路归属过滤；dataset 等表按后续任务增加 |
+| 前端 v2 工作台 | ✅ 完成 | 按 session 状态、可恢复 SSE、历史检索、工作区、多文件/目录上传、案例库、任务历史和通用结果工作台 |
+| 前端接入真实后端 | ✅ 完成 | v2 REST/SSE 已接线；旧曲线/报告、旧 multipart 和演示日志已删除 |
+| 后端分层架构 | ✅ v2 Tasks 1–17 完成 | 身份、调度、SSE、artifact、工作区、摄取、仿真、分析、比较与历史已落地 |
+| 后端数据库 schema | 🚧 待发布收口 | v2 增量表已齐备；Task 18 将压成一份仅支持空库初始化的 initial migration |
 | 后端真实引擎接入 | ✅ v2 编排完成 | 启动探测 `TENSOREVAL_BIN` 的 `--result-dir`、`--output-format parquet` 与命名 Parquet input；运行物化任务私有输入树并登记可复现任务 |
 | 后端结果端点 | ✅ 通用数据集 | 旧 CSV 指标、曲线和报告适配器/路由已删除；提供 ResultDataset 元数据、分页、列投影和 Parquet 下载 API |
-| 会话状态/重命名/删除/附件 | ✅ 后端 v2 完成 | `PATCH/DELETE /api/sessions/{id}`；附件支持 `clientBatchId`、多 `file.<clientFileId>`、流式限制、幂等摄取和刷新恢复，前端将在 Task 16 切换 |
+| 会话状态/重命名/删除/附件 | ✅ v2 完成 | 前后端使用 `clientBatchId`、多 `file.<clientFileId>`、规范目录相对路径、幂等摄取和刷新恢复 |
 | 前后端字段命名对齐 | ✅ 已对齐 | 后端出网 `tool-call`/`toolName`/`taskId` 与前端类型一致（§3） |
 | 历史聊天浏览 | ✅ 基础功能完成 | 全量会话列表、今天/昨天/更早分组、打开回放、重命名和删除 |
-| 历史聊天检索 | 🎯 已完成设计 | 侧栏关键词/筛选/分页 + agent 自然语言跨会话检索；尚未实现 |
+| 历史聊天检索 | ✅ 完成 | FTS5 trigram、短查询有界 LIKE、消息分页/定位、侧栏搜索和 agent 历史工具 |
 | 模型工作区与不可变版本 | 🚧 摄取闭环完成 | active/draft、规范 manifest hash、乐观基线、激活/回退、只读 API、model-status，以及 DataFrame、RSS、ZIP、rssbundle 摄取已落地 |
 | 表头推断与多工作表 Excel | ✅ 摄取闭环完成 | CSV 有界采样、Excel 非空 sheet 转 Parquet、Parquet footer schema、catalog 列名评分、局部失败与 collecting draft 已实现 |
-| 参数修改、任务历史与仿真对比 | 🚧 模型修改完成 | DataFrame 唯一行/from/unit 校验后写新 Parquet，RSS/DSS 唯一文本参数可生成子版本；任务版本绑定、历史和稳定键对比在后续任务实现 |
-| 通用结果 DataFrame 分析 | 🎯 已完成设计 | v2 用 `--result-dir --output-format parquet` 保存原生 Parquet；自然语言生成 RSS 查询脚本并持久化派生表、schema 与血缘；尚未实现 |
+| 参数修改、任务历史与仿真对比 | ✅ 完成 | 不可变子版本、可复现任务、稳定键兼容性、差值分析与前端任务历史已接通 |
+| 通用结果 DataFrame 分析 | ✅ 完成 | 原生 Parquet、自然语言 RSS 分析、持久血缘、分页表格和六类受控 ECharts 视图 |
 | Agent 调度与容量保护 | ✅ 完成 | 全局 8、owner 2、同 session 1、等待队列 32；满载返回 `429 agent_queue_full` 且不写消息 |
 | 历史文件配额 | ✅ 基础链路完成 | 内容寻址 blob、scope 唯一计数/逻辑字节、并发原子硬限制、80% 告警接口和无引用 GC 已实现；领域资源在后续任务接入引用增减 |
 | 多用户隔离 | ✅ 基础边界完成 | instance/trusted_proxy、`/api/me`、storage/access scope 和 Session/Message/Task/SSE 404 隔离已落地 |
 | Agent prompt 与领域技能 | ✅ 工作区阶段完成 | 每轮只注入 system、技能索引和资源摘要；技能/文档/案例按稳定 ID 有界加载，脚本修改缺技能返回 `skill_required`，当前 run 记录已加载技能集 |
 | 内置案例库 | ✅ 导入闭环完成 | 启动时校验并索引根 RSS 与 rssbundle；案例按快照 ID 导入完整依赖闭包，复制并复核 hash，并已注册自然语言检索、查看与导入工具 |
-| v2 详细实施方案 | 🚧 执行中 | Tasks 1–15 已完成；M0–M3 完成，正在实施前端 v2 工作台 |
+| v2 详细实施方案 | 🚧 发布收口 | Tasks 1–17 已完成；正在执行 Task 18 的 schema、E2E、部署和发布门禁 |
 
 > v2 实施以 `docs/superpowers/plans/2026-10-22-v2-simulation-workspace.md` 的 Task 编号为准；当前
-> 已完成 Task 1–11。后文保留的 v1 细节是迁移背景，若与本节冲突，以本节和 v2 契约为准。
+> 已完成 Task 1–17。Task 18 将删除开发期增量 migration 并完成发布验收。
 > 上表 `🎯` 表示已评审目标，不能理解为代码已具备该能力；目标实施顺序见
 > `docs/model-workspace-design.md` §11。
 
@@ -54,7 +54,7 @@
 当前代码已实现 `AUTH_MODE=instance|trusted_proxy`。公开部署必须使用可信代理；所有现有
 Session/Message/Task/SSE 读写均由服务端 principal 注入 scope，跨 scope 和不存在资源返回相同 404。
 聊天仍持久化在 SQLite；前端已使用“先打开 SSE、再读快照”的顺序恢复消息，并按稳定键去重。
-`GET /api/me` 已提供 `scopeKey`，按 scope 保存上次 session 的本地导航偏好将在前端工作台任务完成。
+`GET /api/me` 提供 `scopeKey`；前端以 `zjudss:last-session:<scopeKey>` 保存导航偏好，历史真相仍在服务端。
 
 以下条目仅记录 v1 被替换前的风险背景：
 
@@ -156,50 +156,16 @@ backend/src/
 
 ## 5. 前端实现要点
 
-### 目录（实际）
-
-```
-frontend/src/
-├── main.tsx            # ReactDOM + StrictMode
-├── App.tsx             # 全部状态与接线（见下）
-├── types/index.ts      # ★ 权威类型定义（Session / Message 6 类 / CurveData / 回调）
-├── api/                # 新增：后端接入层
-│   ├── client.ts       #   listSessions/createSession/renameSession/deleteSession/listMessages/postMessage/uploadAttachment/fetchCurves/fetchReport + ApiError
-│   └── events.ts       #   subscribeEvents(sessionId, onMessage) → SSE，返回关闭函数
-├── hooks/useMediaQuery.ts
-├── mocks/              # sessions.ts/messages.ts/curves.ts 已无引用（保留作样例）
-├── components/
-│   ├── Sidebar.tsx / Composer.tsx / ResultPanel.tsx / Markdown.tsx / icons.tsx
-│   ├── charts/LineChart.tsx   # ECharts 直连，props 传 CurveData，支持 dataZoom/legend/resize
-│   └── messages/              # MessageItem + 6 类消息卡片
-```
-
-### App.tsx 接线逻辑（本会话阶段 1–3 的产物）
-
-- **会话**：挂载 `listSessions()` 选第一条；`newSession` 走 `createSession('新的仿真')`；
-  `selectSession` 先 `listMessages(id)` 回放。
-- **发送 + SSE**：`send()` 乐观插入 `local-user-` 临时消息 → `postMessage()`（202）→ SSE 收到
-  真实 `user` 事件后按 id 前缀 FIFO 替换（**方案 A**，见 §6 决策）。
-- **事件合并** `appendEvent()`（`App.tsx` 模块级函数）：
-  - `user` 事件 → 替换第一条 `local-user-`；
-  - `progress` → 按 `taskId` 归并（替换而非追加，api-design §5.4）；
-  - 其它 → 按 `id` 去重后追加。
-- **SSE 生命周期**：`openEvents(id)` 在回放完成后调用；切换会话 / 卸载时 `closeEvents()` 关闭。
-  用 `selectedIdRef` 避免异步回放竞态（过期结果丢弃）。
-
-### 前端阶段 4–5 接入（已完成后端第 5 步的接线）
-
-- **重命名/删除**：`PATCH/DELETE /api/sessions/{id}` 真持久化；`App.tsx` 乐观更新、失败回滚
-  （重命名回滚到旧列表，删除失败重拉会话列表）。
-- **附件上传（v1 前端现状）**：`Composer` 仍发送旧 multipart `file` 字段；后端已切换到 v2
-  `clientBatchId + file.<clientFileId>` 并返回 202。Task 16 必须同步切换前端后才可完成上传；当前不提供
-  v1 兼容分支。
-- **曲线/报告**：`ResultCard` 的「查看曲线」/「下载报告」按 `taskId` 调 `GET /api/tasks/{id}/curves`、
-  `/report`；`ResultPanel` 曲线/报告标签页按需拉取（报告 Markdown 内联渲染 + 下载）。日志标签页
-  暂无后端端点，保留静态样例。当前图表仍固定为共享时间轴的 `LineChart`，没有通用分页表格或
-  多视图渲染器；目标契约见 §8 和 `frontend-design.md` §7.8。
-- **指标显示四舍五入**：`ResultCard` 对电压等标幺指标按 3 位小数展示（`fmtPu`），真实内核返回的
-  长浮点（如 `0.881936848419229`）不再直接上屏。
+- `types/` 按 session/message/workspace/task/dataset 拆分并由 `index.ts` 汇总；出网 ID 均为字符串。
+- `useSessionFeed` 以 session ID 键控消息，先建立 SSE 再合并最近消息页，支持向前分页且不会把迟到
+  响应写入当前会话。localStorage 只保存当前 scope 的导航偏好。
+- Composer 支持文件、多文件和目录；每次选择生成新 batch/file ID，目录文件携带规范相对路径。错传
+  文件重新选择会产生新 ID，历史摄取和模型版本不会被覆盖。
+- 案例库是只读 API；“使用此案例”、激活候选版本、比较任务等动作均转换成可见的自然语言用户消息。
+- 工作台展示 active/draft、识别证据、缺失输入、活动摄取和仿真历史。结果消息按 dataset ID 打开独立
+  DataFrame 工作台，大表数据不进入聊天全局状态。
+- 每张 DataFrame 先提供 schema 顺序的 cursor 分页表格和 Parquet 下载。已保存视图只接受
+  line/bar/scatter/heatmap/boxplot/histogram 六类受控 spec，本地 builder 不执行 formatter。
 
 ---
 
