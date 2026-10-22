@@ -1,0 +1,12 @@
+DROP TRIGGER IF EXISTS immutable_dataframe_bindings;
+DROP TRIGGER IF EXISTS immutable_version_artifacts;
+DROP TRIGGER IF EXISTS immutable_model_versions;
+DROP TRIGGER IF EXISTS validate_workspace_draft_update;
+DROP TRIGGER IF EXISTS validate_workspace_active_update;
+DROP TRIGGER IF EXISTS validate_workspace_active_insert;
+DROP TABLE IF EXISTS dataframe_bindings;
+DROP INDEX IF EXISTS idx_version_artifact_path;
+DROP TABLE IF EXISTS version_artifacts;
+DROP INDEX IF EXISTS idx_versions_workspace_time;
+DROP TABLE IF EXISTS workspaces;
+DROP TABLE IF EXISTS model_versions;

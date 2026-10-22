@@ -5,6 +5,7 @@ mod events;
 mod sessions;
 mod storage;
 mod tasks;
+mod workspaces;
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -16,6 +17,7 @@ use crate::adapters::AdapterError;
 use crate::application::AppError;
 use crate::application::AppState;
 use crate::application::ArtifactError;
+use crate::application::WorkspaceError;
 use crate::db::repositories::RepoError;
 
 /// 统一 API 错误：把仓储/适配器错误映射为 HTTP 响应。
@@ -121,6 +123,27 @@ impl From<ArtifactError> for ApiError {
     }
 }
 
+impl From<WorkspaceError> for ApiError {
+    fn from(error: WorkspaceError) -> Self {
+        match error {
+            WorkspaceError::NotFound => Self::not_found("资源不存在"),
+            WorkspaceError::VersionConflict => Self {
+                status: StatusCode::CONFLICT,
+                message: "模型版本基线已变化，请重新读取工作区".to_string(),
+                code: "version_conflict",
+                details: None,
+            },
+            WorkspaceError::InvalidManifest | WorkspaceError::InvalidState(_) => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: error.to_string(),
+                code: "invalid_model_version",
+                details: None,
+            },
+            WorkspaceError::Repository(other) => Self::internal(other.to_string()),
+        }
+    }
+}
+
 impl From<AdapterError> for ApiError {
     fn from(err: AdapterError) -> Self {
         ApiError::internal(err.to_string())
@@ -150,6 +173,9 @@ pub fn router() -> Router<AppState> {
             post(sessions::upload_attachment).layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
         )
         .route("/api/sessions/{id}/events", get(events::stream))
+        .route("/api/sessions/{id}/workspace", get(workspaces::workspace))
+        .route("/api/sessions/{id}/versions", get(workspaces::versions))
+        .route("/api/versions/{id}", get(workspaces::version))
         .route("/api/tasks/{id}/curves", get(tasks::curves))
         .route("/api/tasks/{id}/report", get(tasks::report))
 }

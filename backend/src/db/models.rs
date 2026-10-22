@@ -3,8 +3,9 @@
 // Diesel 2.x：派生宏（Queryable/Insertable）只从 crate 根重导出（默认 feature
 // `with-deprecated`），prelude 仅含 trait 与 DSL；故显式导入。
 use super::schema::{
-    artifacts, curve_data, messages, sessions, simulation_tasks, storage_scope_artifacts,
-    storage_scopes, task_files, task_results,
+    artifacts, curve_data, dataframe_bindings, messages, model_versions, sessions,
+    simulation_tasks, storage_scope_artifacts, storage_scopes, task_files, task_results,
+    version_artifacts, workspaces,
 };
 #[allow(deprecated)]
 use diesel::{Insertable, Queryable};
@@ -95,6 +96,98 @@ pub struct ArtifactGcFailure {
     pub error: String,
     pub attempts: i64,
     pub updated_at_ms: i64,
+}
+
+#[derive(Queryable, Debug, Clone)]
+pub struct Workspace {
+    pub id: i32,
+    pub session_id: i32,
+    pub active_version_id: Option<i32>,
+    pub draft_version_id: Option<i32>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = workspaces)]
+pub struct NewWorkspace {
+    pub session_id: i32,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Queryable, Debug, Clone)]
+pub struct ModelVersion {
+    pub id: i32,
+    pub workspace_id: i32,
+    pub parent_version_id: Option<i32>,
+    pub status: String,
+    pub source_kind: String,
+    pub origin_kind: String,
+    pub manifest_json: String,
+    pub patch_json: Option<String>,
+    pub content_hash: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = model_versions)]
+pub struct NewModelVersion {
+    pub workspace_id: i32,
+    pub parent_version_id: Option<i32>,
+    pub status: String,
+    pub source_kind: String,
+    pub origin_kind: String,
+    pub manifest_json: String,
+    pub patch_json: Option<String>,
+    pub content_hash: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Queryable, Debug, Clone)]
+pub struct VersionArtifact {
+    pub id: i32,
+    pub version_id: i32,
+    pub artifact_id: i32,
+    pub role: String,
+    pub relative_path: Option<String>,
+    pub display_name: String,
+    pub source_artifact_id: Option<i32>,
+    pub sheet_name: Option<String>,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = version_artifacts)]
+pub struct NewVersionArtifact {
+    pub version_id: i32,
+    pub artifact_id: i32,
+    pub role: String,
+    pub relative_path: Option<String>,
+    pub display_name: String,
+    pub source_artifact_id: Option<i32>,
+    pub sheet_name: Option<String>,
+}
+
+#[derive(Queryable, Debug, Clone)]
+pub struct DataframeBinding {
+    pub id: i32,
+    pub version_artifact_id: i32,
+    pub table_kind: Option<String>,
+    pub confidence: Option<f64>,
+    pub resolution: String,
+    pub columns_json: String,
+    pub evidence_json: String,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = dataframe_bindings)]
+pub struct NewDataframeBinding {
+    pub version_artifact_id: i32,
+    pub table_kind: Option<String>,
+    pub confidence: Option<f64>,
+    pub resolution: String,
+    pub columns_json: String,
+    pub evidence_json: String,
 }
 
 // ---- simulation_tasks ----

@@ -3,12 +3,16 @@ mod message;
 mod session;
 mod storage_scope;
 mod task;
+mod workspace;
 
 pub use artifact::{ArtifactDraft, ArtifactRepo};
 pub use message::MessageRepo;
 pub use session::SessionRepo;
 pub use storage_scope::{StorageLimits, StorageScopeRepo, StorageUsage};
 pub use task::TaskRepo;
+pub use workspace::{
+    BindingDraft, PreparedVersion, VersionArtifactDraft, WorkspaceRecord, WorkspaceRepo,
+};
 
 #[derive(Debug)]
 pub enum RepoError {
@@ -18,6 +22,8 @@ pub enum RepoError {
     NotFound,
     QuotaExceeded,
     Storage(String),
+    VersionConflict,
+    InvalidState(String),
 }
 
 impl std::fmt::Display for RepoError {
@@ -29,6 +35,8 @@ impl std::fmt::Display for RepoError {
             RepoError::NotFound => write!(f, "资源不存在"),
             RepoError::QuotaExceeded => write!(f, "存储配额不足"),
             RepoError::Storage(error) => write!(f, "存储错误: {error}"),
+            RepoError::VersionConflict => write!(f, "模型版本基线已变化"),
+            RepoError::InvalidState(error) => write!(f, "状态无效: {error}"),
         }
     }
 }

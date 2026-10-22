@@ -7,6 +7,7 @@ pub mod artifacts;
 pub mod chat;
 mod events;
 pub mod scheduler;
+pub mod workspace;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,7 +18,9 @@ use crate::adapters::{SimEngine, resolve_data_dir};
 use crate::agent::LlmConfig;
 use crate::auth::{AccessScope, AuthConfig};
 use crate::db::DbPool;
-use crate::db::repositories::{ArtifactRepo, MessageRepo, SessionRepo, StorageScopeRepo, TaskRepo};
+use crate::db::repositories::{
+    ArtifactRepo, MessageRepo, SessionRepo, StorageScopeRepo, TaskRepo, WorkspaceRepo,
+};
 use crate::storage::ArtifactStore;
 
 pub use artifacts::{
@@ -32,6 +35,10 @@ pub use events::{
     ms_to_iso, now_ms,
 };
 pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
+pub use workspace::{
+    DataframeBindingDraft, SourceKind, VersionDraft, VersionInputDraft, VersionOrigin,
+    WorkspaceError, WorkspaceService, canonical_json,
+};
 
 /// 全局共享状态（axum `State`）。
 #[derive(Clone)]
@@ -41,6 +48,7 @@ pub struct AppState {
     pub message_repo: MessageRepo,
     pub task_repo: TaskRepo,
     pub artifact_service: ArtifactService,
+    pub workspace_service: WorkspaceService,
     pub events: EventBus,
     pub engine: Arc<dyn SimEngine>,
     pub llm: LlmConfig,
@@ -113,10 +121,16 @@ impl AppState {
         let session_repo = SessionRepo::new(pool.clone());
         let message_repo = MessageRepo::new(pool.clone());
         let task_repo = TaskRepo::new(pool.clone());
+        let events = EventBus::new();
         let artifact_service = ArtifactService::new(
             ArtifactStore::new(data_dir.clone()).expect("DATA_DIR 已在配置阶段验证为可写"),
             ArtifactRepo::new(pool.clone()),
             StorageScopeRepo::new(pool.clone(), storage_limits),
+        );
+        let workspace_service = WorkspaceService::new(
+            WorkspaceRepo::new(pool.clone()),
+            message_repo.clone(),
+            events.clone(),
         );
         Self {
             pool,
@@ -124,7 +138,8 @@ impl AppState {
             message_repo,
             task_repo,
             artifact_service,
-            events: EventBus::new(),
+            workspace_service,
+            events,
             engine,
             llm,
             auth,

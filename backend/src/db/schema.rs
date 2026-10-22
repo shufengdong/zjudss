@@ -62,6 +62,57 @@ diesel::table! {
 }
 
 diesel::table! {
+    workspaces (id) {
+        id -> Integer,
+        session_id -> Integer,
+        active_version_id -> Nullable<Integer>,
+        draft_version_id -> Nullable<Integer>,
+        created_at_ms -> BigInt,
+        updated_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    model_versions (id) {
+        id -> Integer,
+        workspace_id -> Integer,
+        parent_version_id -> Nullable<Integer>,
+        status -> Text,
+        source_kind -> Text,
+        origin_kind -> Text,
+        manifest_json -> Text,
+        patch_json -> Nullable<Text>,
+        content_hash -> Text,
+        created_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    version_artifacts (id) {
+        id -> Integer,
+        version_id -> Integer,
+        artifact_id -> Integer,
+        role -> Text,
+        relative_path -> Nullable<Text>,
+        display_name -> Text,
+        source_artifact_id -> Nullable<Integer>,
+        sheet_name -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    dataframe_bindings (id) {
+        id -> Integer,
+        version_artifact_id -> Integer,
+        table_kind -> Nullable<Text>,
+        confidence -> Nullable<Double>,
+        resolution -> Text,
+        columns_json -> Text,
+        evidence_json -> Text,
+    }
+}
+
+diesel::table! {
     simulation_tasks (id) {
         id -> Integer,
         session_id -> Integer,
@@ -134,6 +185,10 @@ diesel::table! {
 }
 
 diesel::joinable!(sessions -> storage_scopes (storage_scope_id));
+diesel::joinable!(workspaces -> sessions (session_id));
+diesel::joinable!(model_versions -> workspaces (workspace_id));
+diesel::joinable!(version_artifacts -> model_versions (version_id));
+diesel::joinable!(dataframe_bindings -> version_artifacts (version_artifact_id));
 diesel::joinable!(storage_scope_artifacts -> artifacts (artifact_id));
 diesel::joinable!(storage_scope_artifacts -> storage_scopes (storage_scope_id));
 
@@ -143,6 +198,10 @@ diesel::allow_tables_to_appear_in_same_query!(
     artifacts,
     storage_scope_artifacts,
     artifact_gc_failures,
+    workspaces,
+    model_versions,
+    version_artifacts,
+    dataframe_bindings,
     simulation_tasks,
     messages,
     task_files,

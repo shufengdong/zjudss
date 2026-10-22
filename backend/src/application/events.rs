@@ -279,6 +279,14 @@ struct AttachmentPayload {
     upload_status: UploadStatus,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelStatusPayload {
+    workspace_id: String,
+    scope: ModelScope,
+    snapshot: Option<ModelVersionSnapshot>,
+}
+
 impl AppEvent {
     /// 从落库消息构造事件。role/kind 决定事件类型，结构化字段从 `payload_json` 回放；
     /// 无法解析时退回 assistant 消息，保证回放永不失败。
@@ -337,6 +345,16 @@ impl AppEvent {
                     client_file_id: p.client_file_id,
                     ingestion_id: p.ingestion_id,
                     upload_status: p.upload_status,
+                },
+                None => fallback_assistant(id, timestamp, &msg.content),
+            },
+            ("tool", "model-status") => match parse_payload::<ModelStatusPayload>(msg) {
+                Some(p) => AppEvent::ModelStatus {
+                    id,
+                    timestamp,
+                    workspace_id: p.workspace_id,
+                    scope: p.scope,
+                    snapshot: p.snapshot,
                 },
                 None => fallback_assistant(id, timestamp, &msg.content),
             },
@@ -536,6 +554,27 @@ impl EventWriter {
             "tool",
             "attachment",
             content,
+            Some(serde_json::to_value(payload).unwrap_or_default()),
+            None,
+        )
+        .await
+    }
+
+    pub async fn model_status(
+        &self,
+        workspace_id: i32,
+        scope: ModelScope,
+        snapshot: Option<ModelVersionSnapshot>,
+    ) -> Result<AppEvent, RepoError> {
+        let payload = ModelStatusPayload {
+            workspace_id: workspace_id.to_string(),
+            scope,
+            snapshot,
+        };
+        self.emit(
+            "tool",
+            "model-status",
+            "模型工作区已更新".to_string(),
             Some(serde_json::to_value(payload).unwrap_or_default()),
             None,
         )
