@@ -3,6 +3,7 @@
 //! `AppState` 是 axum 的共享状态（连接池、仓储、事件总线、引擎适配器、限流信号量）；
 //! `EventBus` 按 session 广播事件供 SSE 订阅；`ChatService` 编排一次 agent 对话。
 
+pub mod artifacts;
 pub mod chat;
 mod events;
 pub mod scheduler;
@@ -16,8 +17,13 @@ use crate::adapters::{SimEngine, resolve_data_dir};
 use crate::agent::LlmConfig;
 use crate::auth::{AccessScope, AuthConfig};
 use crate::db::DbPool;
-use crate::db::repositories::{MessageRepo, SessionRepo, TaskRepo};
+use crate::db::repositories::{ArtifactRepo, MessageRepo, SessionRepo, StorageScopeRepo, TaskRepo};
+use crate::storage::ArtifactStore;
 
+pub use artifacts::{
+    ArtifactError, ArtifactMetadata, ArtifactRef, ArtifactService, GcReport, StorageLimits,
+    StorageUsage,
+};
 pub use chat::ChatService;
 pub use events::{
     AppEvent, AttachmentFile, DatasetViewRef, EventBus, EventWriter, ModelAmbiguity, ModelScope,
@@ -34,6 +40,7 @@ pub struct AppState {
     pub session_repo: SessionRepo,
     pub message_repo: MessageRepo,
     pub task_repo: TaskRepo,
+    pub artifact_service: ArtifactService,
     pub events: EventBus,
     pub engine: Arc<dyn SimEngine>,
     pub llm: LlmConfig,
@@ -83,14 +90,40 @@ impl AppState {
         auth: AuthConfig,
         scheduler: RunScheduler,
     ) -> Self {
+        Self::new_with_storage_limits(
+            pool,
+            engine,
+            llm,
+            data_dir,
+            auth,
+            scheduler,
+            StorageLimits::default(),
+        )
+    }
+
+    pub fn new_with_storage_limits(
+        pool: DbPool,
+        engine: Arc<dyn SimEngine>,
+        llm: LlmConfig,
+        data_dir: PathBuf,
+        auth: AuthConfig,
+        scheduler: RunScheduler,
+        storage_limits: StorageLimits,
+    ) -> Self {
         let session_repo = SessionRepo::new(pool.clone());
         let message_repo = MessageRepo::new(pool.clone());
         let task_repo = TaskRepo::new(pool.clone());
+        let artifact_service = ArtifactService::new(
+            ArtifactStore::new(data_dir.clone()).expect("DATA_DIR 已在配置阶段验证为可写"),
+            ArtifactRepo::new(pool.clone()),
+            StorageScopeRepo::new(pool.clone(), storage_limits),
+        );
         Self {
             pool,
             session_repo,
             message_repo,
             task_repo,
+            artifact_service,
             events: EventBus::new(),
             engine,
             llm,

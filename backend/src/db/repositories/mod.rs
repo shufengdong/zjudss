@@ -1,9 +1,13 @@
+mod artifact;
 mod message;
 mod session;
+mod storage_scope;
 mod task;
 
+pub use artifact::{ArtifactDraft, ArtifactRepo};
 pub use message::MessageRepo;
 pub use session::SessionRepo;
+pub use storage_scope::{StorageLimits, StorageScopeRepo, StorageUsage};
 pub use task::TaskRepo;
 
 #[derive(Debug)]
@@ -12,6 +16,8 @@ pub enum RepoError {
     Query(diesel::result::Error),
     Join(tokio::task::JoinError),
     NotFound,
+    QuotaExceeded,
+    Storage(String),
 }
 
 impl std::fmt::Display for RepoError {
@@ -21,10 +27,18 @@ impl std::fmt::Display for RepoError {
             RepoError::Query(error) => write!(f, "查询错误: {error}"),
             RepoError::Join(error) => write!(f, "阻塞任务错误: {error}"),
             RepoError::NotFound => write!(f, "资源不存在"),
+            RepoError::QuotaExceeded => write!(f, "存储配额不足"),
+            RepoError::Storage(error) => write!(f, "存储错误: {error}"),
         }
     }
 }
 
 impl std::error::Error for RepoError {}
+
+impl From<diesel::result::Error> for RepoError {
+    fn from(error: diesel::result::Error) -> Self {
+        Self::Query(error)
+    }
+}
 
 pub type RepoResult<T> = Result<T, RepoError>;

@@ -22,6 +22,42 @@ diesel::table! {
         kind -> Text,
         scope_key -> Text,
         created_at_ms -> BigInt,
+        artifact_limit -> BigInt,
+        byte_limit -> BigInt,
+        warning_ratio -> Double,
+        used_artifacts -> BigInt,
+        used_bytes -> BigInt,
+        updated_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    artifacts (id) {
+        id -> Integer,
+        sha256 -> Text,
+        size_bytes -> BigInt,
+        storage_path -> Text,
+        format -> Text,
+        media_type -> Nullable<Text>,
+        created_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    storage_scope_artifacts (storage_scope_id, artifact_id) {
+        storage_scope_id -> Integer,
+        artifact_id -> Integer,
+        ref_count -> BigInt,
+        created_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    artifact_gc_failures (relative_path) {
+        relative_path -> Text,
+        error -> Text,
+        attempts -> BigInt,
+        updated_at_ms -> BigInt,
     }
 }
 
@@ -98,10 +134,15 @@ diesel::table! {
 }
 
 diesel::joinable!(sessions -> storage_scopes (storage_scope_id));
+diesel::joinable!(storage_scope_artifacts -> artifacts (artifact_id));
+diesel::joinable!(storage_scope_artifacts -> storage_scopes (storage_scope_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     sessions,
     storage_scopes,
+    artifacts,
+    storage_scope_artifacts,
+    artifact_gc_failures,
     simulation_tasks,
     messages,
     task_files,

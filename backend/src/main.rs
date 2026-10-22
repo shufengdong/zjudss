@@ -1,5 +1,5 @@
 use backend::agent::LlmConfig;
-use backend::application::{AppState, RunScheduler};
+use backend::application::{AppState, RunScheduler, StorageLimits};
 use backend::auth::AuthConfig;
 use backend::config::RuntimeConfig;
 use backend::{adapters, build_router, db};
@@ -43,13 +43,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         runtime.agent_max_owner_runs,
         runtime.agent_queue_capacity,
     );
-    let state = AppState::new_with_data_dir_auth_and_scheduler(
+    let storage_limits = StorageLimits {
+        artifact_limit: i64::try_from(runtime.owner_artifact_limit)?,
+        byte_limit: i64::try_from(runtime.owner_storage_limit_bytes)?,
+        warning_ratio: runtime.storage_warning_ratio,
+    };
+    let state = AppState::new_with_storage_limits(
         pool,
         engine,
         llm,
         runtime.data_dir,
         auth,
         scheduler,
+        storage_limits,
     );
 
     let addr = "127.0.0.1:8080";

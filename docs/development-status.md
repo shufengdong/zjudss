@@ -25,8 +25,8 @@
 |---|---|---|
 | 前端静态骨架 | ✅ v2 协议已接入 | 8 类消息、按 operation/callId 归并、可恢复 SSE；工作区和通用结果组件待后续任务 |
 | 前端接入真实后端 | ✅ 阶段 1–5 完成 | `api/client.ts`、`api/events.ts`、`App.tsx` 已接线，含重命名/删除/附件/曲线/报告（见 §5） |
-| 后端分层架构 | ✅ 第 1–4 步完成 | adapters/application/tools/agent/api 已落地，SSE 流式可跑通 |
-| 后端数据库 schema | 🚧 v2 实施中 | 已增加 storage scope 和全链路归属过滤；artifact/workspace/dataset 等表按后续任务增加 |
+| 后端分层架构 | ✅ v2 Tasks 1–5 完成 | 身份、调度、SSE 和 artifact 服务已落地；工作区与摄取继续实施 |
+| 后端数据库 schema | 🚧 v2 实施中 | 已增加 storage scope、artifact、计费引用和全链路归属过滤；workspace/dataset 等表按后续任务增加 |
 | 后端真实引擎接入 | ✅ 第 4 步完成 | `adapters::ProcessEngine` 起 `tensoreval` 子进程（`TENSOREVAL_BIN` 选择，未设置回退 stub）+ 任务状态机 + 限流信号量 |
 | 后端曲线/报告端点 | ✅ 第 5 步完成 | `GET /api/tasks/{id}/curves`、`/report` 已实现；metrics 真实值（尽力解析） |
 | 会话状态/重命名/删除/附件 | ✅ 完成 | `PATCH/DELETE /api/sessions/{id}`、`POST .../attachments`，状态按最新任务推导 |
@@ -38,14 +38,14 @@
 | 参数修改、任务历史与仿真对比 | 🎯 已完成设计 | 结构化补丁、版本绑定、稳定键对比；尚未实现 |
 | 通用结果 DataFrame 分析 | 🎯 已完成设计 | v2 用 `--result-dir --output-format parquet` 保存原生 Parquet；自然语言生成 RSS 查询脚本并持久化派生表、schema 与血缘；尚未实现 |
 | Agent 调度与容量保护 | ✅ 完成 | 全局 8、owner 2、同 session 1、等待队列 32；满载返回 `429 agent_queue_full` 且不写消息 |
-| 历史文件配额 | 🎯 已完成设计 | 默认每实例/owner 20,000 个唯一 artifact、20 GiB，80% 告警，不按时间自动删除；尚未实现 |
+| 历史文件配额 | ✅ 基础链路完成 | 内容寻址 blob、scope 唯一计数/逻辑字节、并发原子硬限制、80% 告警接口和无引用 GC 已实现；领域资源在后续任务接入引用增减 |
 | 多用户隔离 | ✅ 基础边界完成 | instance/trusted_proxy、`/api/me`、storage/access scope 和 Session/Message/Task/SSE 404 隔离已落地 |
 | Agent prompt 与领域技能 | 🎯 已完成设计 | 当前只有一句 system prompt；v2 启动时预索引 TENSOREVAL_CWD 文档，再以版本化 system、按需技能、机器 catalog 和工具合同分层使用，尚未实现 |
 | 内置案例库 | 🎯 已完成设计 | 当前目录已确认 16 个根 RSS、37 个已发布 rssbundle；v2 支持自然语言搜索、导入、派生修改和仿真，尚未实现 |
-| v2 详细实施方案 | 🚧 执行中 | Tasks 1–4 已完成；M0 平台基础完成，继续实施 artifact、工作区和摄取 |
+| v2 详细实施方案 | 🚧 执行中 | Tasks 1–5 已完成；M0 平台基础完成，正在实施 M1 工作区和摄取 |
 
 > v2 实施以 `docs/superpowers/plans/2026-10-22-v2-simulation-workspace.md` 的 Task 编号为准；当前
-> 已完成 Task 1–4。后文保留的 v1 细节是迁移背景，若与本节冲突，以本节和 v2 契约为准。
+> 已完成 Task 1–5。后文保留的 v1 细节是迁移背景，若与本节冲突，以本节和 v2 契约为准。
 > 上表 `🎯` 表示已评审目标，不能理解为代码已具备该能力；目标实施顺序见
 > `docs/model-workspace-design.md` §11。
 

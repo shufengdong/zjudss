@@ -3,6 +3,7 @@
 mod auth;
 mod events;
 mod sessions;
+mod storage;
 mod tasks;
 
 use axum::Router;
@@ -14,6 +15,7 @@ use axum::routing::{get, patch, post};
 use crate::adapters::AdapterError;
 use crate::application::AppError;
 use crate::application::AppState;
+use crate::application::ArtifactError;
 use crate::db::repositories::RepoError;
 
 /// 统一 API 错误：把仓储/适配器错误映射为 HTTP 响应。
@@ -93,7 +95,28 @@ impl From<RepoError> for ApiError {
     fn from(err: RepoError) -> Self {
         match err {
             RepoError::NotFound => ApiError::not_found("资源不存在"),
+            RepoError::QuotaExceeded => Self {
+                status: StatusCode::PAYLOAD_TOO_LARGE,
+                message: "存储配额不足".to_string(),
+                code: "storage_quota_exceeded",
+                details: None,
+            },
             other => ApiError::internal(other.to_string()),
+        }
+    }
+}
+
+impl From<ArtifactError> for ApiError {
+    fn from(error: ArtifactError) -> Self {
+        match error {
+            ArtifactError::NotFound => Self::not_found("资源不存在"),
+            ArtifactError::QuotaExceeded => Self {
+                status: StatusCode::PAYLOAD_TOO_LARGE,
+                message: "存储配额不足".to_string(),
+                code: "storage_quota_exceeded",
+                details: None,
+            },
+            other => Self::internal(other.to_string()),
         }
     }
 }
@@ -112,6 +135,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/health", get(health))
         .route("/api/me", get(auth::me))
+        .route("/api/storage-usage", get(storage::usage))
         .route("/api/sessions", get(sessions::list).post(sessions::create))
         .route(
             "/api/sessions/{id}",

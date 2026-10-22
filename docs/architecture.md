@@ -24,8 +24,8 @@
 ## 0.5 会话归属：v2 已实现的身份边界
 
 v2 不在应用内维护账号密码，而是使用部署实例身份或可信认证代理提供的主体。身份 extractor、
-`storage_scopes`、带 scope 的 repository 和 `/api/me` 已实现；工作区、artifact 和历史等后续资源沿用
-同一边界。
+`storage_scopes`、带 scope 的 repository、`/api/me`、内容寻址 artifact 和只读配额接口已实现；
+工作区和历史等后续资源沿用同一边界。
 
 - **并发不等于多用户隔离**：`session` 和事件流可以并发运行，但 v1 没有身份与归属过滤；不同浏览器
   会看到同一实例的全部历史会话，因此只适合可信单用户/单租户部署。
@@ -36,8 +36,8 @@ v2 不在应用内维护账号密码，而是使用部署实例身份或可信�
 - **v2 身份模式**：`AUTH_MODE=instance` 仅供可信私有单租户；公开多人部署必须使用
   `AUTH_MODE=trusted_proxy`。认证代理完成登录、移除外部同名头并注入 subject/tenant 与代理 token；
   Axum extractor 把它解析成不可变 access scope，应用本身不保存密码。
-- **repository 强制过滤**：已实现的 Session/Message/Task 查询都接收非可选 scope；后续
-  Artifact/History repository 必须遵守相同规则；
+- **repository 强制过滤**：已实现的 Session/Message/Task 查询都接收非可选 access scope；Artifact
+  通过服务端解析的 storage scope 计费；后续 History repository 必须遵守相同规则；
   不能提供“未传 scope 就返回全量”的重载。跨 scope 的已知 ID 与不存在 ID 都返回 404。
 - **当前代理 scope 规则**：无 tenant 时使用 `owner:<subject>`；有 tenant 时使用
   `tenant:<tenant>:owner:<subject>`。同 tenant 下的不同 subject 仍相互隔离；scope 只能由请求头

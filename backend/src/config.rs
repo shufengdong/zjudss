@@ -29,6 +29,9 @@ pub struct RuntimeConfig {
     pub archive_max_entries: usize,
     pub archive_max_expanded_bytes: u64,
     pub archive_max_compression_ratio: u64,
+    pub owner_artifact_limit: u64,
+    pub owner_storage_limit_bytes: u64,
+    pub storage_warning_ratio: f64,
 }
 
 #[derive(Debug)]
@@ -154,6 +157,13 @@ impl RuntimeConfig {
                 "ARCHIVE_MAX_COMPRESSION_RATIO",
                 100,
             )?,
+            owner_artifact_limit: positive_u64(&values, "OWNER_ARTIFACT_LIMIT", 20_000)?,
+            owner_storage_limit_bytes: positive_u64(
+                &values,
+                "OWNER_STORAGE_LIMIT_BYTES",
+                20 * 1024 * MIB,
+            )?,
+            storage_warning_ratio: ratio(&values, "STORAGE_WARNING_RATIO", 0.8)?,
         })
     }
 }
@@ -212,6 +222,29 @@ fn positive_u64(
 
 fn invalid_value(name: &'static str) -> ConfigError {
     ConfigError::new("config_invalid_value", format!("{name} 必须是大于零的整数"))
+}
+
+fn ratio(
+    values: &BTreeMap<String, String>,
+    name: &'static str,
+    default: f64,
+) -> Result<f64, ConfigError> {
+    let value = match values.get(name) {
+        Some(raw) => raw.parse::<f64>().map_err(|_| {
+            ConfigError::new(
+                "config_invalid_value",
+                format!("{name} 必须是 0 到 1 之间的数字"),
+            )
+        })?,
+        None => default,
+    };
+    if !(0.0 < value && value <= 1.0) {
+        return Err(ConfigError::new(
+            "config_invalid_value",
+            format!("{name} 必须是 0 到 1 之间的数字"),
+        ));
+    }
+    Ok(value)
 }
 
 fn parse_bool(value: &str) -> Result<bool, ConfigError> {

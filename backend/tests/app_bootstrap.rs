@@ -32,6 +32,9 @@ fn config_defaults_are_safe() {
     assert_eq!(config.archive_max_entries, 1_000);
     assert_eq!(config.archive_max_expanded_bytes, 2 * 1024 * 1024 * 1024);
     assert_eq!(config.archive_max_compression_ratio, 100);
+    assert_eq!(config.owner_artifact_limit, 20_000);
+    assert_eq!(config.owner_storage_limit_bytes, 20 * 1024 * 1024 * 1024);
+    assert_eq!(config.storage_warning_ratio, 0.8);
 }
 
 #[test]

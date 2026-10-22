@@ -620,14 +620,14 @@ active 指针。
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `id` | INTEGER | PK AUTOINCREMENT | |
-| `sha256` | TEXT | NOT NULL | 内容哈希；与大小组成去重检查 |
+| `sha256` | TEXT | NOT NULL UNIQUE | 内容身份；提交时仍校验已存在行的大小一致 |
 | `size_bytes` | INTEGER | NOT NULL | |
 | `storage_path` | TEXT | NOT NULL | 相对 `DATA_DIR` 的只读 blob 路径 |
 | `media_type` | TEXT | NULL | 检测值，不信任浏览器声明 |
 | `format` | TEXT | NOT NULL | `rss/dss/zip/csv/xls/xlsx/parquet/json/md/...`；rssbundle 是目录级 source kind，不是单文件格式 |
 | `created_at_ms` | INTEGER | NOT NULL | |
 
-索引：`UNIQUE(sha256, size_bytes)`。相同内容复用 blob；用户文件名不放在此表，因为同一内容可有
+相同内容复用 blob；用户文件名不放在此表，因为同一内容可有
 不同展示名。artifact 同时承载用户上传和系统生成的不可变文件；来源语义由
 `ingestion_artifacts/version_artifacts/simulation_tasks/result_datasets/result_analysis_runs` 等引用表达，不在 blob 行上
 硬编码“输入/输出”。blob 去重不等于逻辑输入去重；不同 clientFileId、相对路径或角色可以引用同一
@@ -940,8 +940,8 @@ owner 配额。案例真正导入后产生的入口、依赖和后续派生文�
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `id` | INTEGER | PK AUTOINCREMENT | 内部计费主体 ID |
-| `scope_kind` | TEXT | NOT NULL | `instance/owner/tenant` |
-| `subject_key` | TEXT | NULL | 身份系统中的不可变主体键；instance scope 为 NULL |
+| `kind` | TEXT | NOT NULL | `instance/owner/tenant` |
+| `scope_key` | TEXT | NOT NULL | 身份系统中的不可变主体键；instance 使用固定 `instance` |
 | `artifact_limit` | INTEGER | NOT NULL DEFAULT 20000 | 唯一 artifact 硬上限 |
 | `byte_limit` | INTEGER | NOT NULL DEFAULT 21474836480 | 20 GiB 逻辑字节硬上限 |
 | `warning_ratio` | REAL | NOT NULL DEFAULT 0.8 | 只告警、不阻断 |
@@ -949,7 +949,7 @@ owner 配额。案例真正导入后产生的入口、依赖和后续派生文�
 | `used_bytes` | INTEGER | NOT NULL DEFAULT 0 | 物化逻辑字节数 |
 | `updated_at_ms` | INTEGER | NOT NULL | |
 
-约束：`UNIQUE(scope_kind, subject_key)`；NULL 特例用部分唯一索引保证只有一个 instance scope。
+约束：`UNIQUE(kind, scope_key)`；固定键保证只有一个 instance scope。
 `sessions.storage_scope_id` 是非空 FK→storage_scopes(RESTRICT)。公开多用户部署同时使用独立 access
 scope 做鉴权过滤；计费 scope 不能代替授权关系。
 
