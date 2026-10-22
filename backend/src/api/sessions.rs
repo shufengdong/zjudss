@@ -1,12 +1,13 @@
 //! 会话与消息 handler：CRUD + 触发一次对话（后台 agent run，经 SSE 推送）+ 附件上传。
 
+use axum::Json;
 use axum::extract::{Multipart, Path, State};
 use axum::http::StatusCode;
-use axum::Json;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::application::{AppEvent, AppState, AttachmentFile, EventWriter, ms_to_iso, now_ms};
+use crate::auth::CurrentPrincipal;
 use crate::db::models::{Message, NewMessage};
 
 use super::ApiError;
@@ -23,9 +24,12 @@ fn derive_status(latest: Option<&str>) -> &'static str {
     }
 }
 
-pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    let sessions = state.session_repo.list().await?;
-    let statuses = state.task_repo.latest_statuses().await?;
+pub async fn list(
+    State(state): State<AppState>,
+    CurrentPrincipal(principal): CurrentPrincipal,
+) -> Result<Json<Value>, ApiError> {
+    let sessions = state.session_repo.list(&principal.access).await?;
+    let statuses = state.task_repo.latest_statuses(&principal.access).await?;
     let items: Vec<Value> = sessions
         .into_iter()
         .map(|s| {
@@ -49,10 +53,14 @@ pub struct CreateSessionBody {
 
 pub async fn create(
     State(state): State<AppState>,
+    CurrentPrincipal(principal): CurrentPrincipal,
     Json(body): Json<CreateSessionBody>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let now = now_ms();
-    let session = state.session_repo.create(&body.title, now).await?;
+    let session = state
+        .session_repo
+        .create(&principal.access, &body.title, now)
+        .await?;
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -73,16 +81,17 @@ pub struct RenameSessionBody {
 /// `PATCH /api/sessions/{id}` → 200 改名后的 Session。
 pub async fn rename(
     State(state): State<AppState>,
+    CurrentPrincipal(principal): CurrentPrincipal,
     Path(session_id): Path<i32>,
     Json(body): Json<RenameSessionBody>,
 ) -> Result<Json<Value>, ApiError> {
     let session = state
         .session_repo
-        .rename(session_id, &body.title, now_ms())
+        .rename(&principal.access, session_id, &body.title, now_ms())
         .await?;
     let latest = state
         .task_repo
-        .latest_status_for_session(session_id)
+        .latest_status_for_session(&principal.access, session_id)
         .await?;
     let status = derive_status(latest.as_deref());
     Ok(Json(json!({
@@ -96,9 +105,13 @@ pub async fn rename(
 /// `DELETE /api/sessions/{id}` → 204；未知会话 → 404。同时注销事件通道。
 pub async fn delete(
     State(state): State<AppState>,
+    CurrentPrincipal(principal): CurrentPrincipal,
     Path(session_id): Path<i32>,
 ) -> Result<StatusCode, ApiError> {
-    state.session_repo.delete(session_id).await?;
+    state
+        .session_repo
+        .delete(&principal.access, session_id)
+        .await?;
     state.events.unregister(session_id);
     Ok(StatusCode::NO_CONTENT)
 }
@@ -135,13 +148,16 @@ fn file_type(content_type: Option<&str>, file_name: &str) -> String {
 /// `POST /api/sessions/{id}/attachments`（multipart 字段 `file`）→ 201 attachment 事件。
 pub async fn upload_attachment(
     State(state): State<AppState>,
+    CurrentPrincipal(principal): CurrentPrincipal,
     Path(session_id): Path<i32>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     // 会话必须存在，否则落盘到孤儿目录。
-    state.session_repo.find(session_id).await?.ok_or_else(|| {
-        ApiError::not_found("会话不存在")
-    })?;
+    state
+        .session_repo
+        .find(&principal.access, session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("会话不存在"))?;
 
     // 取第一个 `file` 字段；在循环内转成 owned 值，避免字段借用逃逸到循环外。
     let mut extracted: Option<(String, Option<String>, Vec<u8>)> = None;
@@ -189,7 +205,12 @@ pub async fn upload_attachment(
         file_size: size,
         file_type: ftype,
     };
-    let writer = EventWriter::new(session_id, state.message_repo.clone(), state.events.clone());
+    let writer = EventWriter::new(
+        principal.access,
+        session_id,
+        state.message_repo.clone(),
+        state.events.clone(),
+    );
     let event = writer.attachment(file).await?;
 
     Ok((StatusCode::CREATED, Json(json!(event))))
@@ -199,9 +220,13 @@ pub async fn upload_attachment(
 
 pub async fn messages(
     State(state): State<AppState>,
+    CurrentPrincipal(principal): CurrentPrincipal,
     Path(session_id): Path<i32>,
 ) -> Result<Json<Value>, ApiError> {
-    let msgs = state.message_repo.list_by_session(session_id).await?;
+    let msgs = state
+        .message_repo
+        .list_by_session(&principal.access, session_id)
+        .await?;
     let items: Vec<Value> = msgs.iter().map(json_from_message).collect();
     Ok(Json(json!({ "messages": items })))
 }
@@ -213,6 +238,7 @@ pub struct PostMessageBody {
 
 pub async fn post_message(
     State(state): State<AppState>,
+    CurrentPrincipal(principal): CurrentPrincipal,
     Path(session_id): Path<i32>,
     Json(body): Json<PostMessageBody>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
@@ -221,15 +247,18 @@ pub async fn post_message(
     // 1. 落用户消息。
     let user_msg = state
         .message_repo
-        .create(NewMessage {
-            session_id,
-            task_id: None,
-            role: "user".to_string(),
-            kind: "text".to_string(),
-            content: body.message.clone(),
-            payload_json: None,
-            created_at_ms: now,
-        })
+        .create(
+            &principal.access,
+            NewMessage {
+                session_id,
+                task_id: None,
+                role: "user".to_string(),
+                kind: "text".to_string(),
+                content: body.message.clone(),
+                payload_json: None,
+                created_at_ms: now,
+            },
+        )
         .await?;
 
     // 2. 发布 user 事件（前端已本地显示，但事件流保持一致）。
@@ -238,10 +267,13 @@ pub async fn post_message(
         .publish(session_id, AppEvent::from_message(&user_msg));
 
     // 3. 更新会话活跃时间。
-    state.session_repo.touch(session_id, now).await?;
+    state
+        .session_repo
+        .touch(&principal.access, session_id, now)
+        .await?;
 
     // 4. 后台 agent run：真正的流式驱动（第 3 步）。
-    let chat = state.chat();
+    let chat = state.chat(principal.access);
     let prompt_id = user_msg.id;
     let prompt = body.message;
     tokio::spawn(async move {

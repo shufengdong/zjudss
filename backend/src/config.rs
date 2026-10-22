@@ -19,6 +19,8 @@ pub struct RuntimeConfig {
     pub data_dir: PathBuf,
     pub tensoreval_cwd: PathBuf,
     pub auth_mode: AuthMode,
+    pub auth_proxy_token: Option<String>,
+    pub public_deployment: bool,
     pub agent_max_concurrent_runs: usize,
     pub agent_max_owner_runs: usize,
     pub agent_queue_capacity: usize,
@@ -108,12 +110,30 @@ impl RuntimeConfig {
                 ));
             }
         };
+        let public_deployment = parse_bool(get("PUBLIC_DEPLOYMENT").unwrap_or("false"))?;
+        if public_deployment && auth_mode == AuthMode::Instance {
+            return Err(ConfigError::new(
+                "config_public_auth_required",
+                "PUBLIC_DEPLOYMENT=true 时必须使用 trusted_proxy",
+            ));
+        }
+        let auth_proxy_token = get("AUTH_PROXY_TOKEN").map(str::to_string);
+        if auth_mode == AuthMode::TrustedProxy
+            && auth_proxy_token.as_deref().is_none_or(str::is_empty)
+        {
+            return Err(ConfigError::new(
+                "config_auth_proxy_token_missing",
+                "trusted_proxy 模式必须配置 AUTH_PROXY_TOKEN",
+            ));
+        }
 
         Ok(Self {
             database_url,
             data_dir,
             tensoreval_cwd,
             auth_mode,
+            auth_proxy_token,
+            public_deployment,
             agent_max_concurrent_runs: positive_usize(&values, "AGENT_MAX_CONCURRENT_RUNS", 8)?,
             agent_max_owner_runs: positive_usize(&values, "AGENT_MAX_OWNER_RUNS", 2)?,
             agent_queue_capacity: positive_usize(&values, "AGENT_QUEUE_CAPACITY", 32)?,
@@ -192,4 +212,15 @@ fn positive_u64(
 
 fn invalid_value(name: &'static str) -> ConfigError {
     ConfigError::new("config_invalid_value", format!("{name} 必须是大于零的整数"))
+}
+
+fn parse_bool(value: &str) -> Result<bool, ConfigError> {
+    match value {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => Err(ConfigError::new(
+            "config_invalid_value",
+            "布尔配置必须是 true/false 或 1/0",
+        )),
+    }
 }

@@ -61,7 +61,7 @@ fn progress_stages(sim: StageStatus, analyze: StageStatus, report: StageStatus) 
 }
 
 /// 把仓储错误翻译为适配器错误（工具 `Error` 类型是 `AdapterError`）。
-fn db_err(e: crate::db::repo::RepoError) -> AdapterError {
+fn db_err(e: crate::db::repositories::RepoError) -> AdapterError {
     AdapterError::new(
         "db_error",
         ErrorCategory::Internal,
@@ -92,7 +92,8 @@ impl Tool for RunSimulationTool {
     fn description(&self) -> String {
         "对配电网模型执行时序（QSTS）仿真，返回 task_id 与关键指标（损耗/电压越限等）。\
          时序仿真由 .rss 脚本驱动：脚本需 import_dss 导入模型，并用 ds_radial_qsts 请求 \
-         bus_phase,load_state,summary 三个结果表，适配器据此聚合指标。".to_string()
+         bus_phase,load_state,summary 三个结果表，适配器据此聚合指标。"
+            .to_string()
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -152,18 +153,21 @@ impl Tool for RunSimulationTool {
         });
         let task = services
             .task_repo
-            .create(NewSimulationTask {
-                session_id: services.session_id,
-                status: "pending".to_string(),
-                stage: Some("model_check".to_string()),
-                study_type: None,
-                params_json: params.to_string(),
-                exit_code: None,
-                error_json: None,
-                created_at_ms: now,
-                started_at_ms: None,
-                finished_at_ms: None,
-            })
+            .create(
+                &services.scope,
+                NewSimulationTask {
+                    session_id: services.session_id,
+                    status: "pending".to_string(),
+                    stage: Some("model_check".to_string()),
+                    study_type: None,
+                    params_json: params.to_string(),
+                    exit_code: None,
+                    error_json: None,
+                    created_at_ms: now,
+                    started_at_ms: None,
+                    finished_at_ms: None,
+                },
+            )
             .await
             .map_err(db_err)?;
         let task_id = task.id;
@@ -185,7 +189,7 @@ impl Tool for RunSimulationTool {
         // 4. 状态机 → running，调适配器执行。
         let _ = services
             .task_repo
-            .mark_running(task.id, "running", now_ms())
+            .mark_running(&services.scope, task.id, "running", now_ms())
             .await
             .map_err(db_err)?;
 
@@ -210,17 +214,21 @@ impl Tool for RunSimulationTool {
                 // 5a. 成功：succeeded + progress 全 done + result 事件。
                 let _ = services
                     .task_repo
-                    .mark_done(task.id, "succeeded", "collecting", Some(0), None, now_ms())
+                    .mark_done(
+                        &services.scope,
+                        task.id,
+                        "succeeded",
+                        "collecting",
+                        Some(0),
+                        None,
+                        now_ms(),
+                    )
                     .await;
                 let _ = services
                     .writer
                     .progress(
                         task_id,
-                        progress_stages(
-                            StageStatus::Done,
-                            StageStatus::Done,
-                            StageStatus::Done,
-                        ),
+                        progress_stages(StageStatus::Done, StageStatus::Done, StageStatus::Done),
                     )
                     .await;
 
@@ -248,7 +256,15 @@ impl Tool for RunSimulationTool {
                     AdapterError::new("not_converged", ErrorCategory::Solver, "时序仿真未收敛");
                 let _ = services
                     .task_repo
-                    .mark_done(task.id, "failed", "running", None, error_json(&err), now_ms())
+                    .mark_done(
+                        &services.scope,
+                        task.id,
+                        "failed",
+                        "running",
+                        None,
+                        error_json(&err),
+                        now_ms(),
+                    )
                     .await;
                 let _ = services
                     .writer
@@ -267,7 +283,15 @@ impl Tool for RunSimulationTool {
                 // 5c. 引擎失败：failed + progress 标 failed，原样返回适配器错误。
                 let _ = services
                     .task_repo
-                    .mark_done(task.id, "failed", "running", None, error_json(&err), now_ms())
+                    .mark_done(
+                        &services.scope,
+                        task.id,
+                        "failed",
+                        "running",
+                        None,
+                        error_json(&err),
+                        now_ms(),
+                    )
                     .await;
                 let _ = services
                     .writer

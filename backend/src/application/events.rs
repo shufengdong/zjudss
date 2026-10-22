@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
+use crate::auth::AccessScope;
 use crate::db::models::{Message, NewMessage};
-use crate::db::repo::{MessageRepo, RepoError};
+use crate::db::repositories::{MessageRepo, RepoError};
 
 /// 毫秒时间戳 → ISO 8601 字符串（前端 `timestamp` 字段用）。
 pub fn ms_to_iso(ms: i64) -> String {
@@ -230,14 +231,21 @@ fn normalize_tool_args(args: serde_json::Value) -> serde_json::Value {
 /// 事件并发布到 session 的 broadcast 通道，保证「DB 真相」与「SSE 实时」同 id。
 #[derive(Clone)]
 pub struct EventWriter {
+    scope: AccessScope,
     session_id: i32,
     message_repo: MessageRepo,
     events: EventBus,
 }
 
 impl EventWriter {
-    pub fn new(session_id: i32, message_repo: MessageRepo, events: EventBus) -> Self {
+    pub fn new(
+        scope: AccessScope,
+        session_id: i32,
+        message_repo: MessageRepo,
+        events: EventBus,
+    ) -> Self {
         Self {
+            scope,
             session_id,
             message_repo,
             events,
@@ -256,15 +264,18 @@ impl EventWriter {
     ) -> Result<AppEvent, RepoError> {
         let msg = self
             .message_repo
-            .create(NewMessage {
-                session_id: self.session_id,
-                task_id,
-                role: role.to_string(),
-                kind: kind.to_string(),
-                content,
-                payload_json: payload.map(|p| p.to_string()),
-                created_at_ms: now_ms(),
-            })
+            .create(
+                &self.scope,
+                NewMessage {
+                    session_id: self.session_id,
+                    task_id,
+                    role: role.to_string(),
+                    kind: kind.to_string(),
+                    content,
+                    payload_json: payload.map(|p| p.to_string()),
+                    created_at_ms: now_ms(),
+                },
+            )
             .await?;
         let event = AppEvent::from_message(&msg);
         self.events.publish(self.session_id, event.clone());
@@ -463,7 +474,10 @@ mod tests {
     /// `args` 永不为 null：null → `{}`，否则原样保留。
     #[test]
     fn tool_call_args_null_normalized() {
-        assert_eq!(normalize_tool_args(serde_json::Value::Null), serde_json::json!({}));
+        assert_eq!(
+            normalize_tool_args(serde_json::Value::Null),
+            serde_json::json!({})
+        );
         let obj = serde_json::json!({ "model_path": "/tmp/m.dss" });
         assert_eq!(normalize_tool_args(obj.clone()), obj);
     }

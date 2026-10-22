@@ -14,7 +14,8 @@ use rig::streaming::{Item, StreamEvent};
 use crate::adapters::SimEngine;
 use crate::agent::{self, LlmConfig};
 use crate::application::{AppState, EventBus, EventWriter, ToolStatus, now_ms};
-use crate::db::repo::{MessageRepo, SessionRepo, TaskRepo};
+use crate::auth::AccessScope;
+use crate::db::repositories::{MessageRepo, SessionRepo, TaskRepo};
 use crate::tools::{self, ToolServices};
 use tokio::sync::Semaphore;
 
@@ -30,10 +31,11 @@ pub struct ChatService {
     task_repo: TaskRepo,
     llm: LlmConfig,
     semaphore: Arc<Semaphore>,
+    scope: AccessScope,
 }
 
 impl ChatService {
-    pub fn new(state: &AppState) -> Self {
+    pub fn new(state: &AppState, scope: AccessScope) -> Self {
         Self {
             engine: state.engine.clone(),
             events: state.events.clone(),
@@ -42,12 +44,18 @@ impl ChatService {
             task_repo: state.task_repo.clone(),
             llm: state.llm.clone(),
             semaphore: state.semaphore.clone(),
+            scope,
         }
     }
 
     /// 触发一次对话。`prompt_id` 是刚落库的 user 消息 id，历史只取比它更早的消息。
     pub async fn run(&self, session_id: i32, prompt_id: i32, prompt: String) {
-        let writer = EventWriter::new(session_id, self.message_repo.clone(), self.events.clone());
+        let writer = EventWriter::new(
+            self.scope.clone(),
+            session_id,
+            self.message_repo.clone(),
+            self.events.clone(),
+        );
 
         // 1. 每请求构建一套有状态工具（§5 / §10 #2）。
         let services = Arc::new(ToolServices {
@@ -56,6 +64,7 @@ impl ChatService {
             session_id,
             task_repo: self.task_repo.clone(),
             semaphore: self.semaphore.clone(),
+            scope: self.scope.clone(),
         });
         let tools = tools::build_tools(services);
 
@@ -93,14 +102,17 @@ impl ChatService {
                 let _ = writer.assistant(&format!("agent 任务异常：{join}")).await;
             }
         }
-        let _ = self.session_repo.touch(session_id, now_ms()).await;
+        let _ = self
+            .session_repo
+            .touch(&self.scope, session_id, now_ms())
+            .await;
     }
 
     /// 加载本次 prompt 之前的历史 user/assistant 消息，转成 rig `Message`。
     async fn load_history(&self, session_id: i32, prompt_id: i32) -> Vec<Message> {
         let msgs = self
             .message_repo
-            .list_by_session(session_id)
+            .list_by_session(&self.scope, session_id)
             .await
             .unwrap_or_default();
         msgs.into_iter()
@@ -158,12 +170,7 @@ impl ChatService {
                         .cloned()
                         .unwrap_or(serde_json::Value::Null);
                     let _ = writer
-                        .tool_call(
-                            tool_result.name.as_str(),
-                            args,
-                            status,
-                            Some(summary),
-                        )
+                        .tool_call(tool_result.name.as_str(), args, status, Some(summary))
                         .await;
                 }
                 // FinalResponse / 其它 → 忽略（文本已在 End 段发过）。

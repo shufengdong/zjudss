@@ -4,6 +4,7 @@ pub mod adapters;
 pub mod agent;
 pub mod api;
 pub mod application;
+pub mod auth;
 pub mod config;
 pub mod db;
 pub mod tools;

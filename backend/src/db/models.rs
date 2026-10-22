@@ -2,13 +2,11 @@
 
 // Diesel 2.x：派生宏（Queryable/Insertable）只从 crate 根重导出（默认 feature
 // `with-deprecated`），prelude 仅含 trait 与 DSL；故显式导入。
+use super::schema::{
+    curve_data, messages, sessions, simulation_tasks, storage_scopes, task_files, task_results,
+};
 #[allow(deprecated)]
 use diesel::{Insertable, Queryable};
-use diesel::prelude::*;
-
-use super::schema::{
-    curve_data, messages, sessions, simulation_tasks, task_files, task_results,
-};
 
 // ---- sessions ----
 
@@ -19,6 +17,9 @@ pub struct Session {
     pub title: String,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    pub access_scope_kind: String,
+    pub access_scope_key: String,
+    pub storage_scope_id: Option<i32>,
 }
 
 #[derive(Insertable, Debug, Clone)]
@@ -27,6 +28,26 @@ pub struct NewSession {
     pub title: String,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    pub access_scope_kind: String,
+    pub access_scope_key: String,
+    pub storage_scope_id: Option<i32>,
+}
+
+#[derive(Queryable, Debug, Clone)]
+#[diesel(table_name = storage_scopes)]
+pub struct StorageScope {
+    pub id: i32,
+    pub kind: String,
+    pub scope_key: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = storage_scopes)]
+pub struct NewStorageScope {
+    pub kind: String,
+    pub scope_key: String,
+    pub created_at_ms: i64,
 }
 
 // ---- simulation_tasks ----

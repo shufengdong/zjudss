@@ -1,6 +1,6 @@
 # 后端架构设计
 
-> 版本：v1 已实现基线 + v2 已评审目标设计
+> 版本：v1 已实现基线 + v2 分阶段实施中
 > 配套：数据库设计见 `docs/db-design.md`；前端契约见 `frontend/src/types/index.ts`
 > 说明：本文同时记录 v1 实现基线与 v2 目标架构；标为目标或待实现的内容不能当作当前能力。引擎结论以
 > `../eig-rs/sparrowzz/dss/docs/` 为准（见 db-design §0）。
@@ -21,10 +21,11 @@
 
 ---
 
-## 0.5 会话归属：v1 原型现状与 v2 强制隔离
+## 0.5 会话归属：v2 已实现的身份边界
 
-**v1 不做账号体系，但把多用户扩展点预留到位。** 依据：DB 无 `users` 表、无 `user_id` 外键；
-前端无登录态；AGENTS.md 只要求内核 API 鉴权（收敛在适配器），均未提多用户。
+v2 不在应用内维护账号密码，而是使用部署实例身份或可信认证代理提供的主体。身份 extractor、
+`storage_scopes`、带 scope 的 repository 和 `/api/me` 已实现；工作区、artifact 和历史等后续资源沿用
+同一边界。
 
 - **并发不等于多用户隔离**：`session` 和事件流可以并发运行，但 v1 没有身份与归属过滤；不同浏览器
   会看到同一实例的全部历史会话，因此只适合可信单用户/单租户部署。
@@ -35,8 +36,14 @@
 - **v2 身份模式**：`AUTH_MODE=instance` 仅供可信私有单租户；公开多人部署必须使用
   `AUTH_MODE=trusted_proxy`。认证代理完成登录、移除外部同名头并注入 subject/tenant 与代理 token；
   Axum extractor 把它解析成不可变 access scope，应用本身不保存密码。
-- **repository 强制过滤**：所有 Session/Message/Task/Artifact/History 查询都接收非可选 scope；
+- **repository 强制过滤**：已实现的 Session/Message/Task 查询都接收非可选 scope；后续
+  Artifact/History repository 必须遵守相同规则；
   不能提供“未传 scope 就返回全量”的重载。跨 scope 的已知 ID 与不存在 ID 都返回 404。
+- **当前代理 scope 规则**：无 tenant 时使用 `owner:<subject>`；有 tenant 时使用
+  `tenant:<tenant>:owner:<subject>`。同 tenant 下的不同 subject 仍相互隔离；scope 只能由请求头
+  extractor 产生，不能由请求体或 URL 指定。
+- **前端恢复分区**：`GET /api/me` 返回稳定的 `scopeKey`；浏览器的上次会话键必须组成
+  `zjudss:last-session:<scopeKey>`，避免切换主体后恢复另一个主体的导航状态。
 - **历史文件配额**：instance 模式按整个实例计算；trusted_proxy 模式按 owner/tenant 计算。默认
   20,000 个唯一 artifact、20 GiB，达到上限只拒绝新增持久文件，不影响已有历史读取。
 

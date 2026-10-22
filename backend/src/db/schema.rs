@@ -10,6 +10,18 @@ diesel::table! {
         title -> Text,
         created_at_ms -> BigInt,
         updated_at_ms -> BigInt,
+        access_scope_kind -> Text,
+        access_scope_key -> Text,
+        storage_scope_id -> Nullable<Integer>,
+    }
+}
+
+diesel::table! {
+    storage_scopes (id) {
+        id -> Integer,
+        kind -> Text,
+        scope_key -> Text,
+        created_at_ms -> BigInt,
     }
 }
 
@@ -84,3 +96,15 @@ diesel::table! {
         value -> Double,
     }
 }
+
+diesel::joinable!(sessions -> storage_scopes (storage_scope_id));
+
+diesel::allow_tables_to_appear_in_same_query!(
+    sessions,
+    storage_scopes,
+    simulation_tasks,
+    messages,
+    task_files,
+    task_results,
+    curve_data,
+);

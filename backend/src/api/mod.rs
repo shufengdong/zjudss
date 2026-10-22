@@ -1,5 +1,6 @@
 //! HTTP 层：axum 路由、handler、DTO 与 SSE。
 
+mod auth;
 mod events;
 mod sessions;
 mod tasks;
@@ -12,7 +13,7 @@ use axum::routing::{get, patch, post};
 
 use crate::adapters::AdapterError;
 use crate::application::AppState;
-use crate::db::repo::RepoError;
+use crate::db::repositories::RepoError;
 
 /// 统一 API 错误：把仓储/适配器错误映射为 HTTP 响应。
 pub struct ApiError {
@@ -31,6 +32,13 @@ impl ApiError {
     pub(crate) fn not_found(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn unauthorized(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
             message: message.into(),
         }
     }
@@ -68,10 +76,8 @@ async fn health() -> &'static str {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/health", get(health))
-        .route(
-            "/api/sessions",
-            get(sessions::list).post(sessions::create),
-        )
+        .route("/api/me", get(auth::me))
+        .route("/api/sessions", get(sessions::list).post(sessions::create))
         .route(
             "/api/sessions/{id}",
             patch(sessions::rename).delete(sessions::delete),

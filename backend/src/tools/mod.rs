@@ -15,7 +15,8 @@ use tokio::sync::Semaphore;
 
 use crate::adapters::SimEngine;
 use crate::application::EventWriter;
-use crate::db::repo::TaskRepo;
+use crate::auth::AccessScope;
+use crate::db::repositories::TaskRepo;
 
 pub use inspect_model::InspectModelTool;
 pub use run_simulation::RunSimulationTool;
@@ -28,6 +29,7 @@ pub struct ToolServices {
     pub session_id: i32,
     pub task_repo: TaskRepo,
     pub semaphore: Arc<Semaphore>,
+    pub scope: AccessScope,
 }
 
 /// 每请求装配一套有状态工具（§5）。

@@ -4,6 +4,7 @@ use axum::Router;
 use backend::adapters::StubEngine;
 use backend::agent::LlmConfig;
 use backend::application::AppState;
+use backend::auth::AuthConfig;
 use backend::config::RuntimeConfig;
 use backend::db::{self, DbPool};
 use tempfile::TempDir;
@@ -16,6 +17,10 @@ pub struct TestApp {
 
 impl TestApp {
     pub async fn spawn() -> Self {
+        Self::spawn_with_auth(AuthConfig::instance()).await
+    }
+
+    pub async fn spawn_with_auth(auth: AuthConfig) -> Self {
         let root = tempfile::tempdir().expect("create isolated test root");
         let engine_root = root.path().join("engine");
         std::fs::create_dir_all(engine_root.join("sparrowzz/dss/docs"))
@@ -36,7 +41,7 @@ impl TestApp {
             db::run_migrations(&mut conn).expect("run test migrations");
         }
 
-        let state = AppState::new_with_data_dir(
+        let state = AppState::new_with_data_dir_and_auth(
             pool.clone(),
             std::sync::Arc::new(StubEngine),
             LlmConfig {
@@ -44,6 +49,7 @@ impl TestApp {
                 model: "test-model".to_string(),
             },
             config.data_dir.clone(),
+            auth,
         );
         let router = backend::build_router(state);
 

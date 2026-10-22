@@ -5,13 +5,13 @@
 //! `PRAGMA`（WAL / 外键 / busy_timeout / synchronous），见 `docs/db-design.md` §3.2。
 
 pub mod models;
-pub mod repo;
+pub mod repositories;
 pub mod schema;
 
 use diesel::connection::SimpleConnection;
 use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool, PoolError};
 use diesel::sqlite::SqliteConnection;
-use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
+use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 
 /// 编译期嵌入 `backend/migrations/` 下的所有迁移。
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");

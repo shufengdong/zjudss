@@ -76,6 +76,22 @@ fn config_rejects_zero_limits_and_unwritable_data_path() {
     assert_eq!(bad_data_dir.code(), "config_data_dir_unwritable");
 }
 
+#[test]
+fn public_deployment_rejects_instance_auth() {
+    let root = tempfile::tempdir().expect("create config root");
+    let engine_root = root.path().join("engine");
+    std::fs::create_dir_all(&engine_root).expect("create engine root");
+    let values = BTreeMap::from([
+        ("PUBLIC_DEPLOYMENT".to_string(), "true".to_string()),
+        ("AUTH_MODE".to_string(), "instance".to_string()),
+    ]);
+
+    let error = RuntimeConfig::from_values(root.path(), values, Some(engine_root))
+        .expect_err("public deployment must require trusted proxy auth");
+
+    assert_eq!(error.code(), "config_public_auth_required");
+}
+
 #[tokio::test]
 async fn test_app_runs_migrations_in_temp_dir() {
     let app = TestApp::spawn().await;

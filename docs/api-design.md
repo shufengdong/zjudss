@@ -405,7 +405,10 @@ data: {"type":"user","id":"14","timestamp":"...","content":"..."}
 
 ---
 
-## 10. v2 模型工作区目标契约（🎯 尚未实现）
+## 10. v2 模型工作区契约（分阶段实施中）
+
+本节中的身份提取、`GET /api/me` 以及现有 session/message/task/SSE 端点的 scope 校验已经实现；
+其余端点按实施计划逐步落地。表内端点不能仅凭列出即视为已经可用。
 
 ### 10.1 端点目录
 
@@ -457,7 +460,9 @@ v2 支持两种部署模式：`AUTH_MODE=instance` 只用于可信私有单租�
 ```
 
 instance 模式的 `scopeKind` 为 `instance`，`scopeKey` 为固定非密钥标识。该响应只供界面显示和给
-`localStorage` 导航偏好分区；所有授权仍以服务端 extractor 为准。
+`localStorage` 导航偏好分区；上次会话键固定为 `zjudss:last-session:<scopeKey>`。所有授权仍以
+服务端 extractor 为准。可信代理模式缺少主体、缺少 token 或 token 错误均返回 401；已知但不属于
+当前 scope 的资源与不存在资源使用相同的 404 响应。
 
 #### 引擎文档与案例资源
 

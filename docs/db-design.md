@@ -491,7 +491,7 @@ async fn list_messages(state: axum::extract::State<DbPool>, ...) -> Result<..., 
 
 ---
 
-## 7. v2 目标 schema：身份、工作区、结果分析与比较（尚未实现）
+## 7. v2 schema：身份已实现，工作区、结果分析与比较待实现
 
 v2 发布前将开发期增量 migration 压成一份新的 initial schema，部署时删除原型数据库和 DATA_DIR 后
 从空库初始化。schema 不包含 `task_results`、`curve_data` 或可空归属字段。
@@ -500,6 +500,11 @@ v2 发布前将开发期增量 migration 压成一份新的 initial schema，部
 `storage_scope_id`。前两列用于授权，后一列用于配额；三者只能由认证 extractor 解析当前主体后写入，
 客户端不得提交。`AUTH_MODE=instance` 使用固定 instance scope；`AUTH_MODE=trusted_proxy` 使用认证
 代理提供的 owner/tenant subject。所有子资源通过 session 关系校验 scope，跨 scope 统一返回 404。
+
+当前开发期增量 migration 已建立 `storage_scopes` 和上述三个 session 字段。受 SQLite
+`ALTER TABLE ... ADD COLUMN REFERENCES` 限制，增量表中的 `storage_scope_id` 在物理声明上可空，
+但插入/更新触发器会拒绝空 scope；Task 18 压平的最终 v2 初始 schema 将直接声明为 `NOT NULL`。
+repository 不提供无 scope 的公开入口，Message/Task 均先通过所属 session 完成归属校验。
 
 ### 7.1 新关系
 
