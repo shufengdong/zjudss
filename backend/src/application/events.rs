@@ -286,6 +286,16 @@ struct ModelStatusPayload {
     scope: ModelScope,
     snapshot: Option<ModelVersionSnapshot>,
 }
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ComparisonPayload {
+    comparison_id: String,
+    baseline_task_id: String,
+    candidate_task_id: String,
+    analysis_run_id: String,
+    title: String,
+    outputs: Vec<ResultOutputRef>,
+}
 
 impl AppEvent {
     /// 从落库消息构造事件。role/kind 决定事件类型，结构化字段从 `payload_json` 回放；
@@ -355,6 +365,19 @@ impl AppEvent {
                     workspace_id: p.workspace_id,
                     scope: p.scope,
                     snapshot: p.snapshot,
+                },
+                None => fallback_assistant(id, timestamp, &msg.content),
+            },
+            ("tool", "comparison") => match parse_payload::<ComparisonPayload>(msg) {
+                Some(p) => AppEvent::Comparison {
+                    id,
+                    timestamp,
+                    comparison_id: p.comparison_id,
+                    baseline_task_id: p.baseline_task_id,
+                    candidate_task_id: p.candidate_task_id,
+                    analysis_run_id: p.analysis_run_id,
+                    title: p.title,
+                    outputs: p.outputs,
                 },
                 None => fallback_assistant(id, timestamp, &msg.content),
             },
@@ -554,6 +577,33 @@ impl EventWriter {
             "tool",
             "attachment",
             content,
+            Some(serde_json::to_value(payload).unwrap_or_default()),
+            None,
+        )
+        .await
+    }
+
+    pub async fn comparison(
+        &self,
+        comparison_id: i32,
+        baseline_task_id: i32,
+        candidate_task_id: i32,
+        analysis_run_id: i32,
+        title: &str,
+        outputs: Vec<ResultOutputRef>,
+    ) -> Result<AppEvent, RepoError> {
+        let payload = ComparisonPayload {
+            comparison_id: comparison_id.to_string(),
+            baseline_task_id: baseline_task_id.to_string(),
+            candidate_task_id: candidate_task_id.to_string(),
+            analysis_run_id: analysis_run_id.to_string(),
+            title: title.to_string(),
+            outputs,
+        };
+        self.emit(
+            "tool",
+            "comparison",
+            format!("比较：{title}"),
             Some(serde_json::to_value(payload).unwrap_or_default()),
             None,
         )

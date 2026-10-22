@@ -1,5 +1,6 @@
 mod analysis;
 mod artifact;
+mod comparison;
 mod dataset;
 mod ingestion;
 mod message;
@@ -11,6 +12,7 @@ mod workspace;
 
 pub use analysis::AnalysisRepo;
 pub use artifact::{ArtifactDraft, ArtifactRepo};
+pub use comparison::ComparisonRepo;
 pub use dataset::DatasetRepo;
 pub use ingestion::{IngestionItemDraft, IngestionRecord, IngestionRepo};
 pub use message::MessageRepo;

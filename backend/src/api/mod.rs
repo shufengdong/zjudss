@@ -2,6 +2,7 @@
 
 mod analysis;
 mod auth;
+mod comparisons;
 mod datasets;
 mod events;
 mod ingestions;
@@ -21,6 +22,7 @@ use crate::application::AnalysisError;
 use crate::application::AppError;
 use crate::application::AppState;
 use crate::application::ArtifactError;
+use crate::application::ComparisonError;
 use crate::application::DatasetError;
 use crate::application::IngestionError;
 use crate::application::WorkspaceError;
@@ -224,6 +226,19 @@ impl From<AnalysisError> for ApiError {
         }
     }
 }
+impl From<ComparisonError> for ApiError {
+    fn from(error: ComparisonError) -> Self {
+        match error.code {
+            "not_found" => Self::not_found("资源不存在"),
+            code => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: error.message,
+                code,
+                details: None,
+            },
+        }
+    }
+}
 
 async fn health() -> &'static str {
     "ok"
@@ -259,4 +274,5 @@ pub fn router() -> Router<AppState> {
         .route("/api/datasets/{id}/download", get(datasets::download))
         .route("/api/analysis-runs/{id}", get(analysis::get))
         .route("/api/dataset-views/{id}/data", get(analysis::view_data))
+        .route("/api/task-comparisons/{id}", get(comparisons::get))
 }

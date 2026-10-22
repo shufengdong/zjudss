@@ -5,8 +5,8 @@
 use super::schema::{
     artifacts, curve_data, dataframe_bindings, dataset_views, ingestion_artifacts, ingestions,
     messages, model_versions, result_analysis_inputs, result_analysis_runs, result_datasets,
-    sessions, simulation_tasks, storage_scope_artifacts, storage_scopes, task_files, task_results,
-    version_artifacts, workspaces,
+    sessions, simulation_tasks, storage_scope_artifacts, storage_scopes, task_comparisons,
+    task_files, task_results, version_artifacts, workspaces,
 };
 #[allow(deprecated)]
 use diesel::{Insertable, Queryable};
@@ -420,6 +420,30 @@ pub struct NewDatasetView {
     pub kind: String,
     pub spec_json: String,
     pub is_default: bool,
+    pub created_at_ms: i64,
+}
+
+#[derive(Queryable, Debug, Clone, serde::Serialize)]
+#[diesel(table_name = task_comparisons)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskComparison {
+    pub id: i32,
+    pub session_id: i32,
+    pub baseline_task_id: i32,
+    pub candidate_task_id: i32,
+    pub compatibility_json: String,
+    pub analysis_run_id: i32,
+    pub created_at_ms: i64,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = task_comparisons)]
+pub struct NewTaskComparison {
+    pub session_id: i32,
+    pub baseline_task_id: i32,
+    pub candidate_task_id: i32,
+    pub compatibility_json: String,
+    pub analysis_run_id: i32,
     pub created_at_ms: i64,
 }
 

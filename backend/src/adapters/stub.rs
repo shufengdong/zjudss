@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use arrow_array::{Int64Array, RecordBatch, StringArray};
+use arrow_array::{Float64Array, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use async_trait::async_trait;
 use parquet::arrow::ArrowWriter;
@@ -16,6 +16,70 @@ use super::{
 pub struct StubEngine;
 
 impl StubEngine {
+    fn comparison_fixture(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError> {
+        spec.validate()?;
+        std::fs::create_dir_all(&spec.result_dir).map_err(|e| {
+            AdapterError::new(
+                "result_dir_create_failed",
+                super::ErrorCategory::Io,
+                e.to_string(),
+            )
+        })?;
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("key", DataType::Utf8, false),
+            Field::new("baseline", DataType::Float64, false),
+            Field::new("candidate", DataType::Float64, false),
+            Field::new("absolute", DataType::Float64, false),
+            Field::new("relative", DataType::Float64, true),
+            Field::new("diagnostic", DataType::Utf8, true),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec!["stub"])),
+                Arc::new(Float64Array::from(vec![0.0])),
+                Arc::new(Float64Array::from(vec![1.0])),
+                Arc::new(Float64Array::from(vec![1.0])),
+                Arc::new(Float64Array::from(vec![None])),
+                Arc::new(StringArray::from(vec![Some("baseline_zero")])),
+            ],
+        )
+        .map_err(|e| {
+            AdapterError::new(
+                "stub_parquet_failed",
+                super::ErrorCategory::Internal,
+                e.to_string(),
+            )
+        })?;
+        let file = std::fs::File::create(spec.result_dir.join("result.parquet")).map_err(|e| {
+            AdapterError::new(
+                "stub_parquet_failed",
+                super::ErrorCategory::Io,
+                e.to_string(),
+            )
+        })?;
+        let props = WriterProperties::builder()
+            .set_compression(Compression::SNAPPY)
+            .build();
+        let mut writer = ArrowWriter::try_new(file, schema, Some(props)).map_err(|e| {
+            AdapterError::new(
+                "stub_parquet_failed",
+                super::ErrorCategory::Internal,
+                e.to_string(),
+            )
+        })?;
+        writer
+            .write(&batch)
+            .and_then(|_| writer.close().map(|_| ()))
+            .map_err(|e| {
+                AdapterError::new(
+                    "stub_parquet_failed",
+                    super::ErrorCategory::Internal,
+                    e.to_string(),
+                )
+            })?;
+        validate_outputs(&spec.result_dir, OutputLimits::default())
+    }
     fn run_fixture(
         &self,
         spec: RunSpec,
@@ -102,6 +166,12 @@ impl SimEngine for StubEngine {
         self.run_fixture(spec, &[RunMode::Bundle])
     }
     async fn run_analysis(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError> {
-        self.run_fixture(spec, &[RunMode::Analysis])
+        if spec.named_inputs.iter().any(|v| v.alias == "baseline")
+            && spec.named_inputs.iter().any(|v| v.alias == "candidate")
+        {
+            self.comparison_fixture(spec)
+        } else {
+            self.run_fixture(spec, &[RunMode::Analysis])
+        }
     }
 }

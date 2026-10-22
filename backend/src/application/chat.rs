@@ -41,6 +41,7 @@ pub struct ChatService {
     simulations: crate::application::SimulationService,
     datasets: crate::application::DatasetService,
     analysis: crate::application::AnalysisService,
+    comparisons: crate::application::ComparisonService,
 }
 
 impl ChatService {
@@ -62,6 +63,7 @@ impl ChatService {
             simulations: state.simulation_service.clone(),
             datasets: state.dataset_service.clone(),
             analysis: state.analysis_service.clone(),
+            comparisons: state.comparison_service.clone(),
         }
     }
 
@@ -93,6 +95,7 @@ impl ChatService {
             simulations: self.simulations.clone(),
             datasets: self.datasets.clone(),
             analysis: self.analysis.clone(),
+            comparisons: self.comparisons.clone(),
         });
         let tools = tools::build_tools(services);
 

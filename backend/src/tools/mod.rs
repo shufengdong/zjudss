@@ -6,6 +6,7 @@
 //! 由此落实。
 
 pub mod activate_model_version;
+pub mod compare_simulations;
 pub mod confirm_dataframe_mapping;
 pub mod create_dataset_view;
 pub mod import_example;
@@ -32,8 +33,8 @@ use tokio::sync::{Mutex, Semaphore};
 use crate::adapters::SimEngine;
 use crate::agent::knowledge::AgentKnowledge;
 use crate::application::{
-    AnalysisService, DatasetService, EventWriter, ExampleImportService, ModelPatchService,
-    SimulationService, WorkspaceService,
+    AnalysisService, ComparisonService, DatasetService, EventWriter, ExampleImportService,
+    ModelPatchService, SimulationService, WorkspaceService,
 };
 use crate::auth::{AccessScope, Principal};
 use crate::db::repositories::TaskRepo;
@@ -59,6 +60,7 @@ pub struct ToolServices {
     pub simulations: SimulationService,
     pub datasets: DatasetService,
     pub analysis: AnalysisService,
+    pub comparisons: ComparisonService,
 }
 
 impl ToolServices {
@@ -92,6 +94,9 @@ pub fn build_tools(services: Arc<ToolServices>) -> Vec<RegisteredTool> {
             services.clone(),
         )),
         RegisteredTool::from_tool(create_dataset_view::CreateDatasetViewTool::new(
+            services.clone(),
+        )),
+        RegisteredTool::from_tool(compare_simulations::CompareSimulationsTool::new(
             services.clone(),
         )),
         RegisteredTool::from_tool(search_engine_docs::SearchEngineDocsTool::new(

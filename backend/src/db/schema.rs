@@ -226,6 +226,17 @@ diesel::table! {
         created_at_ms -> BigInt,
     }
 }
+diesel::table! {
+    task_comparisons (id) {
+        id -> Integer,
+        session_id -> Integer,
+        baseline_task_id -> Integer,
+        candidate_task_id -> Integer,
+        compatibility_json -> Text,
+        analysis_run_id -> Integer,
+        created_at_ms -> BigInt,
+    }
+}
 
 diesel::table! {
     messages (id) {
@@ -296,6 +307,7 @@ diesel::joinable!(result_analysis_runs -> sessions (session_id));
 diesel::joinable!(result_analysis_inputs -> result_analysis_runs (analysis_run_id));
 diesel::joinable!(result_datasets -> artifacts (artifact_id));
 diesel::joinable!(dataset_views -> result_datasets (dataset_id));
+diesel::joinable!(task_comparisons -> sessions (session_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     sessions,
@@ -318,4 +330,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     result_analysis_inputs,
     result_datasets,
     dataset_views,
+    task_comparisons,
 );

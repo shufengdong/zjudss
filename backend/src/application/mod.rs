@@ -6,6 +6,7 @@
 pub mod analysis;
 pub mod artifacts;
 pub mod chat;
+pub mod comparisons;
 pub mod datasets;
 mod events;
 pub mod example_import;
@@ -28,8 +29,8 @@ use crate::auth::AuthConfig;
 use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
-    AnalysisRepo, ArtifactRepo, DatasetRepo, IngestionRepo, MessageRepo, SessionRepo,
-    SimulationRepo, StorageScopeRepo, TaskRepo, WorkspaceRepo,
+    AnalysisRepo, ArtifactRepo, ComparisonRepo, DatasetRepo, IngestionRepo, MessageRepo,
+    SessionRepo, SimulationRepo, StorageScopeRepo, TaskRepo, WorkspaceRepo,
 };
 use crate::engine_resources::{EngineKnowledge, EngineResourceSnapshot};
 use crate::ingestion::ArchiveLimits;
@@ -43,6 +44,7 @@ pub use artifacts::{
     StorageUsage,
 };
 pub use chat::ChatService;
+pub use comparisons::{ComparisonError, ComparisonService};
 pub use datasets::{DatasetError, DatasetService};
 pub use events::{
     AppEvent, AttachmentFile, DatasetViewRef, EventBus, EventWriter, ModelAmbiguity, ModelScope,
@@ -75,6 +77,7 @@ pub struct AppState {
     pub dataset_service: DatasetService,
     pub simulation_service: SimulationService,
     pub analysis_service: AnalysisService,
+    pub comparison_service: ComparisonService,
     pub engine_snapshot: Arc<EngineResourceSnapshot>,
     pub agent_knowledge: Arc<AgentKnowledge>,
     pub events: EventBus,
@@ -252,6 +255,14 @@ impl AppState {
             agent_knowledge.clone(),
             data_dir.clone(),
         );
+        let comparison_service = ComparisonService::new(
+            ComparisonRepo::new(pool.clone()),
+            SimulationRepo::new(pool.clone()),
+            DatasetRepo::new(pool.clone()),
+            analysis_service.clone(),
+            message_repo.clone(),
+            events.clone(),
+        );
         Self {
             pool,
             session_repo,
@@ -265,6 +276,7 @@ impl AppState {
             dataset_service,
             simulation_service,
             analysis_service,
+            comparison_service,
             engine_snapshot,
             agent_knowledge,
             events,

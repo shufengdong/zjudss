@@ -1188,4 +1188,8 @@ artifact 的重复引用继续可用。上传、仿真和结果分析的提交�
 结果分析通过 `run_result_analysis` 工具创建持久化 analysis run，输入只接受有序的 dataset ID/alias；
 实际 RSS 脚本、agent bundle/skill refs 和引擎合同随运行保存。`GET /api/analysis-runs/{id}` 恢复运行与
 派生数据集，`GET /api/dataset-views/{id}/data` 返回经过预算校验的视图投影。视图仅支持
-line/bar/scatter/heatmap/boxplot/histogram 六类受控 spec，不接受 ECharts option 或 formatter。
+ line/bar/scatter/heatmap/boxplot/histogram 六类受控 spec，不接受 ECharts option 或 formatter。
+
+任务比较由 `compare_simulations` 仅接收两个 task ID。服务端校验同会话归属、结果名、稳定键、dtype
+和单位，把兼容性快照固化后创建关联 analysis run；差值只存在该 analysis run 的 Parquet 数据集中。
+`GET /api/task-comparisons/{id}` 可在刷新后恢复比较、兼容性和派生数据集。
