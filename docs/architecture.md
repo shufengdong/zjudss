@@ -1,75 +1,92 @@
 # 后端架构设计
 
-> 版本：v1 草案 · 状态：待评审
+> 版本：v1 已实现基线 + v2 已评审目标设计
 > 配套：数据库设计见 `docs/db-design.md`；前端契约见 `frontend/src/types/index.ts`
-> 说明：本文只描述架构与职责划分，不包含具体实现。引擎结论以 `../eig-rs/sparrowzz/dss/docs/` 为准（见 db-design §0）。
+> 说明：本文同时记录 v1 实现基线与 v2 目标架构；标为目标或待实现的内容不能当作当前能力。引擎结论以
+> `../eig-rs/sparrowzz/dss/docs/` 为准（见 db-design §0）。
+> 模型上传、版本、DataFrame 推断与对比的完整目标设计见 `docs/model-workspace-design.md`。
 
 ---
 
 ## 0. 目标
 
-把「配电网仿真智能体」后端从当前的单文件 demo（`main.rs` 硬编码工具）演进为**分层、可扩展、
-可观测**的服务，核心能力：
+本项目最初从单文件 demo（`main.rs` 硬编码工具）起步，v1 已演进为**分层、可扩展、可观测**的
+服务；本文同时定义 v2 模型工作区的目标边界。核心能力：
 
 1. 把一个 rig agent 的「黑盒对话循环」变成**结构化事件流**，前端能实时渲染工具调用、进度、结果；
 2. 落实 AGENTS.md 的硬约束：**所有内核调用收敛到 `adapters/` 适配器层**；
 3. 把「同步阻塞的引擎 CLI」包装成「有状态、可追溯的异步仿真任务」。
+4. 把分批上传的文件组织成不可变模型版本，使修改、重跑、查询和前后对比可复现。
 
 ---
 
-## 0.5 多用户：先匿名、预留扩展（已确认决策）
+## 0.5 会话归属：v1 私有单租户，公开部署前强制隔离
 
 **v1 不做账号体系，但把多用户扩展点预留到位。** 依据：DB 无 `users` 表、无 `user_id` 外键；
 前端无登录态；AGENTS.md 只要求内核 API 鉴权（收敛在适配器），均未提多用户。
 
-- **多人同时用**：架构天然支持——`session` 独立、事件流按 session 隔离，多浏览器/多人
-  各自建会话、各自对话、互不干扰，无需任何用户管理。
+- **并发不等于多用户隔离**：`session` 和事件流可以并发运行，但 v1 没有身份与归属过滤；不同浏览器
+  会看到同一实例的全部历史会话，因此只适合可信单用户/单租户部署。
 - **不做的（v1）**：账号注册/登录、认证中间件、多租户数据隔离、权限/角色。
 - **会话归属语义（v1 定死）**：所有 `sessions` 属于当前部署实例，`GET /api/sessions` 返回全部。
+- **目标历史文件配额（尚未实现）**：在无身份的私有部署阶段按整个实例计算，默认 20,000 个唯一
+  artifact、20 GiB；引入身份后同一契约改为按 owner/tenant 计算。达到上限只拒绝新增持久文件，
+  不影响已有历史读取。
 - **预留 = 路径预留，不建空结构**（以下三点落地在设计与实现习惯里，而非空表/空列）：
   1. **迁移天然支持**：Diesel 版本化迁移（已有 `00000000000000_initial`）意味着未来加
      `user_id` 是新增一条迁移文件，不破坏既有数据。
-  2. **repository 查询预留过滤维度**：`SessionRepo`/`MessageRepo` 的查询方法预留
-     `user_id: Option<i32>` 形参（v1 传 `None`），未来传 `Some(id)` 即可按用户过滤，不改调用方。
+  2. **repository 查询预留过滤维度**：未来所有 Session/Message/History 查询必须接收非可选的
+     owner/tenant scope；不能用忘传 `user_id` 就返回全量数据的可选参数作为生产隔离方案。
   3. **鉴权插入点明确在 api 层**：未来加 `axum` 中间件（token → `user_id` → 应用层过滤），
      是 router 上的纯加法，业务/应用层不感知。
 
 ---
 
-## 1. 现状与差距
+## 1. 立项基线与 v1 落地结果
 
-| 关注点 | 现状 | 目标 |
+| 关注点 | 立项基线 | v1 已落地 |
 |---|---|---|
 | 工具定义 | `#[rig_tool]` 硬编码在 `main.rs`，返回 `"model ok"` / `"task-0001"` | 独立 `tools/`，有状态实例，走适配器 |
 | 适配器层 | **不存在**（AGENTS.md 要求） | `adapters/` 作为内核唯一边界 |
-| agent 生命周期 | 每个请求重建，`agent.prompt()` 一次性返回文本 | 每请求构建 + 流式驱动 |
+| agent 生命周期 | 每个请求重建，`agent.prompt()` 一次性返回文本 | 每条用户消息构建一次短生命周期 run + 流式驱动；不按用户常驻 |
 | 输出形态 | `{ reply }` 单次 JSON | SSE 结构化事件流（对齐前端 6 类消息） |
 | 会话持久化 | 无（DB 已建但未接入） | 全链路落库，DB 为持久化真相 |
 | 仿真执行 | 无（硬编码 task_id） | 子进程跑引擎 + 限流 + 状态机 |
+| 模型输入 | 无附件链路 | 单附件可保存并回显；agent 仍需从消息获得服务器路径 |
+| 版本与对比 | 无 | 属于 v2：任务绑定不可变模型版本，比较绑定两个历史任务 |
+
+前七项已经实现到表中所述的 v1 范围。单 RSS 自动建模、bundle、多 DataFrame、active/draft、历史检索和任务比较是 v2 目标，
+不能按本表中的 v1 能力对外宣称已完成。
 
 ---
 
 ## 2. 前端契约（决定后端输出形态）
 
-前端 `types/index.ts` 把消息定义为 6 类 discriminated union，后端的事件流必须能映射到这 6 类：
+当前前端 `types/index.ts` 把消息定义为 6 类 discriminated union，后端的已实现事件流必须能映射到这 6 类：
 
 | 前端类型 | 关键字段 | 后端事件来源 |
 |---|---|---|
 | `user` | content | 入站消息（直接落库、回放） |
-| `assistant` | content(Markdown) | agent 最终回复（`FinalResponse`） |
+| `assistant` | content(Markdown) | `StreamAssistantItem::End` 的完整文本 |
 | `tool-call` | toolName / args / status(running\|success\|failed) / summary | 工具调用的开始与结果 |
-| `progress` | taskId / stages[](pending\|running\|done\|failed) | 仿真任务阶段推进 |
-| `result` | taskId / title / metrics(maxVoltage·minVoltage·violationNodes·violationDuration) | `task_results` 聚合 |
-| `attachment` | file 信息 | 上传/产出的文件（模型、报告） |
+| `progress` | taskId / stages 数组（pending/running/done/failed） | 仿真任务阶段推进 |
+| `result` | taskId / title / metrics(maxVoltage·minVoltage·violationNodes·violationDuration) | 工具根据适配器聚合值发布并落 `messages` |
+| `attachment` | file 信息 | v1 上传文件的回显 |
 
 **推论**：后端必须把 agent 循环内部发生的「调用工具 → 工具执行 → 出结果 → 最终回复」逐条
 **发布成事件**，而不是等 agent 跑完一次性返回。这是本架构的轴心。
+
+目标工作区功能增加 `model-status` 和 `comparison` 两类消息。它们尚未写入
+`frontend/src/types/index.ts`，属于 v2 契约；实现前必须同步修改前端权威类型、后端 DTO、落库映射和
+回放测试，不能只在后端私自增加事件变体。v2 同时升级 `progress`（operation 命名空间）、`result`
+（DataFrame 输出引用）和 `tool-call`（稳定 callId）；历史 v1 消息由前端兼容层继续回放。
 
 ---
 
 ## 3. 分层架构
 
-自顶向下六层，依赖方向单向向下（上层不跨层调用，工具只依赖其下两层）：
+自顶向下六层。主要业务依赖向下；v1 工具为实时落库和推送持有一个
+`application::EventWriter` 回调，这是当前明确的反向端口，而不是内核调用旁路：
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -79,20 +96,20 @@
 │   GET  /api/sessions/{id}/messages   回放历史               │
 │   GET  /api/tasks/{id}/curves        曲线                   │
 ├──────────────────────────────────────────────────────────┤
-│ application（编排层） 会话编排 / 任务状态机 / 事件总线 / 限流 │
-│   ChatService、SimulationOrchestrator、EventBus            │
+│ application（编排层） 会话编排 / 事件总线 / 限流              │
+│   ChatService、AppState、EventBus                           │
 ├──────────────────────────────────────────────────────────┤
-│ agent（agent 层）   provider 选择 / preamble / 工具装配 / 流 │
-│   llm::build_agent 扩展：run_channel() 驱动                │
+│ agent（agent 层）   provider 选择 / preamble / 工具装配       │
+│   agent::build_agent；run_channel() 由 application 驱动      │
 ├──────────────────────────────────────────────────────────┤
-│ tools（工具层）   有状态工具实例，只调 adapters + repository │
+│ tools（工具层）   有状态实例：adapter + repository + writer  │
 │   InspectModel、RunSimulation（+ 未来更多）                 │
 ├──────────────────────────────────────────────────────────┤
 │ adapters（适配器层） 内核唯一边界（AGENTS.md 硬约束）         │
 │   SimEngine：inspect / run（子进程 + 错误码翻译）            │
 ├──────────────────────────────────────────────────────────┤
 │ db（持久层）   Diesel pool + repository（6 表）             │
-│   SessionRepo / MessageRepo / TaskRepo / ResultRepo         │
+│   SessionRepo / MessageRepo / TaskRepo                      │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -101,10 +118,15 @@
 - **api**：只做 HTTP 协议与 DTO 转换，不含业务逻辑；SSE 端点把内部事件序列化为前端消息。
 - **application**：持有 `AppState`（连接池、事件总线、限流信号量、引擎适配器、LLM 配置），
   编排一次对话的生命周期；是唯一知道「如何把一次 chat 变成 agent run + 落库 + 推事件」的地方。
-- **agent**：现有 `llm.rs` 的扩展——provider 解耦保留，新增用 `run_channel()` 驱动 run 的能力。
-- **tools**：**有状态实例**（见 §5），只依赖 `adapters` 与 `db`，绝不直接碰内核 API。
+- **agent**：`agent/mod.rs` 负责 provider 选择和 agent 组装；`application/chat.rs` 用
+  `run_channel()` 驱动并消费事件。
+- **tools**：**有状态实例**（见 §5），调用 `adapters`、任务 repository 和事件写入回调；绝不直接碰
+  内核 API。当前事件回调的具体类型是 `application::EventWriter`，若后续拆 crate，应把它下沉为中立
+  port/trait，避免形成包级循环依赖。
 - **adapters**：内核地址、鉴权、错误码翻译、子进程生命周期都收敛在此。
-- **db**：已就绪；新增 repository 封装 CRUD，上层不直接拼 SQL。
+- **db**：6 张 v1 表、模型和 Session/Message/Task repository 已就绪，上层不直接拼 SQL；
+  `task_files/task_results/curve_data` 的写入链路仍未接入，且后两张表只保留为遗留 schema；v2 目标见
+  db-design §7.8。
 
 ---
 
@@ -112,7 +134,7 @@
 
 rig 不从文件加载 prompt/skill，三者都来自代码：
 
-- **系统提示词**：`AgentBuilder::preamble()`（字符串）。当前是 `llm.rs` 里一句简短的
+- **系统提示词**：`AgentBuilder::preamble()`（字符串）。当前是 `agent/mod.rs` 里一句简短的
   `SYSTEM_PROMPT`，缺领域知识。
 - **工具（"技能"的实质）**：Rust `Tool` 实现（`#[rig_tool]` 或手动 impl），`description()`
   自动进模型 schema，不进文件。
@@ -122,15 +144,16 @@ rig 不从文件加载 prompt/skill，三者都来自代码：
 
 **本项目"配电网仿真知识"的真实来源是引擎 docs**，尤其 `agent_quickstart.md`
 （需求→分析类型→DSA 函数→RSS 脚本的步骤）、`dsa_function_reference.md`（函数签名）、
-`dataframe_schema_reference.md`（结果表与单位）、`simulation_recipes.md`（配方）。
+`dataframe_schema_reference.md`（结果表与单位）、`rss_language_reference.md` 与
+`rsdss_function_reference.md`（DataFrame 筛选、连接、聚合和脚本语法）、`simulation_recipes.md`（配方）。
 
-**落地方式**：把这些提炼固化到 `backend/prompts/`，用 `include_str!` 编译期嵌入（与
+**v2 落地方式**：把这些提炼固化到 `backend/prompts/`，用 `include_str!` 编译期嵌入（与
 `embed_migrations!` 同理，可移植、无运行时文件依赖），分层注入：
 
 | 层 | 来源 | 内容 |
 |---|---|---|
 | `preamble` | `prompts/system.md` | 角色定位 + 行为准则 + 精简版 agent_quickstart |
-| `context` | `prompts/engine_knowledge.md` | 结果表 schema 摘要 + 单位约定 + 常见配方 |
+| `context` | `prompts/engine_knowledge.md` | 结果表 schema、单位、RSS DataFrame 函数、脚本约束和常见配方 |
 | 工具说明 | `Tool::description()` | 代码内，不进文件 |
 
 **约束**：引擎 docs 目前不在本仓库（AGENTS.md：内核源码与文档未纳入），不能 `include_str!`
@@ -153,12 +176,17 @@ rig 0.45 提供了把 agent loop 拆成「驱动 future + 事件 feed」的能�
 
 | MultiTurnStreamItem | 前端消息 | 说明 |
 |---|---|---|
-| `StreamAssistantItem`（最终文本段） | `assistant` | 可做流式 Markdown |
+| `StreamAssistantItem::End` 的文本 | `assistant` | 当前实现写入一条完整 Markdown |
 | `ToolCall` / `ToolExecutionCommitted` | `tool-call`(running) | 工具开始 |
 | `ToolResult`（成功） | `tool-call`(success, summary) | 工具结束 |
 | `ToolResult`（失败） | `tool-call`(failed) | 工具失败 |
 | 工具体内发布的阶段事件 | `progress`(stages) | 引擎运行期间实时推进 |
 | 工具体内发布的 result 事件 | `result` | 仿真指标 |
+
+`FinalResponse` 和非文本流事件不直接映射；当前只在 `StreamAssistantItem::End` 收到完整文本时
+写入 assistant 消息。若以后需要 token 级流式，必须新增独立 `assistant-delta` 契约和恢复语义。
+v2 的同一次工具调用为 running 与
+success/failed 事件分配不同消息 ID、相同 `callId`，前端据此更新一张工具卡。
 
 **关键细节**：`ToolCall`/`ToolResult` 是**批量提交后**才成对出现，不是实时 start 通知（rig 文档
 明确说明实时观察要靠 tool hook 或工具体内副作用）。因此「`running` 状态 + `progress` 阶段推进」
@@ -175,34 +203,34 @@ rig 0.45 提供了把 agent loop 拆成「驱动 future + 事件 feed」的能�
 
 ## 5. 核心机制二：有状态工具 + 适配器边界
 
-当前 `#[rig_tool]` 生成的是**无状态 unit struct**，无法感知 session/DB/事件总线。rig 0.45 的
+早期 `#[rig_tool]` 生成的是**无状态 unit struct**，无法感知 session/DB/事件总线。v1 已改为手动
+实现 `Tool` 的有状态实例。rig 0.45 的
 `Tool::call(&self, context, args)` 是**异步实例方法**，且官方文档明确「`Arc<Mutex<_>>`、channel
 等共享状态属于工具实例，不属于 `ToolContext`」。因此工具写成**有状态实例**：
 
 ```rust
 // 概念示意，非最终代码
-struct RunSimulation {
-    session_id: i32,              // 每请求构建时注入，落库/发事件都带它
-    services: Arc<AppServices>,   // pool / events / semaphore / engine 适配器
+struct RunSimulationTool {
+    services: Arc<ToolServices>,  // session / writer / task repo / semaphore / engine
 }
 
-impl Tool for RunSimulation {
-    type Args = RunSimulationArgs;     // model_path, duration, step, ...
+impl Tool for RunSimulationTool {
+    type Args = RunSimulationArgs;     // v1: model_path/script_path；v2 改为 version/study spec
     type Output = String;              // 返回 task_id 给 agent
     type Error = AdapterError;         // 错误码已由适配器翻译
 
     async fn call(&self, ctx: &mut ToolContext, args: Self::Args) -> Result<String, AdapterError> {
-        // 1. 发 tool-call(running) 事件 + 落 messages 表
-        // 2. 调 self.services.engine.run(...) —— 只走适配器
-        // 3. 期间按引擎阶段发 progress 事件（见 §6）
-        // 4. 落 simulation_tasks / task_results / curve_data
-        // 5. 发 tool-call(success, summary="task_id: ...") 事件
+        // application 已根据 ToolCall 落 tool-call(running)
+        // 1. 取得 semaphore permit，创建 simulation_tasks
+        // 2. 发布 progress，只通过 self.services.engine.run(...) 调内核
+        // 3. 更新 task，发布最终 progress/result
+        // 4. 返回 task_id；application 根据 ToolResult 发布 tool-call 终态
         Ok(task_id)
     }
 }
 ```
 
-- **每次请求构建一套工具实例**（携带 `session_id` + `Arc<AppServices>`），随 agent 一起创建，
+- **每次请求构建一套工具实例**（携带绑定 session 的 `Arc<ToolServices>`），随 agent 一起创建，
   绕开「agent 如何注入 ToolContext」的不确定点，最稳妥。
 - **适配器是唯一内核边界**：工具只调用 `services.engine`（`adapters::SimEngine`）暴露的
   `inspect()` / `run()`；内核地址、鉴权、错误码翻译、子进程参数拼接全部在 `adapters/` 内。
@@ -213,86 +241,130 @@ impl Tool for RunSimulation {
 
 ---
 
+## 5.5 Agent 生命周期、并发与容量
+
+这里的 `Agent` 是一次模型调用循环的配置与工具注册表，不是 OS 进程，也不是为某个用户常驻的后台
+服务。当前链路是：每次 `POST /messages` 启动一个后台任务；`ChatService::run` 为该条消息新建有状态
+工具和 `Agent`，从数据库加载同一 session 的历史，完成后释放。因此会话连续性来自数据库与
+`session_id`，不依赖一个长期存活的 agent。v1 尚无账号体系，也不存在“每用户一个 agent”的归属关系。
+
+rig 0.45 的 `AgentBuilder::build()` 只组装 `Agent`、handler 表和 `ToolServerHandle`；
+`ToolServer::run()` 创建的是共享注册表句柄，不会为每个 agent 启动常驻线程。需要管控的是同时运行的
+agent run、LLM 请求和工具执行，而不是已构建的 `Agent` 结构体数量。
+
+当前容量边界如下：
+
+| 边界 | v1 现状 | 含义 |
+|---|---|---|
+| 单次 run 模型轮数 | `MAX_TURNS = 8` | 防止模型与工具无限循环；不是 agent 数量上限 |
+| 实例级 agent run | 无应用层上限，每条消息直接 `tokio::spawn` | 突发消息可能同时占用 LLM 配额、内存和 DB 连接 |
+| 同一 session 的 agent run | 无串行化 | 多条消息可能基于不完整历史并交叉写入事件 |
+| 仿真内核执行 | `Semaphore(4)` | 最多 4 个 `tensoreval` 子进程；不限制纯问答/检查阶段的 LLM 并发 |
+| SQLite 连接池 | 8 | 这是数据库资源上限，不可替代 agent admission control |
+
+v2 在 application 层增加独立的 agent 调度器，目标规则定为：
+
+1. **同一 session 同时只运行 1 个 agent run**，后续消息按消息 ID 排队，保证历史与事件顺序；
+2. **实例级活动 run 默认最多 8 个**，由 `AGENT_MAX_CONCURRENT_RUNS` 配置，并根据 LLM provider
+   配额和压测结果调整；等待队列必须有界，由 `AGENT_QUEUE_CAPACITY` 配置；
+3. 队列满时 `POST /messages` 返回 `429 agent_queue_full` 和 `Retry-After`，不落 user 消息、不创建
+   后台任务；前端保留输入并提示稍后重试；
+4. 引入账号后再加 owner/tenant 维度的活动 run 上限，默认每个 owner 2 个；它不能替代实例总上限；
+5. agent run 与仿真内核使用两套 semaphore；前者保护 LLM/应用资源，后者继续限制 CPU 密集的
+   `tensoreval` 子进程；
+6. run 必须支持超时和取消；等待队列中的请求取消后释放位置，运行中的请求停止继续调用模型与工具，
+   已启动的内核子进程按任务取消契约回收。
+
+`AGENT_MAX_CONCURRENT_RUNS=8` 是初始部署值，不代表 rig 的框架上限。上线时应结合 provider 的
+requests/tokens 限额、单次对话耗时和实例内存压测调整，并监控活动数、排队数、等待时长、429 数量与
+每次 run 的模型轮数。
+
+---
+
 ## 6. 核心机制三：同步引擎 → 异步任务
 
 引擎是同步阻塞 CLI（db-design §0.3「进程级单线程」、§0.5「并发限流」），后端要把它包成
 异步、可限流、可追踪的任务：
 
-- **子进程 + 异步外壳**：`adapters::SimEngine` 用 `tokio::process::Command` 起 `tensoreval`，
-  外层 `tokio::task::spawn_blocking`（或 `Command::wait`）避免阻塞 async worker。
-- **限流**：`AppState` 持 `tokio::sync::Semaphore`（初定 4 并发引擎子进程），工具执行前先
-  `acquire`；超过并发排队，对应 `progress` 停在 `pending`。
-- **任务状态机**：`model_check → script_gen → running → collecting → (succeeded | failed)`
-  （db-design §0.3），映射为前端 `progress.stages`（inspect / sim / analyze / report）。
-  阶段由 `SimulationOrchestrator` 在工具体内推进，每推进一档就发一条 `progress` 事件并落
-  `simulation_tasks.stage`。
-- **结果聚合**：引擎产出 `summary` / `bus_voltage` / `branch_flow` 等命名表，适配器落
-  `task_results`（metrics：max/min 电压、越限数、越限时长）+ 曲线（CSV 文件 + `curve_data`
-  或 `task_files`，见 db-design §5）。工具据此发 `result` 事件。
+- **子进程 + 异步外壳**：`adapters::SimEngine` 用 `tokio::process::Command::output()` 异步等待
+  `tensoreval`，引擎计算发生在子进程内，不阻塞 async worker。Diesel 和同步文件 IO 才放入
+  `tokio::task::spawn_blocking`。
+- **限流**：`AppState` 持 `tokio::sync::Semaphore`（当前 4 个并发引擎子进程），工具执行前先
+  `acquire`。v1 在取得 permit 后才建任务，因此排队期间还没有 task/progress；v2 应先创建任务并
+  显示 queued/pending 状态。
+- **任务状态机**：schema 允许 `model_check/script_gen/running/collecting`；当前 QSTS 工具实际推进
+  `model_check → running → collecting → succeeded`，失败时停在 `running`。`script_gen` 留给 v2
+  DataFrame/RSS 生成流程。前端另用 `inspect/sim/analyze/report` 四阶段完整数组展示进度。
+- **结果输出**：引擎通过 `--result-dir` 把每个命名 DataFrame 写入
+  `DATA_DIR/results/{task_id}`。v1 适配器仍启发式聚合 QSTS 固定指标供现有页面使用；v2 不延续该
+  模型，而是显式增加 `--output-format parquet`，把每个原生 Parquet 文件登记为 `result_datasets`；
+  用户提出具体问题后再生成 RSS 分析脚本和派生表。
 
 ---
 
 ## 7. 一次请求的完整时序
 
-```
-前端                    api                 application          tools            adapters          引擎
- │ POST /messages        │                      │                   │                 │              │
- │──────────────────────>│ 落 user 消息          │                   │                 │              │
- │   <── 202 {session}   │─────────────────────>│ spawn agent run    │                 │              │
- │                       │                      │ build agent+工具   │                 │              │
- │ GET /events (SSE)     │                      │ run_channel() ────>│                 │              │
- │ <── assistant(流式)   │<── FinalResponse 回填 │                   │                 │              │
- │ <── tool-call:inspect │                      │ ToolCall ────────>│                 │              │
- │ <── tool-call(ok)     │                      │ ToolResult ──────>│ 调 engine.inspect│── 子进程 ──>│
- │                       │                      │                   │                 │<── 诊断 ────│
- │ <── tool-call:run(run)│                      │ ToolCall ────────>│ acquire 信号量    │              │
- │ <── progress(inspect) │                      │                   │ 发阶段事件 ──────>│── 子进程 ──>│
- │ <── progress(sim..)   │                      │                   │ (running 期间逐档)│              │
- │ <── progress(done)    │                      │                   │ 落 task/result/curve│<── CSV ────│
- │ <── result(metrics)   │                      │                   │ 发 result 事件     │              │
- │ <── tool-call(ok)     │                      │ ToolResult ──────>│ 返回 task_id       │              │
- │ <── assistant(final)  │                      │ FinalResponse     │                   │              │
- │                       │                      │ 落 assistant 消息  │                   │              │
+```mermaid
+sequenceDiagram
+    participant FE as 前端
+    participant API as api
+    participant APP as application
+    participant TOOL as tools
+    participant AD as adapters
+    participant ENG as tensoreval
+    FE->>API: POST /messages
+    API->>API: 落 user 消息并发布
+    API-->>FE: 202 {ok:true}
+    API->>APP: 后台启动 agent run
+    APP->>APP: run_channel / ToolCall
+    APP-->>FE: SSE tool-call(running)
+    APP->>TOOL: 执行有状态工具
+    TOOL-->>FE: SSE progress（仿真工具）
+    TOOL->>AD: inspect/run
+    AD->>ENG: 异步等待子进程
+    ENG-->>AD: 退出码、v1 CSV / v2 Parquet、诊断
+    AD-->>TOOL: 归一结果或 AdapterError
+    TOOL-->>FE: SSE progress + result（成功仿真）
+    TOOL-->>APP: task_id 或错误
+    APP-->>FE: SSE tool-call(success/failed)
+    APP-->>FE: SSE assistant（完整文本）
 ```
 
-要点：`POST /messages` **尽快返回 ack**（触发后台 agent run），后续一切经 SSE 推送；任何时刻
-前端可 `GET /messages` 重放历史补齐断线。
+要点：`POST /messages` **尽快返回 ack**（触发后台 agent run），后续事件经 SSE 推送。v1 可用
+`GET /messages` 全量回放恢复持久化消息，但“先回放、后订阅”仍有短暂缺口；v2 按 §13 消除该窗口。
 
 ---
 
-## 8. 目录结构（目标形态）
+## 8. 目录结构（v1 实际形态）
 
 ```
 backend/src/
 ├── main.rs            # 入口：装配 AppState、路由、启动
 ├── api/               # axum handler + DTO + SSE（§3 api 层）
 │   ├── mod.rs
-│   ├── dto.rs         # 请求/响应/事件 DTO（对齐前端 types）
 │   ├── sessions.rs    # 会话/消息 CRUD
+│   ├── tasks.rs       # 曲线与报告读取
 │   └── events.rs      # SSE 事件流端点
 ├── application/       # 编排层（§3 application 层）
 │   ├── mod.rs         # AppState / AppServices 定义
 │   ├── chat.rs        # ChatService：一次对话的编排
-│   ├── events.rs      # EventBus（per-session broadcast）
-│   └── simulation.rs  # SimulationOrchestrator：任务状态机
-├── agent/             # agent 层（现 llm.rs 的扩展）
-│   └── mod.rs         # provider 选择 + preamble + run_channel 驱动
+│   └── events.rs      # EventBus（per-session broadcast）+ 出网 DTO
+├── agent/             # agent 层
+│   └── mod.rs         # provider 选择 + preamble + agent 组装
 ├── tools/             # 工具层（§5）
 │   ├── mod.rs         # 工具注册（每请求装配）
 │   ├── inspect_model.rs
 │   └── run_simulation.rs
 ├── adapters/          # 适配器层（§5/§6，AGENTS.md 硬约束）
 │   ├── mod.rs         # SimEngine trait + 实现 + AdapterError
-│   └── engine.rs      # tensoreval 子进程封装 + 错误码翻译
+│   ├── process.rs     # tensoreval 子进程封装 + 错误码翻译
+│   └── stub.rs        # 无真实引擎配置时的替代实现
 ├── db/                # 持久层（已就绪）
 │   ├── mod.rs         # pool + 迁移（现有）
 │   ├── schema.rs      # 表（现有）
 │   ├── models.rs      # 实体（现有）
-│   └── repo/          # 新增 repository：SessionRepo/MessageRepo/TaskRepo/ResultRepo
-└── llm.rs → agent/mod.rs  # 迁移并扩展（provider 解耦逻辑保留）
+│   └── repo.rs        # SessionRepo / MessageRepo / TaskRepo
 ```
-
-> `main.rs` 里的两个硬编码工具与 `chat` handler 将被拆分进 `tools/`、`api/`、`application/`。
 
 ---
 
@@ -305,11 +377,14 @@ backend/src/
 |---|---|---|
 | GET | `/api/sessions` | 会话列表 |
 | POST | `/api/sessions` | 新建会话 |
+| PATCH | `/api/sessions/{id}` | 重命名会话 |
+| DELETE | `/api/sessions/{id}` | 删除会话 |
 | GET | `/api/sessions/{id}/messages` | 回放历史消息（DB 重组为前端 Message 流） |
 | POST | `/api/sessions/{id}/messages` | 发用户消息 → 触发 agent run → 返回 202 |
+| POST | `/api/sessions/{id}/attachments` | 上传一个附件并回发 attachment 消息 |
 | GET | `/api/sessions/{id}/events` | SSE 订阅事件流 |
 | GET | `/api/tasks/{id}/curves` | 曲线数据（前端 CurveData） |
-| GET | `/api/tasks/{id}/report` | 报告下载（后续） |
+| GET | `/api/tasks/{id}/report` | 报告下载 |
 
 （保留 `/health`。消息/事件 DTO 对齐 `frontend/src/types/index.ts`。）
 
@@ -321,27 +396,33 @@ backend/src/
 |---|---|---|---|
 | 1 | **事件流是轴心**：用 rig `run_channel()` 而非 `agent.prompt()` 一次性 | 前端要 6 类消息的实时渲染 | 复杂度上升，需处理流生命周期 |
 | 2 | **有状态工具实例**（`&self` 持 session_id + Arc\<Services\>），每请求构建 | 工具要落库/发事件/带会话上下文；rig 官方定位共享状态归工具实例 | 每请求构建有轻微开销，可接受 |
-| 3 | **适配器 = 内核唯一边界**（AGENTS.md 硬约束） | 工具只调 `adapters::SimEngine`，内核地址/鉴权/错误码收敛一处 | — |
+| 3 | **适配器 = 内核唯一边界**（AGENTS.md 硬约束） | 工具调用内核能力时只调 `adapters::SimEngine`，内核地址/鉴权/错误码收敛一处 | — |
 | 4 | **SSE 推送 + DB 落库**双通道 | SSE 实时、HTTP 简单单向；DB 是真相，断线可回放 | 需维护两套状态一致性（以 DB 为准） |
-| 5 | **Semaphore 限流**（初定 4 并发引擎子进程） | 引擎同步阻塞、CPU 密集（db-design §0.5），多开抢核变慢 | 并发数后续可调/可配置 |
-| 6 | **任务状态机后端强加**（model_check→…→succeeded/failed） | 引擎无 task_id/进度概念（db-design §0.3） | 需与引擎真实阶段对齐（实现时验证） |
-| 7 | **POST 返回 ack + 后台 agent run** | 仿真可能几十秒，不能让 HTTP 长挂 | 需处理「会话被并发写」与取消 |
+| 5 | **Semaphore 限流**（当前 4 个并发引擎子进程） | 引擎同步阻塞、CPU 密集（db-design §0.5），多开抢核变慢 | 并发数后续可调/可配置 |
+| 6 | **任务状态与阶段由后端维护** | 引擎无 task_id/进度概念（db-design §0.3） | v1 已映射真实 CLI；v2 增加 queued 与脚本生成阶段 |
+| 7 | **POST 返回 ack + 后台 agent run** | 仿真可能几十秒，不能让 HTTP 长挂 | 同会话并发写串行化与取消仍待实现 |
+| 8 | **Agent 按消息短生命周期运行**，不按用户常驻；v2 同 session 串行、实例级并发有界 | 会话状态已持久化，常驻 agent 会放大资源与恢复复杂度 | v1 尚无 agent run 总量限制 |
 
 ---
 
-## 11. 待验证点（实现前必须落地）
+## 11. 已验证结论与剩余工程项
 
-1. **`run_channel()` 的具体用法**：确认 `AgentRunner` 如何获得（`Agent` → `AgentRunner` 的转换），
-   以及 `RunEvents` 与 axum SSE 的桥接（`Stream` → `EventStream`）。
-2. **`#[rig_tool]` vs 手动 `impl Tool`**：确认能否给工具带状态字段；不能则用手动 `impl Tool`
-   或 `DynamicTool::new_with_context`（二者 rig 0.45 都支持）。
-3. **`ToolCall`/`ToolResult` 的批量提交语义**：确认「实时 running/progress」必须靠工具体内
-   主动发事件（而非 rig 的 ToolResult）这条判断，实测验证时序。
-4. **SSE 断线重连**：`broadcast` 会丢旧事件，重连后需用 `Last-Event-ID` 或回放端点补齐；
-   具体补丁方案实现时定。
-5. **引擎阶段对齐**：`model_check/script_gen/running/collecting` 与真实 `tensoreval` 执行阶段
-   的映射，需在接入真实引擎后校准（现在引擎只有「一次跑完」这一个外部可见状态）。
-6. **并发写一致性**：同一 session 的 agent run 与落库是否要串行化（避免消息乱序）。
+已验证：`run_channel()` 与 axum SSE 已桥接；工具采用手动 `impl Tool` 的有状态实例；
+`ToolCall/ToolResult` 的终态时序已实测，仿真中的 progress/result 由工具体内发布；真实
+`tensoreval` 已接入并完成阶段映射。
+
+仍待实现：
+
+1. **v2 SSE 恢复**：按 §13 和 api-design §10.8 增加消息事件 ID、`Last-Event-ID` 补发和
+   “先订阅、后快照”的无缺口恢复；v1 仍有短暂丢事件窗口。
+2. **同会话写入一致性**：为同一 session 的 agent run 和版本写操作串行化，避免多条并发消息
+   交叉写入；版本变更同时使用 `expectedDraftVersionId` 做乐观并发控制。
+3. **Agent admission control**：按 §5.5 增加实例级 semaphore、有界等待队列、`429` 契约和运行指标；
+   多用户上线时再叠加 owner/tenant 配额。
+4. **任务取消**：定义取消端点或自然语言工具、子进程回收以及 `cancelled` 状态的完整语义。
+5. **结果数据集、语义视图与分析运行**：把 `--result-dir` 的原始/派生 DataFrame 登记为
+   `result_datasets`，把同一数据集的多个图表映射登记为 `dataset_views`，保存 schema、脚本和输入
+   血缘；停止扩展 `task_results/curve_data` 固定结构。详见 db-design §7.8。
 
 ---
 
@@ -357,7 +438,59 @@ backend/src/
 > `TENSOREVAL_CWD` 指定引擎工作目录（`.rss` 内 `import_dss` 的相对路径按此解析，本地指内核仓库根）。
 > 任务状态机落 `simulation_tasks`（pending → running → succeeded/failed），限流用 `AppState.semaphore`（4 并发）。
 >
-> 真实内核 QSTS 契约（实测）：`inspect` 走 `--dss-to-rss --check --study snapshot`；时序仿真由 `.rss`
+> v1 真实内核 QSTS 契约（实测）：`inspect` 走 `--dss-to-rss --check --study snapshot`；时序仿真由 `.rss`
 > 脚本（`import_dss` + `solution` + `load_shape` + `ds_radial_qsts` 请求 `bus_phase,load_state,summary`）
 > 驱动，结果 CSV 名 = RSS 变量名（`qsts_summary.csv` 等），`summary` 每时步一行、适配器按最坏情形聚合。
 > 详见 `docs/development-status.md` §4。
+
+## 13. v2：模型工作区与可复现仿真
+
+v2 在现有六层架构中增加领域能力，不改变依赖方向：
+
+```text
+api
+  → application::workspace（摄取、推断、active/draft 版本、补丁）
+  → application::simulation（仿真编排、结果数据集登记）
+  → application::result_analysis（自然语言查询、脚本校验、派生 DataFrame、语义视图、比较）
+  → application::history（会话分页、全文检索、命中上下文）
+  → tools（只接收 workspace/version/task id）
+  → adapters（唯一内核边界）
+  → db + content store
+```
+
+关键约束：
+
+- 一个会话一个工作区；工作区分别保存 active 与 draft 指针，上传、确认映射和修改均派生不可变版本；
+- active 是默认仿真版本；新上传只推进 draft，draft 校验失败不能阻塞已有 active；
+- 重新上传先形成新 artifact；替换或移除通过派生版本表达，历史版本和既有任务不受影响；
+- 文件名只用于展示，DataFrame 类型按内核 schema catalog 的表头（列名）推断；dtype 只做校验；
+- `simulation_tasks` 必须绑定 `model_version_id + study_spec_json`，不再让 LLM 传任意绝对路径；
+- 仿真脚本和结果查询脚本由 agent 根据用户意图及版本化内核文档生成；应用层只接受稳定资源 ID，
+  命令构造、路径解析和执行继续收敛在适配器；
+- `tensoreval` 源码已支持 `--result-dir DIR --output-format parquet`，产生 Snappy 压缩的
+  `NAME.parquet`；v2 原始仿真和结果分析都必须显式使用该组合，并登记 schema、生产者、脚本和输入
+  血缘。适配器启动时探测实际二进制能力，不支持该参数时禁止接收 v2 任务；
+- 用户查询结果时，agent 先读取数据集目录，再用 RSS 的 select/filter/join/group/aggregate 等能力
+  生成派生 DataFrame；缺少必要原始表时明确要求重跑，不能从固定摘要猜答案；
+- 分页表格是所有 DataFrame 的通用入口；一个 dataset 可以有多个 `dataset_views`。纯粹改变列到视觉
+  通道的映射只创建新 view，需要筛选、聚合、透视、分箱或分位数时才运行 RSS 生成派生 DataFrame；
+- Agent 只能生成版本化 `VisualizationSpec`；application 按图表种类、列、dtype、单位和数据规模校验，
+  前端注册表再编译为 ECharts option。禁止让模型或 API 直接提供可执行 formatter 或任意 option；
+- 首批语义图表为折线、柱状、散点、热力、箱线和直方图；拓扑图、桑基图等先定义专门数据形状再开放；
+- 历史比较先校验结果 schema、单位与业务键，再通过 RSS 脚本产生差值 DataFrame，禁止按行号对齐；
+- progress 使用 `operation.kind + operation.id`，区分 ingestion、simulation 与 analysis；result 消息
+  引用 `outputs[]` 数据集，不绑定固定或可扩展指标数组；
+- SSE 建连成功后再读取快照；持久化消息使用消息 ID 作为 event id，并以 `Last-Event-ID` 断点补发；
+- 文件上传和确定性摄取由固定控件触发，且无 active 时首个 ready 版本可自动激活；映射确认、替换、
+  修改、激活/回退、运行和比较等其余领域写操作继续由自然语言触发；
+- 上下文建议必须生成可见 user 消息，经 session 校验稳定资源引用后再由 agent 调用工具；
+- 历史侧栏搜索和 agent 的 `search_chat_history` 共用 application history service；全文结果只返回摘要，
+  `read_chat_context` 再按命中消息读取受限窗口；
+- 历史搜索只能在当前 owner/tenant scope 内执行；v1 无身份时仅允许可信单用户/单租户部署；
+- 当前 v1 的单附件上传保持兼容，迁移完成前不得把目标端点标成已实现。
+- 历史文件默认配额为每个归属主体 20,000 个唯一 artifact、20 GiB，80% 告警；不按时间自动淘汰，
+  删除会话并完成引用 GC 后释放额度。v1 的归属主体是实例，身份系统落地后改为 owner/tenant；
+  仿真和分析输出在事务提交时原子检查配额，超限不能发布部分结果。
+
+领域工具、输入流程、推断算法、错误码、API 和验收标准以
+`docs/model-workspace-design.md` 为准。
