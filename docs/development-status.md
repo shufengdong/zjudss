@@ -71,7 +71,8 @@ v2 仅支持空库初始化。部署前删除旧开发 SQLite 和 DATA_DIR；不
   Snappy Parquet 输出 smoke test。该测试因 CI 不一定安装外部 binary，仍保留为显式 ignored 并在发布时单独运行。
 - 当前尚未覆盖浏览器 → Vite → Axum → SQLite/CAS 的自动化全链路，也没有真实 DeepSeek 发布验收。
   已在 `integration-testing-design.md` 定义机器可读功能目录、Playwright、可编排 LLM/engine、故障注入和
-  四级门禁；完成落地并达到目录 100% 前，不宣称全链路功能验收完成。
+  四级门禁，详细实施步骤见 `docs/superpowers/plans/2026-10-22-v2-integration-testing.md`；完成落地并达到
+  目录 100% 前，不宣称全链路功能验收完成。
 - 自动化测试设计审查发现工具合同有一项实现缺口：manifest 中的 `get_storage_usage` 尚未注册，已注册的
   `list_result_datasets` 尚未进入 manifest。集成测试实施时必须先统一两份清单并加入双向枚举测试。
 

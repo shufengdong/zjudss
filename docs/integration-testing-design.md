@@ -2,7 +2,8 @@
 
 > 状态：设计已确认，待按实施计划落地。本文定义“100% 功能覆盖”的验收口径；它不表示
 > 100% 源码行覆盖，也不表示穷举所有数据组合。系统架构见 [architecture.md](architecture.md)，HTTP/SSE
-> 合同见 [api-design.md](api-design.md)，发布环境要求见 [v2-deployment.md](v2-deployment.md)。
+> 合同见 [api-design.md](api-design.md)，发布环境要求见 [v2-deployment.md](v2-deployment.md)，详细任务见
+> [2026-10-22-v2-integration-testing.md](superpowers/plans/2026-10-22-v2-integration-testing.md)。
 
 ## 1. 目标和覆盖口径
 
