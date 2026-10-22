@@ -45,8 +45,8 @@ fn inference_uses_normalized_headers_and_reports_dtype_conflicts() {
         ),
         &catalog(),
     );
-    assert_eq!(evidence.table_kind.as_deref(), Some("load"));
-    assert_eq!(evidence.resolution, "inferred");
+    assert_eq!(evidence.table_kind, None);
+    assert_eq!(evidence.resolution, "pending");
     assert!(
         evidence
             .type_conflicts

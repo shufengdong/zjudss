@@ -150,7 +150,23 @@ impl AppState {
         )];
         let catalog_value = serde_json::json!({
             "schema_version": 2,
-            "frames": {"bus": {"required": {"id": "str"}}}
+            "frames": {
+                "bus": {
+                    "required": {"id": "str", "kv": "f64"},
+                    "optional": {"zone": "str"},
+                    "stable_keys": ["id"]
+                },
+                "load": {
+                    "required": {"name": "str", "bus": "str", "p": "f64"},
+                    "optional": {"model": "str"},
+                    "stable_keys": ["name"]
+                },
+                "generator": {
+                    "required": {"name": "str", "bus": "str", "p": "f64"},
+                    "optional": {"dispatch": "str"},
+                    "stable_keys": ["name"]
+                }
+            }
         });
         let catalog = Arc::new(
             SchemaCatalog::from_value("e2e-contract", &catalog_value).expect("e2e catalog valid"),

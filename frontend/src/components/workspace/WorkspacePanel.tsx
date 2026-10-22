@@ -6,11 +6,16 @@ function Version({label,value,onSuggest}:{label:string;value:ModelVersionSnapsho
     </div>
     {!value?<p className="mt-2 text-xs text-slate-400">暂无模型</p>:<>
       <div className="mt-2 text-xs text-slate-500">{value.sourceKind} · {value.status} · {value.inputs?.length??value.recognizedTables?.length??0} 个输入</div>
-      {(value.inputs??[]).map(input=><div key={input.inputId} className="mt-2 rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
+      {(value.inputs??[]).map(input=><div key={input.inputId} aria-label={`模型输入 ${input.fileName}${input.sheetName?` ${input.sheetName}`:''}`} className="mt-2 rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
         <div className="truncate font-medium">{input.fileName}{input.sheetName?` / ${input.sheetName}`:''}</div>
-        <div>{input.tableKind??'待识别'} {input.confidence!==null?`· ${Math.round(input.confidence*100)}%`:''}</div>
+        <div>{input.tableKind??'待识别'} · {input.resolution} {input.confidence!==null?`· ${Math.round(input.confidence*100)}%`:''}</div>
+        {input.candidates.length>0&&<div>候选：{input.candidates.map(candidate=>String((candidate as {tableKind?:unknown}).tableKind??'')).filter(Boolean).join('、')}</div>}
+        {input.missingRequiredColumns.length>0&&<div className="text-amber-600">缺列：{input.missingRequiredColumns.join('、')}</div>}
+        {input.typeConflicts.length>0&&<div className="text-red-500">类型冲突：{input.typeConflicts.map(String).join('、')}</div>}
       </div>)}
       {value.missing.length>0&&<p className="mt-2 text-xs text-amber-600">缺少：{value.missing.join('、')}</p>}
+      {!!value.ambiguities?.length&&<p className="mt-2 text-xs text-amber-600">待确认：{value.ambiguities.map(item=>`${item.inputId} (${item.candidates.join('、')})`).join('；')}</p>}
+      {!!value.diagnostics?.length&&<p className="mt-2 text-xs text-red-500">诊断：{value.diagnostics.map(String).join('；')}</p>}
       {label==='候选版本'&&value.status==='ready'&&<button onClick={()=>onSuggest(`请激活候选模型版本 ${value.versionId}`)} className="mt-3 rounded-lg bg-brand-500 px-3 py-1.5 text-xs text-white">在对话中激活</button>}
     </>}
   </section>

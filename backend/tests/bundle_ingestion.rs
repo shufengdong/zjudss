@@ -300,6 +300,27 @@ async fn uploaded_single_rss_with_missing_dependency_publishes_collecting_versio
         .await
         .unwrap();
     assert_eq!(version.status, "collecting");
+    let input = app
+        .state
+        .workspace_service
+        .inputs(&principal().access, version.id)
+        .await
+        .unwrap()[0]
+        .0
+        .clone();
+    let scope = app
+        .state
+        .artifact_service
+        .resolve_scope(&principal().storage)
+        .await
+        .unwrap();
+    let artifact = app
+        .state
+        .artifact_service
+        .find_owned(scope.id, input.artifact_id)
+        .await
+        .unwrap();
+    assert_eq!(artifact.format, "rss");
     let manifest: serde_json::Value = serde_json::from_str(&version.manifest_json).unwrap();
     assert!(
         manifest["missing"].as_array().unwrap()[0]
@@ -338,19 +359,19 @@ async fn zip_and_directory_upload_publish_equal_canonical_content() {
                 vec![
                     (
                         "entry",
-                        "main.rss",
+                        "demo.rssbundle_main.rss",
                         Some("demo.rssbundle/main.rss"),
                         entry.to_vec(),
                     ),
                     (
                         "model",
-                        "model.dss",
+                        "demo.rssbundle_dss_model.dss",
                         Some("demo.rssbundle/dss/model.dss"),
                         model.to_vec(),
                     ),
                     (
                         "manifest",
-                        "manifest.json",
+                        "demo.rssbundle_manifest.json",
                         Some("demo.rssbundle/manifest.json"),
                         manifest.clone(),
                     ),

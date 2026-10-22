@@ -1,0 +1,406 @@
+{
+  "generator": "task-9-upload-fixtures-v1",
+  "files": [
+    {
+      "path": "bundle/demo.rssbundle/dss/model.dss",
+      "format": "dss",
+      "bytes": 17,
+      "sha256": "3cdce942f652582123b065c63ee4de96adff260feb233b2ce55cd90e74fe420c",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    },
+    {
+      "path": "bundle/demo.rssbundle/main.rss",
+      "format": "rss",
+      "bytes": 33,
+      "sha256": "bed7a0605845973a9d9aef60abc69ca6394eb63273c12a4f57cf5b1aba2fe25c",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    },
+    {
+      "path": "bundle/demo.rssbundle/manifest.json",
+      "format": "json",
+      "bytes": 315,
+      "sha256": "18a84361a2fd4ffc768bf2ad932573b8a36a5603964ce96c034e4bfe043f4ee4",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    },
+    {
+      "path": "bundle/demo.zip",
+      "format": "zip",
+      "bytes": 672,
+      "sha256": "767fc3f7054dfa15d6a6dfb4a04bd1c710eae11c3d6ef007f0a4fc70370036a0",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    },
+    {
+      "path": "dataframes/ambiguous.csv",
+      "format": "csv",
+      "bytes": 22,
+      "sha256": "9aa7e64d51160b589e5d352f1679c9f8423fa445c276653b6e89e156163c6b43",
+      "schema": [
+        {
+          "name": "name",
+          "dtype": "Utf8",
+          "nullable": false
+        },
+        {
+          "name": "bus",
+          "dtype": "Utf8",
+          "nullable": false
+        },
+        {
+          "name": "p",
+          "dtype": "Float64",
+          "nullable": false
+        }
+      ],
+      "rowCount": 1,
+      "units": {}
+    },
+    {
+      "path": "dataframes/bus-duplicate.csv",
+      "format": "csv",
+      "bytes": 25,
+      "sha256": "af2bde8699a793fe78975d5a595e5038aef084c64fc043b19e7487acc35d4658",
+      "schema": [
+        {
+          "name": "id",
+          "dtype": "Utf8",
+          "nullable": false
+        },
+        {
+          "name": "kv",
+          "dtype": "Float64",
+          "nullable": false
+        },
+        {
+          "name": "zone",
+          "dtype": "Utf8",
+          "nullable": false
+        }
+      ],
+      "rowCount": 1,
+      "units": {}
+    },
+    {
+      "path": "dataframes/bus.csv",
+      "format": "csv",
+      "bytes": 25,
+      "sha256": "55dae20eb1b895fdf0cb4209b2de3f9beabf6fa817b3c84aa00761195ce71ea8",
+      "schema": [
+        {
+          "name": "id",
+          "dtype": "Utf8",
+          "nullable": false
+        },
+        {
+          "name": "kv",
+          "dtype": "Float64",
+          "nullable": false
+        },
+        {
+          "name": "zone",
+          "dtype": "Utf8",
+          "nullable": false
+        }
+      ],
+      "rowCount": 1,
+      "units": {}
+    },
+    {
+      "path": "dataframes/dtype-conflict.csv",
+      "format": "csv",
+      "bytes": 39,
+      "sha256": "85eae900cb692bcbcd2a302c16b76c0f29de1bbcf78de33d1819c775d1f9e589",
+      "schema": [
+        {
+          "name": "name",
+          "dtype": "Utf8",
+          "nullable": false
+        },
+        {
+          "name": "bus",
+          "dtype": "Utf8",
+          "nullable": false
+        },
+        {
+          "name": "p",
+          "dtype": "Utf8",
+          "nullable": false
+        },
+        {
+          "name": "model",
+          "dtype": "Utf8",
+          "nullable": false
+        }
+      ],
+      "rowCount": 1,
+      "units": {}
+    },
+    {
+      "path": "dataframes/load.csv",
+      "format": "csv",
+      "bytes": 32,
+      "sha256": "6b663a043b3e4cabe0d39d1736df079e6d7d28768987fd8d2966be0728f5a121",
+      "schema": [
+        {
+          "name": "name",
+          "dtype": "Utf8",
+          "nullable": false
+        },
+        {
+          "name": "bus",
+          "dtype": "Utf8",
+          "nullable": false
+        },
+        {
+          "name": "p",
+          "dtype": "Float64",
+          "nullable": false
+        },
+        {
+          "name": "model",
+          "dtype": "Utf8",
+          "nullable": false
+        }
+      ],
+      "rowCount": 1,
+      "units": {}
+    },
+    {
+      "path": "dataframes/load.parquet",
+      "format": "parquet",
+      "bytes": 1167,
+      "sha256": "79533c54bd08a62c25a5b10c4620de397ae82c5b83d8d78616ec37181355fda2",
+      "schema": [
+        {
+          "name": "name",
+          "dtype": "Utf8",
+          "nullable": false
+        },
+        {
+          "name": "bus",
+          "dtype": "Utf8",
+          "nullable": false
+        },
+        {
+          "name": "p",
+          "dtype": "Float64",
+          "nullable": false
+        },
+        {
+          "name": "model",
+          "dtype": "Utf8",
+          "nullable": false
+        }
+      ],
+      "rowCount": 1,
+      "units": {}
+    },
+    {
+      "path": "dataframes/missing.csv",
+      "format": "csv",
+      "bytes": 6,
+      "sha256": "e695651a33a653b9038b10dca204dfe2ec043c63b806fcb6ab078fba6f9e89e8",
+      "schema": [
+        {
+          "name": "id",
+          "dtype": "Utf8",
+          "nullable": false
+        }
+      ],
+      "rowCount": 1,
+      "units": {}
+    },
+    {
+      "path": "dataframes/multi.xlsx",
+      "format": "xlsx",
+      "bytes": 6341,
+      "sha256": "85fa558b9416a12570d4a496fc03eebf08a14a013700ce92326ef8b94e0a2052",
+      "schema": null,
+      "rowCount": null,
+      "units": {},
+      "tables": [
+        {
+          "name": "Loads",
+          "schema": [
+            {
+              "name": "name",
+              "dtype": "Utf8",
+              "nullable": false
+            },
+            {
+              "name": "bus",
+              "dtype": "Utf8",
+              "nullable": false
+            },
+            {
+              "name": "p",
+              "dtype": "Float64",
+              "nullable": false
+            },
+            {
+              "name": "model",
+              "dtype": "Utf8",
+              "nullable": false
+            }
+          ],
+          "rowCount": 1,
+          "units": {}
+        },
+        {
+          "name": "Empty",
+          "schema": [],
+          "rowCount": 0,
+          "units": {}
+        },
+        {
+          "name": "Mixed",
+          "schema": [
+            {
+              "name": "name",
+              "dtype": "Utf8",
+              "nullable": false
+            },
+            {
+              "name": "bus",
+              "dtype": "Utf8",
+              "nullable": false
+            },
+            {
+              "name": "p",
+              "dtype": "Mixed",
+              "nullable": false
+            },
+            {
+              "name": "model",
+              "dtype": "Utf8",
+              "nullable": false
+            }
+          ],
+          "rowCount": 2,
+          "units": {}
+        },
+        {
+          "name": "DuplicateColumns",
+          "schema": [
+            {
+              "name": "id",
+              "dtype": "Utf8",
+              "nullable": false
+            },
+            {
+              "name": "kv",
+              "dtype": "Float64",
+              "nullable": false
+            },
+            {
+              "name": "kv",
+              "dtype": "Float64",
+              "nullable": false
+            }
+          ],
+          "rowCount": 1,
+          "units": {}
+        }
+      ]
+    },
+    {
+      "path": "dataframes/unknown.csv",
+      "format": "csv",
+      "bytes": 12,
+      "sha256": "6f06cb0016ccbebff0ce2b9e1401323e6668324580d4e0568284e44e53c1b14a",
+      "schema": [
+        {
+          "name": "foo",
+          "dtype": "Utf8",
+          "nullable": false
+        },
+        {
+          "name": "bar",
+          "dtype": "Utf8",
+          "nullable": false
+        }
+      ],
+      "rowCount": 1,
+      "units": {}
+    },
+    {
+      "path": "malicious/absolute.zip",
+      "format": "zip",
+      "bytes": 127,
+      "sha256": "879420be8b197ac035e15570ed893a8aa69c5a185b6d0a8a0d8c73c0a5c43684",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    },
+    {
+      "path": "malicious/bomb.zip",
+      "format": "zip",
+      "bytes": 17455,
+      "sha256": "f2891e3e902a5d9a2f6970f2bf3a24dd3f6f5debe8678e68457db330702628c0",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    },
+    {
+      "path": "malicious/duplicate.zip",
+      "format": "zip",
+      "bytes": 216,
+      "sha256": "328773a775e19045714cf24d45102762e6573f297ab2d00b201927bdb505b232",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    },
+    {
+      "path": "malicious/symlink.zip",
+      "format": "zip",
+      "bytes": 114,
+      "sha256": "a4b0b5337f80a515b8a642bb2b23bc3650f9b295cb6fe8e836408903fdc62bc9",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    },
+    {
+      "path": "malicious/traversal.zip",
+      "format": "zip",
+      "bytes": 127,
+      "sha256": "ef1f429fae4bf33fc64498deead1438a0cd044ebcaa0f7ccb6c7f87d77177f45",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    },
+    {
+      "path": "rss/broken.rss",
+      "format": "rss",
+      "bytes": 37,
+      "sha256": "41a77dd56ec1c9352f6d81db11b150ea2a575e4495c061d67eef3af54b6fa6eb",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    },
+    {
+      "path": "rss/modified.rss",
+      "format": "rss",
+      "bytes": 11,
+      "sha256": "3d64fd05421be9919b1788646f795d9a4a5a7e6fa5fe87e7be4b2d06f4956678",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    },
+    {
+      "path": "rss/replacement.rss",
+      "format": "rss",
+      "bytes": 11,
+      "sha256": "68833fe50c22a93765392cd3e53b25e8a0c7b74e4730e85425e21da46bd69d5c",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    }
+  ]
+}

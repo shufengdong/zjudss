@@ -21,7 +21,7 @@ impl MessageRepo {
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || -> RepoResult<Message> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            conn.transaction::<Message, diesel::result::Error, _>(|conn| {
+            conn.immediate_transaction::<Message, diesel::result::Error, _>(|conn| {
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(new.session_id))
                     .filter(schema::sessions::access_scope_kind.eq(&scope.kind))

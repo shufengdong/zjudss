@@ -6,6 +6,7 @@ export interface VersionInput {
 export interface ModelVersionSnapshot {
   versionId:string; parentVersionId?:string|null; sourceKind?:string; originKind?:string; origin?:unknown
   status:'collecting'|'ready'|'invalid'; inputs?:VersionInput[]
+  contentHash?:string
   recognizedTables?:{inputId:string;artifactId:string;tableKind:string;confidence:number}[]
   missing:string[]; ambiguities?:{inputId:string;candidates:string[]}[]; diagnostics?:unknown[]; createdAt?:string
 }

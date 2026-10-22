@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { uploadFiles } from '../api/client'
+import { getIngestion, uploadFiles } from '../api/client'
 export interface UploadEntry{id:string;name:string;relativePath?:string;status:'queued'|'uploading'|'accepted'|'failed';error?:string}
 const stableId=()=>crypto.randomUUID?.()??`${Date.now()}-${Math.random()}`
 export function useIngestion(sessionId:string|null){
@@ -11,8 +11,13 @@ export function useIngestion(sessionId:string|null){
     setQueue(entries.map(({file:_,...entry})=>entry))
     setQueue(q=>q.map(e=>({...e,status:'uploading'})))
     try{
-      await uploadFiles(sessionId,batchId,entries.map(e=>({id:e.id,file:e.file,relativePath:e.relativePath})))
+      const accepted=await uploadFiles(sessionId,batchId,entries.map(e=>({id:e.id,file:e.file,relativePath:e.relativePath})))
       setQueue(q=>q.map(e=>({...e,status:'accepted'})))
+      const follow=async()=>{const value=await getIngestion(accepted.ingestionId)
+        if(value.status==='failed'){setQueue(q=>q.map(e=>({...e,status:'failed',error:value.errorMessage??'处理失败'})));return}
+        if(value.status==='succeeded'||value.status==='completed_with_errors')return
+        window.setTimeout(()=>void follow(),200)}
+      void follow()
     }catch(error){
       setQueue(q=>q.map(e=>({...e,status:'failed',error:error instanceof Error?error.message:'上传失败'})))
     }

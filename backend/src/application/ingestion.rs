@@ -216,9 +216,7 @@ impl IngestionService {
         let storage_scope = self.artifacts.resolve_scope(&principal.storage).await?;
         let mut committed = Vec::with_capacity(batch.files.len());
         for file in batch.files {
-            let format = format_from_name(&file.file_name)
-                .unwrap_or("file")
-                .to_string();
+            let format = extension(&file.file_name).unwrap_or("file").to_string();
             let UploadFile {
                 client_file_id,
                 file_name,
@@ -685,7 +683,9 @@ impl IngestionService {
                 item.client_file_id,
                 item.sheet_name.clone().unwrap_or_else(|| "table".into())
             );
-            if let Some(kind) = &inference.table_kind {
+            if let Some(kind) = &inference.table_kind
+                && inference.resolution == "inferred"
+            {
                 recognized.push(RecognizedTable {
                     input_id: input_id.clone(),
                     artifact_id: artifact.id.to_string(),
@@ -999,6 +999,11 @@ impl IngestionService {
         .await?;
         path_entries.sort_by(|left, right| left.0.cmp(&right.0));
         for (relative, item, artifact, _source) in path_entries {
+            let display_name = Path::new(&relative)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or(&item.file_name)
+                .to_string();
             inputs.push(VersionInputDraft {
                 artifact_id: artifact.id,
                 sha256: artifact.sha256,
@@ -1010,7 +1015,7 @@ impl IngestionService {
                     "data".into()
                 },
                 relative_path: Some(relative),
-                display_name: item.file_name,
+                display_name,
                 // Archive provenance remains on ingestion_items. Keeping it out of the
                 // immutable model input makes an uploaded directory and its ZIP form
                 // produce the same canonical model content hash.

@@ -271,3 +271,58 @@
     - { runner: playwright, file: integration-tests/e2e/auth-isolation.spec.ts, name: trusted proxy rejects missing and incorrect credentials }
   assertions: [两个浏览器上下文的会话、消息、SSE、任务、数据集、下载和历史搜索互不可见且伪造身份返回 401]
   fixtures: []
+- id: INPUT-E2E-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 浏览器多格式 DataFrame 摄取与表头推断旅程
+  layers: [frontend, api, backend, agent]
+  lanes: [pr]
+  tests:
+    - { runner: playwright, file: integration-tests/e2e/dataframe-workspace.spec.ts, name: headers drive CSV Excel and Parquet inference while ambiguous and invalid tables stay collecting }
+    - { runner: playwright, file: integration-tests/e2e/dataframe-workspace.spec.ts, name: supplemental batches create immutable children and natural language confirms and activates mappings }
+  assertions: [CSV、Excel 和 Parquet 按列名及 dtype 展示推断证据，分批补传、歧义确认和激活均形成可追溯版本]
+  fixtures:
+    - integration-tests/fixtures/uploads/manifest.json
+    - integration-tests/fixtures/uploads/dataframes/multi.xlsx
+    - integration-tests/fixtures/uploads/dataframes/load.parquet
+- id: WORKSPACE-E2E-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: RSS 重传和不可变版本自然语言旅程
+  layers: [frontend, api, backend, agent, adapter]
+  lanes: [pr]
+  tests: [{ runner: playwright, file: integration-tests/e2e/rss-replacement.spec.ts, name: re-uploaded RSS creates immutable replacements and version pointers remain reversible }]
+  assertions: [重传先追加新输入，再由自然语言移除、替换、修改、激活和回退，既有任务继续绑定原模型版本]
+  fixtures:
+    - integration-tests/fixtures/uploads/rss/broken.rss
+    - integration-tests/fixtures/uploads/rss/replacement.rss
+    - integration-tests/fixtures/uploads/rss/modified.rss
+- id: BUNDLE-E2E-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 目录和 ZIP bundle 内容等价
+  layers: [frontend, api, backend]
+  lanes: [pr]
+  tests: [{ runner: playwright, file: integration-tests/e2e/bundle-examples.spec.ts, name: directory and ZIP bundles publish equivalent immutable model content }]
+  assertions: [同一 rssbundle 的目录上传与 ZIP 上传生成相同规范内容哈希]
+  fixtures:
+    - integration-tests/fixtures/uploads/bundle/demo.rssbundle/manifest.json
+    - integration-tests/fixtures/uploads/bundle/demo.zip
+- id: EXAMPLE-E2E-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 内置案例搜索详情和自然语言导入
+  layers: [frontend, api, backend, agent]
+  lanes: [pr]
+  tests: [{ runner: playwright, file: integration-tests/e2e/bundle-examples.spec.ts, name: example search and natural-language import copy a snapshot-pinned editable model }]
+  assertions: [案例副本固定 engine snapshot 和来源 tree hash，并作为可编辑模型版本进入工作区]
+  fixtures: []
+- id: ARCHIVE-E2E-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 恶意 ZIP 整批拒绝且不泄漏工作区状态
+  layers: [frontend, api, backend]
+  lanes: [pr]
+  tests: [{ runner: playwright, file: integration-tests/e2e/malicious-bundle.spec.ts, name: path traversal absolute duplicate symlink and compression-bomb ZIPs fail atomically }]
+  assertions: [路径穿越、绝对路径、重复路径、符号链接和压缩炸弹均失败且不留下 draft 或 artifact 配额]
+  fixtures:
+    - integration-tests/fixtures/uploads/malicious/traversal.zip
+    - integration-tests/fixtures/uploads/malicious/absolute.zip
+    - integration-tests/fixtures/uploads/malicious/duplicate.zip
+    - integration-tests/fixtures/uploads/malicious/symlink.zip
+    - integration-tests/fixtures/uploads/malicious/bomb.zip

@@ -400,11 +400,23 @@ impl ModelPatchService {
         inputs: Vec<InputState>,
         patch: Option<Value>,
     ) -> Result<ModelVersion, ModelMutationError> {
-        let status = if base.status == "ready" {
+        let all_mappings_resolved = base.source_kind == "dataframes"
+            && inputs.iter().all(|input| {
+                input.binding.as_ref().is_some_and(|binding| {
+                    matches!(binding.resolution.as_str(), "inferred" | "user_confirmed")
+                })
+            });
+        let status = if base.status == "ready" || all_mappings_resolved {
             crate::application::ModelVersionStatus::Ready
         } else {
             crate::application::ModelVersionStatus::Collecting
         };
+        let mut manifest = manifest;
+        if matches!(status, crate::application::ModelVersionStatus::Ready)
+            && let Some(object) = manifest.as_object_mut()
+        {
+            object.insert("ambiguities".into(), serde_json::json!([]));
+        }
         self.workspaces
             .publish_version(
                 &principal.access,

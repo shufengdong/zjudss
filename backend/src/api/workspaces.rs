@@ -109,6 +109,7 @@ async fn version_json(
         "originKind": version.origin_kind,
         "origin": manifest.get("origin").cloned(),
         "status": version.status,
+        "contentHash": version.content_hash,
         "inputs": inputs,
         "missing": manifest.get("missing").cloned().unwrap_or_else(|| json!([])),
         "diagnostics": manifest.get("diagnostics").cloned().unwrap_or_else(|| json!([])),

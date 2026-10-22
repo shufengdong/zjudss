@@ -1,0 +1,1 @@
+{"entry": "main.rss", "files": [{"path": "main.rss", "sha256": "bed7a0605845973a9d9aef60abc69ca6394eb63273c12a4f57cf5b1aba2fe25c"}, {"path": "dss/model.dss", "sha256": "3cdce942f652582123b065c63ee4de96adff260feb233b2ce55cd90e74fe420c"}], "required_features": [], "study": {"kind": "power_flow", "solver": "radial"}}

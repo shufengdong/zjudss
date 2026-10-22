@@ -21,7 +21,7 @@ function App(){
   useEffect(()=>{let live=true;void Promise.all([getPrincipal(),listSessions()]).then(([me,list])=>{if(!live)return;setPrincipal(me);setSessions(list)
     const remembered=localStorage.getItem(`zjudss:last-session:${me.scopeKey}`),next=list.some(s=>s.id===remembered)?remembered:list[0]?.id??null;if(next)setSelectedId(next)
   }).catch(e=>notify(e instanceof Error?e.message:'初始化失败'));return()=>{live=false}},[notify])
-  useEffect(()=>{const messages=feed?.messages??[];const last=[...messages].reverse().find((m):m is Extract<Message,{type:'model-status'}>=>m.type==='model-status');if(last)workspaceState.accept(last)},[feed?.messages])
+  useEffect(()=>{const messages=feed?.messages??[];const last=[...messages].reverse().find((m):m is Extract<Message,{type:'model-status'}>=>m.type==='model-status');if(last){workspaceState.accept(last);if(selectedId)void workspaceState.reload(selectedId)}},[feed?.messages,selectedId])
   const newSession=useCallback(async()=>{try{const value=await createSession();setSessions(v=>[value,...v]);select(value.id)}catch(e){notify(e instanceof Error?e.message:'新建失败')}},[notify,select])
   const rename=async(id:string,title:string)=>{try{const value=await renameSessionApi(id,title);setSessions(v=>v.map(s=>s.id===id?value:s))}catch(e){notify(e instanceof Error?e.message:'重命名失败')}}
   const removeSession=async(id:string)=>{try{await deleteSessionApi(id);const rest=sessions.filter(s=>s.id!==id);setSessions(rest);if(selectedId===id)setSelectedId(rest[0]?.id??null)}catch(e){notify(e instanceof Error?e.message:'删除失败')}}

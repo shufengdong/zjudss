@@ -62,6 +62,7 @@ pub fn infer_table(table: &TableSchema, catalog: &SchemaCatalog) -> InferenceEvi
     let inferred = best.as_ref().is_some_and(|candidate| {
         candidate.confidence >= 0.90
             && candidate.missing_required_columns.is_empty()
+            && candidate.type_conflicts.is_empty()
             && margin >= 0.10
     });
     match best {
@@ -175,6 +176,9 @@ fn score(
 fn dtype_compatible(actual: &str, expected: &str) -> bool {
     let actual = actual.to_ascii_lowercase();
     let expected = expected.to_ascii_lowercase();
+    if actual == expected {
+        return true;
+    }
     if actual == "unknown" || expected == "unknown" {
         return true;
     }
