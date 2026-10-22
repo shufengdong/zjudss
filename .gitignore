@@ -25,3 +25,7 @@ frontend/vite.config.d.ts
 
 # 运行时数据目录（内核结果 CSV、上传附件等）
 backend/data/
+
+# 本地隔离工作树与实施账本
+.worktrees/
+.superpowers/
