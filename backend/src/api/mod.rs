@@ -5,7 +5,6 @@ mod events;
 mod ingestions;
 mod sessions;
 mod storage;
-mod tasks;
 mod workspaces;
 
 use axum::Router;
@@ -220,6 +219,4 @@ pub fn router() -> Router<AppState> {
         .route("/api/sessions/{id}/workspace", get(workspaces::workspace))
         .route("/api/sessions/{id}/versions", get(workspaces::versions))
         .route("/api/versions/{id}", get(workspaces::version))
-        .route("/api/tasks/{id}/curves", get(tasks::curves))
-        .route("/api/tasks/{id}/report", get(tasks::report))
 }

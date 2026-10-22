@@ -101,7 +101,7 @@ v2 不在应用内维护账号密码，而是使用部署实例身份或可信�
 │   POST /api/sessions/{id}/messages   触发 agent，返回 ack  │
 │   GET  /api/sessions/{id}/events     SSE 订阅事件流         │
 │   GET  /api/sessions/{id}/messages   回放历史               │
-│   GET  /api/tasks/{id}/curves        曲线                   │
+│   GET  /api/tasks/{id}/datasets      结果 DataFrame（Task 12）│
 ├──────────────────────────────────────────────────────────┤
 │ application（编排层） 会话编排 / 事件总线 / 限流              │
 │   ChatService、AppState、EventBus                           │
@@ -397,8 +397,8 @@ backend/src/
 | POST | `/api/sessions/{id}/messages` | 发用户消息 → 触发 agent run → 返回 202 |
 | POST | `/api/sessions/{id}/attachments` | 上传一个附件并回发 attachment 消息 |
 | GET | `/api/sessions/{id}/events` | SSE 订阅事件流 |
-| GET | `/api/tasks/{id}/curves` | 曲线数据（前端 CurveData） |
-| GET | `/api/tasks/{id}/report` | 报告下载 |
+| GET | `/api/tasks/{id}/datasets` | 通用结果 DataFrame 目录（Task 12） |
+| GET | `/api/datasets/{id}/rows` | Parquet 分页与列投影（Task 12） |
 
 （保留 `/health`。消息/事件 DTO 对齐 `frontend/src/types/index.ts`。）
 
@@ -445,12 +445,12 @@ backend/src/
 1. `adapters/` + `AdapterError`：先把内核边界立起来（即使暂用假实现）—— ✅ 已落地；
 2. `application/`（AppState / EventBus）+ `api/`（SSE + 消息回放）—— ✅ 已落地；
 3. `tools/` 有状态化 + `agent/` 的 `run_channel` 驱动 —— ✅ 已落地；
-4. 接入真实引擎子进程 + 状态机 + 限流 —— ✅ 已落地（`adapters::ProcessEngine`，见下）；
-5. 曲线/报告端点的数据聚合 —— ✅ 已落地（`read_curves`/`read_report`，见 development-status §4）。
+4. 接入 tensoreval Parquet v2 子进程合同 —— ✅ 已落地（`adapters::ProcessEngine`）；
+5. 可复现任务、ResultDataset 登记和通用结果 API —— 🚧 Task 12。
 
-> 第 4 步落地说明：`ProcessEngine` 由 `TENSOREVAL_BIN` 环境变量选择，未设置时回退 `StubEngine`；
-> `TENSOREVAL_CWD` 指定引擎工作目录（`.rss` 内 `import_dss` 的相对路径按此解析，本地指内核仓库根）。
-> 任务状态机落 `simulation_tasks`（pending → running → succeeded/failed），限流用 `AppState.semaphore`（4 并发）。
+> 第 4 步落地说明：生产启动必须提供 `TENSOREVAL_BIN`。适配器执行最小 Parquet input/output
+> smoke probe，并要求 `--result-dir --output-format parquet`；失败即停止启动，不降级旧二进制或 stub。
+> 每次运行的 cwd 是 application 物化的任务私有输入树，共享 `TENSOREVAL_CWD` 只用于启动资源快照。
 >
 > v1 真实内核 QSTS 契约（实测）：`inspect` 走 `--dss-to-rss --check --study snapshot`；时序仿真由 `.rss`
 > 脚本（`import_dss` + `solution` + `load_shape` + `ds_radial_qsts` 请求 `bus_phase,load_state,summary`）

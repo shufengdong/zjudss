@@ -25,10 +25,10 @@
 |---|---|---|
 | 前端静态骨架 | ✅ v2 协议已接入 | 8 类消息、按 operation/callId 归并、可恢复 SSE；工作区和通用结果组件待后续任务 |
 | 前端接入真实后端 | ✅ 阶段 1–5 完成 | `api/client.ts`、`api/events.ts`、`App.tsx` 已接线，含重命名/删除/附件/曲线/报告（见 §5） |
-| 后端分层架构 | ✅ v2 Tasks 1–10 完成 | 身份、调度、SSE、artifact、不可变工作区、引擎知识、全部模型摄取及自然语言工作区工具已落地 |
+| 后端分层架构 | ✅ v2 Tasks 1–11 完成 | 身份、调度、SSE、artifact、不可变工作区、引擎知识、模型摄取、工作区工具与 Parquet v2 内核边界已落地 |
 | 后端数据库 schema | 🚧 v2 实施中 | 已增加 storage scope、artifact、workspaces/model_versions、ingestions、版本输入绑定和全链路归属过滤；dataset 等表按后续任务增加 |
-| 后端真实引擎接入 | ✅ 第 4 步完成 | `adapters::ProcessEngine` 起 `tensoreval` 子进程（`TENSOREVAL_BIN` 选择，未设置回退 stub）+ 任务状态机 + 限流信号量 |
-| 后端曲线/报告端点 | ✅ 第 5 步完成 | `GET /api/tasks/{id}/curves`、`/report` 已实现；metrics 真实值（尽力解析） |
+| 后端真实引擎接入 | 🚧 v2 适配器完成 | 启动必须探测 `TENSOREVAL_BIN` 的 `--result-dir`、`--output-format parquet` 与命名 Parquet input；运行只接受任务私有输入树，不再自动降级 stub；任务登记在 Task 12 接入 |
+| 后端结果端点 | 🚧 v2 迁移中 | 旧 CSV 指标、曲线和报告适配器/路由已删除；Task 12 用通用 ResultDataset 元数据、分页、投影和下载 API 取代 |
 | 会话状态/重命名/删除/附件 | ✅ 后端 v2 完成 | `PATCH/DELETE /api/sessions/{id}`；附件支持 `clientBatchId`、多 `file.<clientFileId>`、流式限制、幂等摄取和刷新恢复，前端将在 Task 16 切换 |
 | 前后端字段命名对齐 | ✅ 已对齐 | 后端出网 `tool-call`/`toolName`/`taskId` 与前端类型一致（§3） |
 | 历史聊天浏览 | ✅ 基础功能完成 | 全量会话列表、今天/昨天/更早分组、打开回放、重命名和删除 |
@@ -42,10 +42,10 @@
 | 多用户隔离 | ✅ 基础边界完成 | instance/trusted_proxy、`/api/me`、storage/access scope 和 Session/Message/Task/SSE 404 隔离已落地 |
 | Agent prompt 与领域技能 | ✅ 工作区阶段完成 | 每轮只注入 system、技能索引和资源摘要；技能/文档/案例按稳定 ID 有界加载，脚本修改缺技能返回 `skill_required`，当前 run 记录已加载技能集 |
 | 内置案例库 | ✅ 导入闭环完成 | 启动时校验并索引根 RSS 与 rssbundle；案例按快照 ID 导入完整依赖闭包，复制并复核 hash，并已注册自然语言检索、查看与导入工具 |
-| v2 详细实施方案 | 🚧 执行中 | Tasks 1–10 已完成；M0/M1 完成，正在实施 M2 tensoreval v2 合同与可复现仿真 |
+| v2 详细实施方案 | 🚧 执行中 | Tasks 1–11 已完成；M0/M1 完成，正在实施 M2 可复现仿真任务与 ResultDataset 登记 |
 
 > v2 实施以 `docs/superpowers/plans/2026-10-22-v2-simulation-workspace.md` 的 Task 编号为准；当前
-> 已完成 Task 1–10。后文保留的 v1 细节是迁移背景，若与本节冲突，以本节和 v2 契约为准。
+> 已完成 Task 1–11。后文保留的 v1 细节是迁移背景，若与本节冲突，以本节和 v2 契约为准。
 > 上表 `🎯` 表示已评审目标，不能理解为代码已具备该能力；目标实施顺序见
 > `docs/model-workspace-design.md` §11。
 
@@ -89,7 +89,7 @@ Session/Message/Task/SSE 读写均由服务端 principal 注入 scope，跨 scop
   带 ID 的 SSE 推送 → 断线按 `Last-Event-ID` 补发，必要时触发快照重同步。
 - **已实现端点**：`GET/POST /api/sessions`、`PATCH/DELETE /api/sessions/{id}`、
   `GET/POST /api/sessions/{id}/messages`、`POST /api/sessions/{id}/attachments`、
-  `GET /api/sessions/{id}/events`（SSE）、`GET /api/tasks/{id}/curves`、`/report`、`GET /api/me`、`GET /health`。
+  `GET /api/sessions/{id}/events`（SSE）、工作区/版本/摄取只读端点、`GET /api/me`、`GET /health`。
 - **错误约定**：固定 `{error,code,details?}`；跨 scope 资源统一 404；队列满为
   `429 agent_queue_full`。
 
@@ -122,72 +122,35 @@ api（axum handler/DTO/SSE）
   run，run 内重建 agent/工具并从 DB 加载 session 历史，完成后释放。rig 本身没有设置 agent 数量上限。
 - **当前容量边界**：单次 run 最多 8 个模型轮次；`RunScheduler` 强制同 session 1、owner 2、实例 8
   个活动 run，等待队列默认 32。仿真内核另有独立 `Semaphore(4)`；两层限制职责不同。
-- **引擎选择**：`adapters/process.rs` 的 `ProcessEngine` 起 `tensoreval` 子进程（`TENSOREVAL_BIN`
-  选择，未设置回退 `adapters/stub.rs` 的 `StubEngine`）；错误码翻译到 `ErrorCategory`。
+- **引擎选择**：生产启动必须设置 `TENSOREVAL_BIN`；`ProcessEngine` 先执行最小 Parquet
+  input/output smoke probe，不满足 v2 合同就启动失败。`StubEngine` 只用于显式注入的测试。
 
 ### 后端目录（实际）
 
 ```
 backend/src/
 ├── main.rs            # 装配 AppState、迁移、路由、引擎选择（env）
-├── adapters/          # mod.rs（SimEngine + AdapterError + engine_from_env）、process.rs、stub.rs
-├── agent/mod.rs       # provider 选择 + build_agent
+├── adapters/          # v2 合同；process/{command,output}；测试 StubEngine
+├── agent/             # provider、PromptAssembler、版本化 knowledge
 ├── api/               # mod.rs（router）、sessions.rs、events.rs（SSE）
 ├── application/       # AppState、chat、events（EventBus/AppEvent）、scheduler
 ├── db/                # pool/迁移/schema/models/repositories（全部显式接收 scope）
-└── tools/             # mod.rs（build_tools）、inspect_model.rs、run_simulation.rs
+└── tools/             # 稳定 ID 的知识、案例和工作区自然语言工具
 ```
 
-### 后端已落地（第 4–5 步，详见 `docs/architecture.md` §12）
+### tensoreval Parquet v2 边界（Task 11）
 
-第 4 步（真实引擎子进程 + 任务状态机 + 限流）与第 5 步（补齐 6 项缺口）均已落地：
-
-- **真实引擎子进程**：`adapters/process.rs` 的 `ProcessEngine` 起 `tensoreval`（`--df --result-dir`），
-  `TENSOREVAL_BIN` 未设置时回退 `StubEngine`；错误码翻译到 `ErrorCategory`。
-- **真实内核 QSTS 契约（2026-10-22 实测对齐）**：
-  - `inspect` → `tensoreval --dss-to-rss --check --study snapshot <model.dss>`（静态潮流校验）。
-  - 时序仿真由 `.rss` 脚本驱动：`import_dss` + `solution`(DAILY) + `load_shape` + `ds_radial_qsts`
-    请求 `bus_phase,load_state,summary`（示例 `eig-rs/sparrowzz/dss/ieee13_daily_qsts.rss`）。
-  - 结果 CSV 名 = RSS 变量名（`qsts_summary.csv`/`qsts_voltage.csv`/`qsts_load_state.csv`），非固定
-    `summary.csv`；适配器按后缀/列名容错识别。
-  - `summary` 为**每时步一行**，适配器按最坏情形聚合：`converged` AND、损耗/越限取最大值、
-    `violation_duration = 越限步数 × 步长`。
-  - 电压：`min_voltage` 取 `load_state.v_min_pu`（标幺，精确）；`max_voltage` 由 `voltage.v_mag`（单位
-    V）按源母线归一（单电压等级精确、多电压等级近似）。
-  - 环境变量新增 `TENSOREVAL_CWD`：`.rss` 内 `import_dss` 相对路径按此目录解析（本地指内核仓库根）。
-- **任务状态机**：`TaskRepo` 落 `simulation_tasks`（`pending→running→succeeded/failed`、阶段
-  `model_check→script_gen→running→collecting`），`task_id` = `simulation_tasks.id`。
-- **限流接入**：`AppState.semaphore`（=4）沿 `ChatService → ToolServices → RunSimulationTool`
-  传下，执行前 acquire。
-- **会话状态动态化**：`GET /api/sessions` 由 `TaskRepo::latest_statuses()` 一次批量查询推导
-  `status`（`succeeded→completed`、`pending/running→running`、`failed/cancelled→failed`）。
-- **v1 固定 metrics（遗留）**：`RunMetrics` 当前仍从 QSTS CSV 尽力聚合
-  `max_voltage/min_voltage/violation_duration_s` 供现有前端使用。这不是 v2 结果模型；v2 保存完整
-  DataFrame 文件，用户查询时由 RSS 脚本生成派生表。
-- **曲线/报告**：`read_curves`/`read_report` 从 `data_dir/results/{task_id}` 与 `reports/{task_id}.md`
-  按需读取（曲线解析为启发式、失败软回退），`/curves`/`/report` 端点已实现。
-- **重命名/删除/附件**：`PATCH/DELETE /api/sessions/{id}`（删除时 `EventBus::unregister`）、
-  `POST /api/sessions/{id}/attachments`（multipart 上传 → 回发 `attachment` 消息）。
-- **隐患修复**：`messages.task_id` 随 progress/result 落库；`EventBus` 注销防泄漏；404 由
-  `RepoError::NotFound` 映射；`tool-call.args` 收口归一为对象（永不为 null）。
-- **端到端已验证（2026-10-22）**：真实 `tensoreval` 跑 `ieee13_daily_qsts.rss` 全链路通——`inspect`
-  校验 194 条语句、`run_simulation` 产出 `qsts_*` CSV、metrics/curves/report 均正确（单测 13 个全过）。
-  **环境已核对（2026-10-22）**：`.env` 的 `TENSOREVAL_BIN` 与 `TENSOREVAL_CWD` 均已指向更名后的
-  `eig-rs`。**已知待办（后端）**：① agent 系统提示词不含模型/脚本路径，当前需消息显式给绝对路径，
-  v2 将改为只传版本 ID；② v1 电压曲线按 16 母线×相位展开成 41 条序列且图例拥挤，v2 改用受控
-  多视图、数据规模预算和自然语言筛选，不在后端硬编码代表母线；③ `maxVoltage` 走源母线归一近似（结果目录无 `*_bus.csv` 的 `voltage_base_v`），只用于当前原型
-  显示；④ 输出文件尚未登记为 `artifacts/result_datasets`，自然语言结果分析运行与血缘也未实现；⑤ agent run 尚无
-  实例级上限或有界队列，同一会话也未串行化；⑥ 任务取消尚未形成完整契约；⑦ 当前 QSTS 任务的
-  `study_type` 仍写 NULL；v2 新 schema 必须改为规范的非空值。
-
-- **v2 Parquet 合同（源码已确认、运行时待接入）**：eig-rs 的 tensoreval 已增加
-  `--output-format <csv|parquet>`，默认 CSV，`parquet` 输出 Snappy 压缩的 `NAME.parquet`。当前
-  `.env` 指向的已编译二进制帮助信息尚未出现该参数，启用 v2 前必须重编译/替换并在适配器启动探测；
-  v2 同步删除原型 CSV 任务读取和 `/curves` 端点。tensoreval 本身已经能通过 `--input NAME=FILE.parquet` 读取 Parquet；
-  当前缺少的是 **zjudss 结果服务层** 的 Parquet reader：`backend/src/adapters/process.rs` 仍只枚举、
-  `read_to_string` 并解析 CSV，`Cargo.toml` 也没有直接声明结果读取依赖。v2 必须补齐结果登记所需的
-  schema/行数校验，以及 REST 表格分页、列投影和图表 JSON 读取；不能依赖 rig 间接带入的
-  Arrow/DataFusion 包。
+- `RunSpec` 只接受 application 物化的绝对任务输入树、规范相对脚本/输入路径、合法 input alias、
+  绝对 staging result-dir 和 timeout；子进程 cwd 固定为任务输入树，参数数组不经过 shell。
+- RSS、DataFrame、结果分析使用 `--df`；bundle 独立运行；全部显式传
+  `--result-dir ... --output-format parquet`。
+- 启动探测先读帮助合同，再真实运行一份最小命名 Parquet input/output；缺能力或输出不是可读的
+  Snappy Parquet 时启动失败，不支持旧二进制降级。
+- 输出校验拒绝 symlink、目录外逃逸、非 Parquet、损坏 footer、非法/重复变量名及文件数、单文件和
+  总字节超限；`ParquetInspector` 提供有序 schema、row count、分页和列投影。
+- v1 的 CSV 聚合、固定 `RunMetrics`、`read_curves/read_report` 和 `/curves`、`/report` 已删除。
+  Task 12 将合法输出提交 ArtifactService 并登记 ResultDataset；当前仓库无可执行真实 binary，真实
+  smoke test 以显式 ignored integration test 保留。
 
 ---
 

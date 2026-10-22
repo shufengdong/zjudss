@@ -78,8 +78,8 @@
 | POST | `/api/sessions/{id}/messages` | 发用户消息 → 触发 agent → 202 | ✅ 已实现 |
 | POST | `/api/sessions/{id}/attachments` | 上传附件 → 回发 `attachment` 消息 | ✅ 已实现 |
 | GET | `/api/sessions/{id}/events` | SSE 订阅事件流 | ✅ 已实现 |
-| GET | `/api/tasks/{id}/curves` | 曲线数据 | ✅ 已实现 |
-| GET | `/api/tasks/{id}/report` | 报告下载 | ✅ 已实现 |
+| GET | `/api/tasks/{id}/datasets` | 通用结果 DataFrame 目录 | 🚧 Task 12 |
+| GET | `/api/datasets/{id}/rows` | Parquet 分页与列投影 | 🚧 Task 12 |
 
 ---
 
@@ -195,14 +195,10 @@
 - 响应 `201`：一条 `attachment` 消息（§5.6），该消息同时落库并推送 SSE。
 - 上限 50MB；会话不存在 → `404`。
 
-### 4.10 `GET /api/tasks/{id}/curves` — 曲线数据
+### 4.10 v1 曲线/报告端点（已删除）
 
-- 响应 `200`：`CurveData`（§9.1 的形状）。无曲线数据 → `404 {"error":"该任务没有曲线数据"}`。
-
-### 4.11 `GET /api/tasks/{id}/report` — 报告下载
-
-- 响应 `200`：二进制下载，`Content-Type` 按报告类型、`Content-Disposition: attachment; filename="…"`。
-- 无报告 → `404 {"error":"该任务没有报告"}`。
+`/api/tasks/{id}/curves` 与 `/report` 属于未投入使用的 v1 固定结果模型，v2 已删除。Task 12
+提供任务数据集目录、Parquet 分页/投影与下载端点；图表由版本化视图规范读取数据集。
 
 ---
 

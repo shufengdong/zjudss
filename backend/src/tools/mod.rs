@@ -5,8 +5,6 @@
 //! `adapters::SimEngine` 调用内核，AGENTS.md 硬约束（内核地址/鉴权/错误码收敛在适配器内）
 //! 由此落实。
 
-pub mod inspect_model;
-pub mod run_simulation;
 pub mod activate_model_version;
 pub mod confirm_dataframe_mapping;
 pub mod import_example;
@@ -34,8 +32,6 @@ use crate::auth::{AccessScope, Principal};
 use crate::db::repositories::TaskRepo;
 use crate::engine_resources::EngineResourceSnapshot;
 
-pub use inspect_model::InspectModelTool;
-pub use run_simulation::RunSimulationTool;
 
 /// 工具共享服务：引擎适配器 + 绑定到当前 session 的写入器 / 任务仓储 / 限流信号量。
 #[derive(Clone)]
@@ -74,8 +70,6 @@ impl ToolServices {
 /// 每请求装配一套有状态工具（§5）。
 pub fn build_tools(services: Arc<ToolServices>) -> Vec<RegisteredTool> {
     vec![
-        RegisteredTool::from_tool(InspectModelTool::new(services.clone())),
-        RegisteredTool::from_tool(RunSimulationTool::new(services.clone())),
         RegisteredTool::from_tool(inspect_workspace::InspectWorkspaceTool::new(services.clone())),
         RegisteredTool::from_tool(load_agent_skill::LoadAgentSkillTool::new(services.clone())),
         RegisteredTool::from_tool(search_engine_docs::SearchEngineDocsTool::new(services.clone())),

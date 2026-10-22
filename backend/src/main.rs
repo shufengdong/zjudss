@@ -46,15 +46,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     eprintln!("[db] ready at {}", runtime.database_url);
 
-    let engine = adapters::engine_from_env();
-    eprintln!(
-        "[config] engine = {}",
-        if std::env::var("TENSOREVAL_BIN").is_ok() {
-            "process"
-        } else {
-            "stub"
-        }
-    );
+    let engine = adapters::engine_from_env()?;
+    eprintln!("[config] engine = tensoreval parquet v2");
     let auth = AuthConfig::from_runtime(&runtime);
     let scheduler = RunScheduler::new(
         runtime.agent_max_concurrent_runs,

@@ -1,0 +1,195 @@
+mod command;
+mod output;
+
+use std::path::PathBuf;
+use std::process::Stdio;
+use std::time::Duration;
+
+use async_trait::async_trait;
+use tokio::process::Command;
+
+use super::{
+    AdapterError, EngineCapabilities, EngineRunOutput, ErrorCategory, InspectOutcome, InspectSpec,
+    RunMode, RunSpec, SimEngine,
+};
+pub use command::{EngineCommand, build_command};
+pub use output::{OutputLimits, validate_outputs};
+
+#[derive(Debug, Clone)]
+pub struct EngineConfig {
+    pub bin: PathBuf,
+    pub default_timeout: Duration,
+    pub output_limits: OutputLimits,
+    pub capabilities: EngineCapabilities,
+}
+
+impl EngineConfig {
+    pub fn probe(bin: PathBuf, default_timeout: Duration) -> Result<Self, AdapterError> {
+        let capabilities = EngineCapabilities::probe(&bin)?;
+        capabilities.require_v2()?;
+        Ok(Self {
+            bin,
+            default_timeout,
+            output_limits: OutputLimits::default(),
+            capabilities,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ProcessEngine {
+    config: EngineConfig,
+}
+
+impl ProcessEngine {
+    pub fn new(config: EngineConfig) -> Self {
+        Self { config }
+    }
+
+    pub fn from_env() -> Result<Self, AdapterError> {
+        let bin = std::env::var_os("TENSOREVAL_BIN")
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                AdapterError::new(
+                    "engine_binary_required",
+                    ErrorCategory::Io,
+                    "必须设置 TENSOREVAL_BIN；v2 不回退 stub",
+                )
+            })?;
+        let timeout = std::env::var("TENSOREVAL_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(120_000);
+        Ok(Self::new(EngineConfig::probe(
+            bin,
+            Duration::from_millis(timeout),
+        )?))
+    }
+
+    async fn execute(
+        &self,
+        spec: RunSpec,
+        allowed: &[RunMode],
+    ) -> Result<EngineRunOutput, AdapterError> {
+        if !allowed.contains(&spec.mode) {
+            return Err(AdapterError::new(
+                "run_mode_invalid",
+                ErrorCategory::Model,
+                "适配器入口与运行模式不匹配",
+            ));
+        }
+        let built = build_command(&self.config.bin, &spec)?;
+        std::fs::create_dir_all(&spec.result_dir).map_err(|error| {
+            AdapterError::new(
+                "result_dir_create_failed",
+                ErrorCategory::Io,
+                error.to_string(),
+            )
+        })?;
+        let timeout = if spec.timeout.is_zero() {
+            self.config.default_timeout
+        } else {
+            spec.timeout
+        };
+        let mut command = Command::new(&built.program);
+        command
+            .args(&built.args)
+            .current_dir(&built.cwd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let output = tokio::time::timeout(timeout, command.output())
+            .await
+            .map_err(|_| {
+                AdapterError::new("timeout", ErrorCategory::Timeout, "tensoreval 执行超时")
+            })?
+            .map_err(|error| {
+                AdapterError::new(
+                    "spawn_failed",
+                    ErrorCategory::Io,
+                    format!("无法启动 tensoreval: {error}"),
+                )
+            })?;
+        if !output.status.success() {
+            return Err(exit_error(&output));
+        }
+        validate_outputs(&spec.result_dir, self.config.output_limits)
+    }
+}
+
+#[async_trait]
+impl SimEngine for ProcessEngine {
+    async fn inspect(&self, spec: InspectSpec) -> Result<InspectOutcome, AdapterError> {
+        spec.validate()?;
+        let model = spec.model_path.to_str().ok_or_else(|| {
+            AdapterError::new(
+                "input_path_invalid",
+                ErrorCategory::Model,
+                "模型相对路径不是 UTF-8",
+            )
+        })?;
+        let mut command = Command::new(&self.config.bin);
+        command
+            .args(["--dss-to-rss", "--check", "--study", "snapshot", model])
+            .current_dir(&spec.input_tree)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let timeout = if spec.timeout.is_zero() {
+            self.config.default_timeout
+        } else {
+            spec.timeout
+        };
+        let output = tokio::time::timeout(timeout, command.output())
+            .await
+            .map_err(|_| {
+                AdapterError::new("timeout", ErrorCategory::Timeout, "tensoreval 检查超时")
+            })?
+            .map_err(|error| {
+                AdapterError::new("spawn_failed", ErrorCategory::Io, error.to_string())
+            })?;
+        if !output.status.success() {
+            return Err(exit_error(&output));
+        }
+        Ok(InspectOutcome {
+            ok: true,
+            summary: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            diagnostics: None,
+        })
+    }
+
+    async fn run_dataframe(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError> {
+        self.execute(spec, &[RunMode::Rss, RunMode::Dataframe])
+            .await
+    }
+    async fn run_bundle(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError> {
+        self.execute(spec, &[RunMode::Bundle]).await
+    }
+    async fn run_analysis(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError> {
+        self.execute(spec, &[RunMode::Analysis]).await
+    }
+}
+
+fn exit_error(output: &std::process::Output) -> AdapterError {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let lower = stderr.to_ascii_lowercase();
+    let (code, category) = if lower.contains("converge") || lower.contains("solve") {
+        ("solver_error", ErrorCategory::Solver)
+    } else if lower.contains("parse") || lower.contains("import") || lower.contains("invalid") {
+        ("model_error", ErrorCategory::Model)
+    } else {
+        ("engine_error", ErrorCategory::Internal)
+    };
+    AdapterError::new(
+        code,
+        category,
+        stderr
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("tensoreval 执行失败")
+            .trim(),
+    )
+    .with_diagnostics(serde_json::json!({"exitCode":output.status.code()}))
+}
