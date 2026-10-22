@@ -215,3 +215,17 @@
     - { runner: rust, file: backend/tests/scripted_agent.rs, name: barrier_holds_and_releases_agent_run_without_sleep }
   assertions: [脚本响应经过真实 Rig 工具分派和消息持久化且错误释放调度许可]
   fixtures: []
+- id: SCENARIO-ENGINE-001
+  source: docs/integration-testing-design.md#33-scenarioengine
+  title: ScenarioEngine 生成真实 Parquet 并注入全部输出故障
+  layers: [adapter, backend]
+  lanes: [pr]
+  tests:
+    - { runner: rust, file: backend/tests/scenario_engine.rs, name: success_scenarios_write_snappy_parquet_matching_fixture_manifests }
+    - { runner: rust, file: backend/tests/scenario_engine.rs, name: failure_scenarios_are_rejected_by_the_adapter_contract }
+    - { runner: rust, file: backend/tests/scenario_engine.rs, name: timeout_barrier_releases_without_sleep }
+    - { runner: rust, file: backend/tests/scenario_engine.rs, name: simulation_and_analysis_fail_without_partial_publication_and_clean_staging }
+  assertions: [真实 Snappy Parquet 与固定 hash 一致且所有故障无半发布并清理 staging]
+  fixtures:
+    - integration-tests/fixtures/results/single/manifest.json
+    - integration-tests/fixtures/results/multi/manifest.json

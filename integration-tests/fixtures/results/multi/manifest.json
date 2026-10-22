@@ -1,0 +1,23 @@
+{
+  "generator": "scenario-engine-v1",
+  "datasets": [
+    {
+      "name": "voltage",
+      "columns": [
+        { "name": "key", "dtype": "Utf8", "nullable": false },
+        { "name": "value", "dtype": "Float64", "nullable": false, "unit": "pu" }
+      ],
+      "rowCount": 1,
+      "sha256": "83f1c8a6f36031985f5cabf6d601aaf6ff5e598a485f820995018b5e13d8ca45"
+    },
+    {
+      "name": "current",
+      "columns": [
+        { "name": "key", "dtype": "Utf8", "nullable": false },
+        { "name": "value", "dtype": "Float64", "nullable": false, "unit": "A" }
+      ],
+      "rowCount": 1,
+      "sha256": "92df2f8f2bdf90ba8ed79d25114b6fd3045404612f19317230df47cfae534bbc"
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use axum::Router;
-use backend::adapters::StubEngine;
+use backend::adapters::{SimEngine, StubEngine};
 use backend::agent::knowledge::AgentKnowledge;
 use backend::agent::{AgentFactory, DeepSeekAgentFactory, LlmConfig};
 use backend::application::{AppState, RunScheduler};
@@ -35,6 +35,7 @@ impl TestApp {
         Self::spawn_with_scheduler_and_agent_factory(
             auth,
             scheduler,
+            std::sync::Arc::new(StubEngine),
             std::sync::Arc::new(DeepSeekAgentFactory::new(LlmConfig {
                 provider: "deepseek".to_string(),
                 model: "test-model".to_string(),
@@ -47,7 +48,21 @@ impl TestApp {
         Self::spawn_with_scheduler_and_agent_factory(
             AuthConfig::instance(),
             RunScheduler::new(8, 2, 32),
+            std::sync::Arc::new(StubEngine),
             factory,
+        )
+        .await
+    }
+
+    pub async fn spawn_with_engine(engine: std::sync::Arc<dyn SimEngine>) -> Self {
+        Self::spawn_with_scheduler_and_agent_factory(
+            AuthConfig::instance(),
+            RunScheduler::new(8, 2, 32),
+            engine,
+            std::sync::Arc::new(DeepSeekAgentFactory::new(LlmConfig {
+                provider: "deepseek".to_string(),
+                model: "test-model".to_string(),
+            })),
         )
         .await
     }
@@ -55,6 +70,7 @@ impl TestApp {
     async fn spawn_with_scheduler_and_agent_factory(
         auth: AuthConfig,
         scheduler: RunScheduler,
+        engine: std::sync::Arc<dyn SimEngine>,
         agent_factory: std::sync::Arc<dyn AgentFactory>,
     ) -> Self {
         let root = tempfile::tempdir().expect("create isolated test root");
@@ -137,7 +153,7 @@ impl TestApp {
 
         let state = AppState::new_with_resources_and_agent_factory(
             pool.clone(),
-            std::sync::Arc::new(StubEngine),
+            engine,
             agent_factory,
             config.data_dir.clone(),
             auth,
