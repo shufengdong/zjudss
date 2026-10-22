@@ -163,6 +163,67 @@ diesel::table! {
         created_at_ms -> BigInt,
         started_at_ms -> Nullable<BigInt>,
         finished_at_ms -> Nullable<BigInt>,
+        model_version_id -> Nullable<Integer>,
+        study_spec_json -> Nullable<Text>,
+        script_artifact_id -> Nullable<Integer>,
+        agent_bundle_version -> Nullable<Text>,
+        agent_skill_refs_json -> Nullable<Text>,
+        engine_contract_version -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    result_analysis_runs (id) {
+        id -> Integer,
+        session_id -> Integer,
+        request_message_id -> Nullable<Integer>,
+        intent_json -> Text,
+        script_artifact_id -> Integer,
+        status -> Text,
+        stage -> Text,
+        error_json -> Nullable<Text>,
+        agent_bundle_version -> Text,
+        agent_skill_refs_json -> Text,
+        engine_contract_version -> Text,
+        created_at_ms -> BigInt,
+        started_at_ms -> Nullable<BigInt>,
+        finished_at_ms -> Nullable<BigInt>,
+    }
+}
+
+diesel::table! {
+    result_analysis_inputs (analysis_run_id, dataset_id) {
+        analysis_run_id -> Integer,
+        dataset_id -> Integer,
+        alias -> Text,
+        ordinal -> Integer,
+    }
+}
+
+diesel::table! {
+    result_datasets (id) {
+        id -> Integer,
+        task_id -> Nullable<Integer>,
+        analysis_run_id -> Nullable<Integer>,
+        artifact_id -> Integer,
+        result_name -> Text,
+        schema_json -> Text,
+        schema_hash -> Text,
+        row_count -> BigInt,
+        size_bytes -> BigInt,
+        created_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    dataset_views (id) {
+        id -> Integer,
+        dataset_id -> Integer,
+        name -> Text,
+        kind -> Text,
+        spec_json -> Text,
+        is_default -> Bool,
+        created_at_ms -> BigInt,
     }
 }
 
@@ -231,6 +292,10 @@ diesel::joinable!(ingestions -> workspaces (workspace_id));
 diesel::joinable!(ingestion_artifacts -> ingestions (ingestion_id));
 diesel::joinable!(storage_scope_artifacts -> artifacts (artifact_id));
 diesel::joinable!(storage_scope_artifacts -> storage_scopes (storage_scope_id));
+diesel::joinable!(result_analysis_runs -> sessions (session_id));
+diesel::joinable!(result_analysis_inputs -> result_analysis_runs (analysis_run_id));
+diesel::joinable!(result_datasets -> artifacts (artifact_id));
+diesel::joinable!(dataset_views -> result_datasets (dataset_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     sessions,
@@ -249,4 +314,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     task_files,
     task_results,
     curve_data,
+    result_analysis_runs,
+    result_analysis_inputs,
+    result_datasets,
+    dataset_views,
 );

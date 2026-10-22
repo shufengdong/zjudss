@@ -78,8 +78,8 @@
 | POST | `/api/sessions/{id}/messages` | 发用户消息 → 触发 agent → 202 | ✅ 已实现 |
 | POST | `/api/sessions/{id}/attachments` | 上传附件 → 回发 `attachment` 消息 | ✅ 已实现 |
 | GET | `/api/sessions/{id}/events` | SSE 订阅事件流 | ✅ 已实现 |
-| GET | `/api/tasks/{id}/datasets` | 通用结果 DataFrame 目录 | 🚧 Task 12 |
-| GET | `/api/datasets/{id}/rows` | Parquet 分页与列投影 | 🚧 Task 12 |
+| GET | `/api/tasks/{id}/datasets` | 通用结果 DataFrame 目录 | ✅ |
+| GET | `/api/datasets/{id}/rows` | Parquet 分页与列投影 | ✅ |
 
 ---
 

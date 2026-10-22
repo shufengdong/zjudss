@@ -221,6 +221,8 @@ fn services(app: &TestApp, session_id: i32) -> Arc<ToolServices> {
         engine_snapshot: app.state.engine_snapshot.clone(),
         agent_knowledge: app.state.agent_knowledge.clone(),
         loaded_skills: Arc::new(Mutex::new(BTreeSet::new())),
+        simulations: app.state.simulation_service.clone(),
+        datasets: app.state.dataset_service.clone(),
     })
 }
 

@@ -1,15 +1,19 @@
 mod artifact;
+mod dataset;
 mod ingestion;
 mod message;
 mod session;
+mod simulation;
 mod storage_scope;
 mod task;
 mod workspace;
 
 pub use artifact::{ArtifactDraft, ArtifactRepo};
+pub use dataset::DatasetRepo;
 pub use ingestion::{IngestionItemDraft, IngestionRecord, IngestionRepo};
 pub use message::MessageRepo;
 pub use session::SessionRepo;
+pub use simulation::SimulationRepo;
 pub use storage_scope::{StorageLimits, StorageScopeRepo, StorageUsage};
 pub use task::TaskRepo;
 pub use workspace::{

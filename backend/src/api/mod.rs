@@ -1,10 +1,12 @@
 //! HTTP 层：axum 路由、handler、DTO 与 SSE。
 
 mod auth;
+mod datasets;
 mod events;
 mod ingestions;
 mod sessions;
 mod storage;
+mod tasks;
 mod workspaces;
 
 use axum::Router;
@@ -17,6 +19,7 @@ use crate::adapters::AdapterError;
 use crate::application::AppError;
 use crate::application::AppState;
 use crate::application::ArtifactError;
+use crate::application::DatasetError;
 use crate::application::IngestionError;
 use crate::application::WorkspaceError;
 use crate::db::repositories::RepoError;
@@ -192,6 +195,21 @@ impl From<AdapterError> for ApiError {
     }
 }
 
+impl From<DatasetError> for ApiError {
+    fn from(error: DatasetError) -> Self {
+        match error {
+            DatasetError::NotFound => Self::not_found("资源不存在"),
+            DatasetError::InvalidCursor | DatasetError::InvalidPage(_) => Self {
+                status: StatusCode::BAD_REQUEST,
+                message: error.to_string(),
+                code: "invalid_dataset_page",
+                details: None,
+            },
+            other => Self::internal(other.to_string()),
+        }
+    }
+}
+
 async fn health() -> &'static str {
     "ok"
 }
@@ -219,4 +237,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/sessions/{id}/workspace", get(workspaces::workspace))
         .route("/api/sessions/{id}/versions", get(workspaces::versions))
         .route("/api/versions/{id}", get(workspaces::version))
+        .route("/api/tasks/{id}", get(tasks::get))
+        .route("/api/tasks/{id}/datasets", get(tasks::datasets))
+        .route("/api/datasets/{id}", get(datasets::metadata))
+        .route("/api/datasets/{id}/rows", get(datasets::rows))
+        .route("/api/datasets/{id}/download", get(datasets::download))
 }

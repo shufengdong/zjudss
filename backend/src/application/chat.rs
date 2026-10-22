@@ -4,8 +4,8 @@
 //! 「驱动 future」与「事件 feed」，把 `MultiTurnStreamItem` 映射为 `AppEvent`
 //! （architecture §4），逐条落库 + 发布到 session 的 SSE 通道。
 
-use std::sync::Arc;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use futures::StreamExt;
 use rig::agent::{MultiTurnStreamItem, RunEvents};
@@ -38,6 +38,8 @@ pub struct ChatService {
     model_patch: crate::application::ModelPatchService,
     engine_snapshot: Arc<crate::engine_resources::EngineResourceSnapshot>,
     agent_knowledge: Arc<crate::agent::knowledge::AgentKnowledge>,
+    simulations: crate::application::SimulationService,
+    datasets: crate::application::DatasetService,
 }
 
 impl ChatService {
@@ -56,6 +58,8 @@ impl ChatService {
             model_patch: state.model_patch_service.clone(),
             engine_snapshot: state.engine_snapshot.clone(),
             agent_knowledge: state.agent_knowledge.clone(),
+            simulations: state.simulation_service.clone(),
+            datasets: state.dataset_service.clone(),
         }
     }
 
@@ -83,6 +87,8 @@ impl ChatService {
             engine_snapshot: self.engine_snapshot.clone(),
             agent_knowledge: self.agent_knowledge.clone(),
             loaded_skills: Arc::new(tokio::sync::Mutex::new(BTreeSet::new())),
+            simulations: self.simulations.clone(),
+            datasets: self.datasets.clone(),
         });
         let tools = tools::build_tools(services);
 

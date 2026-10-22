@@ -39,6 +39,11 @@ impl From<crate::application::ExampleImportError> for DomainToolError {
         Self::new(value.code(), value.to_string())
     }
 }
+impl From<crate::application::SimulationError> for DomainToolError {
+    fn from(value: crate::application::SimulationError) -> Self {
+        Self::new(value.code, value.to_string())
+    }
+}
 
 pub fn object_schema(properties: serde_json::Value, required: &[&str]) -> serde_json::Value {
     serde_json::json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})

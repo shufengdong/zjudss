@@ -156,6 +156,72 @@ pub fn normalize_excel_to_parquet(
     Ok(outputs)
 }
 
+/// 把 CSV 确定性地规范化为 UTF-8 Parquet，供 tensoreval v2 named input 使用。
+pub fn normalize_csv_to_parquet(source: &Path, output: &Path) -> Result<TableSchema, TabularError> {
+    let mut reader = csv::ReaderBuilder::new()
+        .flexible(true)
+        .from_path(source)
+        .map_err(|e| TabularError::new("tabular_read_failed", e.to_string()))?;
+    let headers = reader
+        .headers()
+        .map_err(|e| TabularError::new("tabular_header_invalid", e.to_string()))?
+        .clone();
+    if headers.is_empty() {
+        return Err(TabularError::new("tabular_empty", "CSV 没有列"));
+    }
+    let rows = reader
+        .records()
+        .map(|r| r.map(|r| r.iter().map(str::to_string).collect::<Vec<_>>()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| TabularError::new("tabular_read_failed", e.to_string()))?;
+    let schema = Arc::new(Schema::new(
+        headers
+            .iter()
+            .map(|h| Field::new(h, DataType::Utf8, true))
+            .collect::<Vec<_>>(),
+    ));
+    let arrays = (0..headers.len())
+        .map(|col| {
+            Arc::new(StringArray::from(
+                rows.iter()
+                    .map(|r| r.get(col).map(String::as_str))
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef
+        })
+        .collect();
+    let batch = RecordBatch::try_new(schema.clone(), arrays)
+        .map_err(|e| TabularError::new("tabular_normalize_failed", e.to_string()))?;
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| TabularError::new("tabular_normalize_failed", e.to_string()))?;
+    }
+    let file = std::fs::File::create(output)
+        .map_err(|e| TabularError::new("tabular_normalize_failed", e.to_string()))?;
+    let props = WriterProperties::builder()
+        .set_compression(parquet::basic::Compression::SNAPPY)
+        .build();
+    let mut writer = ArrowWriter::try_new(file, schema, Some(props))
+        .map_err(|e| TabularError::new("tabular_normalize_failed", e.to_string()))?;
+    writer
+        .write(&batch)
+        .and_then(|_| writer.close().map(|_| ()))
+        .map_err(|e| TabularError::new("tabular_normalize_failed", e.to_string()))?;
+    Ok(TableSchema {
+        name: source
+            .file_stem()
+            .and_then(|v| v.to_str())
+            .unwrap_or("table")
+            .into(),
+        columns: headers
+            .iter()
+            .map(|h| ColumnSchema {
+                name: h.into(),
+                dtype: "string".into(),
+            })
+            .collect(),
+    })
+}
+
 fn inspect_csv(path: &Path) -> Result<Vec<TableSchema>, TabularError> {
     let mut reader = csv::ReaderBuilder::new()
         .flexible(true)

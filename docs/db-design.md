@@ -476,7 +476,7 @@ async fn list_messages(state: axum::extract::State<DbPool>, ...) -> Result<..., 
 
 - [x] 数据根使用 `DATA_DIR`；未设置时取进程工作目录下的 `data/`。按文档从 `backend/` 启动即为
       `backend/data/`，该目录已加入 `.gitignore`。
-- [ ] v2 建立 `artifacts/result_datasets/dataset_views/result_analysis_runs/result_analysis_inputs` repository 与写入
+- [x] v2 建立 `artifacts/result_datasets/dataset_views/result_analysis_runs/result_analysis_inputs` 基础关系与仿真结果写入
       链路；适配器固定传 `--output-format parquet`。
 - [ ] 删除 `task_results/curve_data`、固定 metrics payload 和旧曲线读取代码。
 - [ ] 为结果分析提供受控脚本执行：只接受 dataset ID，禁止 LLM 传路径；保存脚本 artifact、输入

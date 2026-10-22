@@ -300,7 +300,9 @@ impl WorkspaceRepo {
                     return Err(RepoError::NotFound);
                 }
                 if version.status != "ready" || workspace.draft_version_id != Some(version_id) {
-                    return Err(RepoError::InvalidState("只能激活当前 ready draft".to_string()));
+                    return Err(RepoError::InvalidState(
+                        "只能激活当前 ready draft".to_string(),
+                    ));
                 }
                 diesel::update(schema::workspaces::table.find(workspace_id))
                     .set((
@@ -391,7 +393,9 @@ impl WorkspaceRepo {
                     return Err(RepoError::InvalidState("只能回退到 ready 版本".to_string()));
                 }
                 if workspace.draft_version_id == Some(version_id) {
-                    return Err(RepoError::InvalidState("当前 draft 请使用激活操作".to_string()));
+                    return Err(RepoError::InvalidState(
+                        "当前 draft 请使用激活操作".to_string(),
+                    ));
                 }
                 diesel::update(schema::workspaces::table.find(workspace_id))
                     .set((

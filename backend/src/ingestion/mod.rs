@@ -36,5 +36,5 @@ pub use rss::{DependencyReport, RssInspector};
 
 pub use tabular::{
     ColumnSchema, NormalizedSheet, TableSchema, TabularError, TabularFormat, TabularInspector,
-    normalize_excel_to_parquet,
+    normalize_csv_to_parquet, normalize_excel_to_parquet,
 };

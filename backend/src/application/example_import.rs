@@ -119,7 +119,11 @@ impl ExampleImportService {
             .workspaces
             .get_or_create(&principal.access, session_id)
             .await?;
-        if workspace.workspace.draft_version_id.or(workspace.workspace.active_version_id).is_some()
+        if workspace
+            .workspace
+            .draft_version_id
+            .or(workspace.workspace.active_version_id)
+            .is_some()
             && expected_base.is_none()
         {
             return Err(ExampleImportError::ExpectedVersionRequired);

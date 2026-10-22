@@ -101,7 +101,7 @@ v2 不在应用内维护账号密码，而是使用部署实例身份或可信�
 │   POST /api/sessions/{id}/messages   触发 agent，返回 ack  │
 │   GET  /api/sessions/{id}/events     SSE 订阅事件流         │
 │   GET  /api/sessions/{id}/messages   回放历史               │
-│   GET  /api/tasks/{id}/datasets      结果 DataFrame（Task 12）│
+│   GET  /api/tasks/{id}/datasets      结果 DataFrame           │
 ├──────────────────────────────────────────────────────────┤
 │ application（编排层） 会话编排 / 事件总线 / 限流              │
 │   ChatService、AppState、EventBus                           │
@@ -397,8 +397,8 @@ backend/src/
 | POST | `/api/sessions/{id}/messages` | 发用户消息 → 触发 agent run → 返回 202 |
 | POST | `/api/sessions/{id}/attachments` | 上传一个附件并回发 attachment 消息 |
 | GET | `/api/sessions/{id}/events` | SSE 订阅事件流 |
-| GET | `/api/tasks/{id}/datasets` | 通用结果 DataFrame 目录（Task 12） |
-| GET | `/api/datasets/{id}/rows` | Parquet 分页与列投影（Task 12） |
+| GET | `/api/tasks/{id}/datasets` | 通用结果 DataFrame 目录 |
+| GET | `/api/datasets/{id}/rows` | Parquet 分页与列投影 |
 
 （保留 `/health`。消息/事件 DTO 对齐 `frontend/src/types/index.ts`。）
 
@@ -446,7 +446,7 @@ backend/src/
 2. `application/`（AppState / EventBus）+ `api/`（SSE + 消息回放）—— ✅ 已落地；
 3. `tools/` 有状态化 + `agent/` 的 `run_channel` 驱动 —— ✅ 已落地；
 4. 接入 tensoreval Parquet v2 子进程合同 —— ✅ 已落地（`adapters::ProcessEngine`）；
-5. 可复现任务、ResultDataset 登记和通用结果 API —— 🚧 Task 12。
+5. 可复现任务、ResultDataset 登记和通用结果 API —— ✅。
 
 > 第 4 步落地说明：生产启动必须提供 `TENSOREVAL_BIN`。适配器执行最小 Parquet input/output
 > smoke probe，并要求 `--result-dir --output-format parquet`；失败即停止启动，不降级旧二进制或 stub。

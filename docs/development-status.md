@@ -27,8 +27,8 @@
 | 前端接入真实后端 | ✅ 阶段 1–5 完成 | `api/client.ts`、`api/events.ts`、`App.tsx` 已接线，含重命名/删除/附件/曲线/报告（见 §5） |
 | 后端分层架构 | ✅ v2 Tasks 1–11 完成 | 身份、调度、SSE、artifact、不可变工作区、引擎知识、模型摄取、工作区工具与 Parquet v2 内核边界已落地 |
 | 后端数据库 schema | 🚧 v2 实施中 | 已增加 storage scope、artifact、workspaces/model_versions、ingestions、版本输入绑定和全链路归属过滤；dataset 等表按后续任务增加 |
-| 后端真实引擎接入 | 🚧 v2 适配器完成 | 启动必须探测 `TENSOREVAL_BIN` 的 `--result-dir`、`--output-format parquet` 与命名 Parquet input；运行只接受任务私有输入树，不再自动降级 stub；任务登记在 Task 12 接入 |
-| 后端结果端点 | 🚧 v2 迁移中 | 旧 CSV 指标、曲线和报告适配器/路由已删除；Task 12 用通用 ResultDataset 元数据、分页、投影和下载 API 取代 |
+| 后端真实引擎接入 | ✅ v2 编排完成 | 启动探测 `TENSOREVAL_BIN` 的 `--result-dir`、`--output-format parquet` 与命名 Parquet input；运行物化任务私有输入树并登记可复现任务 |
+| 后端结果端点 | ✅ 通用数据集 | 旧 CSV 指标、曲线和报告适配器/路由已删除；提供 ResultDataset 元数据、分页、列投影和 Parquet 下载 API |
 | 会话状态/重命名/删除/附件 | ✅ 后端 v2 完成 | `PATCH/DELETE /api/sessions/{id}`；附件支持 `clientBatchId`、多 `file.<clientFileId>`、流式限制、幂等摄取和刷新恢复，前端将在 Task 16 切换 |
 | 前后端字段命名对齐 | ✅ 已对齐 | 后端出网 `tool-call`/`toolName`/`taskId` 与前端类型一致（§3） |
 | 历史聊天浏览 | ✅ 基础功能完成 | 全量会话列表、今天/昨天/更早分组、打开回放、重命名和删除 |
@@ -42,7 +42,7 @@
 | 多用户隔离 | ✅ 基础边界完成 | instance/trusted_proxy、`/api/me`、storage/access scope 和 Session/Message/Task/SSE 404 隔离已落地 |
 | Agent prompt 与领域技能 | ✅ 工作区阶段完成 | 每轮只注入 system、技能索引和资源摘要；技能/文档/案例按稳定 ID 有界加载，脚本修改缺技能返回 `skill_required`，当前 run 记录已加载技能集 |
 | 内置案例库 | ✅ 导入闭环完成 | 启动时校验并索引根 RSS 与 rssbundle；案例按快照 ID 导入完整依赖闭包，复制并复核 hash，并已注册自然语言检索、查看与导入工具 |
-| v2 详细实施方案 | 🚧 执行中 | Tasks 1–11 已完成；M0/M1 完成，正在实施 M2 可复现仿真任务与 ResultDataset 登记 |
+| v2 详细实施方案 | 🚧 执行中 | Tasks 1–12 已完成；M0/M1 完成，正在实施 M2 自然语言结果分析与语义视图 |
 
 > v2 实施以 `docs/superpowers/plans/2026-10-22-v2-simulation-workspace.md` 的 Task 编号为准；当前
 > 已完成 Task 1–11。后文保留的 v1 细节是迁移背景，若与本节冲突，以本节和 v2 契约为准。
@@ -149,7 +149,7 @@ backend/src/
 - 输出校验拒绝 symlink、目录外逃逸、非 Parquet、损坏 footer、非法/重复变量名及文件数、单文件和
   总字节超限；`ParquetInspector` 提供有序 schema、row count、分页和列投影。
 - v1 的 CSV 聚合、固定 `RunMetrics`、`read_curves/read_report` 和 `/curves`、`/report` 已删除。
-  Task 12 将合法输出提交 ArtifactService 并登记 ResultDataset；当前仓库无可执行真实 binary，真实
+  合法输出现已提交 ArtifactService 并登记 ResultDataset；当前仓库无可执行真实 binary，真实
   smoke test 以显式 ignored integration test 保留。
 
 ---

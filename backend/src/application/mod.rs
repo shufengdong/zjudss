@@ -5,11 +5,13 @@
 
 pub mod artifacts;
 pub mod chat;
+pub mod datasets;
 mod events;
 pub mod example_import;
 pub mod ingestion;
 pub mod model_patch;
 pub mod scheduler;
+pub mod simulations;
 pub mod workspace;
 
 use std::path::PathBuf;
@@ -24,8 +26,8 @@ use crate::auth::AuthConfig;
 use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
-    ArtifactRepo, IngestionRepo, MessageRepo, SessionRepo, StorageScopeRepo, TaskRepo,
-    WorkspaceRepo,
+    ArtifactRepo, DatasetRepo, IngestionRepo, MessageRepo, SessionRepo, SimulationRepo,
+    StorageScopeRepo, TaskRepo, WorkspaceRepo,
 };
 use crate::engine_resources::{EngineKnowledge, EngineResourceSnapshot};
 use crate::ingestion::ArchiveLimits;
@@ -36,6 +38,7 @@ pub use artifacts::{
     StorageUsage,
 };
 pub use chat::ChatService;
+pub use datasets::{DatasetError, DatasetService};
 pub use events::{
     AppEvent, AttachmentFile, DatasetViewRef, EventBus, EventWriter, ModelAmbiguity, ModelScope,
     ModelVersionSnapshot, ModelVersionStatus, OperationKind, OperationRef, RecognizedTable,
@@ -46,6 +49,7 @@ pub use example_import::{ExampleImportError, ExampleImportService};
 pub use ingestion::{AcceptedBatch, IngestionError, IngestionService, UploadBatch, UploadFile};
 pub use model_patch::{ModelChange, ModelMutationError, ModelPatch, ModelPatchService};
 pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
+pub use simulations::{RunStudyRequest, SimulationError, SimulationOutcome, SimulationService};
 pub use workspace::{
     DataframeBindingDraft, SourceKind, VersionDraft, VersionInputDraft, VersionOrigin,
     WorkspaceError, WorkspaceService, canonical_json,
@@ -63,6 +67,8 @@ pub struct AppState {
     pub ingestion_service: IngestionService,
     pub example_import_service: ExampleImportService,
     pub model_patch_service: ModelPatchService,
+    pub dataset_service: DatasetService,
+    pub simulation_service: SimulationService,
     pub engine_snapshot: Arc<EngineResourceSnapshot>,
     pub agent_knowledge: Arc<AgentKnowledge>,
     pub events: EventBus,
@@ -213,10 +219,22 @@ impl AppState {
             workspace_service.clone(),
             upload_single_file_limit_bytes,
         );
-        let model_patch_service = ModelPatchService::new(workspace_service.clone(), artifact_service.clone());
+        let model_patch_service =
+            ModelPatchService::new(workspace_service.clone(), artifact_service.clone());
+        let dataset_service =
+            DatasetService::new(DatasetRepo::new(pool.clone()), artifact_service.clone());
         let agent_knowledge = Arc::new(
-            AgentKnowledge::load_embedded("v2.0.0")
-                .expect("内置 agent knowledge 已在构建时校验"),
+            AgentKnowledge::load_embedded("v2.0.0").expect("内置 agent knowledge 已在构建时校验"),
+        );
+        let simulation_service = SimulationService::new(
+            SimulationRepo::new(pool.clone()),
+            workspace_service.clone(),
+            artifact_service.clone(),
+            message_repo.clone(),
+            events.clone(),
+            engine.clone(),
+            agent_knowledge.clone(),
+            data_dir.clone(),
         );
         Self {
             pool,
@@ -228,6 +246,8 @@ impl AppState {
             ingestion_service,
             example_import_service,
             model_patch_service,
+            dataset_service,
+            simulation_service,
             engine_snapshot,
             agent_knowledge,
             events,
