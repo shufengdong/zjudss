@@ -11,6 +11,7 @@ pub struct ParquetColumn {
     pub name: String,
     pub dtype: String,
     pub nullable: bool,
+    pub unit: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -64,6 +65,7 @@ impl ParquetInspector {
                 name: field.name().clone(),
                 dtype: field.data_type().to_string(),
                 nullable: field.is_nullable(),
+                unit: field.metadata().get("unit").cloned(),
             })
             .collect();
         let row_count = u64::try_from(builder.metadata().file_metadata().num_rows())

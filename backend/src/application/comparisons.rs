@@ -169,7 +169,12 @@ fn compatible_pair(
                 .iter()
                 .filter(|c| {
                     let n = c.name.to_ascii_lowercase();
-                    (n == "id" || n.ends_with("_id") || n == "name" || n == "time" || n == "time_s")
+                    (n == "id"
+                        || n == "key"
+                        || n.ends_with("_id")
+                        || n == "name"
+                        || n == "time"
+                        || n == "time_s")
                         && rm.get(c.name.as_str()).is_some_and(|v| v.dtype == c.dtype)
                 })
                 .map(|c| c.name.clone())

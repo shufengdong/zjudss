@@ -354,7 +354,7 @@ pub fn schema_json_and_hash(meta: &crate::storage::ParquetMetadata) -> (String, 
             name: c.name.clone(),
             dtype: c.dtype.clone(),
             nullable: c.nullable,
-            unit: None,
+            unit: c.unit.clone(),
         })
         .collect::<Vec<_>>();
     let json = serde_json::to_string(&cols).expect("schema serializable");

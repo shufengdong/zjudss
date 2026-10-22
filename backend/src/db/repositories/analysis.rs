@@ -25,7 +25,7 @@ impl AnalysisRepo {
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || {
             let mut c = pool.get().map_err(RepoError::Pool)?;
-            c.transaction::<_, RepoError, _>(|c| {
+            c.immediate_transaction::<_, RepoError, _>(|c| {
                 let session_id = run.session_id;
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(session_id))
@@ -127,7 +127,7 @@ impl AnalysisRepo {
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || {
             let mut c = pool.get().map_err(RepoError::Pool)?;
-            c.transaction::<_, RepoError, _>(|c| {
+            c.immediate_transaction::<_, RepoError, _>(|c| {
                 let sessions = schema::sessions::table
                     .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
                     .filter(schema::sessions::access_scope_key.eq(&scope.key))

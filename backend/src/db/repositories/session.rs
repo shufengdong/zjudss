@@ -27,7 +27,7 @@ impl SessionRepo {
         let title = title.to_string();
         tokio::task::spawn_blocking(move || -> RepoResult<Session> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            conn.transaction::<Session, diesel::result::Error, _>(|conn| {
+            conn.immediate_transaction::<Session, diesel::result::Error, _>(|conn| {
                 diesel::insert_into(schema::storage_scopes::table)
                     .values(NewStorageScope {
                         kind: scope.kind.clone(),

@@ -22,7 +22,7 @@ impl ComparisonRepo {
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || {
             let mut c = pool.get().map_err(RepoError::Pool)?;
-            c.transaction::<_, RepoError, _>(|c| {
+            c.immediate_transaction::<_, RepoError, _>(|c| {
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(new.session_id))
                     .filter(schema::sessions::access_scope_kind.eq(&scope.kind))

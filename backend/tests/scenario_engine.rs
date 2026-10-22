@@ -69,6 +69,10 @@ fn assert_manifest_dataset(
         assert_eq!(column["nullable"], actual.metadata.columns[index].nullable);
         if let Some(unit) = column.get("unit") {
             assert_eq!(
+                actual.metadata.columns[index].unit.as_deref(),
+                unit.as_str()
+            );
+            assert_eq!(
                 schema
                     .field(index)
                     .metadata()

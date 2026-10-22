@@ -25,7 +25,7 @@ impl SimulationRepo {
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            conn.transaction::<_, RepoError, _>(|conn| {
+            conn.immediate_transaction::<_, RepoError, _>(|conn| {
                 let version_id = task.model_version_id;
                 let script_id = task.script_artifact_id;
                 let storage_scope_id = schema::sessions::table
@@ -112,7 +112,7 @@ impl SimulationRepo {
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            conn.transaction::<_, RepoError, _>(|conn| {
+            conn.immediate_transaction::<_, RepoError, _>(|conn| {
                 let sessions = schema::sessions::table
                     .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
                     .filter(schema::sessions::access_scope_key.eq(&scope.key))

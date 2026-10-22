@@ -217,3 +217,83 @@ async fn same_task_foreign_session_and_missing_stable_key_fail_without_compariso
         .unwrap();
     assert_eq!(count, 0);
 }
+
+#[tokio::test]
+async fn qsts_requires_a_time_key_and_numeric_dtypes_and_units_must_match() {
+    let app = TestApp::spawn().await;
+    let (p, session, left, right) = two_tasks(&app).await;
+    let qsts_schema = json!([
+        {"name":"time","dtype":"Utf8","nullable":false,"unit":null},
+        {"name":"value","dtype":"Float64","nullable":false,"unit":"pu"}
+    ])
+    .to_string();
+    let mut conn = app.pool.get().unwrap();
+    diesel::update(
+        backend::db::schema::simulation_tasks::table
+            .filter(backend::db::schema::simulation_tasks::id.eq_any([left, right])),
+    )
+    .set(backend::db::schema::simulation_tasks::study_type.eq("qsts"))
+    .execute(&mut conn)
+    .unwrap();
+    diesel::update(
+        backend::db::schema::result_datasets::table.filter(
+            backend::db::schema::result_datasets::task_id.eq_any([Some(left), Some(right)]),
+        ),
+    )
+    .set(backend::db::schema::result_datasets::schema_json.eq(&qsts_schema))
+    .execute(&mut conn)
+    .unwrap();
+    drop(conn);
+
+    let comparison = app
+        .state
+        .comparison_service
+        .compare(&p, session, left, right, None, vec![])
+        .await
+        .unwrap();
+    let (_, compatibility, _) = app
+        .state
+        .comparison_service
+        .find(&p, comparison.id)
+        .await
+        .unwrap();
+    assert_eq!(compatibility["stableKeys"], json!(["time"]));
+
+    let app = TestApp::spawn().await;
+    let (p, session, left, right) = two_tasks(&app).await;
+    let mut conn = app.pool.get().unwrap();
+    diesel::update(
+        backend::db::schema::result_datasets::table
+            .filter(backend::db::schema::result_datasets::task_id.eq(Some(left))),
+    )
+    .set(
+        backend::db::schema::result_datasets::schema_json.eq(json!([
+            {"name":"id","dtype":"Utf8","nullable":false,"unit":null},
+            {"name":"value","dtype":"Float64","nullable":false,"unit":"pu"}
+        ])
+        .to_string()),
+    )
+    .execute(&mut conn)
+    .unwrap();
+    diesel::update(
+        backend::db::schema::result_datasets::table
+            .filter(backend::db::schema::result_datasets::task_id.eq(Some(right))),
+    )
+    .set(
+        backend::db::schema::result_datasets::schema_json.eq(json!([
+            {"name":"id","dtype":"Utf8","nullable":false,"unit":null},
+            {"name":"value","dtype":"Int64","nullable":false,"unit":"pu"}
+        ])
+        .to_string()),
+    )
+    .execute(&mut conn)
+    .unwrap();
+    drop(conn);
+    let error = app
+        .state
+        .comparison_service
+        .compare(&p, session, left, right, None, vec![])
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "comparison_incompatible");
+}

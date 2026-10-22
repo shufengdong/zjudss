@@ -15,7 +15,7 @@ function App(){
   const[examplesOpen,setExamplesOpen]=useState(false),[toast,setToast]=useState<string|null>(null)
   const isNarrow=useMediaQuery('(max-width:1279px)'),timer=useRef<number|undefined>(undefined)
   const{feed,older,add,remove}=useSessionFeed(selectedId),workspaceState=useWorkspace(selectedId),ingestion=useIngestion(selectedId)
-  const tasks=useSimulationHistory(selectedId),usage=useStorageUsage()
+  const tasks=useSimulationHistory(selectedId,feed?.messages.length??0),usage=useStorageUsage()
   const notify=useCallback((text:string)=>{setToast(text);if(timer.current)clearTimeout(timer.current);timer.current=window.setTimeout(()=>setToast(null),2500)},[])
   const select=useCallback((id:string)=>{setSelectedId(id);setDatasetId(null);setComparisonId(null);if(principal)localStorage.setItem(`zjudss:last-session:${principal.scopeKey}`,id)},[principal])
   useEffect(()=>{let live=true;void Promise.all([getPrincipal(),listSessions()]).then(([me,list])=>{if(!live)return;setPrincipal(me);setSessions(list)
@@ -49,7 +49,7 @@ function App(){
     <ResultPanel open={panelOpen} overlay={isNarrow} tab={tab} onTab={setTab} onClose={()=>setPanelOpen(false)} workspace={workspaceState.workspace} tasks={tasks}
       onSuggest={sendText} onTask={id=>void openTask(id)} onCompare={ids=>sendText(`请比较仿真任务 ${ids[0]} 和 ${ids[1]}，给出差异表和合适的图表`)}/>
     {datasetId&&<div className="fixed inset-0 z-50 flex bg-black/30 p-4 sm:p-8"><div className="ml-auto h-full max-w-full overflow-hidden rounded-xl shadow-2xl"><DatasetWorkbench datasetId={datasetId} onClose={()=>setDatasetId(null)}/></div></div>}
-    {comparisonId&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"><div className="w-full max-w-2xl rounded-xl bg-white"><button onClick={()=>setComparisonId(null)} className="float-right p-4">×</button><ComparisonView id={comparisonId} onDataset={setDatasetId}/></div></div>}
+    {comparisonId&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"><div className="w-full max-w-2xl rounded-xl bg-white"><button onClick={()=>setComparisonId(null)} className="float-right p-4">×</button><ComparisonView id={comparisonId} onDataset={id=>{setComparisonId(null);setDatasetId(id)}}/></div></div>}
     {examplesOpen&&<ExampleLibrary onClose={()=>setExamplesOpen(false)} onUse={(id,name)=>{setExamplesOpen(false);sendText(`请导入内置案例“${name}”（exampleId: ${id}），导入后先不要运行，告诉我模型状态`)}}/>}
     {toast&&<div className="fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white">{toast}</div>}
   </div>

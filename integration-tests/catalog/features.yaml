@@ -326,3 +326,63 @@
     - integration-tests/fixtures/uploads/malicious/duplicate.zip
     - integration-tests/fixtures/uploads/malicious/symlink.zip
     - integration-tests/fixtures/uploads/malicious/bomb.zip
+- id: TASK-E2E-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 五类仿真任务状态与可复现结果旅程
+  layers: [frontend, api, backend, agent, adapter]
+  lanes: [pr]
+  tests:
+    - { runner: playwright, file: integration-tests/e2e/simulation-results.spec.ts, name: natural language runs all study families and exposes reproducible multi-result Parquet data }
+    - { runner: rust, file: backend/tests/scenario_engine.rs, name: simulation_and_analysis_fail_without_partial_publication_and_clean_staging }
+  assertions: [自然语言覆盖潮流、短路、QSTS、谐波和开放分析，任务固化版本、脚本、技能、内核合同并正确收敛成功或失败]
+  fixtures:
+    - integration-tests/fixtures/results/multi/manifest.json
+- id: DATASET-E2E-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 通用结果表格分页投影下载与请求竞态
+  layers: [frontend, api, backend]
+  lanes: [pr]
+  tests:
+    - { runner: playwright, file: integration-tests/e2e/simulation-results.spec.ts, name: natural language runs all study families and exposes reproducible multi-result Parquet data }
+    - { runner: vitest, file: frontend/src/hooks/useDataset.test.ts, name: ignores dataset A responses that arrive after switching to B }
+    - { runner: vitest, file: frontend/src/hooks/useDataset.test.ts, name: keeps loaded rows after loadMore failure and allows retry }
+    - { runner: vitest, file: frontend/src/hooks/useDataset.test.ts, name: reloads the projection and keeps it for later pages }
+    - { runner: vitest, file: frontend/src/components/datasets/DatasetTable.test.tsx, name: uses schema order and renders null explicitly }
+    - { runner: vitest, file: frontend/src/components/datasets/DatasetTable.test.tsx, name: keeps legitimate duplicate rows across cursor pages }
+    - { runner: vitest, file: frontend/src/components/datasets/DatasetTable.test.tsx, name: renders only projected columns in their requested order }
+  assertions: [结果元数据保留 schema、单位和行数，游标分页保留重复行，null 明确显示，列选择投影和 Parquet 下载可用，迟到响应及重试不破坏当前数据]
+  fixtures: []
+- id: ANALYSIS-E2E-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 自然语言结果分析与派生数据血缘
+  layers: [frontend, api, backend, agent, adapter]
+  lanes: [pr]
+  tests:
+    - { runner: playwright, file: integration-tests/e2e/analysis-views.spec.ts, name: result analysis creates traceable Parquet and all six controlled ECharts views survive reload }
+    - { runner: rust, file: backend/tests/result_analysis.rs, name: script_validation_rejects_remote_paths_and_missing_outputs_before_run }
+  assertions: [Agent 读取结果 schema、加载分析技能并产生绑定输入和脚本的派生 Parquet，非法脚本与字段只使当前分析失败]
+  fixtures: []
+- id: VIEW-E2E-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 六类 ECharts 视图渲染验证和刷新恢复
+  layers: [frontend, api, backend]
+  lanes: [pr]
+  tests:
+    - { runner: playwright, file: integration-tests/e2e/analysis-views.spec.ts, name: result analysis creates traceable Parquet and all six controlled ECharts views survive reload }
+    - { runner: rust, file: backend/tests/result_analysis.rs, name: six_visualizations_validate_and_unsafe_or_oversized_specs_fail_closed }
+    - { runner: vitest, file: frontend/src/components/datasets/charts.test.ts, name: retains histogram bin edges }
+    - { runner: vitest, file: frontend/src/hooks/useDatasetView.test.ts, name: ignores a stale view response after selecting another view }
+  assertions: [折线、柱状、散点、热力、箱线和直方图均由受控规格渲染，保留单位及区间边界，非法字段和规模返回稳定错误且刷新可恢复]
+  fixtures: []
+- id: COMPARE-E2E-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 仿真比较兼容规则与差值数据恢复
+  layers: [frontend, api, backend, agent]
+  lanes: [pr]
+  tests:
+    - { runner: playwright, file: integration-tests/e2e/comparison.spec.ts, name: compatible tasks create a recoverable difference dataset while name and unit mismatches fail closed }
+    - { runner: rust, file: backend/tests/task_comparison.rs, name: compatible_tasks_create_traceable_analysis_and_difference_dataset }
+    - { runner: rust, file: backend/tests/task_comparison.rs, name: same_task_foreign_session_and_missing_stable_key_fail_without_comparison }
+    - { runner: rust, file: backend/tests/task_comparison.rs, name: qsts_requires_a_time_key_and_numeric_dtypes_and_units_must_match }
+  assertions: [结果名、稳定键、dtype、单位及 QSTS 时间键全部通过兼容性检查，可比任务产生有血缘差值 DataFrame 并可按 comparison ID 刷新恢复]
+  fixtures: []
