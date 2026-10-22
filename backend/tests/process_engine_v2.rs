@@ -1,13 +1,16 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
 use arrow_array::{Float64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use backend::adapters::{
-    ENGINE_CONTRACT_VERSION, EngineCapabilities, EngineConfig, NamedInput, OutputLimits,
-    ProcessEngine, RunMode, RunSpec, SimEngine, build_command, validate_outputs,
+    ENGINE_CONTRACT_VERSION, EngineCapabilities, EngineConfig, NamedInput, OutputLimits, RunMode,
+    RunSpec, build_command, validate_outputs,
 };
+#[cfg(feature = "release-test")]
+use backend::adapters::{ProcessEngine, SimEngine};
 use backend::storage::ParquetInspector;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
@@ -174,6 +177,15 @@ fn parquet_metadata_page_and_projection_preserve_schema_order_and_rows() {
     let projected = ParquetInspector::projection(&path, &["v_mag".into()], 0, 2).unwrap();
     assert_eq!(projected[0].schema().fields().len(), 1);
     assert_eq!(projected[0].schema().field(0).name(), "v_mag");
+
+    let empty = root.path().join("empty.parquet");
+    write_parquet(&empty, 0, Compression::SNAPPY);
+    let empty_metadata = ParquetInspector::metadata(&empty).unwrap();
+    assert_eq!(empty_metadata.row_count, 0);
+    assert!(
+        empty_metadata.snappy,
+        "没有数据页的空 Parquet 不应被误判为非 Snappy"
+    );
 }
 
 #[test]
@@ -327,8 +339,44 @@ fn output_validation_rejects_symlinks_and_capability_probe_fails_closed() {
     assert_eq!(error.code, "engine_parquet_output_unsupported");
 }
 
+#[cfg(unix)]
+#[test]
+fn release_script_fails_closed_with_stable_preflight_reasons() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("scripts/test-release-engine");
+    let missing = Command::new(&script)
+        .env_remove("TENSOREVAL_BIN")
+        .env_remove("TENSOREVAL_CWD")
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&missing.stderr).trim(),
+        "release_engine_missing:TENSOREVAL_BIN"
+    );
+
+    let root = tempfile::tempdir().unwrap();
+    let old = root.path().join("old-tensoreval");
+    std::fs::write(&old, "#!/bin/sh\necho 'Usage: tensoreval --result-dir'\n").unwrap();
+    std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let incompatible = Command::new(&script)
+        .env("TENSOREVAL_BIN", &old)
+        .env("TENSOREVAL_CWD", root.path())
+        .output()
+        .unwrap();
+    assert!(!incompatible.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&incompatible.stderr).trim(),
+        "release_engine_capability_mismatch:output_format_parquet"
+    );
+}
+
+#[cfg(feature = "release-test")]
 #[tokio::test]
-#[ignore = "requires TENSOREVAL_BIN built with expr_df, Parquet input, and Parquet output support"]
 async fn real_tensoreval_smoke_writes_snappy_parquet() {
     let binary = PathBuf::from(std::env::var_os("TENSOREVAL_BIN").expect("set TENSOREVAL_BIN"));
     let engine = ProcessEngine::new(EngineConfig::probe(binary, Duration::from_secs(30)).unwrap());
@@ -337,7 +385,7 @@ async fn real_tensoreval_smoke_writes_snappy_parquet() {
         .run_analysis(spec(root.path(), &input_tree, RunMode::Analysis))
         .await
         .unwrap();
-    assert!(!output.datasets.is_empty());
+    assert_eq!(output.datasets.len(), 1);
     assert!(
         output
             .datasets

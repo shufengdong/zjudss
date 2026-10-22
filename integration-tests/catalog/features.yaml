@@ -441,3 +441,14 @@
     - { runner: playwright, file: integration-tests/e2e/responsive-accessibility.spec.ts, name: narrow drawers remain keyboard reachable without horizontal overflow }
   assertions: [桌面和窄屏均完成上传、对话、工作区、任务和结果查看，无 serious 或 critical axe 违规、横向溢出或隐藏焦点]
   fixtures: []
+- id: ENGINE-RELEASE-001
+  source: docs/integration-testing-design.md#8-测试数据和真实依赖验收
+  title: 真实 tensoreval 合同、全部案例和代表 study 发布验收
+  layers: [adapter, backend]
+  lanes: [release]
+  tests:
+    - { runner: rust, file: backend/tests/process_engine_v2.rs, name: release_script_fails_closed_with_stable_preflight_reasons }
+    - { runner: rust, file: backend/tests/process_engine_v2.rs, name: real_tensoreval_smoke_writes_snappy_parquet }
+    - { runner: release, file: scripts/test-release-engine, name: real_engine_imports_all_examples_and_runs_representative_studies }
+  assertions: [发布命令要求显式真实依赖并稳定拒绝缺失或不兼容环境, 73 个固定案例的依赖哈希均正确且可导入临时 scope, 命名 Parquet、expr_df、多结果、Snappy、失败诊断和五类代表 study 均通过真实引擎]
+  fixtures: []

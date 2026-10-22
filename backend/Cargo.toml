@@ -6,6 +6,7 @@ edition = "2024"
 [features]
 default = []
 e2e-test = []
+release-test = []
 
 [dependencies]
 async-trait = "0.1"

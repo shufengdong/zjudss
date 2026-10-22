@@ -288,7 +288,16 @@ fn discover_rss_dependencies(
                         match std::fs::read(&path) {
                             Ok(bytes) => {
                                 dependencies.push(path.clone());
-                                queue.push((path, bytes));
+                                if path
+                                    .extension()
+                                    .and_then(|extension| extension.to_str())
+                                    .is_some_and(|extension| {
+                                        extension.eq_ignore_ascii_case("rss")
+                                            || extension.eq_ignore_ascii_case("dss")
+                                    })
+                                {
+                                    queue.push((path, bytes));
+                                }
                             }
                             Err(_) => diagnostics.push(format!("missing dependency: {token}")),
                         }
@@ -303,14 +312,22 @@ fn discover_rss_dependencies(
 }
 
 fn dependency_tokens(text: &str) -> Vec<String> {
-    let mut tokens: Vec<String> = text
+    let executable = text
+        .lines()
+        .filter(|line| {
+            let line = line.trim_start();
+            !line.starts_with("//") && !line.starts_with('!')
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut tokens: Vec<String> = executable
         .split(['"', '\''])
         .enumerate()
         .filter_map(|(index, token)| {
             (index % 2 == 1 && is_dependency(token)).then(|| token.to_string())
         })
         .collect();
-    for line in text.lines() {
+    for line in executable.lines() {
         let mut words = line.split_whitespace();
         if words.next().is_some_and(|word| {
             word.eq_ignore_ascii_case("redirect") || word.eq_ignore_ascii_case("compile")
@@ -322,6 +339,12 @@ fn dependency_tokens(text: &str) -> Vec<String> {
                 if is_dependency(path) {
                     tokens.push(path.to_string());
                 }
+            }
+        }
+        for word in line.split_whitespace() {
+            let path = word.trim_matches(['"', '\'', '(', ')', ',', ';']);
+            if !path.contains('(') && !path.contains('=') && is_dependency(path) {
+                tokens.push(path.to_string());
             }
         }
     }

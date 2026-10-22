@@ -76,8 +76,13 @@ impl ParquetInspector {
             .iter()
             .flat_map(|group| group.columns());
         let first = chunks.next();
-        let snappy = first.is_some_and(|column| column.compression() == Compression::SNAPPY)
-            && chunks.all(|column| column.compression() == Compression::SNAPPY);
+        let snappy = match first {
+            Some(column) => {
+                column.compression() == Compression::SNAPPY
+                    && chunks.all(|column| column.compression() == Compression::SNAPPY)
+            }
+            None => row_count == 0,
+        };
         Ok(ParquetMetadata {
             columns,
             row_count,

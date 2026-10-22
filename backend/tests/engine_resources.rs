@@ -104,6 +104,40 @@ fn loads_searchable_stable_snapshot_and_publishes_it_atomically() {
 }
 
 #[test]
+fn data_dependencies_are_hashed_without_parsing_embedded_schema_urls() {
+    let mut fixture = fixture(None);
+    let rss = br#"model = import_bmopf("psa/tests/bmopf/model.json");
+network = import_dss("sparrowzz/dss/models/network.dss");"#;
+    let model = br#"{"$schema":"https://example.invalid/bmopf_schema.json","name":"demo"}"#;
+    std::fs::write(fixture.cwd.join("sparrowzz/dss/demo.rss"), rss).unwrap();
+    std::fs::create_dir_all(fixture.cwd.join("psa/tests/bmopf")).unwrap();
+    std::fs::write(fixture.cwd.join("psa/tests/bmopf/model.json"), model).unwrap();
+    std::fs::create_dir_all(fixture.cwd.join("sparrowzz/dss/models")).unwrap();
+    std::fs::write(
+        fixture.cwd.join("sparrowzz/dss/models/network.dss"),
+        "! This file is normally called by the \"Missing_Run_File.DSS\" file.\nbuscoords coordinates.csv\nnew circuit.demo\n",
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.cwd.join("sparrowzz/dss/models/coordinates.csv"),
+        "bus,x,y\n1,0,0\n",
+    )
+    .unwrap();
+    fixture.contract.root_rss[0].sha256 = hash(rss);
+
+    let snapshot =
+        EngineResourceRegistry::load_with_contract(&fixture.cwd, fixture.contract, &HashSet::new())
+            .unwrap();
+    let example = snapshot
+        .examples
+        .iter()
+        .find(|example| example.source_kind == "rss")
+        .unwrap();
+    assert!(example.importable, "{:?}", example.diagnostics);
+    assert_eq!(example.files.len(), 4);
+}
+
+#[test]
 fn rejects_missing_hash_mismatch_and_path_escape() {
     let missing = fixture(None);
     std::fs::remove_file(missing.cwd.join("sparrowzz/dss/docs/guide.md")).unwrap();

@@ -1,0 +1,55 @@
+#!/bin/sh
+set -eu
+
+# real_engine_imports_all_examples_and_runs_representative_studies
+
+if [ -z "${TENSOREVAL_BIN:-}" ]; then
+  echo "release_engine_missing:TENSOREVAL_BIN" >&2
+  exit 2
+fi
+if [ -z "${TENSOREVAL_CWD:-}" ]; then
+  echo "release_engine_missing:TENSOREVAL_CWD" >&2
+  exit 2
+fi
+if [ ! -x "$TENSOREVAL_BIN" ]; then
+  echo "release_engine_binary_invalid" >&2
+  exit 2
+fi
+if [ ! -d "$TENSOREVAL_CWD" ]; then
+  echo "release_engine_cwd_invalid" >&2
+  exit 2
+fi
+
+help_output=$("$TENSOREVAL_BIN" --help 2>/dev/null) || {
+  echo "release_engine_probe_failed" >&2
+  exit 2
+}
+case "$help_output" in
+  *--result-dir*) ;;
+  *) echo "release_engine_capability_mismatch:result_dir" >&2; exit 2 ;;
+esac
+case "$help_output" in
+  *--output-format*parquet*) ;;
+  *) echo "release_engine_capability_mismatch:output_format_parquet" >&2; exit 2 ;;
+esac
+case "$help_output" in
+  *--input*NAME=FILE*) ;;
+  *) echo "release_engine_capability_mismatch:named_parquet_input" >&2; exit 2 ;;
+esac
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+report_dir="$repo_root/target/release-integration"
+mkdir -p "$report_dir"
+export RELEASE_ENGINE_REPORT="$report_dir/engine-report.json"
+
+cargo test \
+  --manifest-path "$repo_root/backend/Cargo.toml" \
+  --features release-test \
+  --test process_engine_v2 \
+  --test release_engine_cases \
+  -- --nocapture
+
+if [ ! -s "$RELEASE_ENGINE_REPORT" ]; then
+  echo "release_engine_report_missing" >&2
+  exit 1
+fi
