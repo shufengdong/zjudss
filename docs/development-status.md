@@ -67,6 +67,7 @@ v2 仅支持空库初始化。部署前删除旧开发 SQLite 和 DATA_DIR；不
 - 后端全量测试覆盖身份、调度、SSE、配额、四类摄取来源、案例、版本工具、Parquet 合同、仿真失败
   原子性、结果分析、六类视图、比较、历史和完整 DataFrame e2e。
 - 前端测试覆盖消息归并、session state、workspace null、SSE、分页表格、null/重复行和六类图表。
-- 真实 tensoreval smoke test 保留为显式 ignored；提供匹配合同的 binary 后单独运行。
+- 已用当前 eig-rs 源码重建 release binary，并通过真实 tensoreval 命名 Parquet 输入、expr_df 执行和
+  Snappy Parquet 输出 smoke test。该测试因 CI 不一定安装外部 binary，仍保留为显式 ignored 并在发布时单独运行。
 
 发布命令和配置见 `docs/v2-deployment.md`。

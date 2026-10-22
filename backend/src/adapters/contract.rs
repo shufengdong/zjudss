@@ -118,7 +118,7 @@ fn parquet_smoke(binary: &Path) -> bool {
         )?;
         writer.write(&batch)?;
         writer.close()?;
-        std::fs::write(root.join("probe.rss"), "result = probe;\n")?;
+        std::fs::write(root.join("probe.rss"), "result = select(col(id), probe);\n")?;
         let output_dir = root.join("out");
         let output = Command::new(binary)
             .current_dir(&root)

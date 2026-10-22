@@ -86,5 +86,10 @@ git diff --check
 ```
 
 另外检查 `GET /health`、`GET /api/me`、上传、一次真实 Parquet 仿真、结果分页/下载、SSE 重连和
-跨 owner 404。真实 tensoreval smoke test 需要构建带 expr_df、Parquet input/output 能力的 binary；
-未提供 binary 时对应 integration test 保持显式 ignored，不能把 stub 结果当作内核验收。
+跨 owner 404。2026-10-22 已用当前 eig-rs 源码构建的 release binary 通过命名 Parquet 输入、expr_df
+执行和 Snappy Parquet 输出 smoke test。CI 未提供 binary 时 integration test 保持显式 ignored；发布时执行：
+
+```bash
+TENSOREVAL_BIN=/absolute/path/to/eig-rs/target/release/tensoreval \
+  cargo test --test process_engine_v2 real_tensoreval_smoke_writes_snappy_parquet -- --ignored
+```

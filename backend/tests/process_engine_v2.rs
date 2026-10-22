@@ -41,7 +41,11 @@ fn tree() -> (tempfile::TempDir, PathBuf) {
     let input = root.path().join("task-input");
     std::fs::create_dir_all(input.join("case.rssbundle")).unwrap();
     std::fs::write(input.join("main.rss"), "result = input;\n").unwrap();
-    std::fs::write(input.join("query.rss"), "result = input;\n").unwrap();
+    std::fs::write(
+        input.join("query.rss"),
+        "result = select(col(bus), col(v_mag), input);\n",
+    )
+    .unwrap();
     write_parquet(&input.join("input.parquet"), 2, Compression::SNAPPY);
     (root, input)
 }
