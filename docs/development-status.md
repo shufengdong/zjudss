@@ -5,7 +5,9 @@
 > `docs/api-design.md`（前后端契约，前端开发 agent 的单点契约）、
 > `docs/db-design.md`（数据库设计）、
 > `docs/frontend-design.md`（前端功能设计，后端 agent 对接必读）、
-> `docs/model-workspace-design.md`（上传、版本、自然语言仿真、历史与对比的目标设计）。
+> `docs/model-workspace-design.md`（上传、版本、自然语言仿真、历史与对比的目标设计）、
+> `docs/agent-prompt-skills-design.md`（系统 prompt、领域技能、引擎知识来源与版本管理）、
+> `docs/superpowers/plans/2026-10-22-v2-simulation-workspace.md`（v2 可执行实施方案）。
 
 ---
 
@@ -38,6 +40,9 @@
 | Agent 调度与容量保护 | ⚠️ v1 待补 | 当前每条消息临时构建一个 run、无实例总量限制；v2 目标为同会话串行 + 全局有界并发/队列 |
 | 历史文件配额 | 🎯 已完成设计 | 默认每实例/owner 20,000 个唯一 artifact、20 GiB，80% 告警，不按时间自动删除；尚未实现 |
 | 多用户隔离 | ⛔ 公开部署前必做 | v1 无账号和 owner/tenant 过滤，只允许可信单用户/单租户部署 |
+| Agent prompt 与领域技能 | 🎯 已完成设计 | 当前只有一句 system prompt；v2 启动时预索引 TENSOREVAL_CWD 文档，再以版本化 system、按需技能、机器 catalog 和工具合同分层使用，尚未实现 |
+| 内置案例库 | 🎯 已完成设计 | 当前目录已确认 16 个根 RSS、37 个已发布 rssbundle；v2 支持自然语言搜索、导入、派生修改和仿真，尚未实现 |
+| v2 详细实施方案 | 📝 待评审 | 已形成 18 个可独立测试/提交的任务草案，按平台基础、模型工作区、通用结果、历史对比、前端和发布六个里程碑推进 |
 
 > 后端「第 1–5 步」指 `docs/architecture.md` §12 的演进路线。第 5 步已于 2026-10-21 落地。
 > 上表 `🎯` 表示已评审目标，不能理解为代码已具备该能力；目标实施顺序见
@@ -165,15 +170,15 @@ backend/src/
   **环境已核对（2026-10-22）**：`.env` 的 `TENSOREVAL_BIN` 与 `TENSOREVAL_CWD` 均已指向更名后的
   `eig-rs`。**已知待办（后端）**：① agent 系统提示词不含模型/脚本路径，当前需消息显式给绝对路径，
   v2 将改为只传版本 ID；② v1 电压曲线按 16 母线×相位展开成 41 条序列且图例拥挤，v2 改用受控
-  多视图、数据规模预算和自然语言筛选，不在后端硬编码代表母线；③ `maxVoltage` 走源母线归一近似（结果目录无 `*_bus.csv` 的 `voltage_base_v`），只作为 v1
-  兼容显示；④ 输出文件尚未登记为 `artifacts/result_datasets`，自然语言结果分析运行与血缘也未实现；⑤ agent run 尚无
+  多视图、数据规模预算和自然语言筛选，不在后端硬编码代表母线；③ `maxVoltage` 走源母线归一近似（结果目录无 `*_bus.csv` 的 `voltage_base_v`），只用于当前原型
+  显示；④ 输出文件尚未登记为 `artifacts/result_datasets`，自然语言结果分析运行与血缘也未实现；⑤ agent run 尚无
   实例级上限或有界队列，同一会话也未串行化；⑥ 任务取消尚未形成完整契约；⑦ 当前 QSTS 任务的
-  `study_type` 仍写 NULL，v2 任务筛选前要写入规范值并处理历史回填。
+  `study_type` 仍写 NULL；v2 新 schema 必须改为规范的非空值。
 
 - **v2 Parquet 合同（源码已确认、运行时待接入）**：eig-rs 的 tensoreval 已增加
   `--output-format <csv|parquet>`，默认 CSV，`parquet` 输出 Snappy 压缩的 `NAME.parquet`。当前
   `.env` 指向的已编译二进制帮助信息尚未出现该参数，启用 v2 前必须重编译/替换并在适配器启动探测；
-  v1 CSV 任务与端点保持不变。tensoreval 本身已经能通过 `--input NAME=FILE.parquet` 读取 Parquet；
+  v2 同步删除原型 CSV 任务读取和 `/curves` 端点。tensoreval 本身已经能通过 `--input NAME=FILE.parquet` 读取 Parquet；
   当前缺少的是 **zjudss 结果服务层** 的 Parquet reader：`backend/src/adapters/process.rs` 仍只枚举、
   `read_to_string` 并解析 CSV，`Cargo.toml` 也没有直接声明结果读取依赖。v2 必须补齐结果登记所需的
   schema/行数校验，以及 REST 表格分页、列投影和图表 JSON 读取；不能依赖 rig 间接带入的
@@ -242,8 +247,9 @@ frontend/src/
 | 7 | 同步引擎用 `tokio::process::Command` 异步等待子进程，并用信号量限流 | 引擎计算在子进程内，不阻塞 Tokio worker |
 | 8 | Agent 按每条消息短生命周期构建；v2 同会话串行、实例级活动 run 默认上限 8，并设置有界队列 | 会话连续性由 DB 保持；防止突发请求耗尽 LLM 配额和应用资源 |
 | 9 | DataFrame 始终有分页表格入口，并可拥有多个受控语义图表视图 | Agent 生成 `VisualizationSpec`，前端注册表编译为 ECharts；API 不接收任意 ECharts option |
-| 10 | v1 结果保留 CSV；v2 新建 `result_datasets` 统一使用原生 Snappy Parquet | 适配器显式传 `--output-format parquet`，避免依赖默认值，也不在后端做二次格式转换 |
-| 11 | 历史文件默认每个归属主体 20,000 个唯一 artifact、20 GiB，80% 告警且不自动过期 | v1 按实例、身份系统落地后按 owner/tenant；删除会话并完成 GC 后释放额度 |
+| 10 | v2 直接删除原型 CSV 结果链路，`result_datasets` 统一使用原生 Snappy Parquet | v1 未投入使用；适配器显式传 `--output-format parquet`，不保留双读或转换分支 |
+| 11 | 历史文件默认每个归属主体 20,000 个唯一 artifact、20 GiB，80% 告警且不自动过期 | v2 instance 模式按实例、trusted_proxy 模式按 owner/tenant；删除会话并完成 GC 后释放额度 |
+| 12 | v2 不兼容未投入使用的 v1 原型数据和接口 | 发布前重建干净 v2 schema，删除旧消息、固定 metrics、`task_results/curve_data`、`/curves` 和 `/report` 分支 |
 
 ---
 
@@ -271,6 +277,10 @@ npm run build                              # 校验 TS 无错
 - 一个会话对应一个模型工作区；
 - 工作区区分 active 与 draft：默认仿真使用 active，错传或未确认的 draft 不阻塞已有模型；
 - 单 `.rss`、ZIP、目录形式的 `.rssbundle` 和多次追加的 CSV/Excel/Parquet 都是合法输入；
+- 服务启动时从 `TENSOREVAL_CWD/sparrowzz/dss/docs` 预检、切分并索引文档；agent 按需读取相关 section，
+  不把全部文档常驻每轮 prompt；
+- `TENSOREVAL_CWD/sparrowzz/dss` 下经过验证的根 RSS 和 rssbundle 形成只读案例库；用户可用自然语言
+  搜索并导入，导入后复制到自己的 artifact/版本链，再继续修改参数和仿真；
 - DataFrame 类型依据表头（列名）推断，文件名与工作表名不决定类型；dtype 只做校验；
 - 模糊、未知或重复类型必须由智能体向用户说明并确认；
 - 每次上传、确认或修改产生不可变版本，任务绑定具体版本和完整 `study_spec`；
@@ -289,15 +299,15 @@ npm run build                              # 校验 TS 无错
 - 首批图表支持折线、柱状、散点、热力、箱线和直方图。智能体只生成版本化 `VisualizationSpec`，
   前端渲染器注册表负责编译 ECharts option，禁止模型生成任意 option 或可执行 formatter；
 - 每次结果分析保存用户意图、脚本、输入 dataset/alias、输出 dataset 和初始视图；模型不接触服务器路径；
-- 历史 v1 CSV 继续由旧端点读取，不直接登记为 v2 dataset；若未来迁移，需经过可验证的 Parquet 转换并
-  保留新旧 artifact 哈希关系；
+- v1 未投入使用，不迁移旧 SQLite、CSV 或 DATA_DIR；v2 发布前重建干净 schema，并只保存原生 Parquet；
 - 比较绑定两个历史任务并生成 RSS 比较脚本，按稳定业务键和单位输出差值 DataFrame，禁止按行号比较；
 - 聊天、版本、任务、结果和比较均可在重新进入会话后恢复。
 - 历史文件配额同时限制唯一 artifact 数和逻辑字节；达到硬限制只阻止新增文件，历史读取继续可用，
   首版不按保存天数或“最近 N 个任务”静默删除。
 
-实施拆为五期：工作区/版本/推断 → 多文件与 bundle → operation 事件与 SSE 恢复 → 通用仿真与结果
-DataFrame 分析适配器 → 历史检索/修改/查询/对比。
+详细实施按六个里程碑推进：平台基础 → 模型工作区 → 通用仿真结果 → 历史与对比 → 前端工作台 →
+迁移发布。身份 scope、agent admission 和 SSE 恢复先于工作区实现，避免后续仓储和事件协议返工。
 详细对象、API、错误码和验收路径见 `docs/model-workspace-design.md`；数据库迁移见
 `docs/db-design.md` §7；目标 HTTP/SSE 契约见 `docs/api-design.md` §10；前端待办见
-`docs/frontend-design.md` §7。
+`docs/frontend-design.md` §7；逐文件、逐测试和逐提交步骤见
+`docs/superpowers/plans/2026-10-22-v2-simulation-workspace.md`。

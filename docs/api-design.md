@@ -411,12 +411,15 @@ data: {"type":"user","id":"14","timestamp":"...","content":"..."}
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
+| GET | `/api/me` | 返回当前认证主体和 access scope，供前端隔离导航偏好 |
+| GET | `/api/examples` | 搜索当前引擎资源快照中的可导入 RSS/rssbundle 案例 |
+| GET | `/api/examples/{id}` | 案例详情、依赖摘要、验证状态和运行能力要求 |
 | GET | `/api/sessions` | v2 支持关键词/任务筛选和游标分页；空查询保持最近活跃列表 |
 | GET | `/api/sessions/{id}/messages` | v2 支持最近页、向前分页和围绕命中消息取窗口 |
 | POST | `/api/sessions/{id}/messages` | 提交自然语言和可选资源 context；通过 admission control 后触发 agent |
 | GET | `/api/sessions/{id}/events` | 支持 event ID、`Last-Event-ID` 补发和 `resync-required` 的 SSE |
 | GET | `/api/sessions/{id}/workspace` | 工作区、active/draft 版本、输入识别与活动摄取 |
-| POST | `/api/sessions/{id}/attachments` | 一次上传一个或多个文件；兼容现有单 `file` |
+| POST | `/api/sessions/{id}/attachments` | 一次上传一个或多个带 clientFileId 的文件 |
 | GET | `/api/sessions/{id}/versions` | 按创建时间倒序列出模型版本 |
 | GET | `/api/sessions/{id}/tasks` | 列出历史仿真，支持 `studyType/status/versionId` 过滤 |
 | GET | `/api/ingestions/{id}` | 查询上传批次进度与结构化错误，供刷新恢复 |
@@ -436,6 +439,70 @@ data: {"type":"user","id":"14","timestamp":"...","content":"..."}
 `limit + beforeId`（默认 50、最大 200）；会话搜索使用绑定查询条件的不透明 `cursor`（§10.10），
 消息列表另支持 `beforeId` 和 `aroundId`（§10.10）。
 
+#### 身份与 scope
+
+v2 支持两种部署模式：`AUTH_MODE=instance` 只用于可信私有单租户；公开多人部署必须使用
+`AUTH_MODE=trusted_proxy`。可信认证代理负责登录，并在转发前移除外部同名请求头，再注入
+`X-Zjudss-Subject`、可选 `X-Zjudss-Tenant` 和 `X-Zjudss-Proxy-Token`。后端以常量时间比较
+`AUTH_PROXY_TOKEN`，随后生成不可变 access scope；浏览器不能自行提交 owner 或 storage scope ID。
+
+`GET /api/me` 返回：
+
+```json
+{
+  "subject": "alice@example.com",
+  "scopeKind": "owner",
+  "scopeKey": "owner:alice@example.com"
+}
+```
+
+instance 模式的 `scopeKind` 为 `instance`，`scopeKey` 为固定非密钥标识。该响应只供界面显示和给
+`localStorage` 导航偏好分区；所有授权仍以服务端 extractor 为准。
+
+#### 引擎文档与案例资源
+
+后端启动时从 `${TENSOREVAL_CWD}/sparrowzz/dss` 建立只读 `engineResourceSnapshot`。Agent 只能通过
+`search_engine_docs/read_engine_doc_section` 读取索引后的文档 section；这些是内部工具，不暴露接受
+文件路径的 HTTP 接口。
+
+`GET /api/examples?query=IEEE13&studyType=fault_study&sourceKind=rssbundle&limit=20&cursor=...`
+返回只读案例目录：
+
+```json
+{
+  "engineResourceSnapshot": "sha256:...",
+  "examples": [
+    {
+      "id": "ex_7f0c2cba98a84d6f916a4b9e11",
+      "title": "IEEE 123 Bus Short Circuit",
+      "description": "IEEE123 多故障场景短路案例",
+      "sourceKind": "rssbundle",
+      "studyType": "fault_study",
+      "solver": null,
+      "tags": ["IEEE123", "short-circuit"],
+      "requiredFeatures": [],
+      "fileCount": 5,
+      "sizeBytes": 184320,
+      "verification": "self_executed",
+      "importable": true,
+      "engineContractVersion": "eig-rs-02718c716a31-sparrowzz-d6a502d3cd1e-schema2"
+    }
+  ],
+  "nextCursor": null
+}
+```
+
+`GET /api/examples/{id}` 另返回入口相对路径、受控文件树摘要、tree hash、来源/许可证说明、预计运行规模
+和 capability 要求。响应不得包含 `TENSOREVAL_CWD` 或服务器绝对路径。不存在、源文件 hash 已变化、
+依赖不完整和当前 tensoreval 缺少 MUMPS/MKL 等能力时，分别标记不可导入或返回稳定错误。
+
+导入没有公开 POST 旁路。用户自然语言或案例卡片产生可见消息后，agent 调用
+`import_example(exampleId, engineResourceSnapshot, expectedBaseVersionId)`；服务端重新校验 snapshot/hash，
+把完整依赖复制进 artifact 存储并按普通 ingestion/workspace 事务发布版本。`expectedBaseVersionId`
+取当前 draft，若无 draft 则取 active；仅当工作区二者都不存在时允许为 `null`。这样首次导入和并发
+导入都使用同一套乐观并发语义。成功导入只发布模型版本和消息事件，不隐式创建仿真任务；运行仍需
+用户在同一对话中明确提出。
+
 ### 10.2 工作区摘要
 
 `GET /api/sessions/{id}/workspace`：
@@ -448,6 +515,7 @@ data: {"type":"user","id":"14","timestamp":"...","content":"..."}
     "versionId": "11",
     "parentVersionId": "10",
     "sourceKind": "dataframes",
+    "originKind": "upload",
     "status": "ready",
     "inputs": [],
     "missing": [],
@@ -457,35 +525,28 @@ data: {"type":"user","id":"14","timestamp":"...","content":"..."}
   "draft": {
     "versionId": "12",
     "parentVersionId": "11",
-    "sourceKind": "dataframes",
-    "status": "collecting",
-    "inputs": [
-      {
-        "inputId": "35",
-        "artifactId": "21",
-        "fileName": "table-a.xlsx",
-        "sheetName": "Sheet1",
-        "tableKind": "load",
-        "confidence": 0.98,
-        "resolution": "inferred",
-        "candidates": [{"tableKind":"load","confidence":0.98}],
-        "matchedRequiredColumns": ["name", "bus", "p", "q"],
-        "missingRequiredColumns": [],
-        "typeConflicts": []
-      }
-    ],
-    "missing": ["bus", "line", "voltage_source"],
+    "sourceKind": "rssbundle",
+    "originKind": "example",
+    "origin": {
+      "exampleId": "ex_7f0c2cba98a84d6f916a4b9e11",
+      "engineResourceSnapshot": "sha256:...",
+      "sourceTreeHash": "sha256:..."
+    },
+    "status": "ready",
+    "inputs": [],
+    "missing": [],
     "diagnostics": [],
     "createdAt": "2026-10-22T09:00:00+08:00"
   },
   "activeIngestions": [
-    {"id":"31","status":"inferring","clientBatchId":"batch-01","updatedAt":"2026-10-22T09:00:02+08:00"}
+    {"id":"31","originKind":"upload","status":"inferring","clientBatchId":"batch-01","updatedAt":"2026-10-22T09:00:02+08:00"}
   ]
 }
 ```
 
 版本 `status` 为 `collecting | ready | invalid`；`sourceKind` 为
-`rss | rssbundle | dataframes | mixed`；`resolution` 为
+`rss | rssbundle | dataframes | mixed`，`originKind` 为 `upload | example | generated`。example origin
+必须返回稳定 example ID、resource snapshot 和源 tree hash，不能返回服务器路径。`resolution` 为
 `pending | inferred | user_confirmed | rejected`。歧义或未知时使用 `pending` 并返回 `candidates`；
 文件名和工作表名仅展示，`tableKind` 由表头（列名）推断
 或用户确认；dtype 只用于 schema 校验和 `typeConflicts` 诊断。
@@ -501,7 +562,7 @@ data: {"type":"user","id":"14","timestamp":"...","content":"..."}
 
 `POST /api/sessions/{id}/attachments` 使用 `multipart/form-data`：
 
-- v1 单文件继续使用字段 `file`；v2 每个二进制 part 使用字段 `file.<clientFileId>`；
+- 每个二进制 part 使用字段 `file.<clientFileId>`，不接受缺少 clientFileId 的旧 `file` 字段；
 - v2 必填 `clientBatchId`：客户端生成的幂等批次 ID；
 - 目录增强模式另交 `relativePaths` JSON 对象，以 clientFileId 为键保存规范化相对路径；
 - 标准文件上传可直接接收 ZIP；`.rssbundle` 是目录，须通过目录增强模式上传其文件树，或由用户
@@ -568,6 +629,12 @@ artifact/版本 ID 和结构化错误；每个原始上传项还返回
   "stage": "collecting",
   "studyType": "power_flow",
   "scriptArtifactId": "72",
+  "agentBundleVersion": "v2.1",
+  "agentSkillRefs": [
+    {"id":"study-planning","version":"1.0.0","hash":"sha256:..."},
+    {"id":"rss-generation","version":"1.0.0","hash":"sha256:..."}
+  ],
+  "engineContractVersion": "eig-rs-02718c716a31-sparrowzz-d6a502d3cd1e-schema2",
   "studySpec": {
     "solver": "radial",
     "results": ["bus_phase", "branch_flow", "summary"]
@@ -580,7 +647,8 @@ artifact/版本 ID 和结构化错误；每个原始上传项还返回
 
 `studyType` 是筛选标签而不是封闭枚举；首批 UI 识别 `power_flow | short_circuit | qsts`，其他内核
 分析类型仍以字符串返回。`studySpec` 必须使用带单位的领域字段，不能暴露服务器路径或拼好的命令行。
-`scriptArtifactId` 指向实际执行的完整 RSS。
+`scriptArtifactId` 指向实际执行的完整 RSS；`agentBundleVersion`、`agentSkillRefs` 和
+`engineContractVersion` 记录生成与校验脚本时实际使用的知识版本，用于复现和诊断，不由客户端提交。
 
 `GET /api/tasks/{id}/datasets` 返回 `--result-dir` 中每个命名 DataFrame 的目录：
 
@@ -640,8 +708,8 @@ tensoreval --df --result-dir <controlled-output-dir> --output-format parquet \
 ```
 
 v2 的仿真和结果分析必须显式传 `--output-format parquet`；不能依赖 tensoreval 当前默认的 CSV。
-`result_datasets` 只登记校验成功的 Parquet artifact。v1 `/curves`、`/report` 继续读取历史 CSV，二者
-在迁移期按任务版本分流。
+`result_datasets` 只登记校验成功的 Parquet artifact。v2 删除原型 `/curves`、`/report` 和固定 metrics
+契约；需要报告时由结果分析生成结构化 DataFrame 或后续定义新的通用 artifact 端点，不沿用旧接口。
 
 一次分析运行详情：
 
@@ -653,6 +721,11 @@ v2 的仿真和结果分析必须显式传 `--output-format parquet`；不能依
   "intent": "画出节点 632 三相电压",
   "status": "succeeded",
   "scriptArtifactId": "105",
+  "agentBundleVersion": "v2.1",
+  "agentSkillRefs": [
+    {"id":"result-analysis","version":"1.0.0","hash":"sha256:..."}
+  ],
+  "engineContractVersion": "eig-rs-02718c716a31-sparrowzz-d6a502d3cd1e-schema2",
   "inputs": [{"datasetId":"91","inputName":"voltage"}],
   "outputs": [
     {
@@ -899,7 +972,7 @@ interface ChatSuggestion {
   label: string
   message: string
   context?: {
-    action: 'run_study' | 'rerun_task' | 'query_results' | 'visualize_results' | 'compare_tasks' |
+    action: 'import_example' | 'run_study' | 'rerun_task' | 'query_results' | 'visualize_results' | 'compare_tasks' |
             'modify_model' | 'replace_input' | 'remove_input' |
             'activate_version' | 'confirm_mapping'
     refs: Record<string, string>
@@ -913,7 +986,7 @@ interface ChatSuggestion {
 
 ### 10.7 自然语言动作上下文
 
-领域交互以自然语言为默认入口。文件上传和确定性摄取通过固定控件启动；没有 active 时首个校验通过
+领域交互以自然语言为默认入口。文件上传、案例只读浏览和确定性摄取通过固定控件启动；没有 active 时首个校验通过
 的 ready 版本可自动激活。模型映射确认、替换/移除、参数修改、后续版本激活/回退、运行/重跑和任务
 比较不提供绕过 agent 的前端写入口。用户直接输入文本时可以不带 context；从模型、版本或任务列表
 发出的上下文建议向现有消息端点发送可见文本和可选的消歧 context：
@@ -929,7 +1002,9 @@ interface ChatSuggestion {
 ```
 
 `action` 首批为 `run_study | rerun_task | query_results | visualize_results | compare_tasks | modify_model |
-replace_input | remove_input | activate_version | confirm_mapping`。服务端先校验 refs 中资源属于路径中的 session，再把
+replace_input | remove_input | activate_version | confirm_mapping | import_example`。案例卡片的 refs 使用
+`exampleId` 与当前 `engineResourceSnapshot`；服务端校验后仍由 agent 调用导入工具。其他 refs 中资源
+必须属于路径中的 session，随后把
 文本和可信资源引用交给 agent；
 context 本身不能绕过工具调用直接写库。比较创建逻辑位于 application service，由
 `compare_simulations` 调用；公开 HTTP 只提供 `GET /api/task-comparisons/{id}` 读取结果。
@@ -962,7 +1037,7 @@ data: {"reason":"cursor_unavailable"}
 
 ### 10.9 v2 错误体
 
-v1 的 `{"error":"..."}` 保持可解析；v2 增加稳定字段：
+v2 错误体同时提供可读信息和稳定机器码：
 
 ```json
 {
@@ -977,11 +1052,16 @@ v1 的 `{"error":"..."}` 保持可解析；v2 增加稳定字段：
 series、类别、点数或格子预算时返回 `422 visualization_data_too_large`，`details` 只给实际规模、
 上限和建议的自然语言操作，不返回部分图表数据。
 
+引擎资源启动预检失败返回 `503 engine_resource_unavailable` 或 `engine_contract_mismatch`；未知案例返回
+`404 example_not_found`；案例未通过发布校验返回 `422 example_not_importable`；目录在 snapshot 建立后
+发生 hash 变化返回 `409 example_source_changed`；当前二进制缺少案例声明的 solver feature 返回
+`409 engine_feature_unavailable`。这些错误不得回显源目录绝对路径。
+
 ### 10.10 历史聊天查询与分页
 
 #### 会话列表/搜索
 
-`GET /api/sessions` 的 v1 无参数调用保持兼容；v2 可带：
+`GET /api/sessions` 支持以下参数；不带参数时返回最近活跃会话：
 
 | 参数 | 类型 | 说明 |
 |---|---|---|
@@ -1038,7 +1118,7 @@ GET /api/sessions/{id}/messages?aroundId=117&before=20&after=20
 - 所有 session/message ID 先做归属校验，未授权统一表现为 404，避免枚举资源。
 
 v2 分页响应为 `{ "messages": [...], "nextBeforeId": "..." | null }`；around 模式额外返回
-`anchorMessageId/hasEarlier/hasLater`。迁移期前端仍接受 v1 无分页字段的响应。
+`anchorMessageId/hasEarlier/hasLater`。前端只接受此分页响应，不保留 v1 全量数组兼容分支。
 
 #### agent 历史检索工具
 
@@ -1048,8 +1128,8 @@ v2 分页响应为 `{ "messages": [...], "nextBeforeId": "..." | null }`；aroun
 长会话一次塞入模型上下文。
 
 “上次”“修改前”等指代先在当前 session 的任务/版本时间线解析；找不到唯一对象才调用跨会话搜索。
-相近候选必须让用户确认。工具只检索当前身份可访问的 session；匿名 v1 的范围是当前私有部署实例，
-不得把这一语义用于公开多用户部署。
+相近候选必须让用户确认。工具只检索当前身份可访问的 session；instance 模式的范围是当前可信私有
+部署实例，公开多用户部署必须使用 trusted_proxy 身份范围。
 
 #### 自动标题
 
@@ -1061,8 +1141,8 @@ v2 分页响应为 `{ "messages": [...], "nextBeforeId": "..." | null }`；aroun
 
 ### 10.11 历史文件配额
 
-`GET /api/storage-usage` 是高频只读端点。v1 返回整个私有部署实例的使用量；引入身份后只返回当前
-owner/tenant，不能接受客户端传入任意 owner ID：
+`GET /api/storage-usage` 是高频只读端点。instance 模式返回整个可信私有实例的使用量；trusted_proxy
+模式只返回当前 owner/tenant，不能接受客户端传入任意 owner ID：
 
 ```json
 {

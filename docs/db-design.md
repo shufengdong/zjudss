@@ -1,11 +1,12 @@
 # 数据库层设计（SQLite + Diesel）
 
-> 版本：v1 已实现基线 + v2 目标迁移
+> 版本：v1 原型基线 + v2 干净 schema 目标
 > 配套迁移：`backend/migrations/00000000000000_initial/`、
 > `backend/migrations/00000000000001_task_latest_status/`
 > 说明：本文只描述设计，不包含任何 Rust 业务代码。引擎结论以 `../eig-rs/sparrowzz/dss/docs/` 为准，与 `AGENTS.md` 冲突处已在 §0.4 标注。
 > §1–§6 描述 v1 schema 基线；6 张表和 Rust models 已实现，但任务产物元数据写入尚未全部接线。
-> §7 是模型工作区、历史检索与对比的 v2 目标迁移。完整语义见
+> §7 是模型工作区、历史检索与对比的 v2 目标 schema。v1 未投入使用，v2 从空库初始化，不做数据
+> 回填或双读。完整语义见
 > `docs/model-workspace-design.md`。
 
 ---
@@ -227,8 +228,8 @@ erDiagram
 | `started_at_ms` | INTEGER | NULL | |
 | `finished_at_ms` | INTEGER | NULL | |
 
-当前 `run_simulation` 创建的 QSTS 任务尚未填写 `study_type`，实际为 NULL；v2 引入任务筛选前必须按
-上述规范写入 `qsts`，并为历史任务提供可审计的回填策略。
+当前 `run_simulation` 创建的 QSTS 任务尚未填写 `study_type`，实际为 NULL；v2 新 schema 将其改为
+非空规范标签，QSTS 写 `qsts`，不回填原型任务。
 
 索引：
 - `idx_tasks_session_time ON simulation_tasks(session_id, created_at_ms)`（会话内任务时间线）
@@ -297,9 +298,9 @@ erDiagram
 - `idx_results_task ON task_results(task_id)`
 
 `converged/violation_count/p_loss_w/q_loss_var/max_violation_ratio` 都是假设具体分析类型后才有意义的
-领域统计值。v2 不向该表写入新数据，也不把 `metrics_json` 扩成新的万能 JSON；历史 v1 消息仍按旧
-契约读取。目标迁移使用 §7.8 的 `result_datasets` 保存 DataFrame 文件及中立 schema 元数据，具体
-统计由用户提出问题后生成 RSS 分析脚本计算。
+领域统计值。v2 schema 直接删除该表，不把 `metrics_json` 扩成新的万能 JSON。§7.8 的
+`result_datasets` 保存 DataFrame 文件及中立 schema 元数据，具体统计由用户提出问题后生成 RSS
+分析脚本计算。
 
 ### 2.6 curve_data（v1 遗留，v2 不启用）
 
@@ -325,13 +326,11 @@ erDiagram
 **适合 TEXT 存 JSON（整体读写，不参与 WHERE/JOIN/排序）**：
 - `simulation_tasks.params_json`、`simulation_tasks.error_json`
 - `messages.payload_json`（工具参数、结果卡片结构）
-- v1 `task_results.metrics_json`（只为历史兼容保留，不作为 v2 扩展点）
 
 **必须拆独立列（要查询/排序/外键）**：
 - 主键/外键（`id`、`session_id`、`task_id`）
 - 任务状态与阶段（`status`、`stage`）
 - 时间戳（`*_ms`）
-- v1 可排序的固定指标（只解释遗留 schema；v2 不继续增加）
 - 消息 `role`/`kind`（过滤维度）
 
 **原则**：SQLite 的 JSON 只是 TEXT，`json_extract()` 可用但不走索引；凡稳定的系统热路径（状态、
@@ -448,8 +447,8 @@ async fn list_messages(state: axum::extract::State<DbPool>, ...) -> Result<..., 
 ### 5.2 结论：所有结果 DataFrame 存文件，DB 只存目录、schema 与血缘
 
 **目标设计**：
-- v1 适配器保持 `tensoreval --df --result-dir DIR` 的 CSV 兼容链路；v2 原始仿真和后续结果分析都由
-  适配器显式调用 `tensoreval --df --result-dir DIR --output-format parquet`，每个命名 DataFrame
+- v2 原始仿真和后续结果分析都由适配器显式调用
+  `tensoreval --df --result-dir DIR --output-format parquet`，每个命名 DataFrame
   由引擎直接写为独立 Parquet 文件；后端不做 CSV→Parquet 二次转换，只计算内容哈希并登记为不可变 artifact。
 - DB 不保存预设的收敛、网损、电压、越限等领域统计。`result_datasets` 只保存文件引用、结果名、
   行数、列名/dtype/单位、生产者和输入血缘；这些信息与仿真类型无关。
@@ -459,8 +458,7 @@ async fn list_messages(state: axum::extract::State<DbPool>, ...) -> Result<..., 
 - 分页表格是每张 DataFrame 的通用入口，图表是由 `dataset_views` 声明的多个语义视图。小结果可以
   内联预览，大结果通过分页表格或具体 view 数据端点读取；若现有表不适合展示，agent 生成筛选、
   聚合或降采样后的新表。
-- 格式：**v1 继续使用 CSV**；**v2 新建的 `result_datasets` 统一使用 Snappy Parquet**。CSV 只属于
-  v1 兼容端点和临时/历史目录，不能作为新 v2 dataset artifact。
+- 格式：`result_datasets` 统一使用 Snappy Parquet；v2 不保存 CSV 结果 artifact。
 - 存储根：约定 `DATA_DIR`（env），子目录 `models/ uploads/ scripts/ outputs/ reports/`；
   `artifacts.storage_path` 存**相对路径**，保证 DB 可整体搬迁。
 
@@ -469,8 +467,8 @@ async fn list_messages(state: axum::extract::State<DbPool>, ...) -> Result<..., 
 2. 行式存储体积大 3–50 倍，且回放要重组成数组，慢。
 3. 文件方案让备份/清理/去重（sha256）都更简单，且与引擎 `--result-dir` 直接对接。
 
-`curve_data` 和 `task_results` 只保留到 v1 兼容读取结束，不作为后续能力扩展点。跨任务统计检索若
-成为明确产品需求，应建立独立索引/物化视图；不能反过来把所有可能的领域指标塞进主结果表。
+`curve_data` 和 `task_results` 不进入 v2 schema。跨任务统计检索若成为明确产品需求，应建立独立
+索引/物化视图；不能反过来把所有可能的领域指标塞进主结果表。
 
 ---
 
@@ -479,12 +477,12 @@ async fn list_messages(state: axum::extract::State<DbPool>, ...) -> Result<..., 
 - [x] 数据根使用 `DATA_DIR`；未设置时取进程工作目录下的 `data/`。按文档从 `backend/` 启动即为
       `backend/data/`，该目录已加入 `.gitignore`。
 - [ ] v2 建立 `artifacts/result_datasets/dataset_views/result_analysis_runs/result_analysis_inputs` repository 与写入
-      链路；适配器固定传 `--output-format parquet`，当前 v1 结果 CSV 不直接登记为 v2 dataset。
-- [ ] 停止规划 `task_results` 固定指标写入；现有 `messages.payload_json` 四指标仅供 v1 页面兼容。
+      链路；适配器固定传 `--output-format parquet`。
+- [ ] 删除 `task_results/curve_data`、固定 metrics payload 和旧曲线读取代码。
 - [ ] 为结果分析提供受控脚本执行：只接受 dataset ID，禁止 LLM 传路径；保存脚本 artifact、输入
       alias、输出 DataFrame 和诊断。
 - [ ] 文件本体删除策略：`ON DELETE CASCADE` 只删元数据行，磁盘文件由存储层定期清理或任务级清理。
-- [x] v1 适配器以 `--result-dir` 的命名 CSV 为合同，不依赖 `--df` stdout 序列化格式。
+- [x] 当前原型适配器以 `--result-dir` 的命名 CSV 为合同；v2 实现时直接删除这条代码路径。
 - [ ] 重编译/替换 `.env` 指向的 tensoreval，启动时探测 `--output-format`，并用真实任务验证
       `--output-format parquet` 生成可读取的 Snappy Parquet；未通过时禁止启用 v2 任务。
 - [ ] zjudss 结果服务层增加显式 Parquet 读取依赖，提供 schema/行数校验、分页、列投影和有界 JSON
@@ -493,7 +491,15 @@ async fn list_messages(state: axum::extract::State<DbPool>, ...) -> Result<..., 
 
 ---
 
-## 7. v2 目标迁移：工作区、版本、结果分析与比较（尚未实现）
+## 7. v2 目标 schema：身份、工作区、结果分析与比较（尚未实现）
+
+v2 发布前将开发期增量 migration 压成一份新的 initial schema，部署时删除原型数据库和 DATA_DIR 后
+从空库初始化。schema 不包含 `task_results`、`curve_data` 或可空归属字段。
+
+`sessions` 除 §2.1 的基础字段外，增加非空 `access_scope_kind`、`access_scope_key` 和
+`storage_scope_id`。前两列用于授权，后一列用于配额；三者只能由认证 extractor 解析当前主体后写入，
+客户端不得提交。`AUTH_MODE=instance` 使用固定 instance scope；`AUTH_MODE=trusted_proxy` 使用认证
+代理提供的 owner/tenant subject。所有子资源通过 session 关系校验 scope，跨 scope 统一返回 404。
 
 ### 7.1 新关系
 
@@ -536,14 +542,14 @@ erDiagram
 |---|---|---|---|
 | `id` | INTEGER | PK AUTOINCREMENT | |
 | `session_id` | INTEGER | NOT NULL UNIQUE FK→sessions, CASCADE | 一个会话一个工作区 |
-| `active_version_id` | INTEGER | NULL FK→model_versions, SET NULL | 默认仿真使用的 ready 版本；迁移时需延后添加外键 |
+| `active_version_id` | INTEGER | NULL FK→model_versions, SET NULL | 默认仿真使用的 ready 版本；初始 schema 可先声明引用、后创建目标表 |
 | `draft_version_id` | INTEGER | NULL FK→model_versions, SET NULL | 新上传、待确认或校验失败的候选版本 |
 | `created_at_ms` | INTEGER | NOT NULL | |
 | `updated_at_ms` | INTEGER | NOT NULL | |
 
 ### 7.3 ingestions 与 ingestion_artifacts
 
-`ingestions` 保存上传批次及幂等键：
+`ingestions` 保存上传或内置案例导入批次及幂等键：
 
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
@@ -551,6 +557,8 @@ erDiagram
 | `workspace_id` | INTEGER | NOT NULL FK→workspaces, CASCADE | |
 | `base_version_id` | INTEGER | NULL FK→model_versions, SET NULL | 上传时看到的 draft；无 draft 时为 active |
 | `client_batch_id` | TEXT | NOT NULL | 客户端重试幂等键 |
+| `origin_kind` | TEXT | NOT NULL | `upload/example`；由服务端确定 |
+| `source_ref_json` | TEXT | NULL | example 时保存 example ID、resource snapshot、tree hash 和来源；upload 为 NULL |
 | `status` | TEXT | NOT NULL | `accepted/extracting/inferring/validating/succeeded/completed_with_errors/failed` |
 | `error_json` | TEXT | NULL | 结构化错误 |
 | `created_at_ms` | INTEGER | NOT NULL | |
@@ -558,6 +566,8 @@ erDiagram
 | `finished_at_ms` | INTEGER | NULL | |
 
 唯一约束：`UNIQUE(workspace_id, client_batch_id)`。
+案例导入的 `client_batch_id` 由服务端按 `example ID + snapshot + workspace + base version` 生成，重试同一
+导入保持幂等；`source_ref_json` 不接受客户端或 LLM 提交的路径。
 
 `ingestion_artifacts` 连接批次与原始/解包/Excel 拆表后的 artifact：
 
@@ -566,9 +576,9 @@ erDiagram
 | `id` | INTEGER | PK AUTOINCREMENT | 同批次相同内容的两个原始文件仍是两个上传项 |
 | `ingestion_id` | INTEGER | NOT NULL FK→ingestions, CASCADE | |
 | `artifact_id` | INTEGER | NOT NULL FK→artifacts, RESTRICT | 内容可去重，因此不能与 ingestion_id 组成主键 |
-| `role` | TEXT | NOT NULL | `uploaded/extracted/normalized` |
+| `role` | TEXT | NOT NULL | `uploaded/example/extracted/normalized` |
 | `client_file_id` | TEXT | NULL | 仅 uploaded 填写；批次内稳定客户端文件 ID，用于乱序关联和幂等重试 |
-| `client_filename` | TEXT | NOT NULL | 用户上传时的展示名 |
+| `client_filename` | TEXT | NOT NULL | 用户上传名或案例内安全相对路径的展示名 |
 | `source_artifact_id` | INTEGER | NULL FK→artifacts, RESTRICT | extracted/normalized 指向来源 ZIP/Excel 等 artifact |
 | `status` | TEXT | NOT NULL | `accepted/processing/ready/failed`；uploaded 行对外，派生行用于诊断 |
 | `error_json` | TEXT | NULL | 当前项经过筛选的结构化错误；成功项为 NULL |
@@ -626,8 +636,9 @@ artifact。
 | `workspace_id` | INTEGER | NOT NULL FK→workspaces, CASCADE | |
 | `parent_version_id` | INTEGER | NULL FK→model_versions, SET NULL | 派生链 |
 | `status` | TEXT | NOT NULL | `collecting/ready/invalid` |
-| `source_kind` | TEXT | NOT NULL | `rss/rssbundle/dataframes/mixed` |
-| `manifest_json` | TEXT | NOT NULL | 输入清单、入口、catalog 版本、校验摘要 |
+| `source_kind` | TEXT | NOT NULL | `rss/rssbundle/dataframes/mixed`，描述模型输入形态 |
+| `origin_kind` | TEXT | NOT NULL | `upload/example/generated`，描述版本如何进入工作区 |
+| `manifest_json` | TEXT | NOT NULL | 输入清单、入口、catalog 版本、校验摘要；example origin 另含 example ID、resource snapshot、tree hash 和来源 |
 | `patch_json` | TEXT | NULL | 相对父版本的结构化补丁 |
 | `content_hash` | TEXT | NOT NULL | 规范化 manifest 的哈希，支持幂等 |
 | `created_at_ms` | INTEGER | NOT NULL | |
@@ -649,12 +660,13 @@ artifact。
 | `version_id` | INTEGER | NOT NULL FK→model_versions, CASCADE | |
 | `artifact_id` | INTEGER | NOT NULL FK→artifacts, RESTRICT | |
 | `role` | TEXT | NOT NULL | `entry/source/data/input/generated/manifest` |
-| `relative_path` | TEXT | NULL | 包内规范化相对路径 |
+| `relative_path` | TEXT | NULL | 包内或 task-local input tree 的规范化相对路径；案例导入时相对 TENSOREVAL_CWD |
 | `display_name` | TEXT | NOT NULL | 用户可见文件名 |
 | `source_artifact_id` | INTEGER | NULL FK→artifacts, SET NULL | Excel 拆表等派生来源 |
 | `sheet_name` | TEXT | NULL | 原 Excel 工作表名 |
 
-唯一约束：`UNIQUE(version_id, relative_path, artifact_id)`。
+唯一约束：`UNIQUE(version_id, relative_path) WHERE relative_path IS NOT NULL`；同一版本不允许两个内容占用
+同一路径。物化任务输入时逐项校验规范路径、hash 和 artifact 归属，禁止符号链接，再原子发布只读 tree。
 
 `dataframe_bindings`：
 
@@ -670,21 +682,23 @@ artifact。
 
 查询/比较需要的 `table_kind/resolution` 拆列，详细证据保留 JSON。
 
-### 7.7 simulation_tasks 迁移
-
-新增：
+### 7.7 simulation_tasks v2 结构
 
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
-| `model_version_id` | INTEGER | NULL FK→model_versions, RESTRICT | 迁移期允许 NULL；v2 任务必须非空 |
-| `study_spec_json` | TEXT | NULL | 求解器、结果选择、故障/时间参数及单位 |
-| `script_artifact_id` | INTEGER | NULL FK→artifacts, RESTRICT | 实际执行的完整 RSS 脚本；v2 成功进入 running 前必须非空 |
+| `model_version_id` | INTEGER | NOT NULL FK→model_versions, RESTRICT | 任务绑定的不可变模型版本 |
+| `study_spec_json` | TEXT | NOT NULL | 求解器、结果选择、故障/时间参数及单位 |
+| `script_artifact_id` | INTEGER | NOT NULL FK→artifacts, RESTRICT | 实际执行的完整 RSS 脚本 |
+| `agent_bundle_version` | TEXT | NOT NULL | 生成脚本时加载的 system/skill bundle 版本 |
+| `agent_skill_refs_json` | TEXT | NOT NULL | 本轮实际加载的 skill id/version/hash 有序列表 |
+| `engine_contract_version` | TEXT | NOT NULL | 校验脚本和 schema 的 eig-rs/catalog 合同版本 |
 
-保留现有 `params_json` 兼容 v1 历史。迁移完成后，新代码只从
-`model_version_id + study_spec_json + script_artifact_id` 还原输入，`params_json` 不再保存服务器绝对路径。
+v2 删除 `params_json`，由模型版本、study spec、实际脚本、agent bundle 和 engine contract 共同还原
+生成与执行环境。
+`agent_skill_refs_json` 是 canonical JSON 数组，元素固定为 `{id,version,hash}`；仿真至少记录
+`study-planning` 与 `rss-generation`，每个引用都必须属于 `agent_bundle_version` 对应 manifest。
 新任务的 `study_type` 保存 agent 生成脚本所对应的规范标签，但列本身不设封闭枚举；首批 UI 识别
-`power_flow/short_circuit/qsts`，其他值仍可保存和展示。历史值 `fault` 在读取和迁移时归一为
-`short_circuit`。
+`power_flow/short_circuit/qsts`，其他值仍可保存和展示。
 
 ### 7.8 通用结果数据集与自然语言分析运行
 
@@ -767,10 +781,16 @@ dtype/单位适配、系列数、类别数、点数或热力格子数。规范�
 | `intent_text` | TEXT | NOT NULL | 用户意图快照，便于审计和恢复 |
 | `status` | TEXT | NOT NULL | `pending/script_gen/running/succeeded/failed/cancelled` |
 | `script_artifact_id` | INTEGER | NULL FK→artifacts, RESTRICT | 大模型生成并实际执行的 RSS 脚本 |
+| `agent_bundle_version` | TEXT | NOT NULL | 本次分析使用的 system/skill bundle 版本 |
+| `agent_skill_refs_json` | TEXT | NOT NULL | 本轮实际加载的 skill id/version/hash 有序列表 |
+| `engine_contract_version` | TEXT | NOT NULL | 本次脚本校验和运行对应的引擎合同版本 |
 | `error_json` | TEXT | NULL | 经过筛选的编译/执行/资源限制错误 |
 | `created_at_ms` | INTEGER | NOT NULL | |
 | `started_at_ms` | INTEGER | NULL | |
 | `finished_at_ms` | INTEGER | NULL | |
+
+结果分析的 `agent_skill_refs_json` 使用同一 canonical 结构，至少包含 `result-analysis`；比较产生的分析
+运行另包含 `comparison`。这些字段由服务端从当前 `LoadedSkillSet` 写入，客户端和 LLM 不直接提交。
 
 `result_analysis_inputs` 固化脚本输入和 `--input` 别名：
 
@@ -805,9 +825,8 @@ dataset，输出在运行成功后才提交，因此不能引用本次或未来�
 初始 view 与 dataset 在同一事务发布；纯展示变更可以不运行 tensoreval，直接对已有 dataset 创建新的
 `dataset_views` 行，但仍执行完整 spec 校验。未知单位写 NULL，不能由模型猜测。
 
-迁移时停止向 `task_results/curve_data` 写新数据。已有 CSV 结果继续走 v1 只读接口，不直接回填
-`result_datasets`；若以后迁移历史数据，必须通过独立、可校验的转换任务生成 Parquet artifact，保留
-旧 CSV 哈希与新 artifact 的迁移记录后才能登记，不能只改扩展名或伪造血缘。
+v2 不创建 `task_results/curve_data`，也不迁移原型 CSV。所有成功结果都必须由本次执行生成并通过
+Parquet 校验后登记到 `result_datasets`。
 
 ### 7.9 task_comparisons
 
@@ -856,8 +875,8 @@ broadcast 并暂存新事件，再查询和发送数据库补发，最后按消�
 |---|---|---|---|
 | `title_source` | TEXT | NOT NULL | `default/auto/user`，保护手动标题不被自动覆盖 |
 
-迁移时现有标题默认标为 `user`，仅将空标题和精确等于系统默认文案“新的仿真”的行回填为
-`default`。新会话写 `default`；自动截断标题写 `auto`；PATCH 重命名写 `user`。
+新会话写 `default`；自动截断标题写 `auto`；PATCH 重命名写 `user`。v2 从空库初始化，不执行旧标题
+回填。
 
 为同时搜索标题、消息和附件展示名，增加规范化搜索文档表：
 
@@ -887,8 +906,8 @@ FTS 触发器更新处于同一事务；删除 session 时级联删除文档并�
 全文结果使用 `(bm25 ASC, updated_at_ms DESC, id DESC)` 的不透明游标，并绑定规范化查询哈希，防止
 把旧游标用于新查询。任务类型、状态和时间范围通过结构化 SQL 过滤，与全文命中取交集。
 
-所有检索先限定当前身份可访问的 session。匿名 v1 只能部署在可信单用户/单租户环境；引入公开
-多用户访问前，必须给 sessions 增加 owner/tenant 外键并在 repository 查询中强制过滤。
+所有检索先限定当前 access scope 可访问的 session。instance 模式只能部署在可信单用户/单租户环境；
+公开多用户访问必须使用 trusted_proxy，并在 repository 查询中强制过滤。
 
 ### 7.12 删除与垃圾回收
 
@@ -903,9 +922,13 @@ analysis run，随后删除 simulation task、工作区和 session；不能只�
 
 ### 7.13 历史文件配额
 
-配额同时限制唯一 artifact 数和逻辑字节。v1 没有用户表，因此迁移创建一个 `instance` scope 并让全部
-session 指向它；引入认证后，每个 owner/tenant 使用独立 scope。客户端不能提交 scope ID，应用层只
-能从当前身份解析。
+配额同时限制唯一 artifact 数和逻辑字节。`AUTH_MODE=instance` 使用唯一 instance scope；
+`AUTH_MODE=trusted_proxy` 按认证主体创建 owner/tenant scope。客户端不能提交 scope ID，应用层只能
+从当前身份解析。
+
+`${DATA_DIR}/system/engine-resources` 下的文档/catalog/案例索引属于部署级只读系统资源，不进入任何
+owner 配额。案例真正导入后产生的入口、依赖和后续派生文件属于该 owner artifact，按普通规则计费；
+内容寻址去重不改变各 owner 的逻辑计费。
 
 `storage_scopes`：
 
@@ -913,7 +936,7 @@ session 指向它；引入认证后，每个 owner/tenant 使用独立 scope。�
 |---|---|---|---|
 | `id` | INTEGER | PK AUTOINCREMENT | 内部计费主体 ID |
 | `scope_kind` | TEXT | NOT NULL | `instance/owner/tenant` |
-| `subject_key` | TEXT | NULL | 身份系统中的不可变主体键；v1 instance 为 NULL |
+| `subject_key` | TEXT | NULL | 身份系统中的不可变主体键；instance scope 为 NULL |
 | `artifact_limit` | INTEGER | NOT NULL DEFAULT 20000 | 唯一 artifact 硬上限 |
 | `byte_limit` | INTEGER | NOT NULL DEFAULT 21474836480 | 20 GiB 逻辑字节硬上限 |
 | `warning_ratio` | REAL | NOT NULL DEFAULT 0.8 | 只告警、不阻断 |
@@ -921,10 +944,9 @@ session 指向它；引入认证后，每个 owner/tenant 使用独立 scope。�
 | `used_bytes` | INTEGER | NOT NULL DEFAULT 0 | 物化逻辑字节数 |
 | `updated_at_ms` | INTEGER | NOT NULL | |
 
-约束：`UNIQUE(scope_kind, subject_key)`；v1 的 NULL 特例用部分唯一索引保证只有一个 instance scope。
-`sessions` 在 v2 迁移中增加非空 `storage_scope_id` FK→storage_scopes(RESTRICT)，现有数据统一回填默认
-instance scope。公开多用户部署仍需按 §7.11 增加真正的 owner/tenant 归属与鉴权过滤；计费 scope
-不能代替授权关系。
+约束：`UNIQUE(scope_kind, subject_key)`；NULL 特例用部分唯一索引保证只有一个 instance scope。
+`sessions.storage_scope_id` 是非空 FK→storage_scopes(RESTRICT)。公开多用户部署同时使用独立 access
+scope 做鉴权过滤；计费 scope 不能代替授权关系。
 
 `storage_scope_artifacts`：
 

@@ -5,6 +5,7 @@
 > 说明：本文同时记录 v1 实现基线与 v2 目标架构；标为目标或待实现的内容不能当作当前能力。引擎结论以
 > `../eig-rs/sparrowzz/dss/docs/` 为准（见 db-design §0）。
 > 模型上传、版本、DataFrame 推断与对比的完整目标设计见 `docs/model-workspace-design.md`。
+> Agent prompt、领域技能和引擎知识版本管理见 `docs/agent-prompt-skills-design.md`。
 
 ---
 
@@ -20,7 +21,7 @@
 
 ---
 
-## 0.5 会话归属：v1 私有单租户，公开部署前强制隔离
+## 0.5 会话归属：v1 原型现状与 v2 强制隔离
 
 **v1 不做账号体系，但把多用户扩展点预留到位。** 依据：DB 无 `users` 表、无 `user_id` 外键；
 前端无登录态；AGENTS.md 只要求内核 API 鉴权（收敛在适配器），均未提多用户。
@@ -29,16 +30,15 @@
   会看到同一实例的全部历史会话，因此只适合可信单用户/单租户部署。
 - **不做的（v1）**：账号注册/登录、认证中间件、多租户数据隔离、权限/角色。
 - **会话归属语义（v1 定死）**：所有 `sessions` 属于当前部署实例，`GET /api/sessions` 返回全部。
-- **目标历史文件配额（尚未实现）**：在无身份的私有部署阶段按整个实例计算，默认 20,000 个唯一
-  artifact、20 GiB；引入身份后同一契约改为按 owner/tenant 计算。达到上限只拒绝新增持久文件，
-  不影响已有历史读取。
-- **预留 = 路径预留，不建空结构**（以下三点落地在设计与实现习惯里，而非空表/空列）：
-  1. **迁移天然支持**：Diesel 版本化迁移（已有 `00000000000000_initial`）意味着未来加
-     `user_id` 是新增一条迁移文件，不破坏既有数据。
-  2. **repository 查询预留过滤维度**：未来所有 Session/Message/History 查询必须接收非可选的
-     owner/tenant scope；不能用忘传 `user_id` 就返回全量数据的可选参数作为生产隔离方案。
-  3. **鉴权插入点明确在 api 层**：未来加 `axum` 中间件（token → `user_id` → 应用层过滤），
-     是 router 上的纯加法，业务/应用层不感知。
+- **v2 不迁移 v1 数据**：原型未投入使用，发布前重建干净 schema，不保留无归属 session、旧消息或
+  CSV 结果的兼容分支。
+- **v2 身份模式**：`AUTH_MODE=instance` 仅供可信私有单租户；公开多人部署必须使用
+  `AUTH_MODE=trusted_proxy`。认证代理完成登录、移除外部同名头并注入 subject/tenant 与代理 token；
+  Axum extractor 把它解析成不可变 access scope，应用本身不保存密码。
+- **repository 强制过滤**：所有 Session/Message/Task/Artifact/History 查询都接收非可选 scope；
+  不能提供“未传 scope 就返回全量”的重载。跨 scope 的已知 ID 与不存在 ID 都返回 404。
+- **历史文件配额**：instance 模式按整个实例计算；trusted_proxy 模式按 owner/tenant 计算。默认
+  20,000 个唯一 artifact、20 GiB，达到上限只拒绝新增持久文件，不影响已有历史读取。
 
 ---
 
@@ -79,7 +79,7 @@
 目标工作区功能增加 `model-status` 和 `comparison` 两类消息。它们尚未写入
 `frontend/src/types/index.ts`，属于 v2 契约；实现前必须同步修改前端权威类型、后端 DTO、落库映射和
 回放测试，不能只在后端私自增加事件变体。v2 同时升级 `progress`（operation 命名空间）、`result`
-（DataFrame 输出引用）和 `tool-call`（稳定 callId）；历史 v1 消息由前端兼容层继续回放。
+（DataFrame 输出引用）和 `tool-call`（稳定 callId）；由于 v1 未投入使用，旧消息不做兼容回放。
 
 ---
 
@@ -116,7 +116,8 @@
 职责与关键约束：
 
 - **api**：只做 HTTP 协议与 DTO 转换，不含业务逻辑；SSE 端点把内部事件序列化为前端消息。
-- **application**：持有 `AppState`（连接池、事件总线、限流信号量、引擎适配器、LLM 配置），
+- **application**：持有 `AppState`（连接池、事件总线、限流信号量、引擎适配器、LLM 配置；v2 增加
+  只读 `EngineResourceSnapshot`），
   编排一次对话的生命周期；是唯一知道「如何把一次 chat 变成 agent run + 落库 + 推事件」的地方。
 - **agent**：`agent/mod.rs` 负责 provider 选择和 agent 组装；`application/chat.rs` 用
   `run_channel()` 驱动并消费事件。
@@ -132,12 +133,12 @@
 
 ## 3.5 Prompt 与领域知识的来源与管理
 
-rig 不从文件加载 prompt/skill，三者都来自代码：
+rig 不会自动扫描本项目的 prompt/skill 文件；当前组装入口都由代码显式提供：
 
 - **系统提示词**：`AgentBuilder::preamble()`（字符串）。当前是 `agent/mod.rs` 里一句简短的
   `SYSTEM_PROMPT`，缺领域知识。
-- **工具（"技能"的实质）**：Rust `Tool` 实现（`#[rig_tool]` 或手动 impl），`description()`
-  自动进模型 schema，不进文件。
+- **工具（可执行动作）**：Rust `Tool` 实现（`#[rig_tool]` 或手动 impl），`description()` 自动进模型
+  schema，不等同于本文定义的领域技能。
 - **上下文知识**：`AgentBuilder::context()`（静态）/ `dynamic_context()`（动态检索）。
 - rig 里的 `Skill` 是 Anthropic 容器扩展专属（code-execution container 预加载技能），与
   DeepSeek / 本项目无关。
@@ -147,18 +148,24 @@ rig 不从文件加载 prompt/skill，三者都来自代码：
 `dataframe_schema_reference.md`（结果表与单位）、`rss_language_reference.md` 与
 `rsdss_function_reference.md`（DataFrame 筛选、连接、聚合和脚本语法）、`simulation_recipes.md`（配方）。
 
-**v2 落地方式**：把这些提炼固化到 `backend/prompts/`，用 `include_str!` 编译期嵌入（与
-`embed_migrations!` 同理，可移植、无运行时文件依赖），分层注入：
+**v2 落地方式**：系统规则与领域技能编译进后端；引擎文档、机器合同和案例从
+`${TENSOREVAL_CWD}/sparrowzz/dss` 在启动 preflight 中生成只读快照，分层注入：
 
 | 层 | 来源 | 内容 |
 |---|---|---|
-| `preamble` | `prompts/system.md` | 角色定位 + 行为准则 + 精简版 agent_quickstart |
-| `context` | `prompts/engine_knowledge.md` | 结果表 schema、单位、RSS DataFrame 函数、脚本约束和常见配方 |
+| `preamble` | `resources/agent/v2/system.md` | 角色定位、行为规则、稳定 ID 和安全边界 |
+| 技能索引 | `resources/agent/v2/skill-index.json` | 技能 ID、触发条件和所需工具，每轮固定注入 |
+| 按需技能 | `resources/agent/v2/skills/*.md` | 研究规划、RSS 生成、结果分析、比较和故障处理步骤 |
+| 引擎文档 | resource snapshot 的 `docs-index` | 按标题切分并全文索引，通过受限只读工具按需取 section |
+| 机器合同 | resource snapshot 的 `catalog/*.json` | 函数签名、schema、单位与稳定键，供程序校验和只读查询工具使用 |
+| 案例目录 | resource snapshot 的 `examples.json` | 已验证 RSS/rssbundle 的说明、能力要求、依赖闭包和 hash |
 | 工具说明 | `Tool::description()` | 代码内，不进文件 |
 
-**约束**：引擎 docs 目前不在本仓库（AGENTS.md：内核源码与文档未纳入），不能 `include_str!`
-引用 `../eig-rs/...` 外部路径；须**拷一份精简版进 `backend/prompts/`**，随本项目版本管理，
-内核更新时手动同步。
+每轮只注入精简技能索引；需要生成或诊断脚本时先调用 `load_agent_skill`，再按需调用
+`search_engine_docs/read_engine_doc_section`。脚本写工具检查本轮已加载的技能，catalog 和脚本验证器仍
+对最终输出做确定性校验。后端不硬编码 `../eig-rs`，只读取配置根内允许的 docs/catalog/examples；运行
+期间使用已发布 snapshot，防止文件变化造成同一进程内合同漂移。具体来源、资源布局、案例导入、版本字段
+与测试规则见 `docs/agent-prompt-skills-design.md`。
 
 ---
 
@@ -322,7 +329,7 @@ sequenceDiagram
     TOOL-->>FE: SSE progress（仿真工具）
     TOOL->>AD: inspect/run
     AD->>ENG: 异步等待子进程
-    ENG-->>AD: 退出码、v1 CSV / v2 Parquet、诊断
+    ENG-->>AD: 退出码、v2 Parquet、诊断
     AD-->>TOOL: 归一结果或 AdapterError
     TOOL-->>FE: SSE progress + result（成功仿真）
     TOOL-->>APP: task_id 或错误
@@ -453,9 +460,10 @@ api
   → application::simulation（仿真编排、结果数据集登记）
   → application::result_analysis（自然语言查询、脚本校验、派生 DataFrame、语义视图、比较）
   → application::history（会话分页、全文检索、命中上下文）
-  → tools（只接收 workspace/version/task id）
-  → adapters（唯一内核边界）
-  → db + content store
+tools（只接收稳定 ID）→ application services
+application/tools → engine_resources（启动预检 docs/catalog/examples；运行时只读 snapshot）
+application → adapters（唯一内核边界）
+application → db + content store
 ```
 
 关键约束：
@@ -483,13 +491,17 @@ api
 - SSE 建连成功后再读取快照；持久化消息使用消息 ID 作为 event id，并以 `Last-Event-ID` 断点补发；
 - 文件上传和确定性摄取由固定控件触发，且无 active 时首个 ready 版本可自动激活；映射确认、替换、
   修改、激活/回退、运行和比较等其余领域写操作继续由自然语言触发；
+- 启动时预索引 `TENSOREVAL_CWD/sparrowzz/dss/docs` 并扫描已验证 RSS/rssbundle；案例浏览为只读固定
+  功能，“使用此案例”发送可见用户消息，由 agent 按稳定 example ID 导入到当前 artifact/版本链；
 - 上下文建议必须生成可见 user 消息，经 session 校验稳定资源引用后再由 agent 调用工具；
 - 历史侧栏搜索和 agent 的 `search_chat_history` 共用 application history service；全文结果只返回摘要，
   `read_chat_context` 再按命中消息读取受限窗口；
-- 历史搜索只能在当前 owner/tenant scope 内执行；v1 无身份时仅允许可信单用户/单租户部署；
-- 当前 v1 的单附件上传保持兼容，迁移完成前不得把目标端点标成已实现。
+- 历史搜索只能在当前 access scope 内执行；instance 模式仅允许可信单用户/单租户部署；
+- v2 直接替换单附件原型；前后端同时切换到带 clientBatchId/clientFileId 的多文件合同。
+- v2 仿真先把不可变版本物化成任务私有 input tree，适配器以该 tree 为子进程 cwd；
+  `TENSOREVAL_CWD` 负责发现引擎 docs/catalog/examples，不作为已导入案例或用户模型的可变运行输入；
 - 历史文件默认配额为每个归属主体 20,000 个唯一 artifact、20 GiB，80% 告警；不按时间自动淘汰，
-  删除会话并完成引用 GC 后释放额度。v1 的归属主体是实例，身份系统落地后改为 owner/tenant；
+  删除会话并完成引用 GC 后释放额度。instance 模式按实例，trusted_proxy 模式按 owner/tenant；
   仿真和分析输出在事务提交时原子检查配额，超限不能发布部分结果。
 
 领域工具、输入流程、推断算法、错误码、API 和验收标准以

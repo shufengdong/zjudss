@@ -38,9 +38,14 @@
 
 服务部署不能在运行时依赖相邻的 `../eig-rs` 源码目录。实现时把与目标 `tensoreval` 版本对应的
 `dataframes.json`、`functions.json` 和必要的脚本模板复制到本仓库并随版本发布，同时记录 catalog
-版本及来源提交哈希；同时把 `rss_language_reference.md`、`rsdss_function_reference.md` 中允许 agent
+版本、eig-rs superproject 与 sparrowzz submodule 来源提交哈希；同时把
+`rss_language_reference.md`、`rsdss_function_reference.md` 中允许 agent
 使用的 DataFrame 语法提炼进版本化 prompt。启动时校验适配器合同版本；不匹配时禁止自动生成脚本并
 报告配置错误。
+
+Prompt 不打包成一份永久注入的长文。系统规则、按需领域技能、机器 catalog 和 Rust 工具合同分别管理；
+需要生成脚本的 agent run 必须先加载对应技能，任务与分析运行保存实际 bundle/contract 版本。完整规则
+见 `docs/agent-prompt-skills-design.md`。
 
 ## 3. 领域对象
 
@@ -131,8 +136,8 @@ active 后，新 draft 必须在 ready 且用户通过自然语言确认使用�
 ### 4.4 历史文件配额与保留
 
 首版默认给每个存储归属主体保存最多 **20,000 个唯一 artifact、20 GiB 逻辑容量**。两个限制任一达到
-即拒绝会增加唯一 artifact 数或逻辑字节的提交。v1 没有用户体系，归属主体是整个私有部署实例；加入认证后，
-归属主体切换为 owner/tenant，不能继续共用实例总额度。默认值可由
+即拒绝会增加唯一 artifact 数或逻辑字节的提交。v2 的 `AUTH_MODE=instance` 按整个可信私有实例计费；
+`AUTH_MODE=trusted_proxy` 按认证得到的 owner/tenant 计费，不能共用实例总额度。默认值可由
 `OWNER_ARTIFACT_LIMIT`（20,000）和 `OWNER_STORAGE_LIMIT_BYTES`（21,474,836,480）配置，并允许部署
 层按 owner 覆盖。
 
@@ -150,6 +155,26 @@ active 后，新 draft 必须在 ready 且用户通过自然语言确认使用�
   dataset/result 消息并清理 staging；
 - 首版**不按天数自动删除**历史文件，也不采用“只保留最近 N 个任务”。用户删除会话后，GC 在所有
   历史引用消失时释放计费和物理 blob。这样不会静默破坏版本回退、结果查询或前后对比。
+
+### 4.5 从内置案例创建模型
+
+服务启动时从 `${TENSOREVAL_CWD}/sparrowzz/dss` 建立只读引擎资源快照和案例目录。当前来源包含根目录
+16 个 `.rss` 与 `rssbundle/` 下 37 个已发布 `.rssbundle`；具体数量属于当前合同事实，升级后以新快照
+为准。根目录 RSS 必须把 `import_dss/import_bmopf`、`ds_*_plan` 和 `#include` 引用解析成完整依赖
+闭包；依赖可位于 `models/`、`psa/tests/bmopf` 或 `sparrowzz/rspower/lib`，但不得逃逸
+`TENSOREVAL_CWD`。bundle 必须验证 `manifest.json`、entry、文件 hash 和 tree hash。
+
+用户可用自然语言搜索和导入案例，例如“导入 IEEE13 短路案例”“给我一个能修改负荷曲线的 QSTS
+例子”。多个候选都合理时 agent 先返回标题、分析类型、solver、规模和运行要求供选择。用户和模型只
+使用稳定 `example_id`，不得传入 `TENSOREVAL_CWD` 路径。
+
+导入时后端复制案例及依赖到当前 scope 的 artifact 存储，并通过普通 Ingestion 发布不可变版本；不在
+共享引擎目录上修改文件。案例的入口和依赖以相对 `TENSOREVAL_CWD` 的虚拟路径进入版本 manifest；运行
+时物化为任务私有 input tree 并以其根作为 cwd，不继续读取共享源目录。空工作区的首个 ready 案例可
+自动 active，已有 active 时导入结果只成为 draft。
+导入只创建模型版本，不自动启动仿真；用户可以先继续用自然语言修改参数，也可以明确要求按原案例运行。
+版本 manifest 保存 example ID、源 tree hash、engine resource snapshot 和来源信息。用户后续通过自然
+语言修改参数时产生子版本，源案例和已完成任务均保持不变。
 
 ## 5. 基于表头的 DataFrame 类型推断
 
@@ -203,6 +228,11 @@ resolution = pending | inferred | user_confirmed | rejected
 应用前必须检查父版本、行唯一性、旧值、字段类型和单位。成功后生成新 artifact 和新版本；
 任一检查失败时不产生半成品。RSS 修改同时保存原脚本、补丁和新脚本，并重新做语法与依赖检查。
 
+从案例导入的版本也是普通不可变基线。用户说“把负荷提高 20%”“把故障母线改为 632”“把时步改为
+15 分钟”时，agent 先读取该版本可编辑的模型表、脚本参数和 study spec，再生成同样的结构化补丁；
+修改后的 RSS/DataFrame/DSS 产物进入子版本，绝不写回案例文件。无法由当前 catalog/解析器唯一定位的
+执行计划命令或文本位置必须返回 `invalid_model_patch` 并说明缺口，不能用字符串替换猜测修改。
+
 ## 7. 智能体工具与适配器边界
 
 建议提供以下领域工具：
@@ -210,6 +240,11 @@ resolution = pending | inferred | user_confirmed | rejected
 | 工具 | 职责 |
 |---|---|
 | `inspect_workspace` | 返回 active/draft、输入、推断、缺失项和校验状态 |
+| `search_engine_docs` | 在启动时建立的文档索引中查找相关 section，只返回受限片段和稳定 ID |
+| `read_engine_doc_section` | 按 doc/section ID 读取一个受限文档片段，不接受文件路径 |
+| `search_examples` | 按名称、分析类型、solver、标签和运行能力检索内置案例 |
+| `inspect_example` | 返回案例说明、入口类型、文件树摘要、验证状态和资源要求 |
+| `import_example` | 按 example ID、资源快照和预期基线把已验证案例复制为当前工作区的新模型版本 |
 | `confirm_dataframe_mapping` | 固化用户确认的表类型，派生新版本 |
 | `replace_model_input` | 用新上传的 artifact 替换 draft/active 基线中的指定 input_id |
 | `remove_model_input` | 从新版本中排除传错或不再需要的输入 |
@@ -227,7 +262,9 @@ resolution = pending | inferred | user_confirmed | rejected
 
 工具参数使用 `workspace_id/model_version_id/input_id/task_id`，不接受 LLM 生成的任意绝对路径。
 替换、移除和确认映射使用版本内 `input_id`，不能使用可能重复的文件名或全局 artifact ID。所有会
-改变 draft 的工具还必须携带 `expected_draft_version_id`（无 draft 时使用 active 版本 ID 作为基线）。
+改变 draft 的工具还必须携带 `expected_draft_version_id`（无 draft 时使用 active 版本 ID 作为基线；
+仅当二者都不存在时允许为 null）。`import_example` 还必须携带用户选择时看到的
+`engine_resource_snapshot`，防止服务升级后把旧案例选择静默解析成新内容。
 应用层按 workspace 串行化变更，并在事务中校验基线；不一致时返回 `version_conflict`，智能体重新
 检查工作区后再执行，禁止把并发上传或修改静默覆盖。
 `run_study` 和 `run_result_analysis` 都会触发内核计算，并且只能调用适配器：
@@ -244,6 +281,10 @@ DataFrame 模型的仿真 RSS 由 agent 根据用户意图、已确认绑定和�
 脚本文本和结构化声明；实际路径解析、命令构造、输出目录与执行由适配器实现。工具层禁止直接启动
 `tensoreval` 或调用原始内核 API。
 
+v2 不直接在共享 `TENSOREVAL_CWD` 上执行用户版本。application 先把版本 manifest 引用的 artifact
+物化成任务私有 input tree，适配器只接受已校验的 tree 根并把它设为子进程 cwd；脚本中的相对路径因此
+仍可工作，同时历史任务不受共享示例升级或删除影响。
+
 ## 8. 仿真、查询与比较
 
 `study_type` 不作为封闭枚举限制内核能力；它是便于筛选的规范标签，首批 UI 识别
@@ -253,7 +294,8 @@ script artifact，共同构成可复现输入快照。
 
 仿真完成后，适配器枚举 `--result-dir` 里的每个命名 Parquet，校验 footer 并读取 schema/行数和 catalog
 中已知单位，逐个登记为 ResultDataset。数据库不提取或预设收敛、网损、电压、越限等统计字段。
-v1 历史 CSV 保持旧端点读取，不直接登记为 v2 ResultDataset。
+v1 原型未投入使用，不迁移其 CSV 结果。v2 发布时删除旧 CSV 结果链路，只登记经过校验的 Parquet
+ResultDataset。
 
 用户继续说“找出电压最低的十个节点”“画出节点 632 三相电压”“比较修改前后每条线路的损耗”时：
 
@@ -305,6 +347,8 @@ RSS 分析流程。首批视图为折线、柱状、散点、热力、箱线和�
 
 ```text
 GET  /api/sessions/{id}/workspace
+GET  /api/examples?query=...&studyType=...&cursor=...
+GET  /api/examples/{id}
 POST /api/sessions/{id}/attachments
 GET  /api/sessions?query=...&cursor=...
 GET  /api/sessions/{id}/messages?beforeId=...
@@ -332,8 +376,9 @@ SSE event id，断线通过 `Last-Event-ID` 补发；不能采用“先 GET、�
 摘要包含 active ingestions，使刷新后能恢复每个上传批次。会话删除时级联删除其元数据，内容 blob
 仅在没有其他引用后清理。
 
-文件传输以及由确定性规则完成的解包、表头推断、候选版本发布属于摄取流程；没有 active 时，首个
-校验通过的 ready 版本可按 §4.1 自动激活。除此之外，映射确认、替换、移除、修改、激活/回退、
+文件传输、只读案例浏览以及由确定性规则完成的解包、表头推断、候选版本发布属于固定交互范围；点击
+“使用此案例”会发送一条可见用户消息，由 agent 调用 `import_example`。没有 active 时，首个校验通过的
+ready 版本可按 §4.1 自动激活。除此之外，映射确认、替换、移除、修改、激活/回退、
 运行/重跑和比较等领域状态变更均由自然语言触发，前端不提供直接执行按钮；智能体可给出少量上下文
 自然语言建议，点击后仍发送一条可见 user 消息。
 context 只用于资源消歧；后端校验引用属于当前 session 后交给 agent，agent 再调用领域工具。固定
@@ -366,6 +411,9 @@ agent_queue_full
 invalid_cursor               invalid_pagination
 history_query_too_long       history_search_unavailable
 storage_quota_exceeded
+engine_resource_unavailable engine_contract_mismatch
+example_not_found           example_not_importable
+example_source_changed      engine_feature_unavailable
 ```
 
 HTTP 错误体扩展为 `{ "error": "可读信息", "code": "稳定错误码", "details": {...} }`。
@@ -373,17 +421,24 @@ HTTP 错误体扩展为 `{ "error": "可读信息", "code": "稳定错误码", "
 
 ## 11. 实施顺序与验收
 
-1. 工作区 active/draft、内容存储、不可变版本和表头推断；
-2. 多文件上传、`clientFileId`、ZIP/`.rssbundle` 校验和模型状态界面；
-3. operation 事件协议、SSE 补发及 v1 消息兼容层；
-4. 通用 `run_study`、结果数据集登记、`run_result_analysis`、`dataset_views` 与表格/多图表读取；
-5. 历史聊天全文/自然语言检索、结构化参数修改、任务历史和基于派生 DataFrame 的仿真对比。
+1. 建立可测试的应用入口、身份 scope、运行队列和可恢复 SSE，以 v2 合同直接替换原型接口；
+2. 建立 `TENSOREVAL_CWD` 文档/案例快照、artifact/配额、工作区 active/draft、不可变版本和 catalog
+   表头推断；
+3. 完成多文件、Excel、Parquet、ZIP/`.rssbundle` 摄取、内置案例导入，以及结构化模型修改工具；
+4. 接入通用 `run_study`、原生 Parquet 结果、`run_result_analysis`、`dataset_views` 与表格/多图表读取；
+5. 完成任务比较、聊天全文/自然语言检索和历史上下文恢复；
+6. 完成前端工作台、四条端到端路径、容量测试，并收口为只支持空库初始化的干净 v2 schema。
 
-必须覆盖三条端到端验收路径：单 `.rss`、ZIP 或目录形式的 `.rssbundle`、分批上传 DataFrame。每条路径均
+逐任务文件、接口、失败测试和提交边界以
+[`docs/superpowers/plans/2026-10-22-v2-simulation-workspace.md`](superpowers/plans/2026-10-22-v2-simulation-workspace.md)
+为准。
+
+必须覆盖四条端到端验收路径：单 `.rss`、ZIP 或目录形式的 `.rssbundle`、分批上传 DataFrame、从内置
+案例库导入。每条路径均
 验证模型修改、重跑、自然语言生成结果分析脚本、分页表格/多图表展示、结果对比和刷新后的血缘恢复。表头推断另以 catalog 中各输入 schema 做
 正例，并覆盖未知表、相似 schema、dtype 冲突、重复表和多工作表 Excel。
 
-三条路径都必须能够只靠用户自然语言完成领域操作；上下文建议的验收需确认点击后产生可见 user
+四条路径都必须能够只靠用户自然语言完成领域操作；上下文建议的验收需确认点击后产生可见 user
 消息并经过 agent 工具链，前端不存在替换、修改、运行或比较的旁路写调用。
 另需用跨会话中文关键词、日期条件、分析类型、模糊“上次”指代和深层消息定位验收历史查询；任何
 结果都不得越过当前身份的 session 归属范围。
@@ -404,9 +459,13 @@ HTTP 错误体扩展为 `{ "error": "可读信息", "code": "稳定错误码", "
 11. 历史聊天检索与仿真任务检索分层，跨会话命中只读取必要窗口；
 12. 所有内核调用继续收敛在 `backend/src/adapters/`。
 13. v2 仿真和结果分析都显式使用 `--result-dir --output-format parquet`，以原生 Snappy Parquet 为事实
-    来源；数据库不预设领域统计值，v1 CSV 继续走遗留只读链路；
+    来源；数据库不预设领域统计值，并删除未投入使用的 v1 CSV 结果链路；
 14. 每次结果查询保存 RSS 脚本、输入 dataset/alias、输出 dataset 和初始视图，比较复用同一机制；
 15. DataFrame 始终有分页表格入口，并可拥有多个 `dataset_views`；前端把受控 `VisualizationSpec`
     编译为 ECharts option，模型和 API 不传任意可执行图表配置。
 16. 每个归属主体默认保留 20,000 个唯一 artifact、20 GiB；不按时间静默淘汰，删除历史后再由 GC
-    释放额度；v1 按实例、引入身份后按 owner/tenant 计费。
+    释放额度；instance 模式按实例、trusted_proxy 模式按 owner/tenant 计费。
+17. 服务启动时预索引 `TENSOREVAL_CWD/sparrowzz/dss/docs`，脚本生成时按需注入相关 section；不把整套
+    文档常驻每轮 prompt，也不把“学习”实现为模型微调。
+18. 根目录 RSS 和已发布 rssbundle 形成只读案例库；导入必须复制到用户 artifact/版本链，修改永不写回
+    共享案例目录。

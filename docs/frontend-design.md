@@ -163,6 +163,12 @@ export interface ModelSnapshot {
   versionId: string
   parentVersionId?: string
   sourceKind: 'rss' | 'rssbundle' | 'dataframes' | 'mixed'
+  originKind: 'upload' | 'example' | 'generated'
+  origin?: {
+    exampleId: string
+    engineResourceSnapshot: string
+    sourceTreeHash: string
+  }
   status: VersionStatus
   inputs: ModelInput[]
   missing: string[]
@@ -173,9 +179,26 @@ export interface ModelSnapshot {
 export interface IngestionSummary {
   id: string
   clientBatchId: string
+  originKind: 'upload' | 'example'
   status: 'accepted' | 'extracting' | 'inferring' | 'validating' |
           'succeeded' | 'completed_with_errors' | 'failed'
   updatedAt: string
+}
+
+export interface EngineExampleSummary {
+  id: string
+  title: string
+  description: string
+  sourceKind: 'rss' | 'rssbundle'
+  studyType: string
+  solver: string | null
+  tags: string[]
+  requiredFeatures: string[]
+  fileCount: number
+  sizeBytes: number
+  verification: 'regression_tested' | 'self_executed'
+  importable: boolean
+  engineContractVersion: string
 }
 
 export interface WorkspaceSummary {
@@ -330,10 +353,8 @@ spec 只表达列到视觉通道的语义映射，前端再编译成 ECharts opt
 
 `MessageType` 增加 `model-status | comparison`，原有 `attachment` 扩展为上述上传项快照；
 `tool-call` 增加稳定 `callId`。同一 `callId` 的
-running/success/failed 更新一张卡片，消息自身的 `id` 仍用于落库排序和 SSE 恢复。迁移期前端必须
-兼容历史 v1 消息：缺少 `callId` 的工具消息仍各自展示；只有 `taskId` 的 progress 归一成
-`{kind:'simulation', id:taskId}`；旧四指标 result 使用单独的 legacy card 展示，不能伪装成有
-dataset 血缘的 v2 结果。
+running/success/failed 更新一张卡片，消息自身的 `id` 仍用于落库排序和 SSE 恢复。v1 原型未投入使用，
+前端直接采用 v2 消息合同，不保留缺少 `callId`、裸 `taskId` progress 或旧四指标 result 的兼容分支。
 
 v2 的 assistant 消息可选携带上下文建议，但建议本身仍是一句将要发出的自然语言：
 
@@ -354,8 +375,10 @@ interface ChatSuggestion {
 - 左侧会话栏表示聊天历史；每个会话恢复自己的工作区和任务历史；
 - 中央对话流是命令入口，展示用户/助手消息、工具状态、上传进度、模型状态和比较摘要；
 - 右侧工作台只保留三个一级视图：**模型、仿真、结果**；
-- “模型”展示 active 与 draft、识别表、缺失项、歧义、摄取进度和版本链；
-- “仿真”展示任务历史、分析类型、绑定版本、状态、时间和原始 DataFrame 目录；
+- “模型”展示 active 与 draft、识别表、缺失项、歧义、摄取进度和版本链；空工作区及模型页可打开
+  只读“案例库”，但不增加第四个一级工作台；
+- “仿真”展示任务历史、分析类型、绑定版本、状态、时间和原始 DataFrame 目录；详情中的“运行信息”可
+  折叠展示实际 `agentBundleVersion`、`agentSkillRefs` 与 `engineContractVersion`，便于复现和排查；
 - “结果”展示当前任务和派生分析的数据集，可在数据表、多个已保存可视化、文件信息和血缘之间切换；
 - 版本差异、大表格和多图表对比使用可调整宽度的工作台或全宽详情层，不能挤在固定 380px 中；
 - 窄屏继续使用抽屉，抽屉记住当前一级视图和选中的任务。
@@ -403,16 +426,32 @@ attachment(local) → attachment(server) → progress(ingestion:31)
 `activeIngestions` 移除；显式重试会让同一 ingestion 重新出现。刷新后通过 ingestion 详情恢复每个
 文件的最终状态。
 
+#### 7.3.1 内置案例库
+
+案例库调用 `GET /api/examples`，支持关键词、分析类型、RSS/rssbundle、solver 和运行能力筛选。卡片显示
+标题、说明、网络/分析标签、文件数、大小、验证状态，以及 MUMPS/MKL 或长任务要求。详情只展示案例内
+安全相对路径与来源信息，不能显示服务器上的 `TENSOREVAL_CWD`。
+
+“使用此案例”是常用入口，但点击后不直接调用导入服务。前端向现有消息端点发送可见文本，例如“导入
+IEEE 123 Bus Short Circuit 案例”，并附带 `action=import_example`、`exampleId` 和当前
+`engineResourceSnapshot`；agent 再调用 `import_example`。导入进度沿用 ingestion UI，成功后按普通
+model-status 更新 active/draft，但不自动运行。已有 active 时必须明确显示“已作为候选版本导入，尚未
+替换当前版本”。
+
+案例详情提供“在对话中询问”入口，允许用户继续说“把这个案例的故障母线改为 632 后运行”。修改通过
+版本工具产生子版本，界面同时展示“来源案例”和当前版本链；源案例不会被改写。
+
 ### 7.4 交互状态与数据归属
 
 v2 不再把所有异步状态继续堆进 `App.tsx`，也不要求引入 Redux。至少拆为以下领域 hook 或等价的
 reducer/store，组件只消费选择后的视图状态：
 
 - `useSessionFeed(sessionId)`：消息、乐观项、SSE、事件归并和重连；
+- `useExamples(filters)`：只读案例目录、详情、分页和当前 engine resource snapshot；
 - `useWorkspace(sessionId)`：active/draft、输入映射、摄取和版本链；
 - `useSimulationHistory(sessionId)`：任务分页、筛选、选中项和运行状态；
 - `useTaskDatasets(taskId)`：原始结果 DataFrame 目录；
-- `useAnalysisRun(analysisRunId)`：查询脚本、输入血缘、状态和输出数据集；
+- `useAnalysisRun(analysisRunId)`：查询脚本、输入血缘、实际技能与 agent/engine 合同版本、状态和输出数据集；
 - `useDataset(datasetId)`：schema、分页表格、视图目录、血缘和文件下载；
 - `useDatasetView(viewId)`：视图规范、预算内完整数据、规模诊断和渲染错误；
 - `useComparison(comparisonId)`：兼容性、关联分析运行和差值数据集。
@@ -441,11 +480,12 @@ reducer/store，组件只消费选择后的视图状态：
 |---|---|
 | 新建、切换、重命名、删除会话 | 会话管理；删除仍需明确确认 |
 | 选择文件/目录、上传、失败重试 | 文件传输；上传完成后如何使用由对话决定 |
+| 浏览、搜索和筛选案例 | 只读；“使用此案例”转换为可见自然语言消息并走 agent |
 | 发送消息 | 对话基础操作 |
 | 展开模型/任务/结果、切换视图 | 只改变展示和选择上下文 |
 | 搜索、筛选、排序、分页 | 只读列表操作 |
 | 查看、Parquet 原文件下载、图表图片导出、图表缩放 | 只读结果操作 |
-| 查看历史文件用量 | 只读配额信息；v1 按实例，认证后按当前 owner |
+| 查看历史文件用量 | 只读配额信息；instance 模式按实例，trusted_proxy 模式按当前 owner/tenant |
 
 智能体回复下方可以出现 1–3 个临时自然语言建议，例如“用新文件替换原负荷表”“保留两份并让我
 选择”“忽略这次上传”。它们由当前对话生成，不是常驻功能按钮；点击后必须产生一条可见 user 消息
@@ -519,7 +559,11 @@ v1 只会全量读取全部 session，并按“今天 / 昨天 / 更早”分组
 `updatedAt` 降序打开第一条；它没有持久化刷新前的 `selectedId`。v2 在身份系统落地后，可以在
 `localStorage` 中按当前 owner/tenant 保存最后选中的 session ID，并仅把它作为导航偏好：该 ID 必须
 仍出现在服务端返回的可访问会话中才能恢复，否则回退到最近会话。浏览器存储的 ID 不能用于认证、
-归属判断或 API 过滤；匿名 v1 也不能靠浏览器随机 ID 获得多用户隔离。
+归属判断或 API 过滤；instance 模式也不能靠浏览器随机 ID 获得多用户隔离。
+
+v2 页面启动时先调用 `GET /api/me`，以返回的 `scopeKey` 组成
+`zjudss:last-session:<scopeKey>`。trusted_proxy 模式的登录和退出由同源认证代理负责；前端不保存
+密码或代理 token，也不允许在 API 参数里选择 owner/tenant。
 
 选择会话时使用“订阅就绪后读取快照”的顺序：
 
@@ -579,6 +623,7 @@ v2 的原始/派生结果下载统一为 `.parquet`；下载按钮直接保存�
 
 - 模型、任务、结果各自维护 loading/error/empty，不使用覆盖全屏的统一 spinner；
 - 上传失败保留文件项、结构化错误和“重试”，重试复用 clientBatchId/clientFileId；
+- 案例源 hash 变化、依赖缺失或运行能力不足时保留用户消息和选择，刷新案例详情并展示稳定错误；
 - active 可运行而 draft 失败时，输入区保持可用，并提示“可以继续使用当前版本分析”；
 - 关键状态不能只靠颜色表达；progress、校验结果和越限同时提供文字与图标；
 - 长任务在会话侧栏显示运行标记，离开该会话不会取消任务；
@@ -592,11 +637,13 @@ v2 的原始/派生结果下载统一为 `.parquet`；下载按钮直接保存�
 
 ### 7.10 v2 前端待办与验收
 
-- [ ] 建立 v1 消息兼容层，再扩展 progress/result/tool-call/model-status/comparison 类型；旧固定指标
-      result 使用 legacy card，不转换成 v2 dataset；
+- [ ] 以 v2 合同替换消息类型，覆盖 progress/result/tool-call/model-status/comparison；删除旧固定指标
+      result card 和裸 taskId progress；
 - [ ] 将事件归并键改为 operation kind + ID，并给工具卡增加稳定 callId；
 - [ ] 将 SSE 改为订阅就绪后加载快照，支持 message event ID 和断线补发；
 - [ ] 实现 active/draft 工作区、版本输入 ID 和刷新后的摄取恢复；
+- [ ] 实现只读案例库搜索、筛选、详情和运行要求；“使用此案例”发送可见自然语言消息，导入后展示
+      来源案例、resource snapshot 和派生版本链；
 - [ ] 实现带 clientBatchId/clientFileId 的多文件上传、局部失败和幂等重试；
 - [ ] 拆分会话流、工作区、任务历史、分析运行、数据集和比较的状态管理；
 - [ ] 实现 dataset schema、分页表格、`dataset_views` 目录和血缘视图，禁止把大 DataFrame 放进消息/SSE；
@@ -610,7 +657,8 @@ v2 的原始/派生结果下载统一为 `.parquet`；下载按钮直接保存�
 - [ ] 按固定控件白名单精简界面，领域操作通过自然语言消息 + 结构化 context 调用 agent；
 - [ ] 支持 assistant 上下文建议，点击后生成可见 user 消息而非直接执行写操作；
 - [ ] 验证用户只输入自然语言、不使用任何领域快捷项，也能完成上传后的确认、仿真、修改、重跑和对比；
-- [ ] 覆盖 RSS、bundle、分批 DataFrame、错传替换、移除、回退、重跑和前后对比；
+- [ ] 覆盖 RSS、bundle、分批 DataFrame、根 RSS/rssbundle 案例导入、错传替换、移除、回退、重跑和
+      前后对比；
 - [ ] 覆盖 SSE 建连窗口、断线恢复、同 ID 不同操作、乱序上传、会话切换和旧响应覆盖；
 - [ ] 覆盖空查询排序、中文关键词、跨会话筛选、深层消息定位、分页去重和删除后的索引清理；
 - [ ] 覆盖未知分析类型、任意列 schema、无时间轴表格、六类图表、多输入 join、聚合/降采样、纯换图
