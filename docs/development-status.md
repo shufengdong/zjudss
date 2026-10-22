@@ -2,11 +2,11 @@
 
 > 新开的 agent 先读本文。详细机制见 `architecture.md`、`api-design.md`、`db-design.md`、
 > `frontend-design.md`、`model-workspace-design.md`、`agent-prompt-skills-design.md` 和
-> `v2-deployment.md`。
+> `v2-deployment.md`。自动化全链路验收见 `integration-testing-design.md`。
 
 ## 当前结论
 
-配电网仿真智能体 v2 已完成实现和自动化验收：
+配电网仿真智能体 v2 已完成实现，并通过现有组件、服务集成和真实 tensoreval smoke test：
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
@@ -69,5 +69,10 @@ v2 仅支持空库初始化。部署前删除旧开发 SQLite 和 DATA_DIR；不
 - 前端测试覆盖消息归并、session state、workspace null、SSE、分页表格、null/重复行和六类图表。
 - 已用当前 eig-rs 源码重建 release binary，并通过真实 tensoreval 命名 Parquet 输入、expr_df 执行和
   Snappy Parquet 输出 smoke test。该测试因 CI 不一定安装外部 binary，仍保留为显式 ignored 并在发布时单独运行。
+- 当前尚未覆盖浏览器 → Vite → Axum → SQLite/CAS 的自动化全链路，也没有真实 DeepSeek 发布验收。
+  已在 `integration-testing-design.md` 定义机器可读功能目录、Playwright、可编排 LLM/engine、故障注入和
+  四级门禁；完成落地并达到目录 100% 前，不宣称全链路功能验收完成。
+- 自动化测试设计审查发现工具合同有一项实现缺口：manifest 中的 `get_storage_usage` 尚未注册，已注册的
+  `list_result_datasets` 尚未进入 manifest。集成测试实施时必须先统一两份清单并加入双向枚举测试。
 
 发布命令和配置见 `docs/v2-deployment.md`。

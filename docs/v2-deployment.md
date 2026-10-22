@@ -65,7 +65,7 @@ npm run build
 
 ## 6. 发布门禁
 
-自动化验收覆盖四条用户路径：
+当前自动化验收覆盖四条服务级用户路径：
 
 | 路径 | 验收用例 |
 |---|---|
@@ -93,3 +93,7 @@ git diff --check
 TENSOREVAL_BIN=/absolute/path/to/eig-rs/target/release/tensoreval \
   cargo test --test process_engine_v2 real_tensoreval_smoke_writes_snappy_parquet -- --ignored
 ```
+
+目标发布门禁还必须按 [integration-testing-design.md](integration-testing-design.md) 落地并执行浏览器全链路、
+安全/恢复故障注入、机器可读功能覆盖校验，以及真实 DeepSeek + tensoreval 验收。落地后，普通 PR 执行
+L0/L1/L2，候选发布额外执行 L3；缺少外部 binary 或 secret 时发布 job 失败，不能静默跳过。

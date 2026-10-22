@@ -1,7 +1,8 @@
 # 配电网仿真智能体 v2 架构
 
 > 状态：v2 已实现。部署和重置说明见 [v2-deployment.md](v2-deployment.md)，HTTP 线格式见
-> [api-design.md](api-design.md)，数据库见 [db-design.md](db-design.md)。
+> [api-design.md](api-design.md)，数据库见 [db-design.md](db-design.md)，全链路验收设计见
+> [integration-testing-design.md](integration-testing-design.md)。
 
 ## 1. 系统边界
 
@@ -88,3 +89,13 @@ artifact，历史读取和下载仍可用。删除会话后由 GC 在引用归�
 
 v2 只支持全新数据库和 DATA_DIR。仓库包含一份 initial migration，不提供旧原型 schema、CSV 结果、
 固定 metrics、`/curves`、`/report` 或运行时回退。
+
+## 8. 自动化验收边界
+
+PR 门禁使用 Playwright 驱动真实前端和 Axum 服务，后端使用临时 SQLite/CAS；LLM 和仿真进程通过依赖
+注入替换为可编排实现，但请求仍经过生产调度器、Agent 工具、application service 和 adapter 边界。
+候选发布再使用真实 DeepSeek 和当前 engine contract 的 tensoreval 验证外部依赖。
+
+功能覆盖率按机器可读功能目录计算。每个设计功能都必须关联自动化测试和业务断言，公开端点、消息、工具、
+skill、输入格式和视图 manifest 与目录双向校验。详细矩阵、故障注入和发布规则以
+[integration-testing-design.md](integration-testing-design.md) 为准。
