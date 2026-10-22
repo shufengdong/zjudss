@@ -66,4 +66,31 @@ describe('functional coverage catalog', () => {
     ])
     expect(report.validEntries).toBe(0)
   })
+
+  it('reports contract coverage from production manifest keys', async () => {
+    const entries = await loadCatalog(fixture('valid.yaml'))
+    entries[0].contracts = ['route:GET /health', 'message:user', 'view:line']
+
+    const report = await validateCatalog(entries, repoRoot, {
+      routes: [{ method: 'GET', path: '/health' }],
+      messageTypes: ['user'],
+      toolNames: ['inspect_workspace'],
+      skillIds: ['model-intake'],
+      uploadSources: ['single_rss'],
+      visualizationKinds: ['line'],
+      stableErrorCodes: ['agent_queue_full'],
+    })
+
+    expect(report).toMatchObject({
+      contractTotal: 7,
+      contractCovered: 3,
+      coveragePercent: 3 / 7 * 100,
+      missingContracts: [
+        'error:agent_queue_full',
+        'skill:model-intake',
+        'tool:inspect_workspace',
+        'upload:single_rss',
+      ],
+    })
+  })
 })

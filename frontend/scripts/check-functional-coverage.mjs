@@ -3,11 +3,34 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 
 import YAML from 'yaml'
 
 const REQUIRED_ARRAYS = ['layers', 'lanes', 'tests', 'assertions', 'fixtures']
+const execFileAsync = promisify(execFile)
+
+export function contractKeys(manifest) {
+  return [
+    ...(manifest.routes ?? []).map(({ method, path }) => `route:${method} ${path}`),
+    ...(manifest.messageTypes ?? []).map((value) => `message:${value}`),
+    ...(manifest.toolNames ?? []).map((value) => `tool:${value}`),
+    ...(manifest.skillIds ?? []).map((value) => `skill:${value}`),
+    ...(manifest.uploadSources ?? []).map((value) => `upload:${value}`),
+    ...(manifest.visualizationKinds ?? []).map((value) => `view:${value}`),
+    ...(manifest.stableErrorCodes ?? []).map((value) => `error:${value}`),
+  ].sort()
+}
+
+export async function loadProductionManifest(repoRoot) {
+  const { stdout } = await execFileAsync('cargo', [
+    'run', '--quiet', '--manifest-path', path.join(repoRoot, 'backend/Cargo.toml'),
+    '--bin', 'contract-manifest',
+  ], { cwd: repoRoot, maxBuffer: 4 * 1024 * 1024 })
+  return JSON.parse(stdout)
+}
 
 export async function loadCatalog(catalogPath) {
   const value = YAML.parse(await fs.readFile(catalogPath, 'utf8'))
@@ -74,6 +97,9 @@ export async function validateCatalog(entries, repoRoot, manifest = null) {
     for (const field of REQUIRED_ARRAYS) {
       if (!Array.isArray(entry?.[field])) errors.push(`${field} must be an array`)
     }
+    if (entry?.contracts !== undefined && !Array.isArray(entry.contracts)) {
+      errors.push('contracts must be an array')
+    }
     for (const field of ['layers', 'lanes', 'tests', 'assertions']) {
       if (Array.isArray(entry?.[field]) && entry[field].length === 0) {
         errors.push(`${field} must not be empty`)
@@ -91,15 +117,23 @@ export async function validateCatalog(entries, repoRoot, manifest = null) {
     if (errors.length === 0 && !duplicateSet.has(id)) validEntries += 1
   }
 
+  const allContracts = manifest ? contractKeys(manifest) : null
+  const declaredContracts = new Set(entries.flatMap((entry) => entry?.contracts ?? []))
+  const missingContracts = allContracts
+    ? allContracts.filter((contract) => !declaredContracts.has(contract))
+    : null
+  const covered = allContracts ? allContracts.length - missingContracts.length : null
+
   return {
     catalogEntries: entries.length,
     validEntries,
     missing,
     duplicateIds,
-    contractTotal: manifest ? manifest.total : null,
-    contractCovered: manifest ? manifest.covered : null,
-    coveragePercent: manifest
-      ? (manifest.total === 0 ? 100 : (manifest.covered / manifest.total) * 100)
+    contractTotal: allContracts?.length ?? null,
+    contractCovered: covered,
+    missingContracts,
+    coveragePercent: allContracts
+      ? (allContracts.length === 0 ? 100 : (covered / allContracts.length) * 100)
       : null,
   }
 }
@@ -107,8 +141,12 @@ export async function validateCatalog(entries, repoRoot, manifest = null) {
 async function main() {
   const here = path.dirname(fileURLToPath(import.meta.url))
   const repoRoot = path.resolve(here, '../..')
-  const catalogPath = process.argv[2] ?? path.join(repoRoot, 'integration-tests/catalog/features.yaml')
-  const report = await validateCatalog(await loadCatalog(catalogPath), repoRoot)
+  const args = process.argv.slice(2)
+  const checkManifest = args.includes('--check-manifest')
+  const catalogArg = args.find((arg) => !arg.startsWith('--'))
+  const catalogPath = catalogArg ?? path.join(repoRoot, 'integration-tests/catalog/features.yaml')
+  const manifest = checkManifest ? await loadProductionManifest(repoRoot) : null
+  const report = await validateCatalog(await loadCatalog(catalogPath), repoRoot, manifest)
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
   if (report.missing.length > 0 || report.duplicateIds.length > 0) process.exitCode = 1
 }

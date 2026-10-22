@@ -1,6 +1,7 @@
 import type { ResultOutputRef } from './dataset'
 import type { ModelVersionSnapshot } from './workspace'
-export type MessageType='user'|'assistant'|'tool-call'|'progress'|'result'|'attachment'|'model-status'|'comparison'
+export const MESSAGE_TYPES = ['user','assistant','tool-call','progress','result','attachment','model-status','comparison'] as const
+export type MessageType=(typeof MESSAGE_TYPES)[number]
 export type ToolStatus='running'|'success'|'failed'
 export type StageStatus='pending'|'running'|'done'|'failed'
 export interface BaseMessage{id:string;type:MessageType;timestamp:string}

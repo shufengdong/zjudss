@@ -265,39 +265,93 @@ async fn health() -> &'static str {
     "ok"
 }
 
+#[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq)]
+pub struct RouteContract {
+    pub method: &'static str,
+    pub path: &'static str,
+}
+
+fn build_router_and_manifest() -> (Router<AppState>, Vec<RouteContract>) {
+    let mut router = Router::new();
+    let mut manifest = Vec::new();
+    macro_rules! add_route {
+        ($path:literal, $handler:expr, [$($method:literal),+ $(,)?]) => {{
+            router = router.route($path, $handler);
+            $(manifest.push(RouteContract { method: $method, path: $path });)+
+        }};
+    }
+
+    add_route!("/health", get(health), ["GET"]);
+    add_route!("/api/me", get(auth::me), ["GET"]);
+    add_route!("/api/storage-usage", get(storage::usage), ["GET"]);
+    add_route!("/api/examples", get(examples::list), ["GET"]);
+    add_route!("/api/examples/{id}", get(examples::get), ["GET"]);
+    add_route!(
+        "/api/sessions",
+        get(sessions::list).post(sessions::create),
+        ["GET", "POST"]
+    );
+    add_route!(
+        "/api/history/search",
+        get(sessions::search_history),
+        ["GET"]
+    );
+    add_route!(
+        "/api/sessions/{id}",
+        patch(sessions::rename).delete(sessions::delete),
+        ["PATCH", "DELETE"]
+    );
+    add_route!(
+        "/api/sessions/{id}/messages",
+        get(sessions::messages).post(sessions::post_message),
+        ["GET", "POST"]
+    );
+    add_route!(
+        "/api/sessions/{id}/attachments",
+        post(sessions::upload_attachment).layer(DefaultBodyLimit::disable()),
+        ["POST"]
+    );
+    add_route!("/api/sessions/{id}/events", get(events::stream), ["GET"]);
+    add_route!("/api/ingestions/{id}", get(ingestions::get), ["GET"]);
+    add_route!(
+        "/api/sessions/{id}/workspace",
+        get(workspaces::workspace),
+        ["GET"]
+    );
+    add_route!(
+        "/api/sessions/{id}/versions",
+        get(workspaces::versions),
+        ["GET"]
+    );
+    add_route!("/api/versions/{id}", get(workspaces::version), ["GET"]);
+    add_route!("/api/tasks/{id}", get(tasks::get), ["GET"]);
+    add_route!(
+        "/api/sessions/{id}/tasks",
+        get(tasks::list_session),
+        ["GET"]
+    );
+    add_route!("/api/tasks/{id}/datasets", get(tasks::datasets), ["GET"]);
+    add_route!("/api/datasets/{id}", get(datasets::metadata), ["GET"]);
+    add_route!("/api/datasets/{id}/rows", get(datasets::rows), ["GET"]);
+    add_route!(
+        "/api/datasets/{id}/download",
+        get(datasets::download),
+        ["GET"]
+    );
+    add_route!("/api/analysis-runs/{id}", get(analysis::get), ["GET"]);
+    add_route!(
+        "/api/dataset-views/{id}/data",
+        get(analysis::view_data),
+        ["GET"]
+    );
+    add_route!("/api/task-comparisons/{id}", get(comparisons::get), ["GET"]);
+    (router, manifest)
+}
+
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/health", get(health))
-        .route("/api/me", get(auth::me))
-        .route("/api/storage-usage", get(storage::usage))
-        .route("/api/examples", get(examples::list))
-        .route("/api/examples/{id}", get(examples::get))
-        .route("/api/sessions", get(sessions::list).post(sessions::create))
-        .route("/api/history/search", get(sessions::search_history))
-        .route(
-            "/api/sessions/{id}",
-            patch(sessions::rename).delete(sessions::delete),
-        )
-        .route(
-            "/api/sessions/{id}/messages",
-            get(sessions::messages).post(sessions::post_message),
-        )
-        .route(
-            "/api/sessions/{id}/attachments",
-            post(sessions::upload_attachment).layer(DefaultBodyLimit::disable()),
-        )
-        .route("/api/sessions/{id}/events", get(events::stream))
-        .route("/api/ingestions/{id}", get(ingestions::get))
-        .route("/api/sessions/{id}/workspace", get(workspaces::workspace))
-        .route("/api/sessions/{id}/versions", get(workspaces::versions))
-        .route("/api/versions/{id}", get(workspaces::version))
-        .route("/api/tasks/{id}", get(tasks::get))
-        .route("/api/sessions/{id}/tasks", get(tasks::list_session))
-        .route("/api/tasks/{id}/datasets", get(tasks::datasets))
-        .route("/api/datasets/{id}", get(datasets::metadata))
-        .route("/api/datasets/{id}/rows", get(datasets::rows))
-        .route("/api/datasets/{id}/download", get(datasets::download))
-        .route("/api/analysis-runs/{id}", get(analysis::get))
-        .route("/api/dataset-views/{id}/data", get(analysis::view_data))
-        .route("/api/task-comparisons/{id}", get(comparisons::get))
+    build_router_and_manifest().0
+}
+
+pub fn route_manifest() -> Vec<RouteContract> {
+    build_router_and_manifest().1
 }

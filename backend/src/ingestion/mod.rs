@@ -3,6 +3,15 @@ mod bundle;
 mod rss;
 mod tabular;
 
+pub const UPLOAD_SOURCES: &[&str] = &[
+    "single_rss",
+    "zip_rssbundle",
+    "directory_rssbundle",
+    "csv",
+    "parquet",
+    "excel",
+];
+
 #[derive(Debug)]
 pub struct IngestionFormatError {
     code: &'static str,

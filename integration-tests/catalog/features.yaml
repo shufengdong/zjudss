@@ -88,3 +88,101 @@
   tests: [{ runner: rust, file: backend/tests/tool_manifest.rs, name: get_storage_usage_returns_current_scope_only }]
   assertions: [存储用量工具不合并其他 owner 的 artifact 和字节]
   fixtures: []
+- id: CONTRACT-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 生产路由与后端公共枚举可执行合同
+  layers: [api, agent, backend]
+  lanes: [pr]
+  tests:
+    - { runner: rust, file: backend/tests/contract_manifest.rs, name: production_router_and_manifest_share_one_declaration }
+    - { runner: rust, file: backend/tests/contract_manifest.rs, name: contract_manifest_contains_all_public_enums }
+  assertions: [27 个生产路由无重复且所有后端公共枚举可机器读取]
+  fixtures: []
+  contracts:
+    - 'route:GET /health'
+    - 'route:GET /api/me'
+    - 'route:GET /api/storage-usage'
+    - 'route:GET /api/examples'
+    - 'route:GET /api/examples/{id}'
+    - 'route:GET /api/sessions'
+    - 'route:POST /api/sessions'
+    - 'route:GET /api/history/search'
+    - 'route:PATCH /api/sessions/{id}'
+    - 'route:DELETE /api/sessions/{id}'
+    - 'route:GET /api/sessions/{id}/messages'
+    - 'route:POST /api/sessions/{id}/messages'
+    - 'route:POST /api/sessions/{id}/attachments'
+    - 'route:GET /api/sessions/{id}/events'
+    - 'route:GET /api/ingestions/{id}'
+    - 'route:GET /api/sessions/{id}/workspace'
+    - 'route:GET /api/sessions/{id}/versions'
+    - 'route:GET /api/versions/{id}'
+    - 'route:GET /api/tasks/{id}'
+    - 'route:GET /api/sessions/{id}/tasks'
+    - 'route:GET /api/tasks/{id}/datasets'
+    - 'route:GET /api/datasets/{id}'
+    - 'route:GET /api/datasets/{id}/rows'
+    - 'route:GET /api/datasets/{id}/download'
+    - 'route:GET /api/analysis-runs/{id}'
+    - 'route:GET /api/dataset-views/{id}/data'
+    - 'route:GET /api/task-comparisons/{id}'
+    - 'tool:inspect_workspace'
+    - 'tool:search_examples'
+    - 'tool:inspect_example'
+    - 'tool:import_example'
+    - 'tool:remove_model_input'
+    - 'tool:replace_model_input'
+    - 'tool:confirm_dataframe_mapping'
+    - 'tool:modify_model'
+    - 'tool:activate_model_version'
+    - 'tool:rollback_model_version'
+    - 'tool:run_study'
+    - 'tool:list_result_datasets'
+    - 'tool:run_result_analysis'
+    - 'tool:create_dataset_view'
+    - 'tool:compare_simulations'
+    - 'tool:list_simulation_history'
+    - 'tool:search_chat_history'
+    - 'tool:read_chat_context'
+    - 'tool:get_storage_usage'
+    - 'tool:load_agent_skill'
+    - 'tool:search_engine_docs'
+    - 'tool:read_engine_doc_section'
+    - 'skill:comparison'
+    - 'skill:model-intake'
+    - 'skill:result-analysis'
+    - 'skill:rss-generation'
+    - 'skill:study-planning'
+    - 'skill:troubleshooting'
+    - 'upload:single_rss'
+    - 'upload:zip_rssbundle'
+    - 'upload:directory_rssbundle'
+    - 'upload:csv'
+    - 'upload:parquet'
+    - 'upload:excel'
+    - 'error:agent_queue_full'
+    - 'error:version_conflict'
+    - 'error:history_search_unavailable'
+- id: CONTRACT-002
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 前端消息与图表类型公共合同
+  layers: [frontend]
+  lanes: [pr]
+  tests: [{ runner: vitest, file: frontend/src/types/contracts.test.ts, name: frontend public enum contracts }]
+  assertions: [前端 union 类型由运行时常量直接推导]
+  fixtures: []
+  contracts:
+    - 'message:user'
+    - 'message:assistant'
+    - 'message:tool-call'
+    - 'message:progress'
+    - 'message:result'
+    - 'message:attachment'
+    - 'message:model-status'
+    - 'message:comparison'
+    - 'view:line'
+    - 'view:bar'
+    - 'view:scatter'
+    - 'view:heatmap'
+    - 'view:boxplot'
+    - 'view:histogram'

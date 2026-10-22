@@ -48,10 +48,10 @@ pub use chat::ChatService;
 pub use comparisons::{ComparisonError, ComparisonService};
 pub use datasets::{DatasetError, DatasetService};
 pub use events::{
-    AppEvent, AttachmentFile, DatasetViewRef, EventBus, EventWriter, ModelAmbiguity, ModelScope,
-    ModelVersionSnapshot, ModelVersionStatus, OperationKind, OperationRef, RecognizedTable,
-    ResultColumn, ResultOutputRef, Stage, StageStatus, ToolStatus, UploadStatus, VisualizationKind,
-    ms_to_iso, now_ms,
+    AppEvent, AttachmentFile, DatasetViewRef, EventBus, EventWriter, MESSAGE_TYPES, ModelAmbiguity,
+    ModelScope, ModelVersionSnapshot, ModelVersionStatus, OperationKind, OperationRef,
+    RecognizedTable, ResultColumn, ResultOutputRef, Stage, StageStatus, ToolStatus, UploadStatus,
+    VisualizationKind, ms_to_iso, now_ms,
 };
 pub use example_import::{ExampleImportError, ExampleImportService};
 pub use history::{HistoryError, HistoryService};

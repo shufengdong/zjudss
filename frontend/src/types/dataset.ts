@@ -1,4 +1,5 @@
-export type VisualizationKind = 'line'|'bar'|'scatter'|'heatmap'|'boxplot'|'histogram'
+export const VISUALIZATION_KINDS = ['line','bar','scatter','heatmap','boxplot','histogram'] as const
+export type VisualizationKind = (typeof VISUALIZATION_KINDS)[number]
 export interface ResultColumn { name:string; dtype:string; nullable:boolean; unit?:string|null }
 export interface DatasetView {
   id:string; name:string; kind:VisualizationKind; spec:Record<string,unknown>; isDefault:boolean

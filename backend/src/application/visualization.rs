@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
+pub const VISUALIZATION_KINDS: &[&str] =
+    &["line", "bar", "scatter", "heatmap", "boxplot", "histogram"];
+
 #[derive(Debug, Clone, Copy)]
 pub struct VisualizationBudgets {
     pub max_points: u64,
@@ -90,8 +93,7 @@ impl VisualizationValidator {
         s: &VisualizationSpec,
         b: VisualizationBudgets,
     ) -> Result<ProjectionPlan, VisualizationError> {
-        let kinds = ["line", "bar", "scatter", "heatmap", "boxplot", "histogram"];
-        if !kinds.contains(&s.kind.as_str()) {
+        if !VISUALIZATION_KINDS.contains(&s.kind.as_str()) {
             return Err(VisualizationError::new(
                 "visualization_kind_invalid",
                 &s.kind,

@@ -10,6 +10,17 @@ use crate::auth::AccessScope;
 use crate::db::models::{Message, NewMessage};
 use crate::db::repositories::{MessageRepo, RepoError};
 
+pub const MESSAGE_TYPES: &[&str] = &[
+    "user",
+    "assistant",
+    "tool-call",
+    "progress",
+    "result",
+    "attachment",
+    "model-status",
+    "comparison",
+];
+
 /// 毫秒时间戳 → ISO 8601 字符串（前端 `timestamp` 字段用）。
 pub fn ms_to_iso(ms: i64) -> String {
     chrono::DateTime::from_timestamp_millis(ms)
