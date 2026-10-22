@@ -5,6 +5,7 @@
 
 pub mod chat;
 mod events;
+pub mod scheduler;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,6 +23,7 @@ pub use events::{
     AppEvent, AttachmentFile, EventBus, EventWriter, Metrics, Stage, StageStatus, ToolStatus,
     ms_to_iso, now_ms,
 };
+pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
 
 /// 全局共享状态（axum `State`）。
 #[derive(Clone)]
@@ -34,6 +36,7 @@ pub struct AppState {
     pub engine: Arc<dyn SimEngine>,
     pub llm: LlmConfig,
     pub auth: AuthConfig,
+    pub scheduler: RunScheduler,
     pub semaphore: Arc<Semaphore>,
     /// 数据根目录（内核结果、上传附件落这里），由 `DATA_DIR` 环境变量或默认 `data` 决定。
     pub data_dir: PathBuf,
@@ -60,6 +63,24 @@ impl AppState {
         data_dir: PathBuf,
         auth: AuthConfig,
     ) -> Self {
+        Self::new_with_data_dir_auth_and_scheduler(
+            pool,
+            engine,
+            llm,
+            data_dir,
+            auth,
+            RunScheduler::new(8, 2, 32),
+        )
+    }
+
+    pub fn new_with_data_dir_auth_and_scheduler(
+        pool: DbPool,
+        engine: Arc<dyn SimEngine>,
+        llm: LlmConfig,
+        data_dir: PathBuf,
+        auth: AuthConfig,
+        scheduler: RunScheduler,
+    ) -> Self {
         let session_repo = SessionRepo::new(pool.clone());
         let message_repo = MessageRepo::new(pool.clone());
         let task_repo = TaskRepo::new(pool.clone());
@@ -72,6 +93,7 @@ impl AppState {
             engine,
             llm,
             auth,
+            scheduler,
             semaphore: Arc::new(Semaphore::new(4)),
             data_dir,
         }

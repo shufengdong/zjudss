@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use axum::Router;
 use backend::adapters::StubEngine;
 use backend::agent::LlmConfig;
-use backend::application::AppState;
+use backend::application::{AppState, RunScheduler};
 use backend::auth::AuthConfig;
 use backend::config::RuntimeConfig;
 use backend::db::{self, DbPool};
@@ -21,6 +21,10 @@ impl TestApp {
     }
 
     pub async fn spawn_with_auth(auth: AuthConfig) -> Self {
+        Self::spawn_with_scheduler(auth, RunScheduler::new(8, 2, 32)).await
+    }
+
+    pub async fn spawn_with_scheduler(auth: AuthConfig, scheduler: RunScheduler) -> Self {
         let root = tempfile::tempdir().expect("create isolated test root");
         let engine_root = root.path().join("engine");
         std::fs::create_dir_all(engine_root.join("sparrowzz/dss/docs"))
@@ -41,7 +45,7 @@ impl TestApp {
             db::run_migrations(&mut conn).expect("run test migrations");
         }
 
-        let state = AppState::new_with_data_dir_and_auth(
+        let state = AppState::new_with_data_dir_auth_and_scheduler(
             pool.clone(),
             std::sync::Arc::new(StubEngine),
             LlmConfig {
@@ -50,6 +54,7 @@ impl TestApp {
             },
             config.data_dir.clone(),
             auth,
+            scheduler,
         );
         let router = backend::build_router(state);
 

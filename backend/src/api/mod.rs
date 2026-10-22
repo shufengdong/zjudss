@@ -12,6 +12,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 
 use crate::adapters::AdapterError;
+use crate::application::AppError;
 use crate::application::AppState;
 use crate::db::repositories::RepoError;
 
@@ -19,6 +20,8 @@ use crate::db::repositories::RepoError;
 pub struct ApiError {
     status: StatusCode,
     message: String,
+    code: &'static str,
+    details: Option<serde_json::Value>,
 }
 
 impl ApiError {
@@ -26,6 +29,8 @@ impl ApiError {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: message.into(),
+            code: "internal_error",
+            details: None,
         }
     }
 
@@ -33,6 +38,8 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_FOUND,
             message: message.into(),
+            code: "not_found",
+            details: None,
         }
     }
 
@@ -40,6 +47,8 @@ impl ApiError {
         Self {
             status: StatusCode::UNAUTHORIZED,
             message: message.into(),
+            code: "unauthorized",
+            details: None,
         }
     }
 }
@@ -48,9 +57,35 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (
             self.status,
-            axum::Json(serde_json::json!({ "error": self.message })),
+            axum::Json(ApiErrorBody {
+                error: self.message,
+                code: self.code,
+                details: self.details,
+            }),
         )
             .into_response()
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiErrorBody {
+    error: String,
+    code: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<serde_json::Value>,
+}
+
+impl From<AppError> for ApiError {
+    fn from(error: AppError) -> Self {
+        match error {
+            AppError::QueueFull => Self {
+                status: StatusCode::TOO_MANY_REQUESTS,
+                message: error.to_string(),
+                code: "agent_queue_full",
+                details: None,
+            },
+        }
     }
 }
 

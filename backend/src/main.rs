@@ -1,5 +1,5 @@
 use backend::agent::LlmConfig;
-use backend::application::AppState;
+use backend::application::{AppState, RunScheduler};
 use backend::auth::AuthConfig;
 use backend::config::RuntimeConfig;
 use backend::{adapters, build_router, db};
@@ -38,7 +38,19 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     );
     let auth = AuthConfig::from_runtime(&runtime);
-    let state = AppState::new_with_data_dir_and_auth(pool, engine, llm, runtime.data_dir, auth);
+    let scheduler = RunScheduler::new(
+        runtime.agent_max_concurrent_runs,
+        runtime.agent_max_owner_runs,
+        runtime.agent_queue_capacity,
+    );
+    let state = AppState::new_with_data_dir_auth_and_scheduler(
+        pool,
+        engine,
+        llm,
+        runtime.data_dir,
+        auth,
+        scheduler,
+    );
 
     let addr = "127.0.0.1:8080";
     let listener = tokio::net::TcpListener::bind(addr).await?;

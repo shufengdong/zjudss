@@ -244,7 +244,16 @@ pub async fn post_message(
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let now = now_ms();
 
-    // 1. 落用户消息。
+    // 先校验归属并完成 admission；队列满时不能写入用户消息。
+    state
+        .session_repo
+        .find(&principal.access, session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("资源不存在"))?;
+    let ticket = state.scheduler.try_admit(&principal.access, session_id)?;
+    let queued = ticket.is_queued();
+
+    // 1. admission 成功后落用户消息。
     let user_msg = state
         .message_repo
         .create(
@@ -266,6 +275,23 @@ pub async fn post_message(
         .events
         .publish(session_id, AppEvent::from_message(&user_msg));
 
+    if queued {
+        let writer = EventWriter::new(
+            principal.access.clone(),
+            session_id,
+            state.message_repo.clone(),
+            state.events.clone(),
+        );
+        writer
+            .tool_call(
+                "agent_admission",
+                json!({}),
+                crate::application::ToolStatus::Running,
+                Some("Agent 请求已进入等待队列".to_string()),
+            )
+            .await?;
+    }
+
     // 3. 更新会话活跃时间。
     state
         .session_repo
@@ -277,7 +303,7 @@ pub async fn post_message(
     let prompt_id = user_msg.id;
     let prompt = body.message;
     tokio::spawn(async move {
-        chat.run(session_id, prompt_id, prompt).await;
+        ticket.run(chat.run(session_id, prompt_id, prompt)).await;
     });
 
     Ok((StatusCode::ACCEPTED, Json(json!({ "ok": true }))))
