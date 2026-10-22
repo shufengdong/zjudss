@@ -15,9 +15,10 @@ function App(){
   const[examplesOpen,setExamplesOpen]=useState(false),[toast,setToast]=useState<string|null>(null)
   const isNarrow=useMediaQuery('(max-width:1279px)'),timer=useRef<number|undefined>(undefined)
   const{feed,older,add,remove}=useSessionFeed(selectedId),workspaceState=useWorkspace(selectedId),ingestion=useIngestion(selectedId)
-  const tasks=useSimulationHistory(selectedId,feed?.messages.length??0),usage=useStorageUsage()
+  const tasks=useSimulationHistory(selectedId,feed?.messages.length??0),usage=useStorageUsage(feed?.messages.length??0)
   const notify=useCallback((text:string)=>{setToast(text);if(timer.current)clearTimeout(timer.current);timer.current=window.setTimeout(()=>setToast(null),2500)},[])
-  const select=useCallback((id:string)=>{setSelectedId(id);setDatasetId(null);setComparisonId(null);if(principal)localStorage.setItem(`zjudss:last-session:${principal.scopeKey}`,id)},[principal])
+  const select=useCallback((id:string)=>{setSelectedId(id);setDatasetId(null);setComparisonId(null);if(isNarrow)setSidebarCollapsed(true);if(principal)localStorage.setItem(`zjudss:last-session:${principal.scopeKey}`,id)},[principal,isNarrow])
+  useEffect(()=>{if(isNarrow){setSidebarCollapsed(true);setPanelOpen(false)}},[isNarrow])
   useEffect(()=>{let live=true;void Promise.all([getPrincipal(),listSessions()]).then(([me,list])=>{if(!live)return;setPrincipal(me);setSessions(list)
     const remembered=localStorage.getItem(`zjudss:last-session:${me.scopeKey}`),next=list.some(s=>s.id===remembered)?remembered:list[0]?.id??null;if(next)setSelectedId(next)
   }).catch(e=>notify(e instanceof Error?e.message:'初始化失败'));return()=>{live=false}},[notify])
@@ -34,8 +35,9 @@ function App(){
   const openTask=async(id:string)=>{try{const datasets=await listTaskDatasets(id);if(datasets[0])setDatasetId(datasets[0].id);else notify('该任务暂无结果数据集')}catch(e){notify(e instanceof Error?e.message:'结果加载失败')}}
   const title=sessions.find(s=>s.id===selectedId)?.title??'配电网仿真智能体'
   return <div className="flex h-screen w-full overflow-hidden">
-    <HistorySidebar sessions={sessions} selectedId={selectedId} collapsed={sidebarCollapsed} onSelect={select} onNew={()=>void newSession()} onRename={(id,title)=>void rename(id,title)} onDelete={id=>void removeSession(id)} onToggleCollapse={()=>setSidebarCollapsed(v=>!v)}/>
-    <main className="flex min-w-0 flex-1 flex-col bg-slate-50"><header className="flex h-14 items-center gap-2 border-b bg-white px-4">
+    {isNarrow&&!sidebarCollapsed&&<button className="fixed inset-0 z-30 bg-black/30" aria-label="关闭历史侧栏" onClick={()=>setSidebarCollapsed(true)}/>}
+    {(!isNarrow||!sidebarCollapsed)&&<div className={isNarrow?'fixed inset-y-0 left-0 z-40 shadow-2xl':''}><HistorySidebar sessions={sessions} selectedId={selectedId} collapsed={sidebarCollapsed} onSelect={select} onNew={()=>void newSession()} onRename={(id,title)=>void rename(id,title)} onDelete={id=>void removeSession(id)} onToggleCollapse={()=>setSidebarCollapsed(v=>!v)}/></div>}
+    <main inert={isNarrow&&!sidebarCollapsed?true:undefined} aria-hidden={isNarrow&&!sidebarCollapsed?true:undefined} className="flex min-w-0 flex-1 flex-col bg-slate-50"><header className="flex h-14 items-center gap-2 border-b bg-white px-4">
       <button aria-label={sidebarCollapsed?'展开历史侧栏':'收起历史侧栏'} onClick={()=>setSidebarCollapsed(v=>!v)}><PanelLeftIcon className="h-5 w-5"/></button><h1 className="truncate text-sm font-semibold">{title}</h1>
       {usage?.isWarning&&<span className="ml-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">存储已使用 {Math.round(usage.logicalBytes/usage.byteLimit*100)}%</span>}
       <button onClick={()=>setExamplesOpen(true)} className="ml-auto rounded-lg border px-3 py-1.5 text-xs">案例库</button>
@@ -48,8 +50,8 @@ function App(){
     </main>
     <ResultPanel open={panelOpen} overlay={isNarrow} tab={tab} onTab={setTab} onClose={()=>setPanelOpen(false)} workspace={workspaceState.workspace} tasks={tasks}
       onSuggest={sendText} onTask={id=>void openTask(id)} onCompare={ids=>sendText(`请比较仿真任务 ${ids[0]} 和 ${ids[1]}，给出差异表和合适的图表`)}/>
-    {datasetId&&<div className="fixed inset-0 z-50 flex bg-black/30 p-4 sm:p-8"><div className="ml-auto h-full max-w-full overflow-hidden rounded-xl shadow-2xl"><DatasetWorkbench datasetId={datasetId} onClose={()=>setDatasetId(null)}/></div></div>}
-    {comparisonId&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"><div className="w-full max-w-2xl rounded-xl bg-white"><button onClick={()=>setComparisonId(null)} className="float-right p-4">×</button><ComparisonView id={comparisonId} onDataset={id=>{setComparisonId(null);setDatasetId(id)}}/></div></div>}
+    {datasetId&&<div className="fixed inset-0 z-50 flex bg-black/30 p-2 sm:p-8"><div className="ml-auto h-full w-full max-w-full overflow-hidden rounded-xl shadow-2xl sm:w-auto"><DatasetWorkbench datasetId={datasetId} onClose={()=>setDatasetId(null)}/></div></div>}
+    {comparisonId&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"><div className="w-full max-w-2xl rounded-xl bg-white"><button aria-label="关闭比较" onClick={()=>setComparisonId(null)} className="float-right p-4">×</button><ComparisonView id={comparisonId} onDataset={id=>{setComparisonId(null);setDatasetId(id)}}/></div></div>}
     {examplesOpen&&<ExampleLibrary onClose={()=>setExamplesOpen(false)} onUse={(id,name)=>{setExamplesOpen(false);sendText(`请导入内置案例“${name}”（exampleId: ${id}），导入后先不要运行，告诉我模型状态`)}}/>}
     {toast&&<div className="fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white">{toast}</div>}
   </div>

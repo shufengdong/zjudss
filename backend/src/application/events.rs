@@ -470,6 +470,12 @@ impl EventWriter {
         payload: Option<serde_json::Value>,
         task_id: Option<i32>,
     ) -> Result<AppEvent, RepoError> {
+        #[cfg(feature = "e2e-test")]
+        if crate::testing::FaultInjector.take(crate::testing::FaultPoint::EventCommit) {
+            return Err(RepoError::Storage(
+                "injected event commit failure".to_string(),
+            ));
+        }
         let msg = self
             .message_repo
             .create(

@@ -386,3 +386,58 @@
     - { runner: rust, file: backend/tests/task_comparison.rs, name: qsts_requires_a_time_key_and_numeric_dtypes_and_units_must_match }
   assertions: [结果名、稳定键、dtype、单位及 QSTS 时间键全部通过兼容性检查，可比任务产生有血缘差值 DataFrame 并可按 comparison ID 刷新恢复]
   fixtures: []
+- id: SCHED-L2-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: Agent 与引擎并发和等待队列边界
+  layers: [api, backend, agent, adapter]
+  lanes: [pr]
+  tests:
+    - { runner: rust, file: backend/tests/agent_scheduler.rs, name: enforces_global_owner_and_session_limits }
+    - { runner: rust, file: backend/tests/agent_scheduler.rs, name: rejects_the_thirty_third_waiting_run }
+    - { runner: rust, file: backend/tests/agent_scheduler.rs, name: queue_rejection_has_stable_error_and_does_not_write_message }
+    - { runner: rust, file: backend/tests/quota_concurrency.rs, name: production_limits_include_four_engine_slots_and_twenty_gib_storage }
+  assertions: [同会话串行、owner 2、实例 8、队列 32 和引擎 4 路边界确定，溢出返回 429 且不写用户消息]
+  fixtures: []
+- id: STORAGE-L2-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 并发去重、告警和硬配额原子性
+  layers: [frontend, api, backend]
+  lanes: [pr]
+  tests:
+    - { runner: rust, file: backend/tests/quota_concurrency.rs, name: concurrent_same_hash_commits_charge_once_and_preserve_refs_at_quota }
+    - { runner: playwright, file: integration-tests/e2e/storage-quota.spec.ts, name: warning and hard quota are visible while rejected ingestion leaves usage and workspace intact }
+  assertions: [同 scope 同 SHA 并发只计一个 artifact 且引用准确，80% 告警可见，硬限只拒绝新 artifact 并保持工作区指针]
+  fixtures: []
+- id: FAILURE-L2-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 外部依赖和事件提交故障原子性
+  layers: [api, backend, agent, adapter]
+  lanes: [pr]
+  tests:
+    - { runner: rust, file: backend/tests/failure_atomicity.rs, name: injected_event_commit_failure_publishes_nothing_and_keeps_history_readable }
+    - { runner: rust, file: backend/tests/failure_atomicity.rs, name: provider_errors_release_the_permit_without_exposing_internal_details }
+    - { runner: rust, file: backend/tests/scenario_engine.rs, name: failure_scenarios_are_rejected_by_the_adapter_contract }
+    - { runner: rust, file: backend/tests/scenario_engine.rs, name: simulation_and_analysis_fail_without_partial_publication_and_clean_staging }
+    - { runner: rust, file: backend/tests/scripted_agent.rs, name: barrier_holds_and_releases_agent_run_without_sleep }
+  assertions: [LLM、内核、Parquet 和 SQLite 事件失败均释放许可、隐藏内部错误、清理 staging 且不发布半成品，既有历史仍可读]
+  fixtures: []
+- id: RECOVERY-L2-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 服务重启恢复和 FTS 局部降级
+  layers: [frontend, api, backend, agent]
+  lanes: [pr]
+  tests:
+    - { runner: playwright, file: integration-tests/e2e/resilience.spec.ts, name: committed sessions results and views survive restart while running work converges and FTS fails locally }
+    - { runner: rust, file: backend/tests/history_search.rs, name: task_filters_work_and_missing_fts_does_not_break_plain_history_reads }
+  assertions: [同一数据根重启恢复会话、版本、任务、结果和视图，遗留运行态收敛为 service_restarted，FTS 损坏只影响搜索]
+  fixtures: []
+- id: UI-E2E-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 桌面三栏和窄屏双抽屉可访问工作台
+  layers: [frontend, api, backend]
+  lanes: [pr]
+  tests:
+    - { runner: playwright, file: integration-tests/e2e/responsive-accessibility.spec.ts, name: desktop three-column workspace completes upload chat task and result flows with accessible controls }
+    - { runner: playwright, file: integration-tests/e2e/responsive-accessibility.spec.ts, name: narrow drawers remain keyboard reachable without horizontal overflow }
+  assertions: [桌面和窄屏均完成上传、对话、工作区、任务和结果查看，无 serious 或 critical axe 违规、横向溢出或隐藏焦点]
+  fixtures: []

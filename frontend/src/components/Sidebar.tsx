@@ -122,13 +122,13 @@ export default function Sidebar({
                           selectedId === s.id ? 'bg-white shadow-sm' : 'hover:bg-slate-200/60'
                         }`}
                       >
-                        <button
-                          type="button"
-                          aria-label={`打开会话“${s.title || '未命名'}”`}
-                          onClick={() => onSelect(s.id)}
-                          className="min-w-0 flex-1 text-left"
-                        >
-                          <div className="truncate text-sm text-slate-700">{s.title}</div>
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            aria-label={`打开会话“${s.title || '未命名'}”`}
+                            onClick={() => onSelect(s.id)}
+                            className="block w-full truncate text-left text-sm text-slate-700"
+                          >{s.title}</button>
                           <div className="mt-0.5 flex items-center gap-1.5">
                             <span
                               className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium leading-none ${STATUS_CONFIG[s.status].cls}`}
@@ -142,7 +142,7 @@ export default function Sidebar({
                             </span>
                             <span className="text-[11px] text-slate-400">{formatTime(s.updatedAt, groupOf(s.updatedAt))}</span>
                           </div>
-                        </button>
+                        </div>
                         <button
                           type="button"
                           aria-label={`打开“${s.title || '未命名'}”的会话操作`}

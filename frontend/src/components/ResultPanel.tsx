@@ -17,7 +17,7 @@ export default function ResultPanel({open,overlay,tab,onTab,onClose,workspace,ta
   const panel=<aside style={overlay?undefined:{width}} className={`${overlay?'fixed inset-y-0 right-0 z-40 w-[min(92vw,430px)] shadow-2xl':'relative'} flex shrink-0 flex-col border-l bg-slate-50`}>
     {!overlay&&<button aria-label="调整工作台宽度" onMouseDown={startResize} className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize"/>}
     <header className="flex h-12 items-center border-b bg-white px-2"><button onClick={()=>onTab('workspace')} className={`px-3 py-2 text-sm ${tab==='workspace'?'text-brand-600':''}`}>模型工作区</button>
-      <button onClick={()=>onTab('tasks')} className={`px-3 py-2 text-sm ${tab==='tasks'?'text-brand-600':''}`}>仿真历史</button><button onClick={onClose} className="ml-auto px-3">×</button></header>
+      <button onClick={()=>onTab('tasks')} className={`px-3 py-2 text-sm ${tab==='tasks'?'text-brand-600':''}`}>仿真历史</button><button aria-label="关闭结果面板" onClick={onClose} className="ml-auto px-3">×</button></header>
     <div className="flex-1 overflow-auto">{tab==='workspace'?<WorkspacePanel workspace={workspace} onSuggest={onSuggest}/>:<TaskHistory tasks={tasks} onOpen={onTask} onCompare={onCompare}/>}</div>
   </aside>
   return <>{overlay&&<button className="fixed inset-0 z-30 bg-black/30" onClick={onClose} aria-label="关闭工作台"/>}{panel}</>

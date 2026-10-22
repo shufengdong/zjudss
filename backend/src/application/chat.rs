@@ -139,11 +139,11 @@ impl ChatService {
         // 6. 等 agent future 收尾；异常时补一条 assistant 错误。
         match handle.await {
             Ok(Ok(_response)) => { /* 最终文本已在 End 段发过 */ }
-            Ok(Err(err)) => {
-                let _ = writer.assistant(&format!("agent 运行失败：{err}")).await;
+            Ok(Err(_err)) => {
+                let _ = writer.assistant("agent 运行失败，请稍后重试").await;
             }
-            Err(join) => {
-                let _ = writer.assistant(&format!("agent 任务异常：{join}")).await;
+            Err(_join) => {
+                let _ = writer.assistant("agent 运行失败，请稍后重试").await;
             }
         }
         let _ = self

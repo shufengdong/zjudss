@@ -74,6 +74,10 @@ async fn control_routes_require_token() {
         ("POST", "/__e2e/llm-scenarios"),
         ("POST", "/__e2e/engine-scenarios"),
         ("POST", "/__e2e/barriers/test/release"),
+        ("POST", "/__e2e/faults"),
+        ("POST", "/__e2e/storage-limits"),
+        ("POST", "/__e2e/history-index/drop"),
+        ("POST", "/__e2e/history-index/rebuild"),
     ] {
         for token in [None, Some("wrong")] {
             let mut builder = Request::builder()

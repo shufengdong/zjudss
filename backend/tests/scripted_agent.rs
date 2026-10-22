@@ -221,11 +221,7 @@ async fn provider_error_releases_scheduler_permit() {
     let events = messages(&app, &session).await;
     assert!(
         events.iter().any(|event| {
-            event["type"] == "assistant"
-                && event["content"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .contains("provider unavailable")
+            event["type"] == "assistant" && event["content"] == "agent 运行失败，请稍后重试"
         }),
         "events: {events:#?}"
     );

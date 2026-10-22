@@ -55,3 +55,22 @@ pub fn run_migrations(
     conn.run_pending_migrations(MIGRATIONS)?;
     Ok(())
 }
+
+/// 服务进程退出时无法继续执行内存中的任务；启动后把遗留运行态收敛为可解释的失败态。
+pub fn recover_interrupted_runs(
+    conn: &mut SqliteConnection,
+    now_ms: i64,
+) -> Result<(), diesel::result::Error> {
+    conn.batch_execute(&format!(
+        "UPDATE simulation_tasks
+         SET status='failed', stage='recovery',
+             error_json='{{\"code\":\"service_restarted\",\"message\":\"服务重启，运行已中止\"}}',
+             finished_at_ms={now_ms}
+         WHERE status IN ('pending','running');
+         UPDATE result_analysis_runs
+         SET status='failed', stage='recovery',
+             error_json='{{\"code\":\"service_restarted\",\"message\":\"服务重启，运行已中止\"}}',
+             finished_at_ms={now_ms}
+         WHERE status IN ('pending','running');"
+    ))
+}

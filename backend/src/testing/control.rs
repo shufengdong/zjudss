@@ -8,13 +8,16 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::application::AppState;
-use crate::auth::AuthConfig;
-use crate::db;
+use crate::application::{AppState, ArtifactService, StorageLimits};
+use crate::auth::{AuthConfig, StorageScopeRef};
+use crate::db::{self, DbPool};
 
-use super::{EngineScenario, ScenarioEngine, ScriptScenario, ScriptedAgentFactory};
+use super::{
+    EngineScenario, FaultInjector, FaultPoint, ScenarioEngine, ScriptScenario, ScriptedAgentFactory,
+};
 
 const CONTROL_HEADER: &str = "x-zjudss-e2e-token";
 
@@ -106,6 +109,9 @@ pub struct ControlState {
     token: Arc<str>,
     pub llm: Arc<ScriptedAgentFactory>,
     pub engine: Arc<ScenarioEngine>,
+    faults: FaultInjector,
+    artifacts: Option<ArtifactService>,
+    pool: Option<DbPool>,
 }
 
 impl ControlState {
@@ -118,7 +124,15 @@ impl ControlState {
             token: Arc::from(token.into()),
             llm,
             engine,
+            faults: FaultInjector,
+            artifacts: None,
+            pool: None,
         }
+    }
+    pub fn with_app(mut self, state: &AppState) -> Self {
+        self.artifacts = Some(state.artifact_service.clone());
+        self.pool = Some(state.pool.clone());
+        self
     }
     fn authorize(&self, headers: &axum::http::HeaderMap) -> Result<(), StatusCode> {
         let supplied = headers
@@ -136,6 +150,10 @@ pub fn control_router(state: ControlState) -> Router {
         .route("/__e2e/llm-scenarios", post(enqueue_llm))
         .route("/__e2e/engine-scenarios", post(enqueue_engine))
         .route("/__e2e/barriers/{id}/release", post(release))
+        .route("/__e2e/faults", post(inject_fault))
+        .route("/__e2e/storage-limits", post(set_storage_limits))
+        .route("/__e2e/history-index/drop", post(drop_history_index))
+        .route("/__e2e/history-index/rebuild", post(rebuild_history_index))
         .route("/__e2e/trace", get(trace))
         .route("/__e2e/ready", get(ready))
         .layer(middleware::from_fn_with_state(
@@ -186,6 +204,95 @@ async fn ready() -> Json<Value> {
     Json(json!({"ready": true}))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FaultRequest {
+    point: String,
+}
+
+async fn inject_fault(
+    State(state): State<ControlState>,
+    Json(request): Json<FaultRequest>,
+) -> Result<(StatusCode, Json<Value>), StatusCode> {
+    match request.point.as_str() {
+        "event_commit" => state.faults.fail_next(FaultPoint::EventCommit),
+        _ => return Err(StatusCode::UNPROCESSABLE_ENTITY),
+    }
+    Ok((StatusCode::ACCEPTED, Json(json!({"ok": true}))))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StorageLimitsRequest {
+    kind: String,
+    key: String,
+    artifact_limit: i64,
+    byte_limit: i64,
+    warning_ratio: f64,
+}
+
+async fn set_storage_limits(
+    State(state): State<ControlState>,
+    Json(request): Json<StorageLimitsRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    let artifacts = state.artifacts.ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let scope = artifacts
+        .resolve_scope(&StorageScopeRef {
+            kind: request.kind,
+            key: request.key,
+        })
+        .await
+        .map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
+    artifacts
+        .set_limits(
+            scope.id,
+            StorageLimits {
+                artifact_limit: request.artifact_limit,
+                byte_limit: request.byte_limit,
+                warning_ratio: request.warning_ratio,
+            },
+        )
+        .await
+        .map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn drop_history_index(State(state): State<ControlState>) -> Result<Json<Value>, StatusCode> {
+    let pool = state.pool.ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    tokio::task::spawn_blocking(move || {
+        use diesel::RunQueryDsl;
+        let mut connection = pool.get().map_err(|_| ())?;
+        diesel::sql_query("DROP TABLE IF EXISTS chat_search_fts")
+            .execute(&mut connection)
+            .map_err(|_| ())?;
+        Ok::<_, ()>(())
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(json!({"ok": true})))
+}
+
+async fn rebuild_history_index(
+    State(state): State<ControlState>,
+) -> Result<Json<Value>, StatusCode> {
+    let pool = state.pool.ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    tokio::task::spawn_blocking(move || {
+        use diesel::connection::SimpleConnection;
+        let mut connection = pool.get().map_err(|_| ())?;
+        connection
+            .batch_execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS chat_search_fts USING fts5(search_text,content='chat_search_documents',content_rowid='id',tokenize='trigram');
+                 INSERT INTO chat_search_fts(chat_search_fts) VALUES('rebuild');",
+            )
+            .map_err(|_| ())
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(json!({"ok": true})))
+}
+
 pub async fn run_e2e_server(
     config: E2eConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -197,6 +304,7 @@ pub async fn run_e2e_server(
     {
         let mut connection = pool.get()?;
         db::run_migrations(&mut connection)?;
+        db::recover_interrupted_runs(&mut connection, crate::application::now_ms())?;
     }
     let llm = Arc::new(ScriptedAgentFactory::default());
     let engine = Arc::new(ScenarioEngine::default());
@@ -207,11 +315,8 @@ pub async fn run_e2e_server(
         engine.clone(),
         AuthConfig::trusted_proxy(config.proxy_token),
     );
-    let router = crate::build_router(state).merge(control_router(ControlState::new(
-        config.control_token,
-        llm,
-        engine,
-    )));
+    let control = ControlState::new(config.control_token, llm, engine).with_app(&state);
+    let router = crate::build_router(state).merge(control_router(control));
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     let address = listener.local_addr()?;
     println!(

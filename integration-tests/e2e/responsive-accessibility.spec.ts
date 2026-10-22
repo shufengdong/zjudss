@@ -1,0 +1,53 @@
+import AxeBuilder from '@axe-core/playwright'
+import { test, expect, type Page } from './fixtures'
+import { createReadySession, runStudy } from './helpers/journeys'
+
+async function expectNoSeriousViolations(page: Page) {
+  const result = await new AxeBuilder({ page }).analyze()
+  expect(result.violations.filter(violation => violation.impact === 'serious' || violation.impact === 'critical')).toEqual([])
+}
+
+test('desktop three-column workspace completes upload chat task and result flows with accessible controls', async ({ appPage, control }) => {
+  const { page, api } = await appPage({ subject: 'desktop@example.com', tenant: 'grid-ui' })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const { sessionId, versionId } = await createReadySession(page, api, '桌面工作台')
+  await expect(page.getByRole('button', { name: '新建仿真' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: '消息' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '模型工作区' })).toBeVisible()
+  const task = await runStudy({
+    page, api, control, sessionId, versionId, prompt: '桌面潮流', studyType: 'power_flow',
+    engine: { kind: 'success', data: [{ name: 'voltage', rows: [['b1', 1]], valueUnit: 'pu' }] },
+  })
+  await page.getByRole('button', { name: '仿真历史' }).click()
+  await page.getByRole('button', { name: `power_flow #${task.id}` }).click()
+  await expect(page.getByRole('columnheader', { name: 'value (pu)' })).toBeVisible()
+  await expectNoSeriousViolations(page)
+})
+
+test('narrow drawers remain keyboard reachable without horizontal overflow', async ({ appPage, control }) => {
+  const { page, api } = await appPage({ subject: 'narrow@example.com', tenant: 'grid-ui' })
+  await page.setViewportSize({ width: 390, height: 844 })
+  const { sessionId, versionId } = await createReadySession(page, api, '窄屏工作台')
+  await expect(page.getByRole('button', { name: '展开历史侧栏' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '展开结果面板' })).toBeVisible()
+  await page.getByRole('button', { name: '展开历史侧栏' }).click()
+  await expect(page.getByRole('textbox', { name: '搜索历史' })).toBeVisible()
+  await page.getByRole('button', { name: '收起历史侧栏' }).click()
+
+  const task = await runStudy({
+    page, api, control, sessionId, versionId, prompt: '窄屏潮流', studyType: 'power_flow',
+    engine: { kind: 'success', data: [{ name: 'voltage', rows: [['b1', 1]], valueUnit: 'pu' }] },
+  })
+  await page.getByRole('button', { name: '展开结果面板' }).click()
+  await page.getByRole('button', { name: '仿真历史' }).click()
+  await page.getByRole('button', { name: `power_flow #${task.id}` }).click()
+  await expect(page.getByRole('columnheader', { name: 'value (pu)' })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await expectNoSeriousViolations(page)
+  await page.getByRole('button', { name: '关闭数据集' }).click()
+  await page.getByRole('button', { name: '关闭结果面板' }).click()
+  await page.reload()
+  await expect(page.getByRole('button', { name: '展开历史侧栏' })).toBeVisible()
+  await page.keyboard.press('Tab')
+  await expect(page.getByRole('button', { name: '展开历史侧栏' })).toBeFocused()
+})

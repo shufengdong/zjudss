@@ -15,7 +15,9 @@ export function useIngestion(sessionId:string|null){
       setQueue(q=>q.map(e=>({...e,status:'accepted'})))
       const follow=async()=>{const value=await getIngestion(accepted.ingestionId)
         if(value.status==='failed'){setQueue(q=>q.map(e=>({...e,status:'failed',error:value.errorMessage??'处理失败'})));return}
-        if(value.status==='succeeded'||value.status==='completed_with_errors')return
+        if(value.status==='succeeded'||value.status==='completed_with_errors'){
+          setQueue(q=>q.map(entry=>{const item=value.items.find(item=>item.clientFileId===entry.id);return item?.status==='failed'?{...entry,status:'failed',error:item.errorMessage??'处理失败'}:{...entry,status:'accepted'}}));return
+        }
         window.setTimeout(()=>void follow(),200)}
       void follow()
     }catch(error){

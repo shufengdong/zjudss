@@ -35,6 +35,22 @@ export class ControlClient {
     return this.call(`/__e2e/barriers/${encodeURIComponent(id)}/release`, { method: 'POST' })
   }
 
+  injectFault(point: 'event_commit') {
+    return this.call('/__e2e/faults', { method: 'POST', body: JSON.stringify({ point }) })
+  }
+
+  setStorageLimits(scope: { kind: string; key: string }, limits: { artifactLimit: number; byteLimit: number; warningRatio: number }) {
+    return this.call('/__e2e/storage-limits', { method: 'POST', body: JSON.stringify({ ...scope, ...limits }) })
+  }
+
+  dropHistoryIndex() {
+    return this.call('/__e2e/history-index/drop', { method: 'POST' })
+  }
+
+  rebuildHistoryIndex() {
+    return this.call('/__e2e/history-index/rebuild', { method: 'POST' })
+  }
+
   trace() {
     return this.call('/__e2e/trace')
   }

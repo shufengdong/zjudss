@@ -57,6 +57,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     {
         let mut conn = pool.get()?;
         db::run_migrations(&mut conn)?;
+        db::recover_interrupted_runs(&mut conn, backend::application::now_ms())?;
     }
     eprintln!("[db] ready at {}", runtime.database_url);
 
