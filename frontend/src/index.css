@@ -1,6 +1,18 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --color-brand-50: #eef1ff;
+  --color-brand-100: #e0e6ff;
+  --color-brand-200: #c7d0fe;
+  --color-brand-300: #a5b3fd;
+  --color-brand-400: #8090fb;
+  --color-brand-500: #4d6bfe;
+  --color-brand-600: #3d52e8;
+  --color-brand-700: #3340c4;
+  --color-brand-800: #2b349e;
+  --color-brand-900: #28307d;
+}
 
 html,
 body,
