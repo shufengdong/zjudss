@@ -13,6 +13,17 @@ diesel::table! {
         access_scope_kind -> Text,
         access_scope_key -> Text,
         storage_scope_id -> Nullable<Integer>,
+        title_source -> Text,
+    }
+}
+diesel::table! {
+    chat_search_documents (id) {
+        id -> Integer,
+        session_id -> Integer,
+        source_kind -> Text,
+        source_id -> Nullable<Integer>,
+        search_text -> Text,
+        updated_at_ms -> BigInt,
     }
 }
 
@@ -308,6 +319,7 @@ diesel::joinable!(result_analysis_inputs -> result_analysis_runs (analysis_run_i
 diesel::joinable!(result_datasets -> artifacts (artifact_id));
 diesel::joinable!(dataset_views -> result_datasets (dataset_id));
 diesel::joinable!(task_comparisons -> sessions (session_id));
+diesel::joinable!(chat_search_documents -> sessions (session_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     sessions,
@@ -331,4 +343,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     result_datasets,
     dataset_views,
     task_comparisons,
+    chat_search_documents,
 );

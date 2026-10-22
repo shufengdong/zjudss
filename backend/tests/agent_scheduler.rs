@@ -164,5 +164,5 @@ async fn queue_rejection_has_stable_error_and_does_not_write_message() {
         )
         .await
         .expect("history response");
-    assert_eq!(response_json(history).await, json!({"messages": []}));
+    assert_eq!(response_json(history).await["messages"], json!([]));
 }

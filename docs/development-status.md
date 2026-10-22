@@ -42,7 +42,7 @@
 | 多用户隔离 | ✅ 基础边界完成 | instance/trusted_proxy、`/api/me`、storage/access scope 和 Session/Message/Task/SSE 404 隔离已落地 |
 | Agent prompt 与领域技能 | ✅ 工作区阶段完成 | 每轮只注入 system、技能索引和资源摘要；技能/文档/案例按稳定 ID 有界加载，脚本修改缺技能返回 `skill_required`，当前 run 记录已加载技能集 |
 | 内置案例库 | ✅ 导入闭环完成 | 启动时校验并索引根 RSS 与 rssbundle；案例按快照 ID 导入完整依赖闭包，复制并复核 hash，并已注册自然语言检索、查看与导入工具 |
-| v2 详细实施方案 | 🚧 执行中 | Tasks 1–14 已完成；M0–M2 完成，正在实施历史分页与全文检索 |
+| v2 详细实施方案 | 🚧 执行中 | Tasks 1–15 已完成；M0–M3 完成，正在实施前端 v2 工作台 |
 
 > v2 实施以 `docs/superpowers/plans/2026-10-22-v2-simulation-workspace.md` 的 Task 编号为准；当前
 > 已完成 Task 1–11。后文保留的 v1 细节是迁移背景，若与本节冲突，以本节和 v2 契约为准。

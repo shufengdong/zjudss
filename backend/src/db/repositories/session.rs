@@ -141,6 +141,7 @@ impl SessionRepo {
             let updated = diesel::update(target)
                 .set((
                     schema::sessions::title.eq(title),
+                    schema::sessions::title_source.eq("user"),
                     schema::sessions::updated_at_ms.eq(now_ms),
                 ))
                 .execute(&mut conn)

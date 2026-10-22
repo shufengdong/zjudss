@@ -1,7 +1,7 @@
 //! 会话与消息 handler：CRUD + 触发一次对话（后台 agent run，经 SSE 推送）+ 附件上传。
 
 use axum::Json;
-use axum::extract::{Multipart, Path, State};
+use axum::extract::{Multipart, Path, Query, State};
 use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -287,13 +287,63 @@ pub async fn messages(
     State(state): State<AppState>,
     CurrentPrincipal(principal): CurrentPrincipal,
     Path(session_id): Path<i32>,
+    Query(query): Query<MessagePageQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let msgs = state
-        .message_repo
-        .list_by_session(&principal.access, session_id)
+        .history_service
+        .list_messages(
+            &principal,
+            session_id,
+            query.before_id,
+            query.around_id,
+            query.limit.unwrap_or(50),
+        )
         .await?;
     let items: Vec<Value> = msgs.iter().map(json_from_message).collect();
-    Ok(Json(json!({ "messages": items })))
+    let next = msgs.first().map(|m| m.id.to_string());
+    Ok(Json(
+        json!({ "messages": items,"nextBeforeId":next,"hasMoreBefore":msgs.len()>=query.limit.unwrap_or(50).clamp(1,100) as usize }),
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessagePageQuery {
+    before_id: Option<i32>,
+    around_id: Option<i32>,
+    limit: Option<i64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistorySearchQuery {
+    query: String,
+    study_type: Option<String>,
+    status: Option<String>,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+    limit: Option<i64>,
+}
+pub async fn search_history(
+    State(state): State<AppState>,
+    CurrentPrincipal(principal): CurrentPrincipal,
+    Query(q): Query<HistorySearchQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let hits = state
+        .history_service
+        .search_sessions(
+            &principal,
+            q.query,
+            crate::db::repositories::SearchFilters {
+                study_type: q.study_type,
+                status: q.status,
+                from_ms: q.from_ms,
+                to_ms: q.to_ms,
+            },
+            q.limit.unwrap_or(20),
+        )
+        .await?;
+    Ok(Json(json!({"items":hits})))
 }
 
 #[derive(Deserialize)]

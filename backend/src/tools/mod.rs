@@ -13,13 +13,16 @@ pub mod import_example;
 pub mod inspect_example;
 pub mod inspect_workspace;
 pub mod list_result_datasets;
+pub mod list_simulation_history;
 pub mod load_agent_skill;
 pub mod modify_model;
+pub mod read_chat_context;
 pub mod read_engine_doc_section;
 pub mod remove_model_input;
 pub mod replace_model_input;
 pub mod run_result_analysis;
 pub mod run_study;
+pub mod search_chat_history;
 pub mod search_engine_docs;
 pub mod search_examples;
 mod support;
@@ -34,7 +37,7 @@ use crate::adapters::SimEngine;
 use crate::agent::knowledge::AgentKnowledge;
 use crate::application::{
     AnalysisService, ComparisonService, DatasetService, EventWriter, ExampleImportService,
-    ModelPatchService, SimulationService, WorkspaceService,
+    HistoryService, ModelPatchService, SimulationService, WorkspaceService,
 };
 use crate::auth::{AccessScope, Principal};
 use crate::db::repositories::TaskRepo;
@@ -61,6 +64,7 @@ pub struct ToolServices {
     pub datasets: DatasetService,
     pub analysis: AnalysisService,
     pub comparisons: ComparisonService,
+    pub history: HistoryService,
 }
 
 impl ToolServices {
@@ -97,6 +101,15 @@ pub fn build_tools(services: Arc<ToolServices>) -> Vec<RegisteredTool> {
             services.clone(),
         )),
         RegisteredTool::from_tool(compare_simulations::CompareSimulationsTool::new(
+            services.clone(),
+        )),
+        RegisteredTool::from_tool(search_chat_history::SearchChatHistoryTool::new(
+            services.clone(),
+        )),
+        RegisteredTool::from_tool(read_chat_context::ReadChatContextTool::new(
+            services.clone(),
+        )),
+        RegisteredTool::from_tool(list_simulation_history::ListSimulationHistoryTool::new(
             services.clone(),
         )),
         RegisteredTool::from_tool(search_engine_docs::SearchEngineDocsTool::new(

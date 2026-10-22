@@ -1192,4 +1192,9 @@ artifact 的重复引用继续可用。上传、仿真和结果分析的提交�
 
 任务比较由 `compare_simulations` 仅接收两个 task ID。服务端校验同会话归属、结果名、稳定键、dtype
 和单位，把兼容性快照固化后创建关联 analysis run；差值只存在该 analysis run 的 Parquet 数据集中。
-`GET /api/task-comparisons/{id}` 可在刷新后恢复比较、兼容性和派生数据集。
+ `GET /api/task-comparisons/{id}` 可在刷新后恢复比较、兼容性和派生数据集。
+
+历史消息默认返回最近 50 条，支持互斥的 `beforeId` 与 `aroundId` 窗口，单次硬上限 100。
+`GET /api/history/search` 对 3 字及以上查询使用 owner scope 内的 FTS5 trigram，对 1–2 字查询使用
+带 limit 且转义通配符的 LIKE；study type、status 和时间条件采用 AND 过滤。FTS 不可用时仅搜索返回
+`503 history_search_unavailable`，普通历史读取继续可用。手工标题的 `titleSource=user` 永不被自动标题覆盖。

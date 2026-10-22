@@ -24,6 +24,7 @@ use crate::application::AppState;
 use crate::application::ArtifactError;
 use crate::application::ComparisonError;
 use crate::application::DatasetError;
+use crate::application::HistoryError;
 use crate::application::IngestionError;
 use crate::application::WorkspaceError;
 use crate::db::repositories::RepoError;
@@ -239,6 +240,25 @@ impl From<ComparisonError> for ApiError {
         }
     }
 }
+impl From<HistoryError> for ApiError {
+    fn from(error: HistoryError) -> Self {
+        match error.code {
+            "not_found" => Self::not_found("资源不存在"),
+            "history_search_unavailable" => Self {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                message: error.message,
+                code: error.code,
+                details: None,
+            },
+            _ => Self {
+                status: StatusCode::BAD_REQUEST,
+                message: error.message,
+                code: error.code,
+                details: None,
+            },
+        }
+    }
+}
 
 async fn health() -> &'static str {
     "ok"
@@ -250,6 +270,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/me", get(auth::me))
         .route("/api/storage-usage", get(storage::usage))
         .route("/api/sessions", get(sessions::list).post(sessions::create))
+        .route("/api/history/search", get(sessions::search_history))
         .route(
             "/api/sessions/{id}",
             patch(sessions::rename).delete(sessions::delete),

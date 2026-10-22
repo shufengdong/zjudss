@@ -23,6 +23,7 @@ pub struct Session {
     pub access_scope_kind: String,
     pub access_scope_key: String,
     pub storage_scope_id: Option<i32>,
+    pub title_source: String,
 }
 
 #[derive(Insertable, Debug, Clone)]

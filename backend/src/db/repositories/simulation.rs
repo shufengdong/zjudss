@@ -213,4 +213,31 @@ impl SimulationRepo {
         .await
         .map_err(RepoError::Join)?
     }
+    pub async fn list_session(
+        &self,
+        scope: &AccessScope,
+        session_id: i32,
+        limit: i64,
+    ) -> RepoResult<Vec<SimulationTask>> {
+        let pool = self.pool.clone();
+        let scope = scope.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut c = pool.get().map_err(RepoError::Pool)?;
+            schema::sessions::table
+                .filter(schema::sessions::id.eq(session_id))
+                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
+                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .select(schema::sessions::id)
+                .first::<i32>(&mut c)
+                .optional()?
+                .ok_or(RepoError::NotFound)?;
+            Ok(schema::simulation_tasks::table
+                .filter(schema::simulation_tasks::session_id.eq(session_id))
+                .order(schema::simulation_tasks::id.desc())
+                .limit(limit.clamp(1, 100))
+                .load(&mut c)?)
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
 }

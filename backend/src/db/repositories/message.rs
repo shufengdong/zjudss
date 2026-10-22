@@ -29,11 +29,25 @@ impl MessageRepo {
                     .select(schema::sessions::id)
                     .first::<i32>(conn)?;
                 diesel::insert_into(schema::messages::table)
-                    .values(new)
+                    .values(new.clone())
                     .execute(conn)?;
                 let id: i32 =
                     diesel::dsl::sql::<diesel::sql_types::Integer>("SELECT last_insert_rowid()")
                         .get_result(conn)?;
+                if new.role == "user" {
+                    let title: String = new.content.chars().take(30).collect();
+                    diesel::update(
+                        schema::sessions::table
+                            .filter(schema::sessions::id.eq(new.session_id))
+                            .filter(schema::sessions::title_source.eq("default")),
+                    )
+                    .set((
+                        schema::sessions::title.eq(title),
+                        schema::sessions::title_source.eq("auto"),
+                        schema::sessions::updated_at_ms.eq(new.created_at_ms),
+                    ))
+                    .execute(conn)?;
+                }
                 schema::messages::table.find(id).first(conn)
             })
             .map_err(|error| match error {

@@ -18,6 +18,20 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     dotenvy::dotenv().ok();
+    if std::env::args().nth(1).as_deref() == Some("rebuild-search-index") {
+        let database_url =
+            std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://backend.db".into());
+        let pool = db::establish_pool(&database_url)?;
+        {
+            let mut conn = pool.get()?;
+            db::run_migrations(&mut conn)?;
+        }
+        backend::db::repositories::HistoryRepo::new(pool)
+            .rebuild()
+            .await?;
+        eprintln!("[history] search index rebuilt");
+        return Ok(());
+    }
     let runtime = RuntimeConfig::from_env()?;
     let llm = LlmConfig::from_env();
     let knowledge = AgentKnowledge::load_embedded(&runtime.agent_bundle_version)?;
