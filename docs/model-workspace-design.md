@@ -1,6 +1,6 @@
 # 模型工作区、版本、结果分析、历史检索与仿真对比设计
 
-> 状态：已评审设计，尚未实现
+> 状态：v2 已实现；本文保留完整产品语义和验收依据。
 > 适用范围：单 `.rss`、ZIP 打包目录、`.rssbundle` 目录、分批上传的 DataFrame 模型
 > 配套：后端分层见 `architecture.md`，HTTP/SSE 契约见 `api-design.md`，持久化见
 > `db-design.md`，前端行为见 `frontend-design.md`，实现状态见 `development-status.md`。
@@ -329,7 +329,7 @@ RSS 分析流程。首批视图为折线、柱状、散点、热力、箱线和�
 
 ## 9. 消息、API 与历史恢复
 
-当前 6 类消息继续可用，目标契约增加或升级：
+v2 使用以下 8 类消息：
 
 - `model-status`：active/draft 范围及其完整快照；null snapshot 用于明确清空 draft；
 - `comparison`：基准/候选任务、关联 analysis run 和差值数据集；
@@ -343,7 +343,7 @@ RSS 分析流程。首批视图为折线、柱状、散点、热力、箱线和�
 - 仿真：`prepare → inspect → sim → collect`；
 - 结果分析：`script → run → collect → present`。
 
-目标 API：
+已实现 API：
 
 ```text
 GET  /api/sessions/{id}/workspace

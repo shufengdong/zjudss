@@ -9,6 +9,12 @@ use backend::{
 };
 use common::TestApp;
 use diesel::RunQueryDsl;
+use diesel::sql_types::Integer;
+#[derive(diesel::QueryableByName)]
+struct IdRow {
+    #[diesel(sql_type = Integer)]
+    id: i32,
+}
 fn p(key: &str) -> Principal {
     Principal {
         access: AccessScope {
@@ -220,6 +226,25 @@ async fn task_filters_work_and_missing_fts_does_not_break_plain_history_reads() 
         .create(&owner.access, "tasks", 1)
         .await
         .unwrap();
+    let mut conn = app.pool.get().unwrap();
+    diesel::sql_query("INSERT INTO artifacts(sha256,size_bytes,storage_path,format,created_at_ms) VALUES('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',0,'objects/aa/history-script','rss',1)").execute(&mut conn).unwrap();
+    let artifact_id: IdRow = diesel::sql_query("SELECT last_insert_rowid() AS id")
+        .get_result(&mut conn)
+        .unwrap();
+    diesel::sql_query(format!(
+        "INSERT INTO workspaces(session_id,created_at_ms,updated_at_ms) VALUES({},1,1)",
+        s.id
+    ))
+    .execute(&mut conn)
+    .unwrap();
+    let workspace_id: IdRow = diesel::sql_query("SELECT last_insert_rowid() AS id")
+        .get_result(&mut conn)
+        .unwrap();
+    diesel::sql_query(format!("INSERT INTO model_versions(workspace_id,status,source_kind,origin_kind,manifest_json,content_hash,created_at_ms) VALUES({},'ready','rss','generated','{{}}','history-version',1)",workspace_id.id)).execute(&mut conn).unwrap();
+    let version_id: IdRow = diesel::sql_query("SELECT last_insert_rowid() AS id")
+        .get_result(&mut conn)
+        .unwrap();
+    drop(conn);
     TaskRepo::new(app.pool.clone())
         .create(
             &owner.access,
@@ -227,8 +252,13 @@ async fn task_filters_work_and_missing_fts_does_not_break_plain_history_reads() 
                 session_id: s.id,
                 status: "succeeded".into(),
                 stage: Some("done".into()),
-                study_type: Some("power_flow".into()),
-                params_json: "{}".into(),
+                study_type: "power_flow".into(),
+                model_version_id: version_id.id,
+                study_spec_json: "{}".into(),
+                script_artifact_id: artifact_id.id,
+                agent_bundle_version: "v2.0.0".into(),
+                agent_skill_refs_json: "[]".into(),
+                engine_contract_version: "test-contract".into(),
                 exit_code: Some(0),
                 error_json: None,
                 created_at_ms: now_ms(),

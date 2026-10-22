@@ -38,27 +38,14 @@ pub async fn get(
         session_id: t.session_id.to_string(),
         status: t.status,
         stage: t.stage,
-        study_type: t.study_type.unwrap_or_default(),
-        study_spec: t
-            .study_spec_json
-            .as_deref()
-            .and_then(|v| serde_json::from_str(v).ok())
-            .unwrap_or(Value::Null),
-        model_version_id: t
-            .model_version_id
-            .map(|v| v.to_string())
-            .unwrap_or_default(),
-        script_artifact_id: t
-            .script_artifact_id
-            .map(|v| v.to_string())
-            .unwrap_or_default(),
-        agent_bundle_version: t.agent_bundle_version.unwrap_or_default(),
-        agent_skill_refs: t
-            .agent_skill_refs_json
-            .as_deref()
-            .and_then(|v| serde_json::from_str(v).ok())
-            .unwrap_or_else(|| serde_json::json!([])),
-        engine_contract_version: t.engine_contract_version.unwrap_or_default(),
+        study_type: t.study_type,
+        study_spec: serde_json::from_str(&t.study_spec_json).unwrap_or(Value::Null),
+        model_version_id: t.model_version_id.to_string(),
+        script_artifact_id: t.script_artifact_id.to_string(),
+        agent_bundle_version: t.agent_bundle_version,
+        agent_skill_refs: serde_json::from_str(&t.agent_skill_refs_json)
+            .unwrap_or_else(|_| serde_json::json!([])),
+        engine_contract_version: t.engine_contract_version,
         error: t
             .error_json
             .as_deref()
@@ -93,22 +80,18 @@ fn task_dto(t: crate::db::models::SimulationTask) -> TaskDto {
         session_id: t.session_id.to_string(),
         status: t.status,
         stage: t.stage,
-        study_type: t.study_type.unwrap_or_default(),
-        study_spec: t
-            .study_spec_json
+        study_type: t.study_type,
+        study_spec: serde_json::from_str(&t.study_spec_json).unwrap_or(Value::Null),
+        model_version_id: t.model_version_id.to_string(),
+        script_artifact_id: t.script_artifact_id.to_string(),
+        agent_bundle_version: t.agent_bundle_version,
+        agent_skill_refs: serde_json::from_str(&t.agent_skill_refs_json)
+            .unwrap_or_else(|_| serde_json::json!([])),
+        engine_contract_version: t.engine_contract_version,
+        error: t
+            .error_json
             .as_deref()
-            .and_then(|v| serde_json::from_str(v).ok())
-            .unwrap_or(Value::Null),
-        model_version_id: t.model_version_id.map(|v| v.to_string()).unwrap_or_default(),
-        script_artifact_id: t.script_artifact_id.map(|v| v.to_string()).unwrap_or_default(),
-        agent_bundle_version: t.agent_bundle_version.unwrap_or_default(),
-        agent_skill_refs: t
-            .agent_skill_refs_json
-            .as_deref()
-            .and_then(|v| serde_json::from_str(v).ok())
-            .unwrap_or_else(|| serde_json::json!([])),
-        engine_contract_version: t.engine_contract_version.unwrap_or_default(),
-        error: t.error_json.as_deref().and_then(|v| serde_json::from_str(v).ok()),
+            .and_then(|v| serde_json::from_str(v).ok()),
         created_at: ms_to_iso(t.created_at_ms),
         started_at: t.started_at_ms.map(ms_to_iso),
         finished_at: t.finished_at_ms.map(ms_to_iso),

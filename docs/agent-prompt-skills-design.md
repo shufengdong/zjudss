@@ -1,17 +1,18 @@
 # Agent Prompt 与领域技能设计
 
-> 状态：v2 Task 7 已实现资源合同、启动 preflight、文档/案例快照、领域技能 bundle 和表头推断；
-> 工具接入与按 run 记录技能引用在后续任务完成。
+> 状态：v2 已实现资源合同、启动 preflight、文档/案例快照、领域技能 bundle、工具门控、表头推断，
+> 并在仿真和分析 run 中固化技能引用。
 > 适用范围：zjudss 后端通过 rig 0.45 构建的配电网仿真 agent。
 > 引擎知识源：`${TENSOREVAL_CWD}/sparrowzz/dss/docs/`，当前核对版本固定到 eig-rs superproject commit
 > `ce9c0cc0c71ed0e3469e99ecf43b73d33c4e34bf` 及其 sparrowzz submodule commit
 > `d6a502d3cd1eef7285da284173663cc9764bbd54`。
 
-## 1. 当前实现与术语
+## 1. 实现与术语
 
-当前 `backend/src/agent/mod.rs` 只有一句 `SYSTEM_PROMPT`，通过
-`AgentBuilder::preamble()` 注入；`inspect_model` 和 `run_simulation` 的名称、说明与参数 schema 由
-Rust `Tool` 实现提供。尚未加载引擎领域文档，也没有项目级 skill 路由。
+`backend/resources/agent/v2` 保存经过 hash 校验的 manifest、system prompt、skill index 和领域
+Markdown。每轮 agent 注入紧凑 system prompt、技能索引和当前 engine resource snapshot 摘要；领域
+文档、案例详情和技能正文通过稳定 ID 按需读取。工具名称、说明与参数 schema 由 Rust `Tool` 实现
+提供，脚本生成类工具在缺少 required skill 时返回 `skill_required`。
 
 rig 的 `AgentBuilder` 提供 `preamble/context/dynamic_context/tool` 等组装能力，但 rig 0.45 中名为
 `Skill` 的类型属于 Anthropic container 扩展。当前项目使用 DeepSeek，不能把该 provider 专属能力当成

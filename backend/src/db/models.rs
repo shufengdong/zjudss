@@ -3,10 +3,10 @@
 // Diesel 2.x：派生宏（Queryable/Insertable）只从 crate 根重导出（默认 feature
 // `with-deprecated`），prelude 仅含 trait 与 DSL；故显式导入。
 use super::schema::{
-    artifacts, curve_data, dataframe_bindings, dataset_views, ingestion_artifacts, ingestions,
-    messages, model_versions, result_analysis_inputs, result_analysis_runs, result_datasets,
-    sessions, simulation_tasks, storage_scope_artifacts, storage_scopes, task_comparisons,
-    task_files, task_results, version_artifacts, workspaces,
+    artifacts, dataframe_bindings, dataset_views, ingestion_artifacts, ingestions, messages,
+    model_versions, result_analysis_inputs, result_analysis_runs, result_datasets, sessions,
+    simulation_tasks, storage_scope_artifacts, storage_scopes, task_comparisons, version_artifacts,
+    workspaces,
 };
 #[allow(deprecated)]
 use diesel::{Insertable, Queryable};
@@ -273,19 +273,18 @@ pub struct SimulationTask {
     pub session_id: i32,
     pub status: String,
     pub stage: Option<String>,
-    pub study_type: Option<String>,
-    pub params_json: String,
+    pub study_type: String,
+    pub model_version_id: i32,
+    pub study_spec_json: String,
+    pub script_artifact_id: i32,
+    pub agent_bundle_version: String,
+    pub agent_skill_refs_json: String,
+    pub engine_contract_version: String,
     pub exit_code: Option<i32>,
     pub error_json: Option<String>,
     pub created_at_ms: i64,
     pub started_at_ms: Option<i64>,
     pub finished_at_ms: Option<i64>,
-    pub model_version_id: Option<i32>,
-    pub study_spec_json: Option<String>,
-    pub script_artifact_id: Option<i32>,
-    pub agent_bundle_version: Option<String>,
-    pub agent_skill_refs_json: Option<String>,
-    pub engine_contract_version: Option<String>,
 }
 
 #[derive(Insertable, Debug, Clone)]
@@ -294,34 +293,18 @@ pub struct NewSimulationTask {
     pub session_id: i32,
     pub status: String,
     pub stage: Option<String>,
-    pub study_type: Option<String>,
-    pub params_json: String,
+    pub study_type: String,
+    pub model_version_id: i32,
+    pub study_spec_json: String,
+    pub script_artifact_id: i32,
+    pub agent_bundle_version: String,
+    pub agent_skill_refs_json: String,
+    pub engine_contract_version: String,
     pub exit_code: Option<i32>,
     pub error_json: Option<String>,
     pub created_at_ms: i64,
     pub started_at_ms: Option<i64>,
     pub finished_at_ms: Option<i64>,
-}
-
-#[derive(Insertable, Debug, Clone)]
-#[diesel(table_name = simulation_tasks)]
-pub struct NewV2SimulationTask {
-    pub session_id: i32,
-    pub status: String,
-    pub stage: Option<String>,
-    pub study_type: Option<String>,
-    pub params_json: String,
-    pub exit_code: Option<i32>,
-    pub error_json: Option<String>,
-    pub created_at_ms: i64,
-    pub started_at_ms: Option<i64>,
-    pub finished_at_ms: Option<i64>,
-    pub model_version_id: Option<i32>,
-    pub study_spec_json: Option<String>,
-    pub script_artifact_id: Option<i32>,
-    pub agent_bundle_version: Option<String>,
-    pub agent_skill_refs_json: Option<String>,
-    pub engine_contract_version: Option<String>,
 }
 
 #[derive(Queryable, Debug, Clone, serde::Serialize)]
@@ -473,93 +456,4 @@ pub struct NewMessage {
     pub content: String,
     pub payload_json: Option<String>,
     pub created_at_ms: i64,
-}
-
-// ---- task_files ----
-
-#[derive(Queryable, Debug, Clone)]
-#[diesel(table_name = task_files)]
-pub struct TaskFile {
-    pub id: i32,
-    pub task_id: i32,
-    pub role: String,
-    pub path: String,
-    pub filename: String,
-    pub format: Option<String>,
-    pub result_name: Option<String>,
-    pub size_bytes: Option<i64>,
-    pub sha256: Option<String>,
-    pub created_at_ms: i64,
-}
-
-#[derive(Insertable, Debug, Clone)]
-#[diesel(table_name = task_files)]
-pub struct NewTaskFile {
-    pub task_id: i32,
-    pub role: String,
-    pub path: String,
-    pub filename: String,
-    pub format: Option<String>,
-    pub result_name: Option<String>,
-    pub size_bytes: Option<i64>,
-    pub sha256: Option<String>,
-    pub created_at_ms: i64,
-}
-
-// ---- task_results ----
-
-#[derive(Queryable, Debug, Clone)]
-#[diesel(table_name = task_results)]
-pub struct TaskResult {
-    pub id: i32,
-    pub task_id: i32,
-    pub result_name: String,
-    pub row_count: i32,
-    pub converged: Option<bool>,
-    pub violation_count: Option<i32>,
-    pub p_loss_w: Option<f64>,
-    pub q_loss_var: Option<f64>,
-    pub max_violation_ratio: Option<f64>,
-    pub metrics_json: String,
-    pub created_at_ms: i64,
-}
-
-#[derive(Insertable, Debug, Clone)]
-#[diesel(table_name = task_results)]
-pub struct NewTaskResult {
-    pub task_id: i32,
-    pub result_name: String,
-    pub row_count: i32,
-    pub converged: Option<bool>,
-    pub violation_count: Option<i32>,
-    pub p_loss_w: Option<f64>,
-    pub q_loss_var: Option<f64>,
-    pub max_violation_ratio: Option<f64>,
-    pub metrics_json: String,
-    pub created_at_ms: i64,
-}
-
-// ---- curve_data ----
-
-#[derive(Queryable, Debug, Clone)]
-#[diesel(table_name = curve_data)]
-pub struct CurveDatum {
-    pub id: i32,
-    pub task_id: i32,
-    pub result_name: String,
-    pub series_key: String,
-    pub time_s: f64,
-    pub variable: String,
-    pub value: f64,
-}
-
-#[derive(Insertable, Debug, Clone)]
-#[diesel(table_name = curve_data)]
-pub struct NewCurveDatum {
-    pub task_id: i32,
-    pub result_name: String,
-    pub series_key: String,
-    pub time_s: f64,
-    pub variable: String,
-    pub value: f64,
 }

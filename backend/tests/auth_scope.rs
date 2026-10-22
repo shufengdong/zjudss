@@ -140,9 +140,27 @@ async fn trusted_proxy_scopes_all_session_resources() {
     assert_eq!(bob_json["sessions"][0]["id"], bob_session.to_string());
 
     let mut conn = app.pool.get().expect("checkout database");
+    diesel::sql_query("INSERT INTO artifacts(sha256,size_bytes,storage_path,format,created_at_ms) VALUES('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',0,'objects/bb/auth-script','rss',1)")
+    .execute(&mut conn).expect("insert script artifact");
+    let artifact: IdRow = diesel::sql_query("SELECT last_insert_rowid() AS id")
+        .get_result(&mut conn)
+        .unwrap();
     diesel::sql_query(format!(
-        "INSERT INTO simulation_tasks(session_id,status,stage,study_type,params_json,created_at_ms) \
-         VALUES ({alice_session},'succeeded',NULL,NULL,'{{}}',1)"
+        "INSERT INTO workspaces(session_id,created_at_ms,updated_at_ms) VALUES({alice_session},1,1)"
+    ))
+    .execute(&mut conn)
+    .expect("insert workspace");
+    let workspace: IdRow = diesel::sql_query("SELECT last_insert_rowid() AS id")
+        .get_result(&mut conn)
+        .unwrap();
+    diesel::sql_query(format!("INSERT INTO model_versions(workspace_id,status,source_kind,origin_kind,manifest_json,content_hash,created_at_ms) VALUES({},'ready','rss','generated','{{}}','auth-version',1)",workspace.id))
+    .execute(&mut conn).expect("insert model version");
+    let version: IdRow = diesel::sql_query("SELECT last_insert_rowid() AS id")
+        .get_result(&mut conn)
+        .unwrap();
+    diesel::sql_query(format!(
+        "INSERT INTO simulation_tasks(session_id,status,stage,study_type,model_version_id,study_spec_json,script_artifact_id,agent_bundle_version,agent_skill_refs_json,engine_contract_version,created_at_ms) \
+         VALUES ({alice_session},'succeeded',NULL,'power_flow',{},'{{}}',{},'v2.0.0','[]','test-contract',1)",version.id,artifact.id
     ))
     .execute(&mut conn)
     .expect("insert alice task");
@@ -158,7 +176,7 @@ async fn trusted_proxy_scopes_all_session_resources() {
             None,
         ),
         ("GET", format!("/api/sessions/{alice_session}/events"), None),
-        ("GET", format!("/api/tasks/{}/curves", task.id), None),
+        ("GET", format!("/api/tasks/{}", task.id), None),
         (
             "POST",
             format!("/api/sessions/{alice_session}/attachments"),

@@ -1,7 +1,20 @@
--- 回滚初始 schema：按依赖逆序删除（子先于父）。
-DROP TABLE IF EXISTS curve_data;
-DROP TABLE IF EXISTS task_results;
-DROP TABLE IF EXISTS task_files;
+DROP TABLE IF EXISTS chat_search_fts;
+DROP TABLE IF EXISTS chat_search_documents;
+DROP TABLE IF EXISTS task_comparisons;
+DROP TABLE IF EXISTS dataset_views;
+DROP TABLE IF EXISTS result_analysis_inputs;
+DROP TABLE IF EXISTS result_datasets;
+DROP TABLE IF EXISTS result_analysis_runs;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS simulation_tasks;
+DROP TABLE IF EXISTS ingestion_artifacts;
+DROP TABLE IF EXISTS ingestions;
+DROP TABLE IF EXISTS dataframe_bindings;
+DROP TABLE IF EXISTS version_artifacts;
+DROP TABLE IF EXISTS model_versions;
+DROP TABLE IF EXISTS workspaces;
+DROP TABLE IF EXISTS artifact_gc_failures;
+DROP TABLE IF EXISTS storage_scope_artifacts;
+DROP TABLE IF EXISTS artifacts;
 DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS storage_scopes;

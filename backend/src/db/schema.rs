@@ -167,19 +167,18 @@ diesel::table! {
         session_id -> Integer,
         status -> Text,
         stage -> Nullable<Text>,
-        study_type -> Nullable<Text>,
-        params_json -> Text,
+        study_type -> Text,
+        model_version_id -> Integer,
+        study_spec_json -> Text,
+        script_artifact_id -> Integer,
+        agent_bundle_version -> Text,
+        agent_skill_refs_json -> Text,
+        engine_contract_version -> Text,
         exit_code -> Nullable<Integer>,
         error_json -> Nullable<Text>,
         created_at_ms -> BigInt,
         started_at_ms -> Nullable<BigInt>,
         finished_at_ms -> Nullable<BigInt>,
-        model_version_id -> Nullable<Integer>,
-        study_spec_json -> Nullable<Text>,
-        script_artifact_id -> Nullable<Integer>,
-        agent_bundle_version -> Nullable<Text>,
-        agent_skill_refs_json -> Nullable<Text>,
-        engine_contract_version -> Nullable<Text>,
     }
 }
 
@@ -262,49 +261,6 @@ diesel::table! {
     }
 }
 
-diesel::table! {
-    task_files (id) {
-        id -> Integer,
-        task_id -> Integer,
-        role -> Text,
-        path -> Text,
-        filename -> Text,
-        format -> Nullable<Text>,
-        result_name -> Nullable<Text>,
-        size_bytes -> Nullable<BigInt>,
-        sha256 -> Nullable<Text>,
-        created_at_ms -> BigInt,
-    }
-}
-
-diesel::table! {
-    task_results (id) {
-        id -> Integer,
-        task_id -> Integer,
-        result_name -> Text,
-        row_count -> Integer,
-        converged -> Nullable<Bool>,
-        violation_count -> Nullable<Integer>,
-        p_loss_w -> Nullable<Double>,
-        q_loss_var -> Nullable<Double>,
-        max_violation_ratio -> Nullable<Double>,
-        metrics_json -> Text,
-        created_at_ms -> BigInt,
-    }
-}
-
-diesel::table! {
-    curve_data (id) {
-        id -> Integer,
-        task_id -> Integer,
-        result_name -> Text,
-        series_key -> Text,
-        time_s -> Double,
-        variable -> Text,
-        value -> Double,
-    }
-}
-
 diesel::joinable!(sessions -> storage_scopes (storage_scope_id));
 diesel::joinable!(workspaces -> sessions (session_id));
 diesel::joinable!(model_versions -> workspaces (workspace_id));
@@ -335,9 +291,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     ingestion_artifacts,
     simulation_tasks,
     messages,
-    task_files,
-    task_results,
-    curve_data,
     result_analysis_runs,
     result_analysis_inputs,
     result_datasets,

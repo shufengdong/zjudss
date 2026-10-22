@@ -648,8 +648,20 @@ async fn checked_activation_and_rollback_only_move_workspace_pointers() {
                 session_id,
                 status: "succeeded".into(),
                 stage: Some("collecting".into()),
-                study_type: Some("power_flow".into()),
-                params_json: json!({"versionId":base_id}).to_string(),
+                study_type: "power_flow".into(),
+                model_version_id: base_id,
+                study_spec_json: json!({"kind":"power_flow"}).to_string(),
+                script_artifact_id: app
+                    .state
+                    .workspace_service
+                    .inputs(&p.access, base_id)
+                    .await
+                    .unwrap()[0]
+                    .0
+                    .artifact_id,
+                agent_bundle_version: "v2.0.0".into(),
+                agent_skill_refs_json: "[]".into(),
+                engine_contract_version: "test-contract".into(),
                 exit_code: Some(0),
                 error_json: None,
                 created_at_ms: 10,
@@ -693,5 +705,6 @@ async fn checked_activation_and_rollback_only_move_workspace_pointers() {
         .unwrap()
         .unwrap();
     assert_eq!(unchanged.status, "succeeded");
-    assert_eq!(unchanged.params_json, task.params_json);
+    assert_eq!(unchanged.model_version_id, task.model_version_id);
+    assert_eq!(unchanged.study_spec_json, task.study_spec_json);
 }

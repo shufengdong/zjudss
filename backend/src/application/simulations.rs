@@ -17,7 +17,7 @@ use crate::application::{
 };
 use crate::auth::Principal;
 use crate::db::models::{
-    DataframeBinding, NewResultDataset, NewV2SimulationTask, ResultDataset, SimulationTask,
+    DataframeBinding, NewResultDataset, NewSimulationTask, ResultDataset, SimulationTask,
     VersionArtifact,
 };
 use crate::db::repositories::{MessageRepo, SimulationRepo};
@@ -177,27 +177,24 @@ impl SimulationService {
             .repo
             .create(
                 &request.principal.access,
-                NewV2SimulationTask {
+                NewSimulationTask {
                     session_id: request.session_id,
                     status: "pending".into(),
                     stage: Some("prepare".into()),
-                    study_type: Some(request.study_type.clone()),
-                    params_json: "{}".into(),
+                    study_type: request.study_type.clone(),
+                    model_version_id: version.id,
+                    study_spec_json: crate::application::canonical_json(&request.study_spec),
+                    script_artifact_id,
+                    agent_bundle_version: self.knowledge.manifest.agent_bundle_version.clone(),
+                    agent_skill_refs_json: crate::application::canonical_json(&Value::Array(
+                        request.skill_refs.clone(),
+                    )),
+                    engine_contract_version: ENGINE_CONTRACT_VERSION.into(),
                     exit_code: None,
                     error_json: None,
                     created_at_ms: now_ms(),
                     started_at_ms: None,
                     finished_at_ms: None,
-                    model_version_id: Some(version.id),
-                    study_spec_json: Some(crate::application::canonical_json(&request.study_spec)),
-                    script_artifact_id: Some(script_artifact_id),
-                    agent_bundle_version: Some(
-                        self.knowledge.manifest.agent_bundle_version.clone(),
-                    ),
-                    agent_skill_refs_json: Some(crate::application::canonical_json(&Value::Array(
-                        request.skill_refs.clone(),
-                    ))),
-                    engine_contract_version: Some(ENGINE_CONTRACT_VERSION.into()),
                 },
             )
             .await

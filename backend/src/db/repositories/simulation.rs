@@ -1,7 +1,7 @@
 use diesel::prelude::*;
 
 use crate::auth::AccessScope;
-use crate::db::models::{NewResultDataset, NewV2SimulationTask, ResultDataset, SimulationTask};
+use crate::db::models::{NewResultDataset, NewSimulationTask, ResultDataset, SimulationTask};
 use crate::db::{DbPool, schema};
 
 use super::{RepoError, RepoResult};
@@ -19,19 +19,15 @@ impl SimulationRepo {
     pub async fn create(
         &self,
         scope: &AccessScope,
-        task: NewV2SimulationTask,
+        task: NewSimulationTask,
     ) -> RepoResult<SimulationTask> {
         let pool = self.pool.clone();
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.transaction::<_, RepoError, _>(|conn| {
-                let version_id = task
-                    .model_version_id
-                    .ok_or_else(|| RepoError::InvalidState("model_version_id 必填".into()))?;
-                let script_id = task
-                    .script_artifact_id
-                    .ok_or_else(|| RepoError::InvalidState("script_artifact_id 必填".into()))?;
+                let version_id = task.model_version_id;
+                let script_id = task.script_artifact_id;
                 let storage_scope_id = schema::sessions::table
                     .filter(schema::sessions::id.eq(task.session_id))
                     .filter(schema::sessions::access_scope_kind.eq(&scope.kind))

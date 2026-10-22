@@ -69,11 +69,13 @@ pub async fn get(
         object.insert("treeHash".into(), json!(example.tree_hash));
         object.insert(
             "files".into(),
-            json!(example
-                .files
-                .iter()
-                .map(|file| json!({"path": file.virtual_path, "sha256": file.sha256}))
-                .collect::<Vec<_>>()),
+            json!(
+                example
+                    .files
+                    .iter()
+                    .map(|file| json!({"path": file.virtual_path, "sha256": file.sha256}))
+                    .collect::<Vec<_>>()
+            ),
         );
         object.insert("diagnostics".into(), json!(example.diagnostics));
     }

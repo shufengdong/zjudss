@@ -136,12 +136,12 @@ async fn ready_version_persists_reproducible_task_and_generic_parquet_dataset() 
         .await
         .unwrap();
     assert_eq!(out.task.status, "succeeded");
-    assert_eq!(out.task.model_version_id, Some(version));
-    assert!(out.task.script_artifact_id.is_some());
-    assert_eq!(out.task.agent_bundle_version.as_deref(), Some("v2.0.0"));
+    assert_eq!(out.task.model_version_id, version);
+    assert!(out.task.script_artifact_id > 0);
+    assert_eq!(out.task.agent_bundle_version, "v2.0.0");
     assert_eq!(
-        out.task.engine_contract_version.as_deref(),
-        Some(backend::adapters::ENGINE_CONTRACT_VERSION)
+        out.task.engine_contract_version,
+        backend::adapters::ENGINE_CONTRACT_VERSION
     );
     assert_eq!(out.datasets.len(), 1);
     let metadata = app

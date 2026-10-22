@@ -91,11 +91,7 @@ impl ComparisonService {
             .list_task(&p.access, candidate_task_id)
             .await
             .map_err(|_| ComparisonError::new("not_found", "资源不存在"))?;
-        let (left, right, compatibility) = compatible_pair(
-            &baseline.study_type.clone().unwrap_or_default(),
-            left,
-            right,
-        )?;
+        let (left, right, compatibility) = compatible_pair(&baseline.study_type, left, right)?;
         let analysis=self.analysis.run(AnalysisRequest{principal:p.clone(),session_id,request_message_id,intent:json!({"kind":"task_comparison","baselineTaskId":baseline_task_id.to_string(),"candidateTaskId":candidate_task_id.to_string(),"compatibility":compatibility}),script:comparison_script(&compatibility),inputs:vec![AnalysisInput{dataset_id:left.id,alias:"baseline".into()},AnalysisInput{dataset_id:right.id,alias:"candidate".into()}],expected_outputs:vec!["result".into()],initial_views:HashMap::new(),skill_refs}).await.map_err(|e|ComparisonError::new(e.code,e.to_string()))?;
         let comparison = self
             .repo
