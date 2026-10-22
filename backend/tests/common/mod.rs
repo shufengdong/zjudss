@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, HashSet};
 
 use axum::Router;
 use backend::adapters::StubEngine;
-use backend::agent::LlmConfig;
 use backend::agent::knowledge::AgentKnowledge;
+use backend::agent::{AgentFactory, DeepSeekAgentFactory, LlmConfig};
 use backend::application::{AppState, RunScheduler};
 use backend::auth::AuthConfig;
 use backend::catalog::SchemaCatalog;
@@ -32,6 +32,31 @@ impl TestApp {
     }
 
     pub async fn spawn_with_scheduler(auth: AuthConfig, scheduler: RunScheduler) -> Self {
+        Self::spawn_with_scheduler_and_agent_factory(
+            auth,
+            scheduler,
+            std::sync::Arc::new(DeepSeekAgentFactory::new(LlmConfig {
+                provider: "deepseek".to_string(),
+                model: "test-model".to_string(),
+            })),
+        )
+        .await
+    }
+
+    pub async fn spawn_with_agent_factory(factory: std::sync::Arc<dyn AgentFactory>) -> Self {
+        Self::spawn_with_scheduler_and_agent_factory(
+            AuthConfig::instance(),
+            RunScheduler::new(8, 2, 32),
+            factory,
+        )
+        .await
+    }
+
+    async fn spawn_with_scheduler_and_agent_factory(
+        auth: AuthConfig,
+        scheduler: RunScheduler,
+        agent_factory: std::sync::Arc<dyn AgentFactory>,
+    ) -> Self {
         let root = tempfile::tempdir().expect("create isolated test root");
         let engine_root = root.path().join("engine");
         let dss_root = engine_root.join("sparrowzz/dss");
@@ -110,13 +135,10 @@ impl TestApp {
             db::run_migrations(&mut conn).expect("run test migrations");
         }
 
-        let state = AppState::new_with_resources(
+        let state = AppState::new_with_resources_and_agent_factory(
             pool.clone(),
             std::sync::Arc::new(StubEngine),
-            LlmConfig {
-                provider: "deepseek".to_string(),
-                model: "test-model".to_string(),
-            },
+            agent_factory,
             config.data_dir.clone(),
             auth,
             scheduler,

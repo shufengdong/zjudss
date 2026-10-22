@@ -13,7 +13,7 @@ use rig::message::{AssistantContent, Message, ToolResultContent};
 use rig::streaming::{Item, StreamEvent};
 
 use crate::adapters::SimEngine;
-use crate::agent::{self, LlmConfig};
+use crate::agent::{AgentBuildRequest, AgentFactory};
 use crate::application::{AppState, EventBus, EventWriter, ToolStatus, now_ms};
 use crate::auth::Principal;
 use crate::db::repositories::{MessageRepo, SessionRepo, TaskRepo};
@@ -30,7 +30,7 @@ pub struct ChatService {
     message_repo: MessageRepo,
     session_repo: SessionRepo,
     task_repo: TaskRepo,
-    llm: LlmConfig,
+    agent_factory: Arc<dyn AgentFactory>,
     semaphore: Arc<Semaphore>,
     principal: Principal,
     workspaces: crate::application::WorkspaceService,
@@ -54,7 +54,7 @@ impl ChatService {
             message_repo: state.message_repo.clone(),
             session_repo: state.session_repo.clone(),
             task_repo: state.task_repo.clone(),
-            llm: state.llm.clone(),
+            agent_factory: state.agent_factory.clone(),
             semaphore: state.semaphore.clone(),
             principal,
             workspaces: state.workspace_service.clone(),
@@ -110,7 +110,10 @@ impl ChatService {
             &self.agent_knowledge,
             &self.engine_snapshot,
         );
-        let agent = match agent::build_agent_with_prompt(&self.llm, tools, system_prompt) {
+        let agent = match self.agent_factory.build(AgentBuildRequest {
+            tools,
+            system_prompt,
+        }) {
             Ok(agent) => agent,
             Err(err) => {
                 let _ = writer.assistant(&format!("无法启动 agent：{err}")).await;

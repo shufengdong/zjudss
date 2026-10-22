@@ -186,3 +186,19 @@
     - 'view:heatmap'
     - 'view:boxplot'
     - 'view:histogram'
+- id: AGENT-FACTORY-001
+  source: docs/integration-testing-design.md#52-全部-agent-工具和-skill
+  title: 每条用户消息构建独立 Agent
+  layers: [agent, api]
+  lanes: [pr]
+  tests: [{ runner: rust, file: backend/tests/agent_factory.rs, name: chat_builds_one_agent_per_user_message }]
+  assertions: [每条用户消息分别获得完整工具集和当前引擎及技能提示词]
+  fixtures: []
+- id: AGENT-FACTORY-002
+  source: docs/integration-testing-design.md#52-全部-agent-工具和-skill
+  title: 未知 LLM provider 失败关闭
+  layers: [agent]
+  lanes: [pr]
+  tests: [{ runner: rust, file: backend/tests/agent_factory.rs, name: deepseek_factory_rejects_unknown_provider }]
+  assertions: [未知 provider 返回稳定错误且不发起外部请求]
+  fixtures: []

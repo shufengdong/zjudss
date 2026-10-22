@@ -4,12 +4,14 @@
 //! preamble / tools / temperature 都在分支之外，保证多个 provider 共用同一份组装逻辑。
 //! 流式驱动（`run_channel`）在 `application::chat` 层做（architecture §8）。
 
+use rig::Agent;
 use rig::tool::RegisteredTool;
-use rig::tool::server::ToolServer;
-use rig::{Agent, AgentBuilder};
 
+mod factory;
 pub mod knowledge;
 pub mod prompt;
+
+pub use factory::{AgentBuildRequest, AgentFactory, DeepSeekAgentFactory};
 
 const SYSTEM_PROMPT: &str = include_str!("../../resources/agent/v2/system.md");
 const SKILL_INDEX: &str = include_str!("../../resources/agent/v2/skill-index.json");
@@ -61,28 +63,10 @@ pub fn build_agent_with_prompt(
     tools: Vec<RegisteredTool>,
     prompt: String,
 ) -> Result<Agent, LlmError> {
-    // 1. provider 分支：只负责产出模型，其余配置一律不在这里做。
-    let model = match config.provider.as_str() {
-        "deepseek" => {
-            let client = rig::providers::deepseek::from_env()
-                .map_err(|e| LlmError::Provider(e.to_string()))?;
-            client.chat(&config.model)
-        }
-        "openai" => return Err(LlmError::OpenAiNotImplemented),
-        other => return Err(LlmError::UnsupportedProvider(other.to_string())),
-    };
-
-    // 2. 公共组装：preamble / tools / temperature 与 provider 无关。
-    let mut server = ToolServer::new();
-    for tool in tools {
-        server = server.registered_tool(tool);
-    }
-
-    Ok(AgentBuilder::new(model)
-        .preamble(&prompt)
-        .temperature(0.3)
-        .tool_server_handle(server.run())
-        .build())
+    DeepSeekAgentFactory::new(config.clone()).build(AgentBuildRequest {
+        tools,
+        system_prompt: prompt,
+    })
 }
 
 pub fn build_agent(config: &LlmConfig, tools: Vec<RegisteredTool>) -> Result<Agent, LlmError> {

@@ -1,5 +1,5 @@
-use backend::agent::LlmConfig;
 use backend::agent::knowledge::AgentKnowledge;
+use backend::agent::{DeepSeekAgentFactory, LlmConfig};
 use backend::application::{AppState, RunScheduler, StorageLimits};
 use backend::auth::AuthConfig;
 use backend::catalog::SchemaCatalog;
@@ -73,10 +73,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         byte_limit: i64::try_from(runtime.owner_storage_limit_bytes)?,
         warning_ratio: runtime.storage_warning_ratio,
     };
-    let state = AppState::new_with_resources(
+    let state = AppState::new_with_resources_and_agent_factory(
         pool,
         engine,
-        llm,
+        std::sync::Arc::new(DeepSeekAgentFactory::new(llm)),
         runtime.data_dir,
         auth,
         scheduler,

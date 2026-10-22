@@ -24,8 +24,8 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 use crate::adapters::{SimEngine, resolve_data_dir};
-use crate::agent::LlmConfig;
 use crate::agent::knowledge::AgentKnowledge;
+use crate::agent::{AgentFactory, DeepSeekAgentFactory, LlmConfig};
 use crate::auth::AuthConfig;
 use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
@@ -85,7 +85,7 @@ pub struct AppState {
     pub agent_knowledge: Arc<AgentKnowledge>,
     pub events: EventBus,
     pub engine: Arc<dyn SimEngine>,
-    pub llm: LlmConfig,
+    pub agent_factory: Arc<dyn AgentFactory>,
     pub auth: AuthConfig,
     pub scheduler: RunScheduler,
     pub semaphore: Arc<Semaphore>,
@@ -98,6 +98,22 @@ pub struct AppState {
 impl AppState {
     pub fn new(pool: DbPool, engine: Arc<dyn SimEngine>, llm: LlmConfig) -> Self {
         Self::new_with_data_dir(pool, engine, llm, resolve_data_dir())
+    }
+
+    pub fn new_with_agent_factory(
+        pool: DbPool,
+        engine: Arc<dyn SimEngine>,
+        agent_factory: Arc<dyn AgentFactory>,
+    ) -> Self {
+        Self::new_with_data_dir_and_agent_factory(
+            pool,
+            engine,
+            agent_factory,
+            resolve_data_dir(),
+            AuthConfig::instance(),
+            RunScheduler::new(8, 2, 32),
+            StorageLimits::default(),
+        )
     }
 
     pub fn new_with_data_dir(
@@ -202,6 +218,37 @@ impl AppState {
         upload_batch_limit_bytes: u64,
         archive_limits: ArchiveLimits,
     ) -> Self {
+        Self::new_with_resources_and_agent_factory(
+            pool,
+            engine,
+            Arc::new(DeepSeekAgentFactory::new(llm)),
+            data_dir,
+            auth,
+            scheduler,
+            storage_limits,
+            catalog,
+            engine_snapshot,
+            upload_single_file_limit_bytes,
+            upload_batch_limit_bytes,
+            archive_limits,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_resources_and_agent_factory(
+        pool: DbPool,
+        engine: Arc<dyn SimEngine>,
+        agent_factory: Arc<dyn AgentFactory>,
+        data_dir: PathBuf,
+        auth: AuthConfig,
+        scheduler: RunScheduler,
+        storage_limits: StorageLimits,
+        catalog: Arc<SchemaCatalog>,
+        engine_snapshot: Arc<EngineResourceSnapshot>,
+        upload_single_file_limit_bytes: u64,
+        upload_batch_limit_bytes: u64,
+        archive_limits: ArchiveLimits,
+    ) -> Self {
         let session_repo = SessionRepo::new(pool.clone());
         let message_repo = MessageRepo::new(pool.clone());
         let task_repo = TaskRepo::new(pool.clone());
@@ -289,7 +336,7 @@ impl AppState {
             agent_knowledge,
             events,
             engine,
-            llm,
+            agent_factory,
             auth,
             scheduler,
             semaphore: Arc::new(Semaphore::new(4)),
@@ -297,6 +344,52 @@ impl AppState {
             upload_single_file_limit_bytes,
             upload_batch_limit_bytes,
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_data_dir_and_agent_factory(
+        pool: DbPool,
+        engine: Arc<dyn SimEngine>,
+        agent_factory: Arc<dyn AgentFactory>,
+        data_dir: PathBuf,
+        auth: AuthConfig,
+        scheduler: RunScheduler,
+        storage_limits: StorageLimits,
+    ) -> Self {
+        let catalog = Arc::new(
+            SchemaCatalog::from_value(
+                "embedded-test",
+                &serde_json::json!({"schema_version":2,"frames":{"table":{"required":{"id":"str"}}}}),
+            )
+            .expect("内置最小 catalog 有效"),
+        );
+        let engine_snapshot = Arc::new(EngineResourceSnapshot {
+            id: "embedded-empty".into(),
+            contract_version: "embedded-test".into(),
+            catalog_schema_version: 2,
+            source_root: data_dir.clone(),
+            engine_root: data_dir.clone(),
+            catalog_json: serde_json::json!({}),
+            functions_json: serde_json::json!({}),
+            catalog_bytes: Default::default(),
+            documents: Default::default(),
+            knowledge: EngineKnowledge::from_documents(&[]),
+            examples: vec![],
+        });
+        Self::new_with_resources_and_agent_factory(
+            pool,
+            engine,
+            agent_factory,
+            data_dir,
+            auth,
+            scheduler,
+            storage_limits,
+            catalog,
+            engine_snapshot,
+            50 * 1024 * 1024,
+            500 * 1024 * 1024,
+            ArchiveLimits::default(),
+        )
     }
 
     /// 派生一次对话的编排服务（共享引擎/事件/仓储，克隆成本低）。
