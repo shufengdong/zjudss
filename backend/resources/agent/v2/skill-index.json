@@ -7,7 +7,7 @@
       "description": "整理上传、表头推断、替换与模型版本",
       "triggers": ["upload", "replace", "mapping"],
       "requiredTools": ["inspect_workspace"],
-      "engineContractVersion": "dss-v2-d6a502d3",
+      "engineContractVersion": "dss-v2-d2b6d88a",
       "sources": ["docs/dataframe_schema_reference.md", "docs/dss_to_rss.md"],
       "path": "skills/model-intake.md",
       "sha256": "99c5a8ef4cd112ec735b46df840c61047d2d1dddfa21c3c30fb8b47f1438fd54"
@@ -18,7 +18,7 @@
       "description": "选择仿真类型、求解器、参数与输出",
       "triggers": ["simulate", "power-flow", "short-circuit", "qsts"],
       "requiredTools": ["inspect_workspace", "run_study"],
-      "engineContractVersion": "dss-v2-d6a502d3",
+      "engineContractVersion": "dss-v2-d2b6d88a",
       "sources": ["docs/agent_quickstart.md", "docs/dsa_function_reference.md"],
       "path": "skills/study-planning.md",
       "sha256": "bbd011e882e478e778d1ab7e24241c5ff297f1cd265381ee8f2b579e9821b5a4"
@@ -29,7 +29,7 @@
       "description": "按函数合同生成并校验 RSS",
       "triggers": ["generate-script", "modify-script"],
       "requiredTools": ["search_engine_docs", "read_engine_doc_section"],
-      "engineContractVersion": "dss-v2-d6a502d3",
+      "engineContractVersion": "dss-v2-d2b6d88a",
       "sources": ["docs/catalog/functions.json", "docs/rss_language_reference.md", "docs/rsdss_function_reference.md"],
       "path": "skills/rss-generation.md",
       "sha256": "c13d247c74bacf7410a141c4d5ad996b108d177733c999ddf41cbf27330f4ee8"
@@ -40,7 +40,7 @@
       "description": "从 Parquet dataset 生成受控结果查询和视图",
       "triggers": ["query-result", "aggregate", "visualize"],
       "requiredTools": ["run_result_analysis", "create_dataset_view"],
-      "engineContractVersion": "dss-v2-d6a502d3",
+      "engineContractVersion": "dss-v2-d2b6d88a",
       "sources": ["docs/catalog/dataframes.json", "docs/rsdss_function_reference.md"],
       "path": "skills/result-analysis.md",
       "sha256": "864999da5024ef0adc947c6b61f54ac2b39a407807a309d155d83a719372f7ab"
@@ -51,7 +51,7 @@
       "description": "按稳定键和单位比较两个仿真任务",
       "triggers": ["compare", "before-after"],
       "requiredTools": ["compare_simulations"],
-      "engineContractVersion": "dss-v2-d6a502d3",
+      "engineContractVersion": "dss-v2-d2b6d88a",
       "sources": ["docs/catalog/dataframes.json", "docs/validation_and_troubleshooting.md"],
       "path": "skills/comparison.md",
       "sha256": "0498f083e07a15c321c8dc137a6ed0ec783e7d42607090e18ba50f0e86b8ed11"
@@ -62,7 +62,7 @@
       "description": "按稳定错误码和引擎文档定位失败",
       "triggers": ["failed", "diagnose"],
       "requiredTools": ["search_engine_docs", "read_engine_doc_section"],
-      "engineContractVersion": "dss-v2-d6a502d3",
+      "engineContractVersion": "dss-v2-d2b6d88a",
       "sources": ["docs/validation_and_troubleshooting.md", "docs/opendss_compatibility_matrix.md"],
       "path": "skills/troubleshooting.md",
       "sha256": "a6b6acfe9bc37ac025af0e00a993d48e37d989959042933697ce188c1e3e719a"

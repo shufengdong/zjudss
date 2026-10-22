@@ -258,7 +258,7 @@ frontend/src/
 - [x] **Step 1: 固化资源来源**：agent manifest 记录允许的 eig-rs/sparrowzz commit、两个 catalog SHA-256、schema version、skill 文件 hash、允许工具和兼容关系；工作树有未提交修改时记录 dirty 状态且不能把未验证内容混入发布合同。
 - [x] **Step 2: 写知识资源失败测试**：缺 docs/catalog、hash 不符、路径逃逸、重复 skill ID、未知 required tool、bundle/contract 不兼容均使脚本生成 preflight 失败；system prompt 不含路径、密钥或函数/schema 全集。
 - [x] **Step 3: 写推断参数化测试**：catalog 每种输入 schema 至少一个正例；另覆盖 BOM/大小写/空白、未知表、相似 schema、dtype 冲突、重复表、多工作表与空工作表。
-- [x] **Step 4: 写文档/案例目录测试**：按标题切分 11 份 Markdown，全文搜索返回稳定 section/hash；发现 16 个根 RSS 和 37 个 bundle；无 manifest、依赖闭包不全、文件 hash 变化和缺 required feature 的案例不可导入。
+- [x] **Step 4: 写文档/案例目录测试**：按标题切分 11 份 Markdown，全文搜索返回稳定 section/hash；当前合同发现 16 个根 RSS 和 57 个 bundle；无 manifest、依赖闭包不全、文件 hash 变化和缺 required feature 的案例不可导入。
 - [x] **Step 5: 验证失败**：运行 `cd backend && cargo test --test agent_knowledge --test engine_resources --test catalog_inference`。
 - [x] **Step 6: 实现 snapshot 和 reader**：从 `TENSOREVAL_CWD/sparrowzz/dss` 读取允许子树，原子发布 docs/catalog/examples 快照；CSV 只读 header 和有限采样；Excel 每 sheet 独立；Parquet 从 footer 读 schema；文件名和 sheet 名不得进入评分，dtype 只写诊断。
 - [x] **Step 7: 实现检索和推断**：提供有字符上限的文档 search/read；生成包含候选分数、命中、缺失和类型冲突的 inference evidence；引擎合同不匹配时返回 `engine_contract_mismatch`。

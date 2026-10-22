@@ -4,8 +4,8 @@
 > 并在仿真和分析 run 中固化技能引用。
 > 适用范围：zjudss 后端通过 rig 0.45 构建的配电网仿真 agent。
 > 引擎知识源：`${TENSOREVAL_CWD}/sparrowzz/dss/docs/`，当前核对版本固定到 eig-rs superproject commit
-> `ce9c0cc0c71ed0e3469e99ecf43b73d33c4e34bf` 及其 sparrowzz submodule commit
-> `d6a502d3cd1eef7285da284173663cc9764bbd54`。
+> `3698864f0856e16ee77c56be89ef3d1c1424007b` 及其 sparrowzz submodule commit
+> `d2b6d88a740293074273fd5df4237898ac66657a`。
 
 ## 1. 实现与术语
 
@@ -58,7 +58,7 @@ Markdown。zjudss 不硬编码 `../eig-rs` 相对路径；统一从配置后的
 - `dataframes.json` SHA-256：`ead67bd4354e0acb99a957c4f96fd80f85e96268a7a190fb36ac65cce98cd471`
 - `functions.json` SHA-256：`d84b715c62b79ba95931b04e2df1c351928c02c8124b73f18b709f2430331496`
 
-案例 allowlist 从 sparrowzz commit 的 Git 对象生成，固定为 16 个根 RSS 和 37 个 bundle。工作树中
+案例 allowlist 从 sparrowzz commit 的 Git 对象生成，固定为 16 个根 RSS 和 57 个 bundle。工作树中
 额外的未提交 bundle 不进入快照。开发工作区里的 eig-rs 可能含未提交修改，因此 manifest 同时记录
 HEAD、submodule commit、dirty 状态和逐类内容 hash，不能默认为当前工作树就是发布事实。
 
@@ -97,7 +97,7 @@ catalog hash、每个 prompt/skill 文件 hash、允许的工具名称和生成�
 
 “让 agent 提前学习”在本系统中定义为 **服务启动时预检、切分和索引，执行某一请求时按需注入**，不在
 启动时微调模型，也不把全部文档永久塞进每轮上下文。当前目录包含 11 份 Markdown、2 份 JSON catalog、
-16 个根目录 RSS 示例和 37 个已发布 `.rssbundle`；完整文本约数百 KiB，全部常驻 prompt 会挤占用户模型
+16 个根目录 RSS 示例和 57 个已发布 `.rssbundle`；完整文本约数百 KiB，全部常驻 prompt 会挤占用户模型
 和结果 schema 的上下文空间。
 
 启动时 `EngineResourceRegistry` 执行：
@@ -121,7 +121,7 @@ catalog hash、每个 prompt/skill 文件 hash、允许的工具名称和生成�
 - `sparrowzz/dss/*.rss`：当前 16 个经过回归验证的脚本；导入时必须解析 `import_dss/import_bmopf`、
   `ds_*_plan` 和 `#include` 的完整依赖闭包，不能只复制入口脚本。依赖可能位于 `models/`，也可能是
   `psa/tests/bmopf` 或 `sparrowzz/rspower/lib`；只要显式引用解析后仍位于 `TENSOREVAL_CWD` 内即可；
-- `sparrowzz/dss/rssbundle/**/*.rssbundle`：当前 37 个有 `manifest.json`、文件 hash 和自执行验证证据的
+- `sparrowzz/dss/rssbundle/**/*.rssbundle`：当前 57 个有 `manifest.json`、文件 hash 和自执行验证证据的
   自包含 bundle，包含 execution plan、静态潮流、谐波和短路案例。
 
 `examples.json` 的每项至少包含稳定 `exampleId`、标题、说明、标签、`sourceKind`、入口相对路径、分析
