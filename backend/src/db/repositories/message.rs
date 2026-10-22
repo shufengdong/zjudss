@@ -67,7 +67,53 @@ impl MessageRepo {
             }
             schema::messages::table
                 .filter(schema::messages::session_id.eq(session_id))
-                .order(schema::messages::created_at_ms.asc())
+                .order(schema::messages::id.asc())
+                .load(&mut conn)
+                .map_err(RepoError::Query)
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
+    pub async fn list_after(
+        &self,
+        scope: &AccessScope,
+        session_id: i32,
+        after_id: i32,
+    ) -> RepoResult<Vec<Message>> {
+        let pool = self.pool.clone();
+        let scope = scope.clone();
+        tokio::task::spawn_blocking(move || -> RepoResult<Vec<Message>> {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            schema::sessions::table
+                .filter(schema::sessions::id.eq(session_id))
+                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
+                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .select(schema::sessions::id)
+                .first::<i32>(&mut conn)
+                .map_err(|error| match error {
+                    diesel::result::Error::NotFound => RepoError::NotFound,
+                    other => RepoError::Query(other),
+                })?;
+
+            if after_id > 0 {
+                let cursor_exists = schema::messages::table
+                    .filter(schema::messages::id.eq(after_id))
+                    .filter(schema::messages::session_id.eq(session_id))
+                    .select(schema::messages::id)
+                    .first::<i32>(&mut conn)
+                    .optional()
+                    .map_err(RepoError::Query)?
+                    .is_some();
+                if !cursor_exists {
+                    return Err(RepoError::NotFound);
+                }
+            }
+
+            schema::messages::table
+                .filter(schema::messages::session_id.eq(session_id))
+                .filter(schema::messages::id.gt(after_id))
+                .order(schema::messages::id.asc())
                 .load(&mut conn)
                 .map_err(RepoError::Query)
         })

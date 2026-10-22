@@ -5,6 +5,8 @@ import ToolCallCard from './ToolCallCard'
 import ProgressCard from './ProgressCard'
 import ResultCard from './ResultCard'
 import AttachmentCard from './AttachmentCard'
+import ComparisonCard from './ComparisonCard'
+import ModelStatusCard from './ModelStatusCard'
 
 interface MessageItemProps {
   message: Message
@@ -30,6 +32,10 @@ export default function MessageItem({ message, handlers }: MessageItemProps) {
           onDownload={(file) => handlers.notify(`下载 ${file.fileName}（mock）`)}
         />
       )
+    case 'model-status':
+      return <ModelStatusCard message={message} />
+    case 'comparison':
+      return <ComparisonCard message={message} />
     default:
       return null
   }

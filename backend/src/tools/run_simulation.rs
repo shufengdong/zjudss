@@ -9,7 +9,7 @@ use std::sync::Arc;
 use rig::tool::{Tool, ToolContext};
 
 use crate::adapters::{AdapterError, ErrorCategory, RunSpec};
-use crate::application::{Metrics, Stage, StageStatus, now_ms};
+use crate::application::{OperationKind, OperationRef, Stage, StageStatus, now_ms};
 use crate::db::models::NewSimulationTask;
 use crate::tools::ToolServices;
 
@@ -74,12 +74,10 @@ fn error_json(err: &AdapterError) -> Option<String> {
     serde_json::to_string(err).ok()
 }
 
-/// 越限时长（秒）→ 展示用字符串：`0.0` 记「0 h」，否则按小时一位小数。
-fn format_duration(secs: f64) -> String {
-    if secs <= 0.0 {
-        "0 h".to_string()
-    } else {
-        format!("{:.1} h", secs / 3600.0)
+fn simulation_operation(task_id: i32) -> OperationRef {
+    OperationRef {
+        kind: OperationKind::Simulation,
+        id: task_id.to_string(),
     }
 }
 
@@ -177,7 +175,7 @@ impl Tool for RunSimulationTool {
         let _ = services
             .writer
             .progress(
-                task_id,
+                simulation_operation(task_id),
                 progress_stages(
                     StageStatus::Running,
                     StageStatus::Pending,
@@ -227,25 +225,14 @@ impl Tool for RunSimulationTool {
                 let _ = services
                     .writer
                     .progress(
-                        task_id,
+                        simulation_operation(task_id),
                         progress_stages(StageStatus::Done, StageStatus::Done, StageStatus::Done),
                     )
                     .await;
 
-                // 电压指标来自适配器聚合（summary/bus_phase 尽力解析），缺失时回退 0。
-                let m = &outcome.metrics;
-                let metrics = Metrics {
-                    max_voltage: m.max_voltage.unwrap_or(0.0),
-                    min_voltage: m.min_voltage.unwrap_or(0.0),
-                    violation_nodes: m.violation_count.unwrap_or(0),
-                    violation_duration: m
-                        .violation_duration_s
-                        .map(format_duration)
-                        .unwrap_or_else(|| "0 h".to_string()),
-                };
                 let _ = services
                     .writer
-                    .result(task_id, "配电网时序仿真结果", metrics)
+                    .result(Some(task_id), None, "配电网时序仿真结果", vec![])
                     .await;
 
                 Ok(format!("task_id: {task_id_str}"))
@@ -269,7 +256,7 @@ impl Tool for RunSimulationTool {
                 let _ = services
                     .writer
                     .progress(
-                        task_id,
+                        simulation_operation(task_id),
                         progress_stages(
                             StageStatus::Failed,
                             StageStatus::Pending,
@@ -296,7 +283,7 @@ impl Tool for RunSimulationTool {
                 let _ = services
                     .writer
                     .progress(
-                        task_id,
+                        simulation_operation(task_id),
                         progress_stages(
                             StageStatus::Failed,
                             StageStatus::Pending,

@@ -306,7 +306,7 @@
 
 ---
 
-## 6. SSE 线格式
+## 6. v1 SSE 线格式（历史记录）
 
 - 响应头 `Content-Type: text/event-stream`，带 keep-alive 心跳（axum `KeepAlive` 默认发注释行）。
 - 每条事件：
@@ -1019,6 +1019,9 @@ context 本身不能绕过工具调用直接写库。比较创建逻辑位于 ap
 也必须生成可见 user 消息并走本节协议，不能直接调用 application service。
 
 ### 10.8 SSE 恢复契约
+
+该契约的消息补发、`id:`、`resync-required`、先订阅后查询及前端消息快照恢复已在 v2 Task 4
+实现；workspace/tasks 快照将在相应资源端点实现后并入同一恢复流程。
 
 每个持久化消息的 SSE 帧设置 `id: <messageId>`。客户端建立连接并收到 open 后再读取消息、工作区
 和任务快照；快照期间收到的事件先缓存，随后按消息 ID 和资源更新时间归并。断线重连携带

@@ -8,7 +8,7 @@ export interface Session {
   updatedAt: string // ISO 时间戳
 }
 
-// ---- 消息（discriminated union，共 6 种类型）----
+// ---- v2 消息（discriminated union，共 8 种类型）----
 export type MessageType =
   | 'user'
   | 'assistant'
@@ -16,8 +16,10 @@ export type MessageType =
   | 'progress'
   | 'result'
   | 'attachment'
+  | 'model-status'
+  | 'comparison'
 
-interface BaseMessage {
+export interface BaseMessage {
   id: string
   type: MessageType
   timestamp: string // ISO 时间戳
@@ -37,6 +39,7 @@ export type ToolStatus = 'running' | 'success' | 'failed'
 
 export interface ToolCallMessage extends BaseMessage {
   type: 'tool-call'
+  callId: string
   toolName: string
   args: Record<string, unknown>
   status: ToolStatus
@@ -53,22 +56,48 @@ export interface ProgressStage {
 
 export interface ProgressMessage extends BaseMessage {
   type: 'progress'
-  taskId: string
+  operation: OperationRef
   stages: ProgressStage[]
 }
 
-export interface SimulationMetrics {
-  maxVoltage: number
-  minVoltage: number
-  violationNodes: number
-  violationDuration: string
+export interface OperationRef {
+  kind: 'ingestion' | 'simulation' | 'analysis'
+  id: string
+}
+
+export type VisualizationKind = 'line' | 'bar' | 'scatter' | 'heatmap' | 'boxplot' | 'histogram'
+
+export interface ResultColumn {
+  name: string
+  dtype: string
+  nullable: boolean
+  unit?: string
+}
+
+export interface DatasetViewRef {
+  id: string
+  name: string
+  kind: VisualizationKind
+  isDefault: boolean
+}
+
+export interface ResultOutputRef {
+  datasetId: string
+  name: string
+  rowCount: number
+  columns: ResultColumn[]
+  previewRows?: unknown[][]
+  previewTruncated: boolean
+  defaultViewId: string | null
+  views: DatasetViewRef[]
 }
 
 export interface ResultMessage extends BaseMessage {
   type: 'result'
-  taskId: string
+  taskId?: string
+  analysisRunId?: string
   title: string
-  metrics: SimulationMetrics
+  outputs: ResultOutputRef[]
 }
 
 export interface Attachment {
@@ -80,6 +109,40 @@ export interface Attachment {
 export interface AttachmentMessage extends BaseMessage {
   type: 'attachment'
   file: Attachment
+  clientBatchId: string
+  clientFileId: string
+  ingestionId: string
+  uploadStatus: 'accepted' | 'ingesting' | 'ready' | 'failed'
+}
+
+export interface ModelVersionSnapshot {
+  versionId: string
+  status: 'collecting' | 'ready' | 'invalid'
+  recognizedTables: {
+    inputId: string
+    artifactId: string
+    tableKind: string
+    confidence: number
+  }[]
+  missing: string[]
+  ambiguities: { inputId: string; candidates: string[] }[]
+}
+
+export interface ModelStatusMessage extends BaseMessage {
+  type: 'model-status'
+  workspaceId: string
+  scope: 'active' | 'draft'
+  snapshot: ModelVersionSnapshot | null
+}
+
+export interface ComparisonMessage extends BaseMessage {
+  type: 'comparison'
+  comparisonId: string
+  baselineTaskId: string
+  candidateTaskId: string
+  analysisRunId: string
+  title: string
+  outputs: ResultOutputRef[]
 }
 
 export type Message =
@@ -89,6 +152,8 @@ export type Message =
   | ProgressMessage
   | ResultMessage
   | AttachmentMessage
+  | ModelStatusMessage
+  | ComparisonMessage
 
 // ---- 曲线 ----
 export interface CurveSeries {

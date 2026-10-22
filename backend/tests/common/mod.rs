@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::BTreeMap;
 
 use axum::Router;
@@ -12,6 +14,7 @@ use tempfile::TempDir;
 pub struct TestApp {
     pub router: Router,
     pub pool: DbPool,
+    pub state: AppState,
     _root: TempDir,
 }
 
@@ -56,11 +59,12 @@ impl TestApp {
             auth,
             scheduler,
         );
-        let router = backend::build_router(state);
+        let router = backend::build_router(state.clone());
 
         Self {
             router,
             pool,
+            state,
             _root: root,
         }
     }

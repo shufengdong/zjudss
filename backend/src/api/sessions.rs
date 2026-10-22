@@ -6,7 +6,9 @@ use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::application::{AppEvent, AppState, AttachmentFile, EventWriter, ms_to_iso, now_ms};
+use crate::application::{
+    AppEvent, AppState, AttachmentFile, EventWriter, UploadStatus, ms_to_iso, now_ms,
+};
 use crate::auth::CurrentPrincipal;
 use crate::db::models::{Message, NewMessage};
 
@@ -211,7 +213,16 @@ pub async fn upload_attachment(
         state.message_repo.clone(),
         state.events.clone(),
     );
-    let event = writer.attachment(file).await?;
+    let upload_id = now_ms().to_string();
+    let event = writer
+        .attachment(
+            file,
+            format!("server-batch-{upload_id}"),
+            format!("server-file-{upload_id}"),
+            format!("pending-{upload_id}"),
+            UploadStatus::Accepted,
+        )
+        .await?;
 
     Ok((StatusCode::CREATED, Json(json!(event))))
 }
@@ -275,7 +286,8 @@ pub async fn post_message(
         .events
         .publish(session_id, AppEvent::from_message(&user_msg));
 
-    if queued {
+    let queue_call_id = format!("agent-admission:{}", user_msg.id);
+    let queue_writer = if queued {
         let writer = EventWriter::new(
             principal.access.clone(),
             session_id,
@@ -284,13 +296,17 @@ pub async fn post_message(
         );
         writer
             .tool_call(
+                &queue_call_id,
                 "agent_admission",
                 json!({}),
                 crate::application::ToolStatus::Running,
                 Some("Agent 请求已进入等待队列".to_string()),
             )
             .await?;
-    }
+        Some(writer)
+    } else {
+        None
+    };
 
     // 3. 更新会话活跃时间。
     state
@@ -303,7 +319,22 @@ pub async fn post_message(
     let prompt_id = user_msg.id;
     let prompt = body.message;
     tokio::spawn(async move {
-        ticket.run(chat.run(session_id, prompt_id, prompt)).await;
+        ticket
+            .run(async move {
+                if let Some(writer) = queue_writer {
+                    let _ = writer
+                        .tool_call(
+                            &queue_call_id,
+                            "agent_admission",
+                            json!({}),
+                            crate::application::ToolStatus::Success,
+                            Some("Agent 已开始处理".to_string()),
+                        )
+                        .await;
+                }
+                chat.run(session_id, prompt_id, prompt).await;
+            })
+            .await;
     });
 
     Ok((StatusCode::ACCEPTED, Json(json!({ "ok": true }))))

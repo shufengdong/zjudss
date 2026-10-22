@@ -23,11 +23,16 @@ function StageIcon({ status }: { status: StageStatus }) {
 }
 
 export default function ProgressCard({ message }: { message: ProgressMessage }) {
+  const operationLabel = {
+    ingestion: '模型摄取进度',
+    simulation: '仿真进度',
+    analysis: '结果分析进度',
+  }[message.operation.kind]
   return (
     <div className="mx-4 my-2 max-w-[78%] rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm sm:mx-6">
       <div className="mb-3 flex items-center gap-2 text-xs text-slate-400">
-        <span className="font-medium text-slate-500">仿真进度</span>
-        <span className="font-mono">{message.taskId}</span>
+        <span className="font-medium text-slate-500">{operationLabel}</span>
+        <span className="font-mono">{message.operation.id}</span>
       </div>
       <ol className="space-y-2.5">
         {message.stages.map((stage) => {

@@ -1,24 +1,64 @@
-// SSE 订阅：把后端的结构化事件流（api-design §6）转成前端 Message 回调。
-
 import type { Message } from '../types'
 
+export interface SseControlEvent {
+  type: 'resync-required'
+  reason: string
+}
+
+export interface EventSubscription {
+  opened: Promise<void>
+  close: () => void
+}
+
+export interface EventCallbacks {
+  onMessage: (message: Message) => void
+  onControl: (event: SseControlEvent) => void
+  onError?: () => void
+}
+
 /**
- * 订阅某会话的事件流。EventSource 会自动重连；但后端 broadcast 不回放历史，
- * 断线期间的事件可能丢失，完整性由 `GET /messages` 回放兜底（见 App.tsx）。
- *
- * 返回一个取消函数（关闭 EventSource）。
+ * 建立可恢复 SSE。浏览器重连会自动携带服务端 message 帧的 Last-Event-ID；调用方应先等待
+ * opened，再读取 REST 快照，期间到达的事件交给 reducer 缓存和去重。
  */
-export function subscribeEvents(
-  sessionId: string,
-  onMessage: (message: Message) => void,
-): () => void {
-  const es = new EventSource(`/api/sessions/${sessionId}/events`)
-  es.onmessage = (e) => {
+export function subscribeEvents(sessionId: string, callbacks: EventCallbacks): EventSubscription {
+  const source = new EventSource(`/api/sessions/${sessionId}/events`)
+  let opened = false
+  let resolveOpened!: () => void
+  let rejectOpened!: (reason: Error) => void
+  const openedPromise = new Promise<void>((resolve, reject) => {
+    resolveOpened = resolve
+    rejectOpened = reject
+  })
+
+  source.onopen = () => {
+    opened = true
+    resolveOpened()
+  }
+  source.onmessage = (event) => {
     try {
-      onMessage(JSON.parse(e.data) as Message)
+      callbacks.onMessage(JSON.parse(event.data) as Message)
     } catch {
-      // 忽略无法解析的事件
+      // 单个损坏事件由下一次持久快照或重连恢复。
     }
   }
-  return () => es.close()
+  source.addEventListener('resync-required', (rawEvent) => {
+    try {
+      const payload = JSON.parse((rawEvent as MessageEvent<string>).data) as { reason?: string }
+      callbacks.onControl({
+        type: 'resync-required',
+        reason: typeof payload.reason === 'string' ? payload.reason : 'cursor_unavailable',
+      })
+    } catch {
+      callbacks.onControl({ type: 'resync-required', reason: 'cursor_unavailable' })
+    }
+  })
+  source.onerror = () => {
+    if (!opened) rejectOpened(new Error('事件流连接失败'))
+    callbacks.onError?.()
+  }
+
+  return {
+    opened: openedPromise,
+    close: () => source.close(),
+  }
 }

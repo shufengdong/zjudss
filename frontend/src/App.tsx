@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import type { CurveData, Message, MessageHandlers, ResultTab, Session } from './types'
 import { useMediaQuery } from './hooks/useMediaQuery'
 import {
@@ -13,6 +13,7 @@ import {
   uploadAttachment,
 } from './api/client'
 import { subscribeEvents } from './api/events'
+import { initialMessageState, messageReducer } from './state/messageReducer'
 import Sidebar from './components/Sidebar'
 import Composer from './components/Composer'
 import ResultPanel from './components/ResultPanel'
@@ -22,31 +23,11 @@ import { ChevronDownIcon, PanelLeftIcon, PanelRightIcon } from './components/ico
 // 乐观消息的临时 id 前缀：发送时先本地展示，等后端经 SSE 回传真实 id 后替换。
 const LOCAL_USER = 'local-user-'
 
-// 把一条新事件合并进消息列表：
-//  - user 事件 → 替换第一条乐观 user（FIFO，与发送顺序一致）
-//  - progress → 按 taskId 归并（替换而非追加，api-design §5.4）
-//  - 其它 → 按 id 去重后追加
-function appendEvent(list: Message[], msg: Message): Message[] {
-  if (msg.type === 'user') {
-    const idx = list.findIndex((m) => m.type === 'user' && m.id.startsWith(LOCAL_USER))
-    if (idx >= 0) {
-      const next = list.slice()
-      next[idx] = msg
-      return next
-    }
-  }
-  if (msg.type === 'progress') {
-    const rest = list.filter((m) => !(m.type === 'progress' && m.taskId === msg.taskId))
-    return [...rest, msg]
-  }
-  if (list.some((m) => m.id === msg.id)) return list
-  return [...list, msg]
-}
-
 function App() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [messages, setMessages] = useState<Message[]>([])
+  const [messageState, dispatchMessages] = useReducer(messageReducer, initialMessageState)
+  const messages = messageState.messages
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [panelOpen, setPanelOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<ResultTab>('curves')
@@ -81,15 +62,28 @@ function App() {
     closeEventsRef.current = null
   }, [])
 
-  // 订阅某会话的 SSE 事件流。回放完成后再订阅，避免 api-design §6 的竞态。
+  const reloadMessages = useCallback(async (id: string) => {
+    const list = await listMessages(id)
+    dispatchMessages({ type: 'snapshot', sessionId: id, messages: list })
+  }, [])
+
+  // 先打开 SSE，再读取快照；reducer 会合并快照期间到达的实时事件。
   const openEvents = useCallback(
     (id: string) => {
       closeEvents()
-      closeEventsRef.current = subscribeEvents(id, (msg) => {
-        setMessages((prev) => appendEvent(prev, msg))
+      const subscription = subscribeEvents(id, {
+        onMessage: (message) => {
+          dispatchMessages({ type: 'event', sessionId: id, message })
+        },
+        onControl: () => {
+          dispatchMessages({ type: 'select-session', sessionId: id })
+          void reloadMessages(id).catch(() => notify('事件游标已失效，重新加载消息失败'))
+        },
       })
+      closeEventsRef.current = subscription.close
+      return subscription.opened
     },
-    [closeEvents],
+    [closeEvents, notify, reloadMessages],
   )
 
   const resetPanel = useCallback(() => {
@@ -108,23 +102,20 @@ function App() {
       if (selectedIdRef.current === id) return
       selectedIdRef.current = id
       setSelectedId(id)
-      setMessages([])
+      dispatchMessages({ type: 'select-session', sessionId: id })
       setPanelOpen(false)
       resetPanel()
       try {
-        const list = await listMessages(id)
+        await openEvents(id)
+        await reloadMessages(id)
         if (selectedIdRef.current !== id) return // 已切换走，丢弃过期回放
-        // 回放同样走 appendEvent 折叠：progress 按 taskId 归并（api-design §5.4），
-        // 避免刷新后同一任务的多条 progress 渲染成多张进度卡。
-        setMessages(list.reduce<Message[]>((acc, msg) => appendEvent(acc, msg), []))
       } catch (err) {
         if (selectedIdRef.current === id) {
           notify(err instanceof Error ? err.message : '加载消息失败')
         }
       }
-      openEvents(id)
     },
-    [notify, openEvents, resetPanel],
+    [notify, openEvents, reloadMessages, resetPanel],
   )
 
   const newSession = useCallback(async () => {
@@ -133,11 +124,11 @@ function App() {
       setSessions((prev) => [s, ...prev])
       selectedIdRef.current = s.id
       setSelectedId(s.id)
-      setMessages([])
+      dispatchMessages({ type: 'select-session', sessionId: s.id })
       setPanelOpen(false)
       resetPanel()
       setActiveTab('curves')
-      openEvents(s.id)
+      void openEvents(s.id).catch(() => notify('事件流连接失败'))
     } catch (err) {
       notify(err instanceof Error ? err.message : '新建会话失败')
     }
@@ -160,9 +151,10 @@ function App() {
     setSessions(remaining)
     if (selectedId === id) {
       const next = remaining[0] ?? null
-      selectedIdRef.current = next?.id ?? null
-      setSelectedId(next?.id ?? null)
-      setMessages([])
+      closeEvents()
+      selectedIdRef.current = null
+      setSelectedId(null)
+      dispatchMessages({ type: 'select-session', sessionId: null })
       setPanelOpen(false)
       resetPanel()
       if (next) void selectSession(next.id)
@@ -188,12 +180,12 @@ function App() {
     }
     const prevDraft = draft
 
-    setMessages((prev) => [...prev, optimistic])
+    dispatchMessages({ type: 'optimistic', sessionId: selectedId, message: optimistic })
     setDraft('')
 
     void postMessage(selectedId, text).catch((err) => {
       notify(err instanceof Error ? err.message : '发送失败')
-      setMessages((prev) => prev.filter((m) => !m.id.startsWith(LOCAL_USER)))
+      dispatchMessages({ type: 'remove-optimistic', sessionId: selectedId, id: optimistic.id })
       setDraft(prevDraft)
     })
   }
@@ -206,7 +198,7 @@ function App() {
       for (const file of files) {
         try {
           const msg = await uploadAttachment(selectedId, file)
-          setMessages((prev) => appendEvent(prev, msg))
+          dispatchMessages({ type: 'event', sessionId: selectedId, message: msg })
         } catch (err) {
           notify(err instanceof Error ? err.message : `上传 ${file.name} 失败`)
         }

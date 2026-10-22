@@ -3,7 +3,8 @@
 > 受众：**后端 agent**。本文说明前端如何消费后端数据、依赖哪些行为，以及后端还需补齐/对齐什么。
 > **权威类型定义**：`frontend/src/types/index.ts`，所有字段名与枚举值以它为准，前端不做任何转换。
 > 通信契约（端点 / SSE 线格式）见 `docs/api-design.md`；开发状态见 `docs/development-status.md`。
-> §1–§6 是当前已实现的 v1 契约；§7 是模型工作区、历史任务和仿真对比的目标设计，尚未实现。
+> §1–§6 记录 v1 历史契约；v2 已完成 §7.1 的 8 类消息、operation/callId 归并与 §7.7 的消息/SSE
+> 恢复，工作区、任务快照和通用结果界面仍按后续任务实施。当前契约始终以源码权威类型为准。
 
 ---
 
@@ -20,7 +21,7 @@ interface Session {
 }
 ```
 
-### 1.2 消息（6 类 discriminated union，`type` 为判别字段）
+### 1.2 消息（v1 历史合同）
 
 公共字段：`id: string`、`timestamp: string`（ISO 8601）。
 
@@ -117,8 +118,8 @@ user → tool-call(running) → [progress…] → result → tool-call(success) 
 
 ## 5. 前端的渲染行为（隐含契约）
 
-- **v1 SSE 无回放、无 `Last-Event-ID`**：当前实现先 `GET /messages`、再开 EventSource，二者之间
-  存在短暂丢事件窗口。这是已知兼容性问题，不应复制到 v2；v2 恢复流程见 §7.7。
+- **v2 SSE 已支持恢复**：当前实现先等待 EventSource open，再读取消息快照；后端用持久消息 ID
+  补发 `Last-Event-ID` 之后的消息，游标不可用或 broadcast lag 时发送 `resync-required`。
 - **`id` 一律字符串**：前端从不把 id 当整数解析；后端所有出网 id 用 `.to_string()`。
 - **时间戳一律 ISO 8601 字符串**（含时区偏移），DB 存毫秒整数、出网转 ISO。
 - **`progress` 是替换语义**：后端若想更新某一档，必须重发完整 stages；前端不会「增量叠加」。
@@ -128,8 +129,10 @@ user → tool-call(running) → [progress…] → result → tool-call(success) 
 ## 6. 前端组件与数据流速览（后端不必关心细节，仅备查）
 
 - 三栏布局：260px 侧栏（会话分组/新建/重命名/删除）· 中心对话流 · 380px 结果面板（<1280px 变抽屉）。
-- 状态集中在 `App.tsx`（React 单 state，无 Redux）；`api/client.ts` 封 REST，`api/events.ts` 封 SSE。
-- 消息合并逻辑 `appendEvent()`（`App.tsx` 模块级）：user 替换乐观、progress 按 taskId 归并、其余按 id 去重。
+- 会话/面板状态仍在 `App.tsx`；消息状态已拆到纯 reducer `state/messageReducer.ts`，
+  `api/client.ts` 封 REST，`api/events.ts` 提供 `opened`、消息/控制事件回调和关闭方法。
+- 消息按 ID 去重；progress 按 `operation.kind + operation.id`、tool-call 按 `callId`、模型状态和比较按
+  各自稳定资源键归并。旧 session 的迟到响应由 reducer 丢弃。
 - 图表 `components/charts/LineChart.tsx`：ECharts 直连，props 传 `CurveData`，支持 dataZoom/legend/resize。
 
 ---

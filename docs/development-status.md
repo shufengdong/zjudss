@@ -23,10 +23,10 @@
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
-| 前端静态骨架 | ✅ 完成 | 6 类消息组件、三栏布局、ECharts 曲线、侧栏分组/重命名/删除、结果面板 |
+| 前端静态骨架 | ✅ v2 协议已接入 | 8 类消息、按 operation/callId 归并、可恢复 SSE；工作区和通用结果组件待后续任务 |
 | 前端接入真实后端 | ✅ 阶段 1–5 完成 | `api/client.ts`、`api/events.ts`、`App.tsx` 已接线，含重命名/删除/附件/曲线/报告（见 §5） |
 | 后端分层架构 | ✅ 第 1–4 步完成 | adapters/application/tools/agent/api 已落地，SSE 流式可跑通 |
-| 后端数据库 schema | ✅ 完成 | 6 张表 + models + Session/Message/Task 仓储已齐；任务产物元数据写入仍待接线 |
+| 后端数据库 schema | 🚧 v2 实施中 | 已增加 storage scope 和全链路归属过滤；artifact/workspace/dataset 等表按后续任务增加 |
 | 后端真实引擎接入 | ✅ 第 4 步完成 | `adapters::ProcessEngine` 起 `tensoreval` 子进程（`TENSOREVAL_BIN` 选择，未设置回退 stub）+ 任务状态机 + 限流信号量 |
 | 后端曲线/报告端点 | ✅ 第 5 步完成 | `GET /api/tasks/{id}/curves`、`/report` 已实现；metrics 真实值（尽力解析） |
 | 会话状态/重命名/删除/附件 | ✅ 完成 | `PATCH/DELETE /api/sessions/{id}`、`POST .../attachments`，状态按最新任务推导 |
@@ -37,18 +37,26 @@
 | 表头推断与多工作表 Excel | 🎯 已完成设计 | 按内核 schema catalog 的列名推断，歧义由用户确认；尚未实现 |
 | 参数修改、任务历史与仿真对比 | 🎯 已完成设计 | 结构化补丁、版本绑定、稳定键对比；尚未实现 |
 | 通用结果 DataFrame 分析 | 🎯 已完成设计 | v2 用 `--result-dir --output-format parquet` 保存原生 Parquet；自然语言生成 RSS 查询脚本并持久化派生表、schema 与血缘；尚未实现 |
-| Agent 调度与容量保护 | ⚠️ v1 待补 | 当前每条消息临时构建一个 run、无实例总量限制；v2 目标为同会话串行 + 全局有界并发/队列 |
+| Agent 调度与容量保护 | ✅ 完成 | 全局 8、owner 2、同 session 1、等待队列 32；满载返回 `429 agent_queue_full` 且不写消息 |
 | 历史文件配额 | 🎯 已完成设计 | 默认每实例/owner 20,000 个唯一 artifact、20 GiB，80% 告警，不按时间自动删除；尚未实现 |
-| 多用户隔离 | ⛔ 公开部署前必做 | v1 无账号和 owner/tenant 过滤，只允许可信单用户/单租户部署 |
+| 多用户隔离 | ✅ 基础边界完成 | instance/trusted_proxy、`/api/me`、storage/access scope 和 Session/Message/Task/SSE 404 隔离已落地 |
 | Agent prompt 与领域技能 | 🎯 已完成设计 | 当前只有一句 system prompt；v2 启动时预索引 TENSOREVAL_CWD 文档，再以版本化 system、按需技能、机器 catalog 和工具合同分层使用，尚未实现 |
 | 内置案例库 | 🎯 已完成设计 | 当前目录已确认 16 个根 RSS、37 个已发布 rssbundle；v2 支持自然语言搜索、导入、派生修改和仿真，尚未实现 |
-| v2 详细实施方案 | 📝 待评审 | 已形成 18 个可独立测试/提交的任务草案，按平台基础、模型工作区、通用结果、历史对比、前端和发布六个里程碑推进 |
+| v2 详细实施方案 | 🚧 执行中 | Tasks 1–4 已完成；M0 平台基础完成，继续实施 artifact、工作区和摄取 |
 
-> 后端「第 1–5 步」指 `docs/architecture.md` §12 的演进路线。第 5 步已于 2026-10-21 落地。
+> v2 实施以 `docs/superpowers/plans/2026-10-22-v2-simulation-workspace.md` 的 Task 编号为准；当前
+> 已完成 Task 1–4。后文保留的 v1 细节是迁移背景，若与本节冲突，以本节和 v2 契约为准。
 > 上表 `🎯` 表示已评审目标，不能理解为代码已具备该能力；目标实施顺序见
 > `docs/model-workspace-design.md` §11。
 
-### 2.1 当前多浏览器、会话与刷新语义
+### 2.1 v2 身份与恢复语义
+
+当前代码已实现 `AUTH_MODE=instance|trusted_proxy`。公开部署必须使用可信代理；所有现有
+Session/Message/Task/SSE 读写均由服务端 principal 注入 scope，跨 scope 和不存在资源返回相同 404。
+聊天仍持久化在 SQLite；前端已使用“先打开 SSE、再读快照”的顺序恢复消息，并按稳定键去重。
+`GET /api/me` 已提供 `scopeKey`，按 scope 保存上次 session 的本地导航偏好将在前端工作台任务完成。
+
+以下条目仅记录 v1 被替换前的风险背景：
 
 - 当前后端**没有用户身份**。没有登录态、认证 token、用户 cookie、`user_id` 或 owner/tenant
   过滤；连接同一个后端实例的所有浏览器共享同一套 SQLite 会话和消息。
@@ -75,15 +83,15 @@
 
 ## 3. 前后端契约（务必先读 api-design.md）
 
-- **前端类型是权威**：`frontend/src/types/index.ts` 定义 6 类 discriminated union
-  （`user`/`assistant`/`tool-call`/`progress`/`result`/`attachment`）与 `Session`、`CurveData`。
-  后端事件必须能映射到这 6 类，字段命名以前端为准。
-- **通信模型**：`POST /messages` 立即回 202 → 后台 agent 跑 → 事件经 SSE 逐条推送 → 断线由
-  `GET /messages` 回放补齐。
+- **前端类型是权威**：`frontend/src/types/index.ts` 定义 8 类 v2 discriminated union，新增
+  `model-status/comparison`；progress 使用 operation，tool-call 使用稳定 callId，result 引用 outputs。
+- **通信模型**：`POST /messages` admission 成功后立即回 202 → 后台 agent 串行运行 → 持久事件经
+  带 ID 的 SSE 推送 → 断线按 `Last-Event-ID` 补发，必要时触发快照重同步。
 - **已实现端点**：`GET/POST /api/sessions`、`PATCH/DELETE /api/sessions/{id}`、
   `GET/POST /api/sessions/{id}/messages`、`POST /api/sessions/{id}/attachments`、
-  `GET /api/sessions/{id}/events`（SSE）、`GET /api/tasks/{id}/curves`、`/report`、`GET /health`。
-- **错误约定**：未知会话/任务/无曲线报告 → `404 {"error":…}`；仓储/适配器错误 → `500`。
+  `GET /api/sessions/{id}/events`（SSE）、`GET /api/tasks/{id}/curves`、`/report`、`GET /api/me`、`GET /health`。
+- **错误约定**：固定 `{error,code,details?}`；跨 scope 资源统一 404；队列满为
+  `429 agent_queue_full`。
 
 ### 字段命名已对齐（api-design §8）
 
@@ -112,11 +120,8 @@ api（axum handler/DTO/SSE）
 - **有状态工具**：每请求构建一套（携带 session_id + `Arc<ToolServices>`），绕开 ToolContext 注入。
 - **Agent 生命周期**：不是每用户常驻一个 agent；每条用户消息由 `tokio::spawn` 启动一次短生命周期
   run，run 内重建 agent/工具并从 DB 加载 session 历史，完成后释放。rig 本身没有设置 agent 数量上限。
-- **当前容量边界**：单次 run 最多 8 个模型轮次；只有仿真内核受 `Semaphore(4)` 限制，agent run
-  总量与同会话并发均未限制；SQLite 连接池 8 不能替代 agent 限流。
-- **v2 调度目标**：同一 session 同时 1 个 run；实例活动 run 默认 8（通过
-  `AGENT_MAX_CONCURRENT_RUNS` 配置）；使用有界队列，满载返回 `429 agent_queue_full`；引入账号后每个
-  owner 默认最多 2 个活动 run。详见 `docs/architecture.md` §5.5。
+- **当前容量边界**：单次 run 最多 8 个模型轮次；`RunScheduler` 强制同 session 1、owner 2、实例 8
+  个活动 run，等待队列默认 32。仿真内核另有独立 `Semaphore(4)`；两层限制职责不同。
 - **引擎选择**：`adapters/process.rs` 的 `ProcessEngine` 起 `tensoreval` 子进程（`TENSOREVAL_BIN`
   选择，未设置回退 `adapters/stub.rs` 的 `StubEngine`）；错误码翻译到 `ErrorCategory`。
 
@@ -128,8 +133,8 @@ backend/src/
 ├── adapters/          # mod.rs（SimEngine + AdapterError + engine_from_env）、process.rs、stub.rs
 ├── agent/mod.rs       # provider 选择 + build_agent
 ├── api/               # mod.rs（router）、sessions.rs、events.rs（SSE）
-├── application/       # mod.rs（AppState）、chat.rs、events.rs（EventBus/AppEvent）
-├── db/                # mod.rs（pool/PRAGMA/迁移）、schema.rs、models.rs、repo.rs（含 TaskRepo）
+├── application/       # AppState、chat、events（EventBus/AppEvent）、scheduler
+├── db/                # pool/迁移/schema/models/repositories（全部显式接收 scope）
 └── tools/             # mod.rs（build_tools）、inspect_model.rs、run_simulation.rs
 ```
 

@@ -20,7 +20,9 @@ use crate::db::repositories::{MessageRepo, SessionRepo, TaskRepo};
 
 pub use chat::ChatService;
 pub use events::{
-    AppEvent, AttachmentFile, EventBus, EventWriter, Metrics, Stage, StageStatus, ToolStatus,
+    AppEvent, AttachmentFile, DatasetViewRef, EventBus, EventWriter, ModelAmbiguity, ModelScope,
+    ModelVersionSnapshot, ModelVersionStatus, OperationKind, OperationRef, RecognizedTable,
+    ResultColumn, ResultOutputRef, Stage, StageStatus, ToolStatus, UploadStatus, VisualizationKind,
     ms_to_iso, now_ms,
 };
 pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};

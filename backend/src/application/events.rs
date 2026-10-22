@@ -50,19 +50,118 @@ pub struct Stage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Metrics {
-    pub max_voltage: f64,
-    pub min_voltage: f64,
-    pub violation_nodes: i64,
-    pub violation_duration: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AttachmentFile {
     pub file_name: String,
     pub file_size: String,
     pub file_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationKind {
+    Ingestion,
+    Simulation,
+    Analysis,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperationRef {
+    pub kind: OperationKind,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResultColumn {
+    pub name: String,
+    pub dtype: String,
+    pub nullable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VisualizationKind {
+    Line,
+    Bar,
+    Scatter,
+    Heatmap,
+    Boxplot,
+    Histogram,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatasetViewRef {
+    pub id: String,
+    pub name: String,
+    pub kind: VisualizationKind,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResultOutputRef {
+    pub dataset_id: String,
+    pub name: String,
+    pub row_count: i64,
+    pub columns: Vec<ResultColumn>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_rows: Option<Vec<Vec<serde_json::Value>>>,
+    pub preview_truncated: bool,
+    pub default_view_id: Option<String>,
+    pub views: Vec<DatasetViewRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecognizedTable {
+    pub input_id: String,
+    pub artifact_id: String,
+    pub table_kind: String,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelAmbiguity {
+    pub input_id: String,
+    pub candidates: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelVersionSnapshot {
+    pub version_id: String,
+    pub status: ModelVersionStatus,
+    pub recognized_tables: Vec<RecognizedTable>,
+    pub missing: Vec<String>,
+    pub ambiguities: Vec<ModelAmbiguity>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelVersionStatus {
+    Collecting,
+    Ready,
+    Invalid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelScope {
+    Active,
+    Draft,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UploadStatus {
+    Accepted,
+    Ingesting,
+    Ready,
+    Failed,
 }
 
 /// 推给前端的结构化消息（discriminated union，`type` 区分）。
@@ -83,6 +182,7 @@ pub enum AppEvent {
     ToolCall {
         id: String,
         timestamp: String,
+        call_id: String,
         tool_name: String,
         args: serde_json::Value,
         status: ToolStatus,
@@ -93,21 +193,48 @@ pub enum AppEvent {
     Progress {
         id: String,
         timestamp: String,
-        task_id: String,
+        operation: OperationRef,
         stages: Vec<Stage>,
     },
     #[serde(rename_all = "camelCase")]
     Result {
         id: String,
         timestamp: String,
-        task_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        analysis_run_id: Option<String>,
         title: String,
-        metrics: Metrics,
+        outputs: Vec<ResultOutputRef>,
     },
+    #[serde(rename_all = "camelCase")]
     Attachment {
         id: String,
         timestamp: String,
         file: AttachmentFile,
+        client_batch_id: String,
+        client_file_id: String,
+        ingestion_id: String,
+        upload_status: UploadStatus,
+    },
+    #[serde(rename = "model-status", rename_all = "camelCase")]
+    ModelStatus {
+        id: String,
+        timestamp: String,
+        workspace_id: String,
+        scope: ModelScope,
+        snapshot: Option<ModelVersionSnapshot>,
+    },
+    #[serde(rename_all = "camelCase")]
+    Comparison {
+        id: String,
+        timestamp: String,
+        comparison_id: String,
+        baseline_task_id: String,
+        candidate_task_id: String,
+        analysis_run_id: String,
+        title: String,
+        outputs: Vec<ResultOutputRef>,
     },
 }
 
@@ -116,6 +243,7 @@ pub enum AppEvent {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ToolCallPayload {
+    call_id: String,
     tool_name: String,
     args: serde_json::Value,
     status: ToolStatus,
@@ -126,21 +254,29 @@ struct ToolCallPayload {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProgressPayload {
-    task_id: String,
+    operation: OperationRef,
     stages: Vec<Stage>,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ResultPayload {
-    task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    analysis_run_id: Option<String>,
     title: String,
-    metrics: Metrics,
+    outputs: Vec<ResultOutputRef>,
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AttachmentPayload {
     file: AttachmentFile,
+    client_batch_id: String,
+    client_file_id: String,
+    ingestion_id: String,
+    upload_status: UploadStatus,
 }
 
 impl AppEvent {
@@ -164,6 +300,7 @@ impl AppEvent {
                 Some(p) => AppEvent::ToolCall {
                     id,
                     timestamp,
+                    call_id: p.call_id,
                     tool_name: p.tool_name,
                     args: p.args,
                     status: p.status,
@@ -175,7 +312,7 @@ impl AppEvent {
                 Some(p) => AppEvent::Progress {
                     id,
                     timestamp,
-                    task_id: p.task_id,
+                    operation: p.operation,
                     stages: p.stages,
                 },
                 None => fallback_assistant(id, timestamp, &msg.content),
@@ -185,8 +322,9 @@ impl AppEvent {
                     id,
                     timestamp,
                     task_id: p.task_id,
+                    analysis_run_id: p.analysis_run_id,
                     title: p.title,
-                    metrics: p.metrics,
+                    outputs: p.outputs,
                 },
                 None => fallback_assistant(id, timestamp, &msg.content),
             },
@@ -195,11 +333,29 @@ impl AppEvent {
                     id,
                     timestamp,
                     file: p.file,
+                    client_batch_id: p.client_batch_id,
+                    client_file_id: p.client_file_id,
+                    ingestion_id: p.ingestion_id,
+                    upload_status: p.upload_status,
                 },
                 None => fallback_assistant(id, timestamp, &msg.content),
             },
             _ => fallback_assistant(id, timestamp, &msg.content),
         }
+    }
+
+    pub fn message_id(&self) -> Option<i32> {
+        let id = match self {
+            Self::User { id, .. }
+            | Self::Assistant { id, .. }
+            | Self::ToolCall { id, .. }
+            | Self::Progress { id, .. }
+            | Self::Result { id, .. }
+            | Self::Attachment { id, .. }
+            | Self::ModelStatus { id, .. }
+            | Self::Comparison { id, .. } => id,
+        };
+        id.parse().ok()
     }
 }
 
@@ -289,6 +445,7 @@ impl EventWriter {
 
     pub async fn tool_call(
         &self,
+        call_id: &str,
         tool_name: &str,
         args: serde_json::Value,
         status: ToolStatus,
@@ -297,6 +454,7 @@ impl EventWriter {
         let args = normalize_tool_args(args);
         let content = summary.clone().unwrap_or_else(|| tool_name.to_string());
         let payload = ToolCallPayload {
+            call_id: call_id.to_string(),
             tool_name: tool_name.to_string(),
             args,
             status,
@@ -312,47 +470,68 @@ impl EventWriter {
         .await
     }
 
-    pub async fn progress(&self, task_id: i32, stages: Vec<Stage>) -> Result<AppEvent, RepoError> {
-        let tid = task_id.to_string();
+    pub async fn progress(
+        &self,
+        operation: OperationRef,
+        stages: Vec<Stage>,
+    ) -> Result<AppEvent, RepoError> {
+        let task_id = match operation.kind {
+            OperationKind::Simulation => operation.id.parse().ok(),
+            OperationKind::Ingestion | OperationKind::Analysis => None,
+        };
         let payload = ProgressPayload {
-            task_id: tid.clone(),
+            operation: operation.clone(),
             stages,
         };
         self.emit(
             "tool",
             "progress",
-            format!("进度：{tid}"),
+            format!("进度：{}", operation.id),
             Some(serde_json::to_value(payload).unwrap_or_default()),
-            Some(task_id),
+            task_id,
         )
         .await
     }
 
     pub async fn result(
         &self,
-        task_id: i32,
+        task_id: Option<i32>,
+        analysis_run_id: Option<i32>,
         title: &str,
-        metrics: Metrics,
+        outputs: Vec<ResultOutputRef>,
     ) -> Result<AppEvent, RepoError> {
-        let tid = task_id.to_string();
         let payload = ResultPayload {
-            task_id: tid,
+            task_id: task_id.map(|id| id.to_string()),
+            analysis_run_id: analysis_run_id.map(|id| id.to_string()),
             title: title.to_string(),
-            metrics,
+            outputs,
         };
         self.emit(
             "tool",
             "result",
             format!("结果：{title}"),
             Some(serde_json::to_value(payload).unwrap_or_default()),
-            Some(task_id),
+            task_id,
         )
         .await
     }
 
-    pub async fn attachment(&self, file: AttachmentFile) -> Result<AppEvent, RepoError> {
+    pub async fn attachment(
+        &self,
+        file: AttachmentFile,
+        client_batch_id: String,
+        client_file_id: String,
+        ingestion_id: String,
+        upload_status: UploadStatus,
+    ) -> Result<AppEvent, RepoError> {
         let content = format!("附件：{}", file.file_name);
-        let payload = AttachmentPayload { file };
+        let payload = AttachmentPayload {
+            file,
+            client_batch_id,
+            client_file_id,
+            ingestion_id,
+            upload_status,
+        };
         self.emit(
             "tool",
             "attachment",
@@ -406,13 +585,13 @@ impl EventBus {
 mod tests {
     use super::*;
 
-    /// 锁住出网字段命名，与 `frontend/src/types/index.ts`（权威）一致：
-    /// `type: "tool-call"`、`toolName`、`taskId`，不得回退成 snake_case / camelCase 标签。
+    /// 锁住 8 类 v2 消息及关键 camelCase 字段，与前端权威类型一致。
     #[test]
     fn wire_format_matches_frontend_types() {
         let tool_call = AppEvent::ToolCall {
             id: "1".into(),
             timestamp: "t".into(),
+            call_id: "call-1".into(),
             tool_name: "inspect_model".into(),
             args: serde_json::json!({ "model_path": "/tmp/m.dss" }),
             status: ToolStatus::Running,
@@ -420,13 +599,17 @@ mod tests {
         };
         let v = serde_json::to_value(tool_call).unwrap();
         assert_eq!(v["type"].as_str(), Some("tool-call"));
+        assert_eq!(v["callId"].as_str(), Some("call-1"));
         assert_eq!(v["toolName"].as_str(), Some("inspect_model"));
         assert!(v.get("tool_name").is_none());
 
         let progress = AppEvent::Progress {
             id: "2".into(),
             timestamp: "t".into(),
-            task_id: "42".into(),
+            operation: OperationRef {
+                kind: OperationKind::Simulation,
+                id: "42".into(),
+            },
             stages: vec![Stage {
                 key: "sim".into(),
                 label: "仿真".into(),
@@ -435,25 +618,23 @@ mod tests {
         };
         let v = serde_json::to_value(progress).unwrap();
         assert_eq!(v["type"].as_str(), Some("progress"));
-        assert_eq!(v["taskId"].as_str(), Some("42"));
-        assert!(v.get("task_id").is_none());
+        assert_eq!(v["operation"]["kind"].as_str(), Some("simulation"));
+        assert_eq!(v["operation"]["id"].as_str(), Some("42"));
+        assert!(v.get("taskId").is_none());
 
         let result = AppEvent::Result {
             id: "3".into(),
             timestamp: "t".into(),
-            task_id: "42".into(),
+            task_id: Some("42".into()),
+            analysis_run_id: None,
             title: "仿真结果".into(),
-            metrics: Metrics {
-                max_voltage: 1.02,
-                min_voltage: 0.98,
-                violation_nodes: 2,
-                violation_duration: "0 h".into(),
-            },
+            outputs: vec![],
         };
         let v = serde_json::to_value(result).unwrap();
         assert_eq!(v["type"].as_str(), Some("result"));
         assert_eq!(v["taskId"].as_str(), Some("42"));
-        assert_eq!(v["metrics"]["maxVoltage"].as_f64(), Some(1.02));
+        assert_eq!(v["outputs"].as_array().map(Vec::len), Some(0));
+        assert!(v.get("metrics").is_none());
         assert!(v.get("task_id").is_none());
 
         let attachment = AppEvent::Attachment {
@@ -464,11 +645,59 @@ mod tests {
                 file_size: "1.2 MB".into(),
                 file_type: "pdf".into(),
             },
+            client_batch_id: "batch-1".into(),
+            client_file_id: "file-1".into(),
+            ingestion_id: "ingestion-1".into(),
+            upload_status: UploadStatus::Accepted,
         };
         let v = serde_json::to_value(attachment).unwrap();
         assert_eq!(v["type"].as_str(), Some("attachment"));
         assert_eq!(v["file"]["fileName"].as_str(), Some("report.pdf"));
         assert!(v["file"].get("file_name").is_none());
+        assert_eq!(v["clientBatchId"].as_str(), Some("batch-1"));
+
+        let model_status = AppEvent::ModelStatus {
+            id: "5".into(),
+            timestamp: "t".into(),
+            workspace_id: "workspace-1".into(),
+            scope: ModelScope::Draft,
+            snapshot: None,
+        };
+        let v = serde_json::to_value(model_status).unwrap();
+        assert_eq!(v["type"].as_str(), Some("model-status"));
+        assert_eq!(v["workspaceId"].as_str(), Some("workspace-1"));
+
+        let comparison = AppEvent::Comparison {
+            id: "6".into(),
+            timestamp: "t".into(),
+            comparison_id: "comparison-1".into(),
+            baseline_task_id: "1".into(),
+            candidate_task_id: "2".into(),
+            analysis_run_id: "3".into(),
+            title: "比较".into(),
+            outputs: vec![],
+        };
+        let v = serde_json::to_value(comparison).unwrap();
+        assert_eq!(v["type"].as_str(), Some("comparison"));
+        assert_eq!(v["comparisonId"].as_str(), Some("comparison-1"));
+
+        for event in [
+            AppEvent::User {
+                id: "7".into(),
+                timestamp: "t".into(),
+                content: "u".into(),
+            },
+            AppEvent::Assistant {
+                id: "8".into(),
+                timestamp: "t".into(),
+                content: "a".into(),
+            },
+        ] {
+            assert!(matches!(
+                serde_json::to_value(event).unwrap()["type"].as_str(),
+                Some("user" | "assistant")
+            ));
+        }
     }
 
     /// `args` 永不为 null：null → `{}`，否则原样保留。

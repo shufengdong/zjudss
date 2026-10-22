@@ -150,6 +150,7 @@ impl ChatService {
                     args_by_call.insert(tool_call.id.to_string(), args.clone());
                     let _ = writer
                         .tool_call(
+                            &tool_call.id.to_string(),
                             tool_call.function.name.as_str(),
                             args,
                             ToolStatus::Running,
@@ -170,7 +171,13 @@ impl ChatService {
                         .cloned()
                         .unwrap_or(serde_json::Value::Null);
                     let _ = writer
-                        .tool_call(tool_result.name.as_str(), args, status, Some(summary))
+                        .tool_call(
+                            &tool_result.call.to_string(),
+                            tool_result.name.as_str(),
+                            args,
+                            status,
+                            Some(summary),
+                        )
                         .await;
                 }
                 // FinalResponse / 其它 → 忽略（文本已在 End 段发过）。
