@@ -3,18 +3,18 @@
 //! `AppState` 是 axum 的共享状态（连接池、仓储、事件总线、引擎适配器、限流信号量）；
 //! `EventBus` 按 session 广播事件供 SSE 订阅；`ChatService` 编排一次 agent 对话。
 
-mod events;
 pub mod chat;
+mod events;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::Semaphore;
 
-use crate::adapters::{resolve_data_dir, SimEngine};
+use crate::adapters::{SimEngine, resolve_data_dir};
 use crate::agent::LlmConfig;
-use crate::db::repo::{MessageRepo, SessionRepo, TaskRepo};
 use crate::db::DbPool;
+use crate::db::repo::{MessageRepo, SessionRepo, TaskRepo};
 
 pub use chat::ChatService;
 pub use events::{
@@ -39,6 +39,15 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(pool: DbPool, engine: Arc<dyn SimEngine>, llm: LlmConfig) -> Self {
+        Self::new_with_data_dir(pool, engine, llm, resolve_data_dir())
+    }
+
+    pub fn new_with_data_dir(
+        pool: DbPool,
+        engine: Arc<dyn SimEngine>,
+        llm: LlmConfig,
+        data_dir: PathBuf,
+    ) -> Self {
         let session_repo = SessionRepo::new(pool.clone());
         let message_repo = MessageRepo::new(pool.clone());
         let task_repo = TaskRepo::new(pool.clone());
@@ -51,7 +60,7 @@ impl AppState {
             engine,
             llm,
             semaphore: Arc::new(Semaphore::new(4)),
-            data_dir: resolve_data_dir(),
+            data_dir,
         }
     }
 
