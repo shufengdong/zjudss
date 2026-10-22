@@ -36,14 +36,14 @@ function App(){
   return <div className="flex h-screen w-full overflow-hidden">
     <HistorySidebar sessions={sessions} selectedId={selectedId} collapsed={sidebarCollapsed} onSelect={select} onNew={()=>void newSession()} onRename={(id,title)=>void rename(id,title)} onDelete={id=>void removeSession(id)} onToggleCollapse={()=>setSidebarCollapsed(v=>!v)}/>
     <main className="flex min-w-0 flex-1 flex-col bg-slate-50"><header className="flex h-14 items-center gap-2 border-b bg-white px-4">
-      <button onClick={()=>setSidebarCollapsed(v=>!v)}><PanelLeftIcon className="h-5 w-5"/></button><h1 className="truncate text-sm font-semibold">{title}</h1>
+      <button aria-label={sidebarCollapsed?'展开历史侧栏':'收起历史侧栏'} onClick={()=>setSidebarCollapsed(v=>!v)}><PanelLeftIcon className="h-5 w-5"/></button><h1 className="truncate text-sm font-semibold">{title}</h1>
       {usage?.isWarning&&<span className="ml-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">存储已使用 {Math.round(usage.logicalBytes/usage.byteLimit*100)}%</span>}
       <button onClick={()=>setExamplesOpen(true)} className="ml-auto rounded-lg border px-3 py-1.5 text-xs">案例库</button>
-      <button onClick={()=>setPanelOpen(v=>!v)}><PanelRightIcon className="h-5 w-5"/></button>
+      <button aria-label={panelOpen?'收起结果面板':'展开结果面板'} onClick={()=>setPanelOpen(v=>!v)}><PanelRightIcon className="h-5 w-5"/></button>
     </header>
     <div className="flex-1 overflow-y-auto">{feed?.hasMoreBefore&&<div className="py-2 text-center"><button onClick={()=>void older()} className="rounded border bg-white px-3 py-1 text-xs">加载更早消息</button></div>}
       {!feed?.messages.length?<div className="flex h-full items-center justify-center text-center"><div><div className="text-3xl">⚡</div><p className="mt-2 text-sm text-slate-500">描述要做的仿真，或上传 RSS、文件夹、CSV、Excel、Parquet</p></div></div>:
-        <div className="py-4">{feed.messages.map(message=><MessageItem key={message.id} message={message} handlers={handlers}/>)}</div>}</div>
+        <div className="py-4">{feed.messages.map(message=><div key={message.id} data-testid={`message-${message.type}`} data-message-id={message.id}><MessageItem message={message} handlers={handlers}/></div>)}</div>}</div>
     <UploadQueue entries={ingestion.queue}/><Composer value={draft} onChange={setDraft} onSend={()=>sendText(draft)} uploading={ingestion.queue.some(e=>e.status==='uploading')} onUploadFiles={files=>void ingestion.upload(files)}/>
     </main>
     <ResultPanel open={panelOpen} overlay={isNarrow} tab={tab} onTab={setTab} onClose={()=>setPanelOpen(false)} workspace={workspaceState.workspace} tasks={tasks}

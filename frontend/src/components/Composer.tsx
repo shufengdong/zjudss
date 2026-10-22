@@ -51,6 +51,7 @@ export default function Composer({
         <input ref={directoryRef} type="file" multiple className="hidden" onChange={handleFiles} {...{webkitdirectory:''}} />
         <button
           type="button"
+          aria-label="上传文件"
           onClick={() => fileRef.current?.click()}
           disabled={uploading}
           className="mb-0.5 shrink-0 text-slate-400 transition-colors hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40"
@@ -58,9 +59,10 @@ export default function Composer({
         >
           <PaperclipIcon className="h-5 w-5" />
         </button>
-        <button type="button" onClick={()=>directoryRef.current?.click()} disabled={uploading}
+        <button type="button" aria-label="上传文件夹" onClick={()=>directoryRef.current?.click()} disabled={uploading}
           className="mb-0.5 shrink-0 text-[11px] text-slate-400 hover:text-brand-600 disabled:opacity-40" title="上传文件夹">文件夹</button>
         <textarea
+          aria-label="消息"
           ref={textareaRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -71,6 +73,7 @@ export default function Composer({
         />
         <button
           type="button"
+          aria-label="发送消息"
           onClick={onSend}
           disabled={!canSend}
           className="mb-0.5 shrink-0 rounded-lg bg-brand-500 p-2 text-white transition-colors hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-40"

@@ -4,6 +4,7 @@ use std::convert::Infallible;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::time::Duration;
 
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
@@ -100,5 +101,7 @@ pub async fn stream(
         }
     });
     let stream: EventStream = Box::pin(futures::stream::iter(initial).chain(live));
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+    // 代理可能等到首个 body chunk 才向浏览器提交响应头。较短的注释心跳使空会话也能
+    // 及时触发 EventSource.open，前端随后读取 REST 快照，同时不改变业务事件序列。
+    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_millis(250))))
 }

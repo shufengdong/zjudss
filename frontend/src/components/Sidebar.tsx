@@ -78,6 +78,7 @@ export default function Sidebar({
         <div className="flex items-center justify-between px-3 pb-1 pt-3">
           <button
             type="button"
+            aria-label="新建仿真"
             onClick={onNew}
             className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-600"
           >
@@ -86,6 +87,7 @@ export default function Sidebar({
           </button>
           <button
             type="button"
+            aria-label="收起历史侧栏"
             onClick={onToggleCollapse}
             className="ml-2 rounded-md p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
             title="收起侧栏"
@@ -103,6 +105,7 @@ export default function Sidebar({
                   <li key={s.id} className="relative">
                     {editingId === s.id ? (
                       <input
+                        aria-label={`重命名“${s.title}”`}
                         autoFocus
                         value={draft}
                         onChange={(e) => setDraft(e.target.value)}
@@ -115,12 +118,16 @@ export default function Sidebar({
                       />
                     ) : (
                       <div
-                        onClick={() => onSelect(s.id)}
                         className={`group flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 transition-colors ${
                           selectedId === s.id ? 'bg-white shadow-sm' : 'hover:bg-slate-200/60'
                         }`}
                       >
-                        <div className="min-w-0 flex-1">
+                        <button
+                          type="button"
+                          aria-label={`打开会话“${s.title || '未命名'}”`}
+                          onClick={() => onSelect(s.id)}
+                          className="min-w-0 flex-1 text-left"
+                        >
                           <div className="truncate text-sm text-slate-700">{s.title}</div>
                           <div className="mt-0.5 flex items-center gap-1.5">
                             <span
@@ -135,9 +142,10 @@ export default function Sidebar({
                             </span>
                             <span className="text-[11px] text-slate-400">{formatTime(s.updatedAt, groupOf(s.updatedAt))}</span>
                           </div>
-                        </div>
+                        </button>
                         <button
                           type="button"
+                          aria-label={`打开“${s.title || '未命名'}”的会话操作`}
                           onClick={(e) => {
                             e.stopPropagation()
                             setMenuId(menuId === s.id ? null : s.id)
@@ -161,6 +169,7 @@ export default function Sidebar({
                         <div className="absolute right-2 top-9 z-20 w-28 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
                           <button
                             type="button"
+                            aria-label={`重命名“${s.title || '未命名'}”`}
                             onClick={() => startRename(s)}
                             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-slate-600 hover:bg-slate-50"
                           >
@@ -169,6 +178,7 @@ export default function Sidebar({
                           </button>
                           <button
                             type="button"
+                            aria-label={`删除“${s.title || '未命名'}”`}
                             onClick={() => {
                               setMenuId(null)
                               onDelete(s.id)

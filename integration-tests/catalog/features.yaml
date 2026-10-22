@@ -242,3 +242,32 @@
     - { runner: rust, file: backend/tests/e2e_server.rs, name: server_rejects_non_loopback_bind }
   assertions: [e2e 服务只监听 loopback 并以 token 保护控制面且生产路由不暴露测试端点]
   fixtures: []
+- id: SESSION-E2E-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 浏览器会话历史与持久恢复旅程
+  layers: [frontend, api, backend, agent]
+  lanes: [pr]
+  tests:
+    - { runner: playwright, file: integration-tests/e2e/session-recovery.spec.ts, name: session CRUD renders optimistic user, tool-call, and assistant messages }
+    - { runner: playwright, file: integration-tests/e2e/session-recovery.spec.ts, name: older history, refresh, restart, and invalid localStorage recover committed state }
+  assertions: [自然语言消息替换乐观记录且会话 CRUD、历史搜索、50 条分页、刷新和服务重启均恢复已提交状态]
+  fixtures: []
+- id: SSE-E2E-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 浏览器断线后的 SSE 补发与重同步
+  layers: [frontend, api, backend]
+  lanes: [pr]
+  tests:
+    - { runner: playwright, file: integration-tests/e2e/session-recovery.spec.ts, name: SSE cursor replays committed messages, requests resync, and does not duplicate DOM rows }
+  assertions: [有效 Last-Event-ID 补发断线消息而旧游标要求 resync 且 DOM 中同一业务消息只出现一次]
+  fixtures: []
+- id: AUTH-E2E-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: trusted proxy 身份认证与两 owner 全资源隔离
+  layers: [api, backend]
+  lanes: [pr]
+  tests:
+    - { runner: playwright, file: integration-tests/e2e/auth-isolation.spec.ts, name: two owners cannot enumerate or guess each other session, message, SSE, task, or dataset resources }
+    - { runner: playwright, file: integration-tests/e2e/auth-isolation.spec.ts, name: trusted proxy rejects missing and incorrect credentials }
+  assertions: [两个浏览器上下文的会话、消息、SSE、任务、数据集、下载和历史搜索互不可见且伪造身份返回 401]
+  fixtures: []

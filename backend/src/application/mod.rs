@@ -138,6 +138,11 @@ impl AppState {
             .expect("create e2e example directory");
         let source_bytes = b"result = 1\n";
         std::fs::write(&source, source_bytes).expect("write e2e example");
+        // macOS 的临时目录常以 /var 暴露、canonicalize 后变为 /private/var；
+        // 快照根必须规范化，否则案例导入的越界检查会误判合法 fixture。
+        let engine_root = engine_root
+            .canonicalize()
+            .expect("canonicalize e2e engine root");
         let source_hash = format!("{:x}", Sha256::digest(source_bytes));
         let docs = vec![(
             "docs/e2e-guide.md".to_string(),
