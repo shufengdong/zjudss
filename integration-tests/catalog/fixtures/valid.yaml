@@ -1,0 +1,12 @@
+- id: BOOT-001
+  source: docs/integration-testing-design.md#1-目标和覆盖口径
+  title: 生产配置使用安全默认值
+  layers: [backend]
+  lanes: [pr]
+  tests:
+    - runner: rust
+      file: backend/tests/app_bootstrap.rs
+      name: config_defaults_are_safe
+  assertions:
+    - 启动配置使用设计规定的并发、上传和存储默认值
+  fixtures: []

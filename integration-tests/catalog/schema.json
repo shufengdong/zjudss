@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["id", "source", "title", "layers", "lanes", "tests", "assertions", "fixtures"],
+    "properties": {
+      "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9-]*-[0-9]{3}$" },
+      "source": { "type": "string", "minLength": 1 },
+      "title": { "type": "string", "minLength": 1 },
+      "layers": { "type": "array", "minItems": 1, "items": { "type": "string" }, "uniqueItems": true },
+      "lanes": { "type": "array", "minItems": 1, "items": { "enum": ["pr", "release"] }, "uniqueItems": true },
+      "tests": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["runner", "file", "name"],
+          "properties": {
+            "runner": { "enum": ["rust", "vitest", "playwright", "release"] },
+            "file": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 }
+          }
+        }
+      },
+      "assertions": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+      "fixtures": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+    }
+  }
+}

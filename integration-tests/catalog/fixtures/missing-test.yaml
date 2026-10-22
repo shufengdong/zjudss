@@ -1,0 +1,11 @@
+- id: BOOT-001
+  source: docs/integration-testing-design.md#1-目标和覆盖口径
+  title: missing test symbol
+  layers: [backend]
+  lanes: [pr]
+  tests:
+    - runner: rust
+      file: backend/tests/app_bootstrap.rs
+      name: does_not_exist
+  assertions: [missing tests are rejected]
+  fixtures: []

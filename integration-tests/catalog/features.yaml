@@ -1,0 +1,74 @@
+- id: BOOT-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 安全启动配置和空库 migration
+  layers: [backend]
+  lanes: [pr]
+  tests: [{ runner: rust, file: backend/tests/app_bootstrap.rs, name: config_defaults_are_safe }]
+  assertions: [生产默认限制与设计一致]
+  fixtures: []
+- id: AUTH-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: trusted proxy 身份与跨 scope 隔离
+  layers: [api]
+  lanes: [pr]
+  tests: [{ runner: rust, file: backend/tests/auth_scope.rs, name: trusted_proxy_scopes_all_session_resources }]
+  assertions: [非归属 scope 对资源猜测得到统一 404]
+  fixtures: []
+- id: INPUT-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: DataFrame 多格式摄取
+  layers: [backend]
+  lanes: [pr]
+  tests: [{ runner: rust, file: backend/tests/dataframe_ingestion.rs, name: excel_nonempty_sheets_are_normalized_to_traceable_parquet_artifacts }]
+  assertions: [Excel 非空 sheet 归一化为可追溯 Parquet]
+  fixtures: []
+- id: WORKSPACE-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: active draft 激活和回退
+  layers: [api]
+  lanes: [pr]
+  tests: [{ runner: rust, file: backend/tests/workspace_versions.rs, name: ready_versions_follow_active_draft_activation_and_rollback_rules }]
+  assertions: [版本不可变且工作区指针按规则移动]
+  fixtures: []
+- id: TASK-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 可复现仿真任务
+  layers: [backend]
+  lanes: [pr]
+  tests: [{ runner: rust, file: backend/tests/v2_simulation.rs, name: ready_version_persists_reproducible_task_and_generic_parquet_dataset }]
+  assertions: [任务固化模型版本脚本技能和引擎合同]
+  fixtures: []
+- id: DATASET-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 通用 Parquet 数据集分页
+  layers: [api]
+  lanes: [pr]
+  tests: [{ runner: rust, file: backend/tests/process_engine_v2.rs, name: parquet_metadata_page_and_projection_preserve_schema_order_and_rows }]
+  assertions: [分页和投影保持 schema 列序与合法重复行]
+  fixtures: []
+- id: VIEW-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 六类可视化规格
+  layers: [backend, frontend]
+  lanes: [pr]
+  tests:
+    - { runner: rust, file: backend/tests/result_analysis.rs, name: six_visualizations_validate_and_unsafe_or_oversized_specs_fail_closed }
+    - { runner: vitest, file: frontend/src/components/datasets/charts.test.ts, name: 'builds ${kind} without executable formatter' }
+  assertions: [六类视图由受控 spec 编译且危险或超限输入失败关闭]
+  fixtures: []
+- id: COMPARE-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 兼容任务产生差值 DataFrame
+  layers: [backend]
+  lanes: [pr]
+  tests: [{ runner: rust, file: backend/tests/task_comparison.rs, name: compatible_tasks_create_traceable_analysis_and_difference_dataset }]
+  assertions: [兼容比较保留分析血缘并生成差值数据集]
+  fixtures: []
+- id: HISTORY-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 历史消息窗口和搜索降级
+  layers: [api]
+  lanes: [pr]
+  tests: [{ runner: rust, file: backend/tests/history_search.rs, name: task_filters_work_and_missing_fts_does_not_break_plain_history_reads }]
+  assertions: [FTS 故障不影响普通历史读取]
+  fixtures: []
