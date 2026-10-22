@@ -86,7 +86,13 @@ async fn root_rss_import_copies_full_closure_is_idempotent_and_creates_no_task()
     let repeated = app
         .state
         .example_import_service
-        .import(&principal(), session_id, &example_id, &snapshot_id, None)
+        .import(
+            &principal(),
+            session_id,
+            &example_id,
+            &snapshot_id,
+            Some(version.id),
+        )
         .await
         .unwrap();
     assert_eq!(repeated.id, version.id);

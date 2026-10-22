@@ -7,16 +7,32 @@
 
 pub mod inspect_model;
 pub mod run_simulation;
+pub mod activate_model_version;
+pub mod confirm_dataframe_mapping;
+pub mod import_example;
+pub mod inspect_example;
+pub mod inspect_workspace;
+pub mod load_agent_skill;
+pub mod modify_model;
+pub mod read_engine_doc_section;
+pub mod remove_model_input;
+pub mod replace_model_input;
+pub mod search_engine_docs;
+pub mod search_examples;
+mod support;
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use rig::tool::RegisteredTool;
-use tokio::sync::Semaphore;
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::adapters::SimEngine;
-use crate::application::EventWriter;
-use crate::auth::AccessScope;
+use crate::agent::knowledge::AgentKnowledge;
+use crate::application::{EventWriter, ExampleImportService, ModelPatchService, WorkspaceService};
+use crate::auth::{AccessScope, Principal};
 use crate::db::repositories::TaskRepo;
+use crate::engine_resources::EngineResourceSnapshot;
 
 pub use inspect_model::InspectModelTool;
 pub use run_simulation::RunSimulationTool;
@@ -30,12 +46,48 @@ pub struct ToolServices {
     pub task_repo: TaskRepo,
     pub semaphore: Arc<Semaphore>,
     pub scope: AccessScope,
+    pub principal: Principal,
+    pub workspaces: WorkspaceService,
+    pub example_import: ExampleImportService,
+    pub model_patch: ModelPatchService,
+    pub engine_snapshot: Arc<EngineResourceSnapshot>,
+    pub agent_knowledge: Arc<AgentKnowledge>,
+    pub loaded_skills: Arc<Mutex<BTreeSet<String>>>,
+}
+
+impl ToolServices {
+    pub(crate) async fn require_skill(
+        &self,
+        skill_id: &str,
+    ) -> Result<(), support::DomainToolError> {
+        if self.loaded_skills.lock().await.contains(skill_id) {
+            Ok(())
+        } else {
+            Err(support::DomainToolError::new(
+                "skill_required",
+                format!("请先调用 load_agent_skill 加载 {skill_id}"),
+            ))
+        }
+    }
 }
 
 /// 每请求装配一套有状态工具（§5）。
 pub fn build_tools(services: Arc<ToolServices>) -> Vec<RegisteredTool> {
     vec![
         RegisteredTool::from_tool(InspectModelTool::new(services.clone())),
-        RegisteredTool::from_tool(RunSimulationTool::new(services)),
+        RegisteredTool::from_tool(RunSimulationTool::new(services.clone())),
+        RegisteredTool::from_tool(inspect_workspace::InspectWorkspaceTool::new(services.clone())),
+        RegisteredTool::from_tool(load_agent_skill::LoadAgentSkillTool::new(services.clone())),
+        RegisteredTool::from_tool(search_engine_docs::SearchEngineDocsTool::new(services.clone())),
+        RegisteredTool::from_tool(read_engine_doc_section::ReadEngineDocSectionTool::new(services.clone())),
+        RegisteredTool::from_tool(search_examples::SearchExamplesTool::new(services.clone())),
+        RegisteredTool::from_tool(inspect_example::InspectExampleTool::new(services.clone())),
+        RegisteredTool::from_tool(import_example::ImportExampleTool::new(services.clone())),
+        RegisteredTool::from_tool(confirm_dataframe_mapping::ConfirmDataframeMappingTool::new(services.clone())),
+        RegisteredTool::from_tool(replace_model_input::ReplaceModelInputTool::new(services.clone())),
+        RegisteredTool::from_tool(remove_model_input::RemoveModelInputTool::new(services.clone())),
+        RegisteredTool::from_tool(activate_model_version::ActivateModelVersionTool::new(services.clone())),
+        RegisteredTool::from_tool(activate_model_version::RollbackModelVersionTool::new(services.clone())),
+        RegisteredTool::from_tool(modify_model::ModifyModelTool::new(services)),
     ]
 }

@@ -16,7 +16,7 @@
   "skillIndexSha256": "27ca7d528b2629ac81ff5e508293a570e3fa6695e1108c8ea904a227fbdb7430",
   "allowedTools": [
     "inspect_model", "run_simulation", "inspect_workspace", "search_examples", "inspect_example",
-    "import_example", "remove_model_input", "replace_model_input", "confirm_table_mapping",
+    "import_example", "remove_model_input", "replace_model_input", "confirm_dataframe_mapping", "modify_model",
     "activate_model_version", "rollback_model_version", "run_study", "run_result_analysis",
     "create_dataset_view", "compare_simulations", "list_simulation_history", "search_chat_history",
     "read_chat_context", "get_storage_usage", "load_agent_skill", "search_engine_docs",

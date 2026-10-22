@@ -9,6 +9,7 @@ use rig::tool::server::ToolServer;
 use rig::{Agent, AgentBuilder};
 
 pub mod knowledge;
+pub mod prompt;
 
 const SYSTEM_PROMPT: &str = include_str!("../../resources/agent/v2/system.md");
 const SKILL_INDEX: &str = include_str!("../../resources/agent/v2/skill-index.json");
@@ -55,7 +56,11 @@ impl std::fmt::Display for LlmError {
 impl std::error::Error for LlmError {}
 
 /// 依据 `config.provider` 选择模型，然后在 provider 无关的公共逻辑里组装 agent。
-pub fn build_agent(config: &LlmConfig, tools: Vec<RegisteredTool>) -> Result<Agent, LlmError> {
+pub fn build_agent_with_prompt(
+    config: &LlmConfig,
+    tools: Vec<RegisteredTool>,
+    prompt: String,
+) -> Result<Agent, LlmError> {
     // 1. provider 分支：只负责产出模型，其余配置一律不在这里做。
     let model = match config.provider.as_str() {
         "deepseek" => {
@@ -74,9 +79,12 @@ pub fn build_agent(config: &LlmConfig, tools: Vec<RegisteredTool>) -> Result<Age
     }
 
     Ok(AgentBuilder::new(model)
-        .preamble(SYSTEM_PROMPT)
-        .context(SKILL_INDEX)
+        .preamble(&prompt)
         .temperature(0.3)
         .tool_server_handle(server.run())
         .build())
+}
+
+pub fn build_agent(config: &LlmConfig, tools: Vec<RegisteredTool>) -> Result<Agent, LlmError> {
+    build_agent_with_prompt(config, tools, format!("{SYSTEM_PROMPT}\n\n{SKILL_INDEX}"))
 }

@@ -140,6 +140,17 @@ impl ArtifactService {
         self.scopes.usage(scope_id).await.map_err(Into::into)
     }
 
+    pub async fn find_owned(
+        &self,
+        scope_id: i32,
+        artifact_id: i32,
+    ) -> Result<crate::db::models::Artifact, ArtifactError> {
+        self.artifacts
+            .find_owned(scope_id, artifact_id)
+            .await
+            .map_err(Into::into)
+    }
+
     pub async fn set_limits(
         &self,
         scope_id: i32,

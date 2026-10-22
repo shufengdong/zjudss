@@ -8,6 +8,7 @@ pub mod chat;
 mod events;
 pub mod example_import;
 pub mod ingestion;
+pub mod model_patch;
 pub mod scheduler;
 pub mod workspace;
 
@@ -18,7 +19,8 @@ use tokio::sync::Semaphore;
 
 use crate::adapters::{SimEngine, resolve_data_dir};
 use crate::agent::LlmConfig;
-use crate::auth::{AccessScope, AuthConfig};
+use crate::agent::knowledge::AgentKnowledge;
+use crate::auth::AuthConfig;
 use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
@@ -42,6 +44,7 @@ pub use events::{
 };
 pub use example_import::{ExampleImportError, ExampleImportService};
 pub use ingestion::{AcceptedBatch, IngestionError, IngestionService, UploadBatch, UploadFile};
+pub use model_patch::{ModelChange, ModelMutationError, ModelPatch, ModelPatchService};
 pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
 pub use workspace::{
     DataframeBindingDraft, SourceKind, VersionDraft, VersionInputDraft, VersionOrigin,
@@ -59,6 +62,9 @@ pub struct AppState {
     pub workspace_service: WorkspaceService,
     pub ingestion_service: IngestionService,
     pub example_import_service: ExampleImportService,
+    pub model_patch_service: ModelPatchService,
+    pub engine_snapshot: Arc<EngineResourceSnapshot>,
+    pub agent_knowledge: Arc<AgentKnowledge>,
     pub events: EventBus,
     pub engine: Arc<dyn SimEngine>,
     pub llm: LlmConfig,
@@ -202,10 +208,15 @@ impl AppState {
             archive_limits,
         );
         let example_import_service = ExampleImportService::new(
-            engine_snapshot,
+            engine_snapshot.clone(),
             artifact_service.clone(),
             workspace_service.clone(),
             upload_single_file_limit_bytes,
+        );
+        let model_patch_service = ModelPatchService::new(workspace_service.clone(), artifact_service.clone());
+        let agent_knowledge = Arc::new(
+            AgentKnowledge::load_embedded("v2.0.0")
+                .expect("内置 agent knowledge 已在构建时校验"),
         );
         Self {
             pool,
@@ -216,6 +227,9 @@ impl AppState {
             workspace_service,
             ingestion_service,
             example_import_service,
+            model_patch_service,
+            engine_snapshot,
+            agent_knowledge,
             events,
             engine,
             llm,
@@ -229,7 +243,7 @@ impl AppState {
     }
 
     /// 派生一次对话的编排服务（共享引擎/事件/仓储，克隆成本低）。
-    pub fn chat(&self, scope: AccessScope) -> ChatService {
-        ChatService::new(self, scope)
+    pub fn chat(&self, principal: crate::auth::Principal) -> ChatService {
+        ChatService::new(self, principal)
     }
 }

@@ -17,6 +17,7 @@ use super::{
 pub enum ExampleImportError {
     NotFound,
     SnapshotMismatch,
+    ExpectedVersionRequired,
     NotImportable(Vec<String>),
     SourceChanged(String),
     Artifact(ArtifactError),
@@ -29,6 +30,7 @@ impl std::fmt::Display for ExampleImportError {
         match self {
             Self::NotFound => write!(f, "案例不存在"),
             Self::SnapshotMismatch => write!(f, "引擎资源快照不匹配"),
+            Self::ExpectedVersionRequired => write!(f, "expectedDraftVersionId 必填"),
             Self::NotImportable(items) => write!(f, "案例不可导入: {}", items.join("; ")),
             Self::SourceChanged(path) => write!(f, "案例源文件已变化: {path}"),
             Self::Artifact(error) => write!(f, "{error}"),
@@ -38,6 +40,21 @@ impl std::fmt::Display for ExampleImportError {
     }
 }
 impl std::error::Error for ExampleImportError {}
+impl ExampleImportError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NotFound => "example_not_found",
+            Self::SnapshotMismatch => "engine_resource_snapshot_mismatch",
+            Self::ExpectedVersionRequired => "expected_version_required",
+            Self::NotImportable(_) => "example_not_importable",
+            Self::SourceChanged(_) => "example_source_changed",
+            Self::Artifact(_) => "artifact_error",
+            Self::Workspace(WorkspaceError::VersionConflict) => "version_conflict",
+            Self::Workspace(_) => "workspace_error",
+            Self::Io(_) => "example_io_error",
+        }
+    }
+}
 impl From<ArtifactError> for ExampleImportError {
     fn from(value: ArtifactError) -> Self {
         Self::Artifact(value)
@@ -102,6 +119,11 @@ impl ExampleImportService {
             .workspaces
             .get_or_create(&principal.access, session_id)
             .await?;
+        if workspace.workspace.draft_version_id.or(workspace.workspace.active_version_id).is_some()
+            && expected_base.is_none()
+        {
+            return Err(ExampleImportError::ExpectedVersionRequired);
+        }
         for version in self
             .workspaces
             .list_versions(&principal.access, session_id)

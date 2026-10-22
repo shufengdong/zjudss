@@ -218,6 +218,36 @@ impl WorkspaceService {
         Ok(record)
     }
 
+    pub async fn activate_checked(
+        &self,
+        scope: &AccessScope,
+        workspace_id: i32,
+        version_id: i32,
+        expected_base: Option<i32>,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        let record = self
+            .repo
+            .activate_checked(scope, workspace_id, version_id, expected_base, now_ms())
+            .await?;
+        self.emit_status(scope, &record).await?;
+        Ok(record)
+    }
+
+    pub async fn rollback_checked(
+        &self,
+        scope: &AccessScope,
+        workspace_id: i32,
+        version_id: i32,
+        expected_base: Option<i32>,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        let record = self
+            .repo
+            .rollback_checked(scope, workspace_id, version_id, expected_base, now_ms())
+            .await?;
+        self.emit_status(scope, &record).await?;
+        Ok(record)
+    }
+
     pub async fn list_versions(
         &self,
         scope: &AccessScope,

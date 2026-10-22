@@ -27,6 +27,23 @@ impl ArtifactRepo {
         Self { pool }
     }
 
+    pub async fn find_owned(&self, scope_id: i32, artifact_id: i32) -> RepoResult<Artifact> {
+        let pool = self.pool.clone();
+        tokio::task::spawn_blocking(move || -> RepoResult<Artifact> {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            schema::artifacts::table
+                .inner_join(schema::storage_scope_artifacts::table)
+                .filter(schema::artifacts::id.eq(artifact_id))
+                .filter(schema::storage_scope_artifacts::storage_scope_id.eq(scope_id))
+                .select(schema::artifacts::all_columns)
+                .first(&mut conn)
+                .optional()?
+                .ok_or(RepoError::NotFound)
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
     pub async fn commit_with_publish<F>(
         &self,
         scope_id: i32,

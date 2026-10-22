@@ -369,7 +369,7 @@ pub async fn post_message(
         .await?;
 
     // 4. 后台 agent run：真正的流式驱动（第 3 步）。
-    let chat = state.chat(principal.access);
+    let chat = state.chat(principal);
     let prompt_id = user_msg.id;
     let prompt = body.message;
     tokio::spawn(async move {

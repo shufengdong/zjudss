@@ -274,6 +274,49 @@ impl WorkspaceRepo {
         .map_err(RepoError::Join)?
     }
 
+    pub async fn activate_checked(
+        &self,
+        scope: &AccessScope,
+        workspace_id: i32,
+        version_id: i32,
+        expected_base: Option<i32>,
+        now_ms: i64,
+    ) -> RepoResult<WorkspaceRecord> {
+        let pool = self.pool.clone();
+        let scope = scope.clone();
+        tokio::task::spawn_blocking(move || -> RepoResult<WorkspaceRecord> {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            conn.immediate_transaction::<WorkspaceRecord, RepoError, _>(|conn| {
+                let workspace = scoped_workspace(conn, &scope, workspace_id)?;
+                if workspace.draft_version_id.or(workspace.active_version_id) != expected_base {
+                    return Err(RepoError::VersionConflict);
+                }
+                let version = schema::model_versions::table
+                    .find(version_id)
+                    .first::<ModelVersion>(conn)
+                    .optional()?
+                    .ok_or(RepoError::NotFound)?;
+                if version.workspace_id != workspace_id {
+                    return Err(RepoError::NotFound);
+                }
+                if version.status != "ready" || workspace.draft_version_id != Some(version_id) {
+                    return Err(RepoError::InvalidState("只能激活当前 ready draft".to_string()));
+                }
+                diesel::update(schema::workspaces::table.find(workspace_id))
+                    .set((
+                        schema::workspaces::active_version_id.eq(Some(version_id)),
+                        schema::workspaces::draft_version_id.eq::<Option<i32>>(None),
+                        schema::workspaces::updated_at_ms.eq(now_ms),
+                    ))
+                    .execute(conn)?;
+                let workspace = schema::workspaces::table.find(workspace_id).first(conn)?;
+                load_record(conn, workspace)
+            })
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
     pub async fn rollback(
         &self,
         scope: &AccessScope,
@@ -312,6 +355,51 @@ impl WorkspaceRepo {
                 let workspace = schema::workspaces::table
                     .find(workspace_id)
                     .first::<Workspace>(conn)?;
+                load_record(conn, workspace)
+            })
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
+    pub async fn rollback_checked(
+        &self,
+        scope: &AccessScope,
+        workspace_id: i32,
+        version_id: i32,
+        expected_base: Option<i32>,
+        now_ms: i64,
+    ) -> RepoResult<WorkspaceRecord> {
+        let pool = self.pool.clone();
+        let scope = scope.clone();
+        tokio::task::spawn_blocking(move || -> RepoResult<WorkspaceRecord> {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            conn.immediate_transaction::<WorkspaceRecord, RepoError, _>(|conn| {
+                let workspace = scoped_workspace(conn, &scope, workspace_id)?;
+                if workspace.draft_version_id.or(workspace.active_version_id) != expected_base {
+                    return Err(RepoError::VersionConflict);
+                }
+                let version = schema::model_versions::table
+                    .find(version_id)
+                    .first::<ModelVersion>(conn)
+                    .optional()?
+                    .ok_or(RepoError::NotFound)?;
+                if version.workspace_id != workspace_id {
+                    return Err(RepoError::NotFound);
+                }
+                if version.status != "ready" {
+                    return Err(RepoError::InvalidState("只能回退到 ready 版本".to_string()));
+                }
+                if workspace.draft_version_id == Some(version_id) {
+                    return Err(RepoError::InvalidState("当前 draft 请使用激活操作".to_string()));
+                }
+                diesel::update(schema::workspaces::table.find(workspace_id))
+                    .set((
+                        schema::workspaces::active_version_id.eq(Some(version_id)),
+                        schema::workspaces::updated_at_ms.eq(now_ms),
+                    ))
+                    .execute(conn)?;
+                let workspace = schema::workspaces::table.find(workspace_id).first(conn)?;
                 load_record(conn, workspace)
             })
         })

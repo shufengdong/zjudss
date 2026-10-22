@@ -8,7 +8,7 @@ const MANIFEST: &str = include_str!("../../resources/agent/v2/manifest.json");
 const SKILL_INDEX: &str = include_str!("../../resources/agent/v2/skill-index.json");
 const SYSTEM: &str = include_str!("../../resources/agent/v2/system.md");
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentManifest {
     pub agent_bundle_version: String,

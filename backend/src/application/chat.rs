@@ -5,6 +5,7 @@
 //! （architecture §4），逐条落库 + 发布到 session 的 SSE 通道。
 
 use std::sync::Arc;
+use std::collections::BTreeSet;
 
 use futures::StreamExt;
 use rig::agent::{MultiTurnStreamItem, RunEvents};
@@ -14,7 +15,7 @@ use rig::streaming::{Item, StreamEvent};
 use crate::adapters::SimEngine;
 use crate::agent::{self, LlmConfig};
 use crate::application::{AppState, EventBus, EventWriter, ToolStatus, now_ms};
-use crate::auth::AccessScope;
+use crate::auth::Principal;
 use crate::db::repositories::{MessageRepo, SessionRepo, TaskRepo};
 use crate::tools::{self, ToolServices};
 use tokio::sync::Semaphore;
@@ -31,11 +32,16 @@ pub struct ChatService {
     task_repo: TaskRepo,
     llm: LlmConfig,
     semaphore: Arc<Semaphore>,
-    scope: AccessScope,
+    principal: Principal,
+    workspaces: crate::application::WorkspaceService,
+    example_import: crate::application::ExampleImportService,
+    model_patch: crate::application::ModelPatchService,
+    engine_snapshot: Arc<crate::engine_resources::EngineResourceSnapshot>,
+    agent_knowledge: Arc<crate::agent::knowledge::AgentKnowledge>,
 }
 
 impl ChatService {
-    pub fn new(state: &AppState, scope: AccessScope) -> Self {
+    pub fn new(state: &AppState, principal: Principal) -> Self {
         Self {
             engine: state.engine.clone(),
             events: state.events.clone(),
@@ -44,14 +50,19 @@ impl ChatService {
             task_repo: state.task_repo.clone(),
             llm: state.llm.clone(),
             semaphore: state.semaphore.clone(),
-            scope,
+            principal,
+            workspaces: state.workspace_service.clone(),
+            example_import: state.example_import_service.clone(),
+            model_patch: state.model_patch_service.clone(),
+            engine_snapshot: state.engine_snapshot.clone(),
+            agent_knowledge: state.agent_knowledge.clone(),
         }
     }
 
     /// 触发一次对话。`prompt_id` 是刚落库的 user 消息 id，历史只取比它更早的消息。
     pub async fn run(&self, session_id: i32, prompt_id: i32, prompt: String) {
         let writer = EventWriter::new(
-            self.scope.clone(),
+            self.principal.access.clone(),
             session_id,
             self.message_repo.clone(),
             self.events.clone(),
@@ -64,12 +75,23 @@ impl ChatService {
             session_id,
             task_repo: self.task_repo.clone(),
             semaphore: self.semaphore.clone(),
-            scope: self.scope.clone(),
+            scope: self.principal.access.clone(),
+            principal: self.principal.clone(),
+            workspaces: self.workspaces.clone(),
+            example_import: self.example_import.clone(),
+            model_patch: self.model_patch.clone(),
+            engine_snapshot: self.engine_snapshot.clone(),
+            agent_knowledge: self.agent_knowledge.clone(),
+            loaded_skills: Arc::new(tokio::sync::Mutex::new(BTreeSet::new())),
         });
         let tools = tools::build_tools(services);
 
         // 2. 构建 agent。
-        let agent = match agent::build_agent(&self.llm, tools) {
+        let system_prompt = crate::agent::prompt::PromptAssembler::assemble(
+            &self.agent_knowledge,
+            &self.engine_snapshot,
+        );
+        let agent = match agent::build_agent_with_prompt(&self.llm, tools, system_prompt) {
             Ok(agent) => agent,
             Err(err) => {
                 let _ = writer.assistant(&format!("无法启动 agent：{err}")).await;
@@ -104,7 +126,7 @@ impl ChatService {
         }
         let _ = self
             .session_repo
-            .touch(&self.scope, session_id, now_ms())
+            .touch(&self.principal.access, session_id, now_ms())
             .await;
     }
 
@@ -112,7 +134,7 @@ impl ChatService {
     async fn load_history(&self, session_id: i32, prompt_id: i32) -> Vec<Message> {
         let msgs = self
             .message_repo
-            .list_by_session(&self.scope, session_id)
+            .list_by_session(&self.principal.access, session_id)
             .await
             .unwrap_or_default();
         msgs.into_iter()
