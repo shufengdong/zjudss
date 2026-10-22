@@ -6,6 +6,7 @@
 pub mod artifacts;
 pub mod chat;
 mod events;
+pub mod ingestion;
 pub mod scheduler;
 pub mod workspace;
 
@@ -17,9 +18,11 @@ use tokio::sync::Semaphore;
 use crate::adapters::{SimEngine, resolve_data_dir};
 use crate::agent::LlmConfig;
 use crate::auth::{AccessScope, AuthConfig};
+use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
-    ArtifactRepo, MessageRepo, SessionRepo, StorageScopeRepo, TaskRepo, WorkspaceRepo,
+    ArtifactRepo, IngestionRepo, MessageRepo, SessionRepo, StorageScopeRepo, TaskRepo,
+    WorkspaceRepo,
 };
 use crate::storage::ArtifactStore;
 
@@ -34,6 +37,7 @@ pub use events::{
     ResultColumn, ResultOutputRef, Stage, StageStatus, ToolStatus, UploadStatus, VisualizationKind,
     ms_to_iso, now_ms,
 };
+pub use ingestion::{AcceptedBatch, IngestionError, IngestionService, UploadBatch, UploadFile};
 pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
 pub use workspace::{
     DataframeBindingDraft, SourceKind, VersionDraft, VersionInputDraft, VersionOrigin,
@@ -49,6 +53,7 @@ pub struct AppState {
     pub task_repo: TaskRepo,
     pub artifact_service: ArtifactService,
     pub workspace_service: WorkspaceService,
+    pub ingestion_service: IngestionService,
     pub events: EventBus,
     pub engine: Arc<dyn SimEngine>,
     pub llm: LlmConfig,
@@ -57,6 +62,8 @@ pub struct AppState {
     pub semaphore: Arc<Semaphore>,
     /// 数据根目录（内核结果、上传附件落这里），由 `DATA_DIR` 环境变量或默认 `data` 决定。
     pub data_dir: PathBuf,
+    pub upload_single_file_limit_bytes: u64,
+    pub upload_batch_limit_bytes: u64,
 }
 
 impl AppState {
@@ -118,6 +125,37 @@ impl AppState {
         scheduler: RunScheduler,
         storage_limits: StorageLimits,
     ) -> Self {
+        let catalog = Arc::new(SchemaCatalog::from_value(
+            "embedded-test",
+            &serde_json::json!({"schema_version":2,"frames":{"table":{"required":{"id":"str"}}}}),
+        ).expect("内置最小 catalog 有效"));
+        Self::new_with_resources(
+            pool,
+            engine,
+            llm,
+            data_dir,
+            auth,
+            scheduler,
+            storage_limits,
+            catalog,
+            50 * 1024 * 1024,
+            500 * 1024 * 1024,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_resources(
+        pool: DbPool,
+        engine: Arc<dyn SimEngine>,
+        llm: LlmConfig,
+        data_dir: PathBuf,
+        auth: AuthConfig,
+        scheduler: RunScheduler,
+        storage_limits: StorageLimits,
+        catalog: Arc<SchemaCatalog>,
+        upload_single_file_limit_bytes: u64,
+        upload_batch_limit_bytes: u64,
+    ) -> Self {
         let session_repo = SessionRepo::new(pool.clone());
         let message_repo = MessageRepo::new(pool.clone());
         let task_repo = TaskRepo::new(pool.clone());
@@ -132,6 +170,14 @@ impl AppState {
             message_repo.clone(),
             events.clone(),
         );
+        let ingestion_service = IngestionService::new(
+            IngestionRepo::new(pool.clone()),
+            artifact_service.clone(),
+            workspace_service.clone(),
+            catalog,
+            message_repo.clone(),
+            events.clone(),
+        );
         Self {
             pool,
             session_repo,
@@ -139,6 +185,7 @@ impl AppState {
             task_repo,
             artifact_service,
             workspace_service,
+            ingestion_service,
             events,
             engine,
             llm,
@@ -146,6 +193,8 @@ impl AppState {
             scheduler,
             semaphore: Arc::new(Semaphore::new(4)),
             data_dir,
+            upload_single_file_limit_bytes,
+            upload_batch_limit_bytes,
         }
     }
 

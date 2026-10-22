@@ -7,10 +7,11 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::application::{
-    AppEvent, AppState, AttachmentFile, EventWriter, UploadStatus, ms_to_iso, now_ms,
+    AppEvent, AppState, EventWriter, UploadBatch, UploadFile, ms_to_iso, now_ms,
 };
 use crate::auth::CurrentPrincipal;
 use crate::db::models::{Message, NewMessage};
+use crate::storage::StageLimits;
 
 use super::ApiError;
 
@@ -120,111 +121,164 @@ pub async fn delete(
 
 // ---- 附件上传 ----
 
-/// 人类可读的文件大小。
-fn human_size(bytes: usize) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    let b = bytes as f64;
-    if b >= MB {
-        format!("{:.1} MB", b / MB)
-    } else if b >= KB {
-        format!("{:.1} KB", b / KB)
-    } else {
-        format!("{bytes} B")
-    }
-}
-
-/// 由 MIME 类型推导前端 `AttachmentFile.file_type`（无则按扩展名）。
-fn file_type(content_type: Option<&str>, file_name: &str) -> String {
-    if let Some(ct) = content_type.filter(|ct| !ct.is_empty()) {
-        return ct.to_string();
-    }
-    let ext = file_name.rsplit('.').next().unwrap_or("");
-    if ext.is_empty() {
-        "file".to_string()
-    } else {
-        ext.to_string()
-    }
-}
-
-/// `POST /api/sessions/{id}/attachments`（multipart 字段 `file`）→ 201 attachment 事件。
+/// `POST /api/sessions/{id}/attachments`：v2 多文件流式上传。
 pub async fn upload_attachment(
     State(state): State<AppState>,
     CurrentPrincipal(principal): CurrentPrincipal,
     Path(session_id): Path<i32>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
-    // 会话必须存在，否则落盘到孤儿目录。
     state
         .session_repo
         .find(&principal.access, session_id)
         .await?
         .ok_or_else(|| ApiError::not_found("会话不存在"))?;
 
-    // 取第一个 `file` 字段；在循环内转成 owned 值，避免字段借用逃逸到循环外。
-    let mut extracted: Option<(String, Option<String>, Vec<u8>)> = None;
-    while let Some(field) = multipart
+    let mut client_batch_id = None;
+    let mut relative_paths = std::collections::HashMap::<String, String>::new();
+    let mut files = Vec::new();
+    let mut batch_bytes = 0_u64;
+    while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(|e| ApiError::internal(format!("读取上传字段失败: {e}")))?
     {
-        if field.name() == Some("file") {
+        let name = field.name().unwrap_or_default().to_string();
+        if name == "clientBatchId" {
+            client_batch_id = Some(
+                field
+                    .text()
+                    .await
+                    .map_err(|e| ApiError::internal(format!("读取 clientBatchId 失败: {e}")))?,
+            );
+        } else if name == "relativePaths" {
+            let text = field
+                .text()
+                .await
+                .map_err(|e| ApiError::internal(format!("读取 relativePaths 失败: {e}")))?;
+            relative_paths = serde_json::from_str(&text).map_err(|_| {
+                crate::application::IngestionError::InvalidUpload(
+                    "relativePaths 必须是 clientFileId 到相对路径的 JSON 对象".into(),
+                )
+            })?;
+        } else if let Some(client_file_id) = name.strip_prefix("file.") {
+            if client_file_id.is_empty() {
+                return Err(crate::application::IngestionError::InvalidUpload(
+                    "file 字段缺少 clientFileId".into(),
+                )
+                .into());
+            }
             let file_name = field
                 .file_name()
                 .map(|n| n.replace(['/', '\\'], "_"))
                 .unwrap_or_else(|| "upload".to_string());
-            let content_type = field.content_type().map(|c| c.to_string());
-            let bytes = field
-                .bytes()
+            let media_type = field.content_type().map(str::to_string);
+            let mut writer = state
+                .artifact_service
+                .store()
+                .begin_stage(StageLimits {
+                    max_bytes: state.upload_single_file_limit_bytes,
+                })
+                .map_err(crate::application::ArtifactError::from)?;
+            while let Some(chunk) = field
+                .chunk()
                 .await
                 .map_err(|e| ApiError::internal(format!("读取上传内容失败: {e}")))?
-                .to_vec();
-            extracted = Some((file_name, content_type, bytes));
-            break;
+            {
+                batch_bytes = batch_bytes.checked_add(chunk.len() as u64).ok_or_else(|| {
+                    crate::application::IngestionError::InvalidUpload("上传批次大小溢出".into())
+                })?;
+                if batch_bytes > state.upload_batch_limit_bytes {
+                    return Err(crate::application::IngestionError::UploadTooLarge(format!(
+                        "上传批次超过 {} 字节限制",
+                        state.upload_batch_limit_bytes
+                    ))
+                    .into());
+                }
+                writer
+                    .write_chunk(&chunk)
+                    .map_err(crate::application::ArtifactError::from)?;
+            }
+            files.push(UploadFile {
+                client_file_id: client_file_id.to_string(),
+                file_name,
+                relative_path: None,
+                media_type,
+                staged: writer
+                    .finish()
+                    .map_err(crate::application::ArtifactError::from)?,
+            });
+        } else if name == "file" {
+            return Err(crate::application::IngestionError::InvalidUpload(
+                "v2 不接受旧 file 字段，请使用 file.<clientFileId>".into(),
+            )
+            .into());
         }
     }
-    let (file_name, content_type, bytes) =
-        extracted.ok_or_else(|| ApiError::not_found("缺少 file 字段"))?;
-
-    let size = human_size(bytes.len());
-    let ftype = file_type(content_type.as_deref(), &file_name);
-
-    // 写 `data_dir/uploads/{session_id}/{unix_nanos}_{name}`，避免重名覆盖与路径穿越。
-    let uploads_dir = state.data_dir.join("uploads").join(session_id.to_string());
-    let disk_path = uploads_dir.join(format!("{}_{}", now_ms(), file_name));
-    let bytes_for_write = bytes.clone();
-    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-        std::fs::create_dir_all(&uploads_dir)?;
-        std::fs::write(&disk_path, bytes_for_write)
-    })
-    .await
-    .map_err(|e| ApiError::internal(format!("写盘任务失败: {e}")))?
-    .map_err(|e| ApiError::internal(format!("附件写盘失败: {e}")))?;
-
-    // 落库 + 发布 attachment 事件。
-    let file = AttachmentFile {
-        file_name,
-        file_size: size,
-        file_type: ftype,
-    };
-    let writer = EventWriter::new(
-        principal.access,
-        session_id,
-        state.message_repo.clone(),
-        state.events.clone(),
-    );
-    let upload_id = now_ms().to_string();
-    let event = writer
-        .attachment(
-            file,
-            format!("server-batch-{upload_id}"),
-            format!("server-file-{upload_id}"),
-            format!("pending-{upload_id}"),
-            UploadStatus::Accepted,
+    for file in &mut files {
+        if let Some(path) = relative_paths.remove(&file.client_file_id) {
+            let candidate = std::path::Path::new(&path);
+            if candidate.is_absolute()
+                || candidate
+                    .components()
+                    .any(|part| !matches!(part, std::path::Component::Normal(_)))
+            {
+                return Err(crate::application::IngestionError::InvalidUpload(
+                    "relativePaths 必须是规范相对路径".into(),
+                )
+                .into());
+            }
+            file.relative_path = Some(path);
+        }
+    }
+    if !relative_paths.is_empty() {
+        return Err(crate::application::IngestionError::InvalidUpload(
+            "relativePaths 包含未知 clientFileId".into(),
+        )
+        .into());
+    }
+    let accepted = state
+        .ingestion_service
+        .accept_batch(
+            &principal,
+            session_id,
+            UploadBatch {
+                client_batch_id: client_batch_id.ok_or_else(|| {
+                    crate::application::IngestionError::InvalidUpload("缺少 clientBatchId".into())
+                })?,
+                files,
+            },
         )
         .await?;
-
-    Ok((StatusCode::CREATED, Json(json!(event))))
+    let ingestion_id: i32 = accepted
+        .id
+        .parse()
+        .map_err(|_| ApiError::internal("ingestion ID 无效"))?;
+    let service = state.ingestion_service.clone();
+    tokio::spawn(async move {
+        service.process(principal, ingestion_id).await;
+    });
+    let accepted_items: Vec<_> = accepted
+        .items
+        .iter()
+        .filter(|item| item.role == "uploaded")
+        .map(|item| {
+            json!({
+                "clientFileId": item.client_file_id,
+                "artifactId": item.artifact_id,
+                "fileName": item.file_name,
+                "deduplicated": false,
+            })
+        })
+        .collect();
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "ok": true,
+            "ingestionId": accepted.id,
+            "accepted": accepted_items,
+        })),
+    ))
 }
 
 // ---- 消息 ----

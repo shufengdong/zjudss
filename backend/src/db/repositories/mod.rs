@@ -1,4 +1,5 @@
 mod artifact;
+mod ingestion;
 mod message;
 mod session;
 mod storage_scope;
@@ -6,6 +7,7 @@ mod task;
 mod workspace;
 
 pub use artifact::{ArtifactDraft, ArtifactRepo};
+pub use ingestion::{IngestionItemDraft, IngestionRecord, IngestionRepo};
 pub use message::MessageRepo;
 pub use session::SessionRepo;
 pub use storage_scope::{StorageLimits, StorageScopeRepo, StorageUsage};
@@ -24,6 +26,7 @@ pub enum RepoError {
     Storage(String),
     VersionConflict,
     InvalidState(String),
+    IdempotencyConflict,
 }
 
 impl std::fmt::Display for RepoError {
@@ -37,6 +40,7 @@ impl std::fmt::Display for RepoError {
             RepoError::Storage(error) => write!(f, "存储错误: {error}"),
             RepoError::VersionConflict => write!(f, "模型版本基线已变化"),
             RepoError::InvalidState(error) => write!(f, "状态无效: {error}"),
+            RepoError::IdempotencyConflict => write!(f, "幂等键对应的请求内容不一致"),
         }
     }
 }

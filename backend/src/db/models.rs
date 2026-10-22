@@ -3,9 +3,9 @@
 // Diesel 2.x：派生宏（Queryable/Insertable）只从 crate 根重导出（默认 feature
 // `with-deprecated`），prelude 仅含 trait 与 DSL；故显式导入。
 use super::schema::{
-    artifacts, curve_data, dataframe_bindings, messages, model_versions, sessions,
-    simulation_tasks, storage_scope_artifacts, storage_scopes, task_files, task_results,
-    version_artifacts, workspaces,
+    artifacts, curve_data, dataframe_bindings, ingestion_artifacts, ingestions, messages,
+    model_versions, sessions, simulation_tasks, storage_scope_artifacts, storage_scopes,
+    task_files, task_results, version_artifacts, workspaces,
 };
 #[allow(deprecated)]
 use diesel::{Insertable, Queryable};
@@ -188,6 +188,78 @@ pub struct NewDataframeBinding {
     pub resolution: String,
     pub columns_json: String,
     pub evidence_json: String,
+}
+
+#[derive(Queryable, Debug, Clone)]
+pub struct Ingestion {
+    pub id: i32,
+    pub workspace_id: i32,
+    pub client_batch_id: String,
+    pub origin_kind: String,
+    pub source_ref_json: Option<String>,
+    pub base_version_id: Option<i32>,
+    pub published_version_id: Option<i32>,
+    pub status: String,
+    pub stages_json: String,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = ingestions)]
+pub struct NewIngestion {
+    pub workspace_id: i32,
+    pub client_batch_id: String,
+    pub origin_kind: String,
+    pub source_ref_json: Option<String>,
+    pub base_version_id: Option<i32>,
+    pub published_version_id: Option<i32>,
+    pub status: String,
+    pub stages_json: String,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Queryable, Debug, Clone)]
+pub struct IngestionArtifact {
+    pub id: i32,
+    pub ingestion_id: i32,
+    pub client_file_id: String,
+    pub artifact_id: i32,
+    pub file_name: String,
+    pub relative_path: Option<String>,
+    pub media_type: Option<String>,
+    pub role: String,
+    pub source_artifact_id: Option<i32>,
+    pub sheet_name: Option<String>,
+    pub status: String,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = ingestion_artifacts)]
+pub struct NewIngestionArtifact {
+    pub ingestion_id: i32,
+    pub client_file_id: String,
+    pub artifact_id: i32,
+    pub file_name: String,
+    pub relative_path: Option<String>,
+    pub media_type: Option<String>,
+    pub role: String,
+    pub source_artifact_id: Option<i32>,
+    pub sheet_name: Option<String>,
+    pub status: String,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
 // ---- simulation_tasks ----

@@ -54,6 +54,61 @@ pub struct StagedArtifact {
     pub size_bytes: u64,
 }
 
+#[derive(Debug)]
+pub struct StagingWriter {
+    file: Option<File>,
+    path: Option<PathBuf>,
+    hasher: Sha256,
+    size_bytes: u64,
+    max_bytes: u64,
+}
+
+impl StagingWriter {
+    pub fn write_chunk(&mut self, chunk: &[u8]) -> Result<(), StorageError> {
+        let size_bytes = self
+            .size_bytes
+            .checked_add(chunk.len() as u64)
+            .ok_or_else(|| StorageError::new("artifact_too_large", "artifact 大小溢出"))?;
+        if size_bytes > self.max_bytes {
+            return Err(StorageError::new(
+                "artifact_too_large",
+                format!("artifact 超过 {} 字节限制", self.max_bytes),
+            ));
+        }
+        self.file
+            .as_mut()
+            .ok_or_else(|| StorageError::new("artifact_stage_finished", "暂存写入已经结束"))?
+            .write_all(chunk)
+            .map_err(|error| StorageError::new("artifact_stage_failed", error.to_string()))?;
+        self.hasher.update(chunk);
+        self.size_bytes = size_bytes;
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<StagedArtifact, StorageError> {
+        let file = self
+            .file
+            .take()
+            .ok_or_else(|| StorageError::new("artifact_stage_finished", "暂存写入已经结束"))?;
+        file.sync_all()
+            .map_err(|error| StorageError::new("artifact_stage_failed", error.to_string()))?;
+        drop(file);
+        Ok(StagedArtifact {
+            path: self.path.take(),
+            sha256: format!("{:x}", self.hasher.clone().finalize()),
+            size_bytes: self.size_bytes,
+        })
+    }
+}
+
+impl Drop for StagingWriter {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 impl StagedArtifact {
     pub(crate) fn publish(&mut self, destination: &Path) -> Result<(), StorageError> {
         let Some(staging_path) = self.path.take() else {
@@ -118,50 +173,33 @@ impl ArtifactStore {
         mut reader: R,
         limits: StageLimits,
     ) -> Result<StagedArtifact, StorageError> {
+        let mut writer = self.begin_stage(limits)?;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = reader
+                .read(&mut buffer)
+                .map_err(|error| StorageError::new("artifact_read_failed", error.to_string()))?;
+            if read == 0 {
+                break;
+            }
+            writer.write_chunk(&buffer[..read])?;
+        }
+        writer.finish()
+    }
+
+    pub fn begin_stage(&self, limits: StageLimits) -> Result<StagingWriter, StorageError> {
         let path = unique_staging_path(&self.staging_dir);
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .create_new(true)
             .write(true)
             .open(&path)
             .map_err(|error| StorageError::new("artifact_stage_failed", error.to_string()))?;
-        let mut hasher = Sha256::new();
-        let mut size = 0_u64;
-        let mut buffer = [0_u8; 64 * 1024];
-        let result = (|| -> Result<(), StorageError> {
-            loop {
-                let read = reader.read(&mut buffer).map_err(|error| {
-                    StorageError::new("artifact_read_failed", error.to_string())
-                })?;
-                if read == 0 {
-                    break;
-                }
-                size = size
-                    .checked_add(read as u64)
-                    .ok_or_else(|| StorageError::new("artifact_too_large", "artifact 大小溢出"))?;
-                if size > limits.max_bytes {
-                    return Err(StorageError::new(
-                        "artifact_too_large",
-                        format!("artifact 超过 {} 字节限制", limits.max_bytes),
-                    ));
-                }
-                hasher.update(&buffer[..read]);
-                file.write_all(&buffer[..read]).map_err(|error| {
-                    StorageError::new("artifact_stage_failed", error.to_string())
-                })?;
-            }
-            file.sync_all()
-                .map_err(|error| StorageError::new("artifact_stage_failed", error.to_string()))
-        })();
-        if let Err(error) = result {
-            drop(file);
-            let _ = std::fs::remove_file(&path);
-            return Err(error);
-        }
-        let sha256 = format!("{:x}", hasher.finalize());
-        Ok(StagedArtifact {
+        Ok(StagingWriter {
+            file: Some(file),
             path: Some(path),
-            sha256,
-            size_bytes: size,
+            hasher: Sha256::new(),
+            size_bytes: 0,
+            max_bytes: limits.max_bytes,
         })
     }
 

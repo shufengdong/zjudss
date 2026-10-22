@@ -2,6 +2,7 @@
 
 mod auth;
 mod events;
+mod ingestions;
 mod sessions;
 mod storage;
 mod tasks;
@@ -17,6 +18,7 @@ use crate::adapters::AdapterError;
 use crate::application::AppError;
 use crate::application::AppState;
 use crate::application::ArtifactError;
+use crate::application::IngestionError;
 use crate::application::WorkspaceError;
 use crate::db::repositories::RepoError;
 
@@ -118,7 +120,42 @@ impl From<ArtifactError> for ApiError {
                 code: "storage_quota_exceeded",
                 details: None,
             },
+            ArtifactError::Storage(error) if error.code() == "artifact_too_large" => Self {
+                status: StatusCode::PAYLOAD_TOO_LARGE,
+                message: error.to_string(),
+                code: "upload_too_large",
+                details: None,
+            },
             other => Self::internal(other.to_string()),
+        }
+    }
+}
+
+impl From<IngestionError> for ApiError {
+    fn from(error: IngestionError) -> Self {
+        match error {
+            IngestionError::NotFound => Self::not_found("资源不存在"),
+            IngestionError::IdempotencyConflict => Self {
+                status: StatusCode::CONFLICT,
+                message: "clientBatchId 已用于不同内容".to_string(),
+                code: "idempotency_conflict",
+                details: None,
+            },
+            IngestionError::InvalidUpload(message) => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message,
+                code: "invalid_upload",
+                details: None,
+            },
+            IngestionError::UploadTooLarge(message) => Self {
+                status: StatusCode::PAYLOAD_TOO_LARGE,
+                message,
+                code: "upload_too_large",
+                details: None,
+            },
+            IngestionError::Artifact(error) => error.into(),
+            IngestionError::Workspace(error) => error.into(),
+            IngestionError::Repository(error) => error.into(),
         }
     }
 }
@@ -170,9 +207,10 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/api/sessions/{id}/attachments",
-            post(sessions::upload_attachment).layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
+            post(sessions::upload_attachment).layer(DefaultBodyLimit::disable()),
         )
         .route("/api/sessions/{id}/events", get(events::stream))
+        .route("/api/ingestions/{id}", get(ingestions::get))
         .route("/api/sessions/{id}/workspace", get(workspaces::workspace))
         .route("/api/sessions/{id}/versions", get(workspaces::versions))
         .route("/api/versions/{id}", get(workspaces::version))

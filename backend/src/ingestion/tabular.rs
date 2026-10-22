@@ -1,7 +1,12 @@
 use std::path::Path;
 
+use arrow_array::{ArrayRef, RecordBatch, StringArray};
+use arrow_schema::{DataType, Field, Schema};
 use calamine::{Data, Reader, open_workbook_auto};
+use parquet::arrow::ArrowWriter;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::file::properties::WriterProperties;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnSchema {
@@ -50,6 +55,13 @@ impl std::error::Error for TabularError {}
 
 pub struct TabularInspector;
 
+#[derive(Debug, Clone)]
+pub struct NormalizedSheet {
+    pub sheet_name: String,
+    pub path: std::path::PathBuf,
+    pub schema: TableSchema,
+}
+
 impl TabularInspector {
     pub fn inspect(path: &Path, format: TabularFormat) -> Result<Vec<TableSchema>, TabularError> {
         match format {
@@ -58,6 +70,90 @@ impl TabularInspector {
             TabularFormat::Parquet => inspect_parquet(path),
         }
     }
+}
+
+pub fn normalize_excel_to_parquet(
+    source: &Path,
+    output_dir: &Path,
+) -> Result<Vec<NormalizedSheet>, TabularError> {
+    std::fs::create_dir_all(output_dir)
+        .map_err(|error| TabularError::new("tabular_normalize_failed", error.to_string()))?;
+    let mut workbook = open_workbook_auto(source)
+        .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+    let mut outputs = Vec::new();
+    for (sheet_index, sheet_name) in workbook.sheet_names().to_vec().into_iter().enumerate() {
+        let range = workbook
+            .worksheet_range(&sheet_name)
+            .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+        let mut rows = range
+            .rows()
+            .filter(|row| row.iter().any(|cell| !matches!(cell, Data::Empty)));
+        let Some(header) = rows.next() else { continue };
+        let headers: Vec<String> = header
+            .iter()
+            .enumerate()
+            .map(|(index, cell)| {
+                let value = cell.to_string();
+                if value.trim().is_empty() {
+                    format!("column_{}", index + 1)
+                } else {
+                    value
+                }
+            })
+            .collect();
+        if headers.is_empty() {
+            continue;
+        }
+        let data: Vec<Vec<String>> = rows
+            .map(|row| {
+                (0..headers.len())
+                    .map(|index| row.get(index).map(ToString::to_string).unwrap_or_default())
+                    .collect()
+            })
+            .collect();
+        let schema = Arc::new(Schema::new(
+            headers
+                .iter()
+                .map(|name| Field::new(name, DataType::Utf8, true))
+                .collect::<Vec<_>>(),
+        ));
+        let arrays: Vec<ArrayRef> = (0..headers.len())
+            .map(|column| {
+                Arc::new(StringArray::from(
+                    data.iter()
+                        .map(|row| row[column].as_str())
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef
+            })
+            .collect();
+        let batch = RecordBatch::try_new(schema.clone(), arrays)
+            .map_err(|error| TabularError::new("tabular_normalize_failed", error.to_string()))?;
+        let path = output_dir.join(format!("sheet-{sheet_index}.parquet"));
+        let file = std::fs::File::create(&path)
+            .map_err(|error| TabularError::new("tabular_normalize_failed", error.to_string()))?;
+        let properties = WriterProperties::builder().build();
+        let mut writer = ArrowWriter::try_new(file, schema, Some(properties))
+            .map_err(|error| TabularError::new("tabular_normalize_failed", error.to_string()))?;
+        writer
+            .write(&batch)
+            .and_then(|_| writer.close().map(|_| ()))
+            .map_err(|error| TabularError::new("tabular_normalize_failed", error.to_string()))?;
+        outputs.push(NormalizedSheet {
+            sheet_name: sheet_name.clone(),
+            path,
+            schema: TableSchema {
+                name: sheet_name,
+                columns: headers
+                    .into_iter()
+                    .map(|name| ColumnSchema {
+                        name,
+                        dtype: "string".into(),
+                    })
+                    .collect(),
+            },
+        });
+    }
+    Ok(outputs)
 }
 
 fn inspect_csv(path: &Path) -> Result<Vec<TableSchema>, TabularError> {

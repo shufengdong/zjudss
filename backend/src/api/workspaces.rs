@@ -19,12 +19,16 @@ pub async fn workspace(
         .await?;
     let active = version_json(&state, &principal.access, record.active).await?;
     let draft = version_json(&state, &principal.access, record.draft).await?;
+    let active_ingestions = state
+        .ingestion_service
+        .active(&principal, record.workspace.id)
+        .await?;
     Ok(Json(json!({
         "id": record.workspace.id.to_string(),
         "sessionId": record.workspace.session_id.to_string(),
         "active": active,
         "draft": draft,
-        "activeIngestions": [],
+        "activeIngestions": active_ingestions,
     })))
 }
 

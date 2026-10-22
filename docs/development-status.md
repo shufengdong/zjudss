@@ -25,16 +25,16 @@
 |---|---|---|
 | 前端静态骨架 | ✅ v2 协议已接入 | 8 类消息、按 operation/callId 归并、可恢复 SSE；工作区和通用结果组件待后续任务 |
 | 前端接入真实后端 | ✅ 阶段 1–5 完成 | `api/client.ts`、`api/events.ts`、`App.tsx` 已接线，含重命名/删除/附件/曲线/报告（见 §5） |
-| 后端分层架构 | ✅ v2 Tasks 1–7 完成 | 身份、调度、SSE、artifact、不可变工作区和引擎知识 preflight 已落地；摄取继续实施 |
-| 后端数据库 schema | 🚧 v2 实施中 | 已增加 storage scope、artifact、workspaces/model_versions、版本输入绑定和全链路归属过滤；ingestion/dataset 等表按后续任务增加 |
+| 后端分层架构 | ✅ v2 Tasks 1–8 完成 | 身份、调度、SSE、artifact、不可变工作区、引擎知识 preflight 和 DataFrame 摄取已落地 |
+| 后端数据库 schema | 🚧 v2 实施中 | 已增加 storage scope、artifact、workspaces/model_versions、ingestions、版本输入绑定和全链路归属过滤；dataset 等表按后续任务增加 |
 | 后端真实引擎接入 | ✅ 第 4 步完成 | `adapters::ProcessEngine` 起 `tensoreval` 子进程（`TENSOREVAL_BIN` 选择，未设置回退 stub）+ 任务状态机 + 限流信号量 |
 | 后端曲线/报告端点 | ✅ 第 5 步完成 | `GET /api/tasks/{id}/curves`、`/report` 已实现；metrics 真实值（尽力解析） |
-| 会话状态/重命名/删除/附件 | ✅ 完成 | `PATCH/DELETE /api/sessions/{id}`、`POST .../attachments`，状态按最新任务推导 |
+| 会话状态/重命名/删除/附件 | ✅ 后端 v2 完成 | `PATCH/DELETE /api/sessions/{id}`；附件支持 `clientBatchId`、多 `file.<clientFileId>`、流式限制、幂等摄取和刷新恢复，前端将在 Task 16 切换 |
 | 前后端字段命名对齐 | ✅ 已对齐 | 后端出网 `tool-call`/`toolName`/`taskId` 与前端类型一致（§3） |
 | 历史聊天浏览 | ✅ 基础功能完成 | 全量会话列表、今天/昨天/更早分组、打开回放、重命名和删除 |
 | 历史聊天检索 | 🎯 已完成设计 | 侧栏关键词/筛选/分页 + agent 自然语言跨会话检索；尚未实现 |
-| 模型工作区与不可变版本 | 🚧 核心已实现 | active/draft、规范 manifest hash、乐观基线、激活/回退、只读 API 和 model-status 已落地；具体文件摄取由 Tasks 7–9 接入 |
-| 表头推断与多工作表 Excel | ✅ 基础能力完成 | CSV 有界采样、Excel 分 sheet、Parquet footer schema 和 catalog 列名评分已实现；摄取状态与用户确认在 Tasks 8–9 接入 |
+| 模型工作区与不可变版本 | 🚧 DataFrame 闭环完成 | active/draft、规范 manifest hash、乐观基线、激活/回退、只读 API、model-status 和追加式 DataFrame 摄取已落地；RSS/ZIP 由 Task 9 接入 |
+| 表头推断与多工作表 Excel | ✅ 摄取闭环完成 | CSV 有界采样、Excel 非空 sheet 转 Parquet、Parquet footer schema、catalog 列名评分、局部失败与 collecting draft 已实现 |
 | 参数修改、任务历史与仿真对比 | 🎯 已完成设计 | 结构化补丁、版本绑定、稳定键对比；尚未实现 |
 | 通用结果 DataFrame 分析 | 🎯 已完成设计 | v2 用 `--result-dir --output-format parquet` 保存原生 Parquet；自然语言生成 RSS 查询脚本并持久化派生表、schema 与血缘；尚未实现 |
 | Agent 调度与容量保护 | ✅ 完成 | 全局 8、owner 2、同 session 1、等待队列 32；满载返回 `429 agent_queue_full` 且不写消息 |
@@ -42,10 +42,10 @@
 | 多用户隔离 | ✅ 基础边界完成 | instance/trusted_proxy、`/api/me`、storage/access scope 和 Session/Message/Task/SSE 404 隔离已落地 |
 | Agent prompt 与领域技能 | 🚧 资源层完成 | v2.0.0 system、6 个技能、hash/工具/合同校验及 skill index 注入已实现；按需加载工具和运行记录在后续任务接入 |
 | 内置案例库 | 🚧 目录完成 | 启动时校验并索引 16 个根 RSS、提交中的 37 个 rssbundle，额外未提交案例不会混入；搜索 API 与导入在 Tasks 9–10 接入 |
-| v2 详细实施方案 | 🚧 执行中 | Tasks 1–7 已完成；M0 平台基础完成，正在实施 M1 多文件摄取与案例导入 |
+| v2 详细实施方案 | 🚧 执行中 | Tasks 1–8 已完成；M0 平台基础完成，正在实施 M1 ZIP/RSS/案例导入与自然语言工作区工具 |
 
 > v2 实施以 `docs/superpowers/plans/2026-10-22-v2-simulation-workspace.md` 的 Task 编号为准；当前
-> 已完成 Task 1–7。后文保留的 v1 细节是迁移背景，若与本节冲突，以本节和 v2 契约为准。
+> 已完成 Task 1–8。后文保留的 v1 细节是迁移背景，若与本节冲突，以本节和 v2 契约为准。
 > 上表 `🎯` 表示已评审目标，不能理解为代码已具备该能力；目标实施顺序见
 > `docs/model-workspace-design.md` §11。
 
@@ -228,8 +228,9 @@ frontend/src/
 
 - **重命名/删除**：`PATCH/DELETE /api/sessions/{id}` 真持久化；`App.tsx` 乐观更新、失败回滚
   （重命名回滚到旧列表，删除失败重拉会话列表）。
-- **附件上传**：`Composer` 纸夹 → 真实文件选择 → `POST .../attachments`（multipart 字段 `file`），
-  201 返回 attachment 消息经 `appendEvent` 落地；SSE 广播同一条按 id 去重。
+- **附件上传（v1 前端现状）**：`Composer` 仍发送旧 multipart `file` 字段；后端已切换到 v2
+  `clientBatchId + file.<clientFileId>` 并返回 202。Task 16 必须同步切换前端后才可完成上传；当前不提供
+  v1 兼容分支。
 - **曲线/报告**：`ResultCard` 的「查看曲线」/「下载报告」按 `taskId` 调 `GET /api/tasks/{id}/curves`、
   `/report`；`ResultPanel` 曲线/报告标签页按需拉取（报告 Markdown 内联渲染 + 下载）。日志标签页
   暂无后端端点，保留静态样例。当前图表仍固定为共享时间轴的 `LineChart`，没有通用分页表格或

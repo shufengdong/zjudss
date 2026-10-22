@@ -8,6 +8,7 @@ use backend::agent::LlmConfig;
 use backend::agent::knowledge::AgentKnowledge;
 use backend::application::{AppState, RunScheduler};
 use backend::auth::AuthConfig;
+use backend::catalog::SchemaCatalog;
 use backend::config::RuntimeConfig;
 use backend::db::{self, DbPool};
 use backend::engine_resources::{EngineResourceRegistry, ResourceContract};
@@ -77,13 +78,17 @@ impl TestApp {
         .expect("preflight isolated engine resource fixture");
         EngineResourceRegistry::publish(&engine_snapshot, &config.data_dir)
             .expect("publish isolated engine snapshot");
+        let catalog = std::sync::Arc::new(
+            SchemaCatalog::from_snapshot(&engine_snapshot, "test-contract")
+                .expect("load isolated schema catalog"),
+        );
         let pool = db::establish_pool(&config.database_url).expect("create test database pool");
         {
             let mut conn = pool.get().expect("checkout test database");
             db::run_migrations(&mut conn).expect("run test migrations");
         }
 
-        let state = AppState::new_with_data_dir_auth_and_scheduler(
+        let state = AppState::new_with_resources(
             pool.clone(),
             std::sync::Arc::new(StubEngine),
             LlmConfig {
@@ -93,6 +98,10 @@ impl TestApp {
             config.data_dir.clone(),
             auth,
             scheduler,
+            backend::application::StorageLimits::default(),
+            catalog,
+            config.upload_single_file_limit_bytes,
+            config.upload_batch_limit_bytes,
         );
         let router = backend::build_router(state.clone());
 

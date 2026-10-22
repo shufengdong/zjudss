@@ -2,6 +2,7 @@ use backend::agent::LlmConfig;
 use backend::agent::knowledge::AgentKnowledge;
 use backend::application::{AppState, RunScheduler, StorageLimits};
 use backend::auth::AuthConfig;
+use backend::catalog::SchemaCatalog;
 use backend::config::RuntimeConfig;
 use backend::engine_resources::EngineResourceRegistry;
 use backend::{adapters, build_router, db};
@@ -21,6 +22,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let knowledge = AgentKnowledge::load_embedded(&runtime.agent_bundle_version)?;
     let engine_resources = EngineResourceRegistry::load(&runtime.tensoreval_cwd)?;
     let snapshot_path = EngineResourceRegistry::publish(&engine_resources, &runtime.data_dir)?;
+    let catalog = std::sync::Arc::new(SchemaCatalog::from_snapshot(
+        &engine_resources,
+        &engine_resources.contract_version,
+    )?);
     eprintln!(
         "[config] provider = {}, model = {}",
         llm.provider, llm.model
@@ -59,7 +64,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         byte_limit: i64::try_from(runtime.owner_storage_limit_bytes)?,
         warning_ratio: runtime.storage_warning_ratio,
     };
-    let state = AppState::new_with_storage_limits(
+    let state = AppState::new_with_resources(
         pool,
         engine,
         llm,
@@ -67,6 +72,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         auth,
         scheduler,
         storage_limits,
+        catalog,
+        runtime.upload_single_file_limit_bytes,
+        runtime.upload_batch_limit_bytes,
     );
 
     let addr = "127.0.0.1:8080";

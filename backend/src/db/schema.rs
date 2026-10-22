@@ -113,6 +113,44 @@ diesel::table! {
 }
 
 diesel::table! {
+    ingestions (id) {
+        id -> Integer,
+        workspace_id -> Integer,
+        client_batch_id -> Text,
+        origin_kind -> Text,
+        source_ref_json -> Nullable<Text>,
+        base_version_id -> Nullable<Integer>,
+        published_version_id -> Nullable<Integer>,
+        status -> Text,
+        stages_json -> Text,
+        error_code -> Nullable<Text>,
+        error_message -> Nullable<Text>,
+        created_at_ms -> BigInt,
+        updated_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    ingestion_artifacts (id) {
+        id -> Integer,
+        ingestion_id -> Integer,
+        client_file_id -> Text,
+        artifact_id -> Integer,
+        file_name -> Text,
+        relative_path -> Nullable<Text>,
+        media_type -> Nullable<Text>,
+        role -> Text,
+        source_artifact_id -> Nullable<Integer>,
+        sheet_name -> Nullable<Text>,
+        status -> Text,
+        error_code -> Nullable<Text>,
+        error_message -> Nullable<Text>,
+        created_at_ms -> BigInt,
+        updated_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
     simulation_tasks (id) {
         id -> Integer,
         session_id -> Integer,
@@ -189,6 +227,8 @@ diesel::joinable!(workspaces -> sessions (session_id));
 diesel::joinable!(model_versions -> workspaces (workspace_id));
 diesel::joinable!(version_artifacts -> model_versions (version_id));
 diesel::joinable!(dataframe_bindings -> version_artifacts (version_artifact_id));
+diesel::joinable!(ingestions -> workspaces (workspace_id));
+diesel::joinable!(ingestion_artifacts -> ingestions (ingestion_id));
 diesel::joinable!(storage_scope_artifacts -> artifacts (artifact_id));
 diesel::joinable!(storage_scope_artifacts -> storage_scopes (storage_scope_id));
 
@@ -202,6 +242,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     model_versions,
     version_artifacts,
     dataframe_bindings,
+    ingestions,
+    ingestion_artifacts,
     simulation_tasks,
     messages,
     task_files,
