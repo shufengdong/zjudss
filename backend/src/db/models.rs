@@ -7,8 +7,8 @@ use super::schema::{
     draft_dataframes, ingestion_artifacts, ingestions, messages, model_import_candidates,
     model_import_selections, model_imports, model_versions, publish_receipts,
     result_analysis_inputs, result_analysis_runs, result_datasets, script_resources, sessions,
-    simulation_runs, simulation_tasks, storage_scope_artifacts, storage_scopes, task_comparisons,
-    users, version_artifacts, version_deletion_previews, workspace_drafts, workspaces,
+    simulation_tasks, storage_scope_artifacts, storage_scopes, task_comparisons, users,
+    version_artifacts, version_deletion_previews, workspace_drafts, workspaces,
 };
 #[allow(deprecated)]
 use diesel::{Insertable, Queryable};
@@ -310,7 +310,7 @@ pub struct NewScriptResource {
 }
 
 #[derive(Queryable, Debug, Clone)]
-#[diesel(table_name = simulation_runs)]
+#[diesel(table_name = crate::db::schema::simulation_runs)]
 pub struct SimulationRun {
     pub id: i32,
     pub session_id: i32,

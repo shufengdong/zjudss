@@ -8,14 +8,77 @@ use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 
 use super::{
-    AdapterError, EngineRunOutput, InspectOutcome, InspectSpec, OutputLimits, RunMode, RunSpec,
-    SimEngine, validate_outputs,
+    AdapterError, EngineRunOutput, ImportSpec, ImportedModel, InspectOutcome, InspectSpec,
+    OutputLimits, RunMode, RunSpec, STATIC_MODEL_TABLES, SimEngine, validate_outputs,
 };
 
 #[derive(Debug, Clone, Default)]
 pub struct StubEngine;
 
 impl StubEngine {
+    fn import_fixture(&self, spec: ImportSpec) -> Result<ImportedModel, AdapterError> {
+        let (_entry, profile) = super::import::resolve_entry(&spec)?;
+        std::fs::create_dir_all(&spec.result_dir).map_err(|error| {
+            AdapterError::new(
+                "result_dir_create_failed",
+                super::ErrorCategory::Io,
+                error.to_string(),
+            )
+        })?;
+        for (index, table) in STATIC_MODEL_TABLES.into_iter().enumerate() {
+            let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Utf8, false)]));
+            let values = if index == 0 {
+                StringArray::from(vec!["stub"])
+            } else {
+                StringArray::from(Vec::<String>::new())
+            };
+            let batch =
+                RecordBatch::try_new(schema.clone(), vec![Arc::new(values)]).map_err(|error| {
+                    AdapterError::new(
+                        "stub_parquet_failed",
+                        super::ErrorCategory::Internal,
+                        error.to_string(),
+                    )
+                })?;
+            let file = std::fs::File::create(spec.result_dir.join(format!("{table}.parquet")))
+                .map_err(|error| {
+                    AdapterError::new(
+                        "stub_parquet_failed",
+                        super::ErrorCategory::Io,
+                        error.to_string(),
+                    )
+                })?;
+            let properties = WriterProperties::builder()
+                .set_compression(Compression::SNAPPY)
+                .build();
+            let mut writer =
+                ArrowWriter::try_new(file, schema, Some(properties)).map_err(|error| {
+                    AdapterError::new(
+                        "stub_parquet_failed",
+                        super::ErrorCategory::Internal,
+                        error.to_string(),
+                    )
+                })?;
+            writer
+                .write(&batch)
+                .and_then(|_| writer.close().map(|_| ()))
+                .map_err(|error| {
+                    AdapterError::new(
+                        "stub_parquet_failed",
+                        super::ErrorCategory::Internal,
+                        error.to_string(),
+                    )
+                })?;
+        }
+        let dataframes = super::import::order_model_outputs(
+            validate_outputs(&spec.result_dir, OutputLimits::default())?.datasets,
+        )?;
+        Ok(ImportedModel {
+            profile,
+            dataframes,
+            diagnostics: serde_json::json!({"engine":"stub","tableCount":21}),
+        })
+    }
     fn comparison_fixture(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError> {
         spec.validate()?;
         std::fs::create_dir_all(&spec.result_dir).map_err(|e| {
@@ -173,5 +236,8 @@ impl SimEngine for StubEngine {
         } else {
             self.run_fixture(spec, &[RunMode::Analysis])
         }
+    }
+    async fn import_model(&self, spec: ImportSpec) -> Result<ImportedModel, AdapterError> {
+        self.import_fixture(spec)
     }
 }

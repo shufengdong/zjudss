@@ -1,7 +1,9 @@
 //! tensoreval 适配器是仿真内核与应用层之间的唯一边界。
 
 mod contract;
+mod import;
 mod process;
+mod script;
 mod stub;
 
 use std::fmt;
@@ -11,9 +13,14 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 pub use contract::{ENGINE_CONTRACT_VERSION, EngineCapabilities};
+pub use import::{
+    ImportEntryCandidate, ImportInspectSpec, ImportInspection, ImportProfile, ImportSpec,
+    ImportedModel, STATIC_MODEL_TABLES,
+};
 pub use process::{
     EngineCommand, EngineConfig, OutputLimits, ProcessEngine, build_command, validate_outputs,
 };
+pub use script::{ScriptValidationSpec, StaticScriptValidation};
 pub use stub::StubEngine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -186,7 +193,7 @@ fn valid_alias(value: &str) -> bool {
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
-fn validate_tree_file(root: &Path, relative: &Path) -> Result<(), AdapterError> {
+pub(super) fn validate_tree_file(root: &Path, relative: &Path) -> Result<(), AdapterError> {
     if !root.is_absolute()
         || relative.is_absolute()
         || relative
@@ -231,6 +238,25 @@ pub trait SimEngine: Send + Sync {
     async fn run_dataframe(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError>;
     async fn run_bundle(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError>;
     async fn run_analysis(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError>;
+    async fn inspect_model_import(
+        &self,
+        spec: ImportInspectSpec,
+    ) -> Result<ImportInspection, AdapterError> {
+        import::inspect_tree(&spec)
+    }
+    async fn import_model(&self, _spec: ImportSpec) -> Result<ImportedModel, AdapterError> {
+        Err(AdapterError::new(
+            "model_import_unavailable",
+            ErrorCategory::Internal,
+            "当前引擎未实现模型导入",
+        ))
+    }
+    async fn validate_script(
+        &self,
+        spec: ScriptValidationSpec,
+    ) -> Result<StaticScriptValidation, AdapterError> {
+        script::validate_script_source(&spec)
+    }
 }
 
 pub fn resolve_data_dir() -> PathBuf {

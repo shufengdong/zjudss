@@ -322,6 +322,9 @@ fn output_validation_rejects_symlinks_and_capability_probe_fails_closed() {
         result_dir: true,
         output_format_parquet: true,
         named_parquet_inputs: true,
+        static_dss_import: true,
+        single_solve_import: true,
+        script_validation: true,
     };
     assert_eq!(
         mismatched.require_v2().unwrap_err().code,

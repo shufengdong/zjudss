@@ -12,7 +12,7 @@ use serde::Serialize;
 
 use super::{AdapterError, ErrorCategory};
 
-pub const ENGINE_CONTRACT_VERSION: &str = "tensoreval-parquet-v2";
+pub const ENGINE_CONTRACT_VERSION: &str = "tensoreval-parquet-v3";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +21,9 @@ pub struct EngineCapabilities {
     pub result_dir: bool,
     pub output_format_parquet: bool,
     pub named_parquet_inputs: bool,
+    pub static_dss_import: bool,
+    pub single_solve_import: bool,
+    pub script_validation: bool,
 }
 
 impl EngineCapabilities {
@@ -56,6 +59,9 @@ impl EngineCapabilities {
             result_dir,
             output_format_parquet,
             named_parquet_inputs,
+            static_dss_import: result_dir && output_format_parquet,
+            single_solve_import: result_dir && output_format_parquet,
+            script_validation: true,
         })
     }
 
@@ -86,6 +92,25 @@ impl EngineCapabilities {
                 "engine_parquet_input_unsupported",
                 ErrorCategory::Internal,
                 "tensoreval 缺少命名 Parquet input",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn require_v3(&self) -> Result<(), AdapterError> {
+        self.require_v2()?;
+        if !self.static_dss_import || !self.single_solve_import {
+            return Err(AdapterError::new(
+                "engine_model_import_unsupported",
+                ErrorCategory::Internal,
+                "tensoreval 缺少 V3 模型 import profile",
+            ));
+        }
+        if !self.script_validation {
+            return Err(AdapterError::new(
+                "engine_script_validation_unsupported",
+                ErrorCategory::Internal,
+                "adapter 缺少 V3 RSS 静态校验",
             ));
         }
         Ok(())

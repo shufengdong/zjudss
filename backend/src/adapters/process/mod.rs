@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use tokio::process::Command;
 
 use super::{
-    AdapterError, EngineCapabilities, EngineRunOutput, ErrorCategory, InspectOutcome, InspectSpec,
-    RunMode, RunSpec, SimEngine,
+    AdapterError, EngineCapabilities, EngineRunOutput, ErrorCategory, ImportProfile, ImportSpec,
+    ImportedModel, InspectOutcome, InspectSpec, RunMode, RunSpec, STATIC_MODEL_TABLES, SimEngine,
 };
 pub use command::{EngineCommand, build_command};
 pub use output::{OutputLimits, validate_outputs};
@@ -26,7 +26,7 @@ pub struct EngineConfig {
 impl EngineConfig {
     pub fn probe(bin: PathBuf, default_timeout: Duration) -> Result<Self, AdapterError> {
         let capabilities = EngineCapabilities::probe(&bin)?;
-        capabilities.require_v2()?;
+        capabilities.require_v3()?;
         Ok(Self {
             bin,
             default_timeout,
@@ -169,6 +169,61 @@ impl SimEngine for ProcessEngine {
     }
     async fn run_analysis(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError> {
         self.execute(spec, &[RunMode::Analysis]).await
+    }
+    async fn import_model(&self, spec: ImportSpec) -> Result<ImportedModel, AdapterError> {
+        let (entry, profile) = super::import::resolve_entry(&spec)?;
+        let function = match profile {
+            ImportProfile::StaticDss => "import_dss",
+            ImportProfile::SingleSolveExecution => "import_dss_execution",
+        };
+        let entry = entry.to_str().ok_or_else(|| {
+            AdapterError::new(
+                "input_path_invalid",
+                ErrorCategory::Model,
+                "DSS 入口不是 UTF-8",
+            )
+        })?;
+        let script_name = ".zjudss-model-import.rss";
+        let outputs = STATIC_MODEL_TABLES.join(", ");
+        let entry_literal = serde_json::to_string(&entry.replace('\\', "/")).map_err(|error| {
+            AdapterError::new(
+                "model_import_script_failed",
+                ErrorCategory::Internal,
+                error.to_string(),
+            )
+        })?;
+        std::fs::write(
+            spec.input_tree.join(script_name),
+            format!("[{outputs}] = {function}({entry_literal});\n"),
+        )
+        .map_err(|error| {
+            AdapterError::new(
+                "model_import_script_failed",
+                ErrorCategory::Io,
+                error.to_string(),
+            )
+        })?;
+        let output = self
+            .execute(
+                RunSpec {
+                    mode: RunMode::Dataframe,
+                    input_tree: spec.input_tree,
+                    script_path: PathBuf::from(script_name),
+                    named_inputs: Vec::new(),
+                    result_dir: spec.result_dir,
+                    timeout: spec.timeout,
+                },
+                &[RunMode::Dataframe],
+            )
+            .await?;
+        Ok(ImportedModel {
+            profile,
+            dataframes: super::import::order_model_outputs(output.datasets)?,
+            diagnostics: serde_json::json!({
+                "importMethod": function,
+                "tableCount": STATIC_MODEL_TABLES.len()
+            }),
+        })
     }
 }
 
