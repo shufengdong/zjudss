@@ -18,8 +18,7 @@ impl DatasetRepo {
         d: &ResultDataset,
     ) -> RepoResult<()> {
         let sessions = schema::sessions::table
-            .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-            .filter(schema::sessions::access_scope_key.eq(&scope.key))
+            .filter(schema::sessions::user_id.eq(&scope.key))
             .select(schema::sessions::id);
         let ok = if let Some(id) = d.task_id {
             schema::simulation_tasks::table
@@ -68,8 +67,7 @@ impl DatasetRepo {
         tokio::task::spawn_blocking(move || {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id);
             schema::simulation_tasks::table
                 .filter(schema::simulation_tasks::id.eq(task_id))
@@ -113,8 +111,7 @@ impl DatasetRepo {
         tokio::task::spawn_blocking(move || {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id);
             schema::result_analysis_runs::table
                 .filter(schema::result_analysis_runs::id.eq(analysis_id))

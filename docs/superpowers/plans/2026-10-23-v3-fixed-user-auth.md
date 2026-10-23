@@ -46,13 +46,13 @@
 - Add test: `backend/tests/user_seed.rs`
 - Modify test support: `backend/tests/common/mod.rs`
 
-- [ ] Write failing seed and schema tests.
+- [x] Write failing seed and schema tests.
 
   Cover exactly: the current CSV yields its actual row count; stored hashes begin with `$argon2id$` and differ from IDs; headers must be exactly `ID,NAME`; empty/duplicate/control-character/extra-column input rolls back all inserts; identical bytes are idempotent; different bytes against a populated database return `user_seed_mismatch_reset_required`; `sessions.user_id` is required and `access_scope_*` columns no longer exist.
 
-- [ ] Run `cd backend && cargo test --test user_seed --features e2e-test` and confirm the new tests fail for missing schema/service.
+- [x] Run `cd backend && cargo test --test user_seed --features e2e-test` and confirm the new tests fail for missing schema/service.
 
-- [ ] Rewrite the empty-database initial migration.
+- [x] Rewrite the empty-database initial migration.
 
   Add:
 
@@ -68,7 +68,7 @@
 
   Replace `sessions.access_scope_kind/access_scope_key/storage_scope_id` with required `sessions.user_id`; retain per-user storage scopes but constrain their V3 `kind='user'` and `scope_key=user.id`. Add indexes on auth-session user/expiry and business-session user/update time. Order `down.sql` by foreign-key dependency.
 
-- [ ] Add the seed API and embedded build input.
+- [x] Add the seed API and embedded build input.
 
   ```rust
   pub const INIT_USERS_CSV: &[u8] = include_bytes!("../../resources/init_users.csv");
@@ -89,11 +89,11 @@
 
   Parse and validate the complete CSV before the insert transaction. Use Argon2id with documented constants and a distinct random salt per row. Insert the user storage scope and user atomically, then write `init_users_sha256`. Never include IDs in errors or logs.
 
-- [ ] Update Diesel table declarations/models and export `UserRepo`; give `backend/tests/common/mod.rs` a seed helper that accepts fixture CSV bytes rather than silently depending on a specific row count.
+- [x] Update Diesel table declarations/models and export `UserRepo`; give `backend/tests/common/mod.rs` a seed helper that accepts fixture CSV bytes rather than silently depending on a specific row count.
 
-- [ ] Run `cd backend && cargo test --test user_seed --features e2e-test` and confirm it passes.
+- [x] Run `cd backend && cargo test --test user_seed --features e2e-test` and confirm it passes.
 
-- [ ] Commit: `git add backend/Cargo.toml backend/Cargo.lock backend/migrations backend/src/db backend/src/auth backend/tests/user_seed.rs backend/tests/common/mod.rs && git commit -m "feat: seed fixed v3 users"` (explicitly exclude `backend/resources/init_users.csv`).
+- [x] Commit: `git add backend/Cargo.toml backend/Cargo.lock backend/migrations backend/src/db backend/src/auth backend/tests/user_seed.rs backend/tests/common/mod.rs && git commit -m "feat: seed fixed v3 users"` (explicitly exclude `backend/resources/init_users.csv`).
 
 ### Task 2: Implement opaque auth sessions, cookies, and protected routing
 

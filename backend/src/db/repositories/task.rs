@@ -39,8 +39,7 @@ impl TaskRepo {
             conn.immediate_transaction::<SimulationTask, diesel::result::Error, _>(|conn| {
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(new.session_id))
-                    .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-                    .filter(schema::sessions::access_scope_key.eq(&scope.key))
+                    .filter(schema::sessions::user_id.eq(&scope.key))
                     .select(schema::sessions::id)
                     .first::<i32>(conn)?;
                 diesel::insert_into(schema::simulation_tasks::table)
@@ -73,8 +72,7 @@ impl TaskRepo {
         tokio::task::spawn_blocking(move || -> RepoResult<()> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let session_ids = schema::sessions::table
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id);
             let target = schema::simulation_tasks::table
                 .filter(schema::simulation_tasks::id.eq(task_id))
@@ -113,8 +111,7 @@ impl TaskRepo {
         tokio::task::spawn_blocking(move || -> RepoResult<()> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let session_ids = schema::sessions::table
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id);
             let target = schema::simulation_tasks::table
                 .filter(schema::simulation_tasks::id.eq(task_id))
@@ -148,8 +145,7 @@ impl TaskRepo {
         tokio::task::spawn_blocking(move || -> RepoResult<Option<SimulationTask>> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let session_ids = schema::sessions::table
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id);
             schema::simulation_tasks::table
                 .filter(schema::simulation_tasks::id.eq(task_id))
@@ -173,8 +169,7 @@ impl TaskRepo {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let exists = schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id)
                 .first::<i32>(&mut conn)
                 .optional()

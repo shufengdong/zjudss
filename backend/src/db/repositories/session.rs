@@ -1,7 +1,7 @@
 use diesel::prelude::*;
 
 use crate::auth::AccessScope;
-use crate::db::models::{NewSession, NewStorageScope, Session};
+use crate::db::models::{NewSession, Session};
 use crate::db::{DbPool, schema};
 
 use super::{RepoError, RepoResult};
@@ -28,31 +28,12 @@ impl SessionRepo {
         tokio::task::spawn_blocking(move || -> RepoResult<Session> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.immediate_transaction::<Session, diesel::result::Error, _>(|conn| {
-                diesel::insert_into(schema::storage_scopes::table)
-                    .values(NewStorageScope {
-                        kind: scope.kind.clone(),
-                        scope_key: scope.key.clone(),
-                        created_at_ms: now_ms,
-                    })
-                    .on_conflict((
-                        schema::storage_scopes::kind,
-                        schema::storage_scopes::scope_key,
-                    ))
-                    .do_nothing()
-                    .execute(conn)?;
-                let storage_scope_id: i32 = schema::storage_scopes::table
-                    .filter(schema::storage_scopes::kind.eq(&scope.kind))
-                    .filter(schema::storage_scopes::scope_key.eq(&scope.key))
-                    .select(schema::storage_scopes::id)
-                    .first(conn)?;
                 diesel::insert_into(schema::sessions::table)
                     .values(NewSession {
                         title,
                         created_at_ms: now_ms,
                         updated_at_ms: now_ms,
-                        access_scope_kind: scope.kind.clone(),
-                        access_scope_key: scope.key.clone(),
-                        storage_scope_id: Some(storage_scope_id),
+                        user_id: scope.key.clone(),
                     })
                     .execute(conn)?;
                 let id: i32 =
@@ -72,8 +53,7 @@ impl SessionRepo {
         tokio::task::spawn_blocking(move || -> RepoResult<Vec<Session>> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             schema::sessions::table
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .order(schema::sessions::updated_at_ms.desc())
                 .load(&mut conn)
                 .map_err(RepoError::Query)
@@ -90,8 +70,7 @@ impl SessionRepo {
             let updated = diesel::update(
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(session_id))
-                    .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                    .filter(schema::sessions::access_scope_key.eq(scope.key)),
+                    .filter(schema::sessions::user_id.eq(scope.key)),
             )
             .set(schema::sessions::updated_at_ms.eq(now_ms))
             .execute(&mut conn)
@@ -112,8 +91,7 @@ impl SessionRepo {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .first(&mut conn)
                 .optional()
                 .map_err(RepoError::Query)
@@ -136,8 +114,7 @@ impl SessionRepo {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let target = schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(&scope.key));
+                .filter(schema::sessions::user_id.eq(&scope.key));
             let updated = diesel::update(target)
                 .set((
                     schema::sessions::title.eq(title),
@@ -151,8 +128,7 @@ impl SessionRepo {
             }
             schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .first(&mut conn)
                 .map_err(RepoError::Query)
         })
@@ -168,8 +144,7 @@ impl SessionRepo {
             let deleted = diesel::delete(
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(session_id))
-                    .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                    .filter(schema::sessions::access_scope_key.eq(scope.key)),
+                    .filter(schema::sessions::user_id.eq(scope.key)),
             )
             .execute(&mut conn)
             .map_err(RepoError::Query)?;

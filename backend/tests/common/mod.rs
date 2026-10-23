@@ -22,6 +22,17 @@ pub struct TestApp {
     _root: TempDir,
 }
 
+pub fn seed_test_users(pool: &DbPool, csv_bytes: &[u8]) -> backend::auth::UserSeedSummary {
+    let mut conn = pool.get().expect("checkout database for user seed");
+    backend::auth::seed_users(
+        &mut conn,
+        csv_bytes,
+        backend::application::now_ms(),
+        backend::application::StorageLimits::default(),
+    )
+    .expect("seed test users")
+}
+
 impl TestApp {
     pub async fn spawn() -> Self {
         Self::spawn_with_auth(AuthConfig::instance()).await

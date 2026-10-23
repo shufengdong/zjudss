@@ -29,8 +29,7 @@ impl AnalysisRepo {
                 let session_id = run.session_id;
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(session_id))
-                    .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-                    .filter(schema::sessions::access_scope_key.eq(&scope.key))
+                    .filter(schema::sessions::user_id.eq(&scope.key))
                     .select(schema::sessions::id)
                     .first::<i32>(c)
                     .optional()?
@@ -93,8 +92,7 @@ impl AnalysisRepo {
         tokio::task::spawn_blocking(move || {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id);
             let n = diesel::update(
                 schema::result_analysis_runs::table
@@ -129,8 +127,7 @@ impl AnalysisRepo {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             c.immediate_transaction::<_, RepoError, _>(|c| {
                 let sessions = schema::sessions::table
-                    .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-                    .filter(schema::sessions::access_scope_key.eq(&scope.key))
+                    .filter(schema::sessions::user_id.eq(&scope.key))
                     .select(schema::sessions::id);
                 schema::result_analysis_runs::table
                     .filter(schema::result_analysis_runs::id.eq(id))
@@ -188,8 +185,7 @@ impl AnalysisRepo {
         tokio::task::spawn_blocking(move || {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id);
             let n = diesel::update(
                 schema::result_analysis_runs::table
@@ -218,8 +214,7 @@ impl AnalysisRepo {
         tokio::task::spawn_blocking(move || {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id);
             schema::result_analysis_runs::table
                 .filter(schema::result_analysis_runs::id.eq(id))
@@ -247,8 +242,7 @@ impl AnalysisRepo {
                 .optional()?
                 .ok_or(RepoError::NotFound)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(&scope.key))
+                .filter(schema::sessions::user_id.eq(&scope.key))
                 .select(schema::sessions::id);
             let ok = if let Some(t) = d.task_id {
                 schema::simulation_tasks::table

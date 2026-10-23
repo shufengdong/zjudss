@@ -17,4 +17,7 @@ DROP TABLE IF EXISTS artifact_gc_failures;
 DROP TABLE IF EXISTS storage_scope_artifacts;
 DROP TABLE IF EXISTS artifacts;
 DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS auth_sessions;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS system_metadata;
 DROP TABLE IF EXISTS storage_scopes;

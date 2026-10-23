@@ -94,8 +94,7 @@ impl HistoryRepo {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id)
                 .first::<i32>(&mut c)
                 .optional()?

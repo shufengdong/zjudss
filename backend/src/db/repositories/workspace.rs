@@ -125,12 +125,10 @@ impl WorkspaceRepo {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.immediate_transaction::<(ModelVersion, WorkspaceRecord), RepoError, _>(|conn| {
                 let workspace = scoped_workspace(conn, &scope, workspace_id)?;
-                let storage_scope_id = schema::workspaces::table
-                    .inner_join(schema::sessions::table)
-                    .filter(schema::workspaces::id.eq(workspace_id))
-                    .select(schema::sessions::storage_scope_id)
-                    .first::<Option<i32>>(conn)?
-                    .ok_or_else(|| RepoError::InvalidState("会话缺少存储 scope".to_string()))?;
+                let storage_scope_id = schema::users::table
+                    .find(&scope.key)
+                    .select(schema::users::storage_scope_id)
+                    .first::<i32>(conn)?;
                 let current_base = workspace.draft_version_id.or(workspace.active_version_id);
                 if current_base != expected_base {
                     return Err(RepoError::VersionConflict);
@@ -452,8 +450,7 @@ impl WorkspaceRepo {
             schema::model_versions::table
                 .inner_join(schema::workspaces::table.inner_join(schema::sessions::table))
                 .filter(schema::model_versions::id.eq(version_id))
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::model_versions::all_columns)
                 .first(&mut conn)
                 .optional()?
@@ -506,8 +503,7 @@ impl WorkspaceRepo {
                     schema::model_versions::table
                         .inner_join(schema::workspaces::table.inner_join(schema::sessions::table)),
                 )
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .filter(
                     schema::version_artifacts::artifact_id
                         .eq(artifact_id)
@@ -529,8 +525,7 @@ fn ensure_session(
 ) -> RepoResult<()> {
     schema::sessions::table
         .filter(schema::sessions::id.eq(session_id))
-        .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-        .filter(schema::sessions::access_scope_key.eq(&scope.key))
+        .filter(schema::sessions::user_id.eq(&scope.key))
         .select(schema::sessions::id)
         .first::<i32>(conn)
         .optional()?
@@ -546,8 +541,7 @@ fn scoped_workspace(
     schema::workspaces::table
         .inner_join(schema::sessions::table)
         .filter(schema::workspaces::id.eq(workspace_id))
-        .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-        .filter(schema::sessions::access_scope_key.eq(&scope.key))
+        .filter(schema::sessions::user_id.eq(&scope.key))
         .select(schema::workspaces::all_columns)
         .first(conn)
         .optional()?

@@ -25,8 +25,7 @@ impl ComparisonRepo {
             c.immediate_transaction::<_, RepoError, _>(|c| {
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(new.session_id))
-                    .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-                    .filter(schema::sessions::access_scope_key.eq(&scope.key))
+                    .filter(schema::sessions::user_id.eq(&scope.key))
                     .select(schema::sessions::id)
                     .first::<i32>(c)
                     .optional()?
@@ -69,8 +68,7 @@ impl ComparisonRepo {
             schema::task_comparisons::table
                 .inner_join(schema::sessions::table)
                 .filter(schema::task_comparisons::id.eq(id))
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::task_comparisons::all_columns)
                 .first(&mut c)
                 .optional()?

@@ -1,4 +1,7 @@
+mod seed;
 mod trusted_proxy;
+
+pub use seed::{INIT_USERS_CSV, UserSeedError, UserSeedSummary, seed_users};
 
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;

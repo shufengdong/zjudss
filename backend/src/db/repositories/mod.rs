@@ -9,6 +9,7 @@ mod session;
 mod simulation;
 mod storage_scope;
 mod task;
+mod user;
 mod workspace;
 
 pub use analysis::AnalysisRepo;
@@ -22,6 +23,7 @@ pub use session::SessionRepo;
 pub use simulation::SimulationRepo;
 pub use storage_scope::{StorageLimits, StorageScopeRepo, StorageUsage};
 pub use task::TaskRepo;
+pub use user::UserRepo;
 pub use workspace::{
     BindingDraft, PreparedVersion, VersionArtifactDraft, WorkspaceRecord, WorkspaceRepo,
 };

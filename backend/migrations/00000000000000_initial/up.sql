@@ -1,8 +1,8 @@
--- zjudss v2 initial schema. v1 was never deployed; only empty-database initialization is supported.
+-- zjudss v3 initial schema. Earlier versions were never deployed; only empty-database initialization is supported.
 
 CREATE TABLE storage_scopes (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
- kind TEXT NOT NULL CHECK(kind IN ('instance','owner','tenant')),
+ kind TEXT NOT NULL CHECK(kind='user'),
  scope_key TEXT NOT NULL,
  created_at_ms INTEGER NOT NULL,
  artifact_limit INTEGER NOT NULL DEFAULT 20000 CHECK(artifact_limit>0),
@@ -13,21 +13,40 @@ CREATE TABLE storage_scopes (
  updated_at_ms INTEGER NOT NULL DEFAULT 0,
  UNIQUE(kind,scope_key)
 );
-INSERT INTO storage_scopes(kind,scope_key,created_at_ms) VALUES('instance','instance',0);
+
+CREATE TABLE users (
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL CHECK(length(name)>0),
+ password_hash TEXT NOT NULL,
+ storage_scope_id INTEGER NOT NULL UNIQUE REFERENCES storage_scopes(id) ON DELETE RESTRICT,
+ created_at_ms INTEGER NOT NULL
+);
+
+CREATE TABLE auth_sessions (
+ token_hash TEXT PRIMARY KEY CHECK(length(token_hash)=64),
+ user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ created_at_ms INTEGER NOT NULL,
+ last_seen_at_ms INTEGER NOT NULL,
+ expires_at_ms INTEGER NOT NULL
+);
+CREATE INDEX idx_auth_sessions_user ON auth_sessions(user_id);
+CREATE INDEX idx_auth_sessions_expiry ON auth_sessions(expires_at_ms);
+
+CREATE TABLE system_metadata (
+ key TEXT PRIMARY KEY,
+ value TEXT NOT NULL
+);
 
 CREATE TABLE sessions (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  title TEXT NOT NULL DEFAULT '',
  created_at_ms INTEGER NOT NULL,
  updated_at_ms INTEGER NOT NULL,
- access_scope_kind TEXT NOT NULL CHECK(access_scope_kind IN ('instance','owner','tenant')),
- access_scope_key TEXT NOT NULL CHECK(length(access_scope_key)>0),
- storage_scope_id INTEGER NOT NULL REFERENCES storage_scopes(id),
+ user_id TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
  title_source TEXT NOT NULL DEFAULT 'default' CHECK(title_source IN ('default','auto','user'))
 );
 CREATE INDEX idx_sessions_updated ON sessions(updated_at_ms);
-CREATE INDEX idx_sessions_access_scope ON sessions(access_scope_kind,access_scope_key,updated_at_ms);
-CREATE INDEX idx_sessions_storage_scope ON sessions(storage_scope_id);
+CREATE INDEX idx_sessions_user_updated ON sessions(user_id,updated_at_ms);
 
 CREATE TABLE artifacts (
  id INTEGER PRIMARY KEY AUTOINCREMENT,

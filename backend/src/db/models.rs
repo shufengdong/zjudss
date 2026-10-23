@@ -3,10 +3,10 @@
 // Diesel 2.x：派生宏（Queryable/Insertable）只从 crate 根重导出（默认 feature
 // `with-deprecated`），prelude 仅含 trait 与 DSL；故显式导入。
 use super::schema::{
-    artifacts, dataframe_bindings, dataset_views, ingestion_artifacts, ingestions, messages,
-    model_versions, result_analysis_inputs, result_analysis_runs, result_datasets, sessions,
-    simulation_tasks, storage_scope_artifacts, storage_scopes, task_comparisons, version_artifacts,
-    workspaces,
+    artifacts, auth_sessions, dataframe_bindings, dataset_views, ingestion_artifacts, ingestions,
+    messages, model_versions, result_analysis_inputs, result_analysis_runs, result_datasets,
+    sessions, simulation_tasks, storage_scope_artifacts, storage_scopes, task_comparisons, users,
+    version_artifacts, workspaces,
 };
 #[allow(deprecated)]
 use diesel::{Insertable, Queryable};
@@ -20,9 +20,7 @@ pub struct Session {
     pub title: String,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
-    pub access_scope_kind: String,
-    pub access_scope_key: String,
-    pub storage_scope_id: Option<i32>,
+    pub user_id: String,
     pub title_source: String,
 }
 
@@ -32,9 +30,37 @@ pub struct NewSession {
     pub title: String,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
-    pub access_scope_kind: String,
-    pub access_scope_key: String,
-    pub storage_scope_id: Option<i32>,
+    pub user_id: String,
+}
+
+#[derive(Queryable, Debug, Clone)]
+#[diesel(table_name = users)]
+pub struct User {
+    pub id: String,
+    pub name: String,
+    pub password_hash: String,
+    pub storage_scope_id: i32,
+    pub created_at_ms: i64,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = users)]
+pub struct NewUser {
+    pub id: String,
+    pub name: String,
+    pub password_hash: String,
+    pub storage_scope_id: i32,
+    pub created_at_ms: i64,
+}
+
+#[derive(Queryable, Insertable, Debug, Clone)]
+#[diesel(table_name = auth_sessions)]
+pub struct AuthSession {
+    pub token_hash: String,
+    pub user_id: String,
+    pub created_at_ms: i64,
+    pub last_seen_at_ms: i64,
+    pub expires_at_ms: i64,
 }
 
 #[derive(Queryable, Debug, Clone)]

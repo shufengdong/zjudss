@@ -28,13 +28,17 @@ impl SimulationRepo {
             conn.immediate_transaction::<_, RepoError, _>(|conn| {
                 let version_id = task.model_version_id;
                 let script_id = task.script_artifact_id;
-                let storage_scope_id = schema::sessions::table
+                schema::sessions::table
                     .filter(schema::sessions::id.eq(task.session_id))
-                    .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-                    .filter(schema::sessions::access_scope_key.eq(&scope.key))
-                    .select(schema::sessions::storage_scope_id)
-                    .first::<Option<i32>>(conn)?
+                    .filter(schema::sessions::user_id.eq(&scope.key))
+                    .select(schema::sessions::id)
+                    .first::<i32>(conn)
+                    .optional()?
                     .ok_or(RepoError::NotFound)?;
+                let storage_scope_id = schema::users::table
+                    .find(&scope.key)
+                    .select(schema::users::storage_scope_id)
+                    .first::<i32>(conn)?;
                 schema::model_versions::table
                     .inner_join(schema::workspaces::table)
                     .filter(schema::model_versions::id.eq(version_id))
@@ -77,8 +81,7 @@ impl SimulationRepo {
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id);
             let count = diesel::update(
                 schema::simulation_tasks::table
@@ -114,8 +117,7 @@ impl SimulationRepo {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.immediate_transaction::<_, RepoError, _>(|conn| {
                 let sessions = schema::sessions::table
-                    .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-                    .filter(schema::sessions::access_scope_key.eq(&scope.key))
+                    .filter(schema::sessions::user_id.eq(&scope.key))
                     .select(schema::sessions::id);
                 let found = schema::simulation_tasks::table
                     .filter(schema::simulation_tasks::id.eq(id))
@@ -164,8 +166,7 @@ impl SimulationRepo {
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id);
             let count = diesel::update(
                 schema::simulation_tasks::table
@@ -196,8 +197,7 @@ impl SimulationRepo {
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id);
             schema::simulation_tasks::table
                 .filter(schema::simulation_tasks::id.eq(id))
@@ -221,8 +221,7 @@ impl SimulationRepo {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id)
                 .first::<i32>(&mut c)
                 .optional()?

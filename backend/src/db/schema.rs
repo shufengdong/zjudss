@@ -10,10 +10,35 @@ diesel::table! {
         title -> Text,
         created_at_ms -> BigInt,
         updated_at_ms -> BigInt,
-        access_scope_kind -> Text,
-        access_scope_key -> Text,
-        storage_scope_id -> Nullable<Integer>,
+        user_id -> Text,
         title_source -> Text,
+    }
+}
+
+diesel::table! {
+    users (id) {
+        id -> Text,
+        name -> Text,
+        password_hash -> Text,
+        storage_scope_id -> Integer,
+        created_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    auth_sessions (token_hash) {
+        token_hash -> Text,
+        user_id -> Text,
+        created_at_ms -> BigInt,
+        last_seen_at_ms -> BigInt,
+        expires_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    system_metadata (key) {
+        key -> Text,
+        value -> Text,
     }
 }
 diesel::table! {
@@ -261,7 +286,9 @@ diesel::table! {
     }
 }
 
-diesel::joinable!(sessions -> storage_scopes (storage_scope_id));
+diesel::joinable!(sessions -> users (user_id));
+diesel::joinable!(users -> storage_scopes (storage_scope_id));
+diesel::joinable!(auth_sessions -> users (user_id));
 diesel::joinable!(workspaces -> sessions (session_id));
 diesel::joinable!(model_versions -> workspaces (workspace_id));
 diesel::joinable!(version_artifacts -> model_versions (version_id));
@@ -279,6 +306,9 @@ diesel::joinable!(chat_search_documents -> sessions (session_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     sessions,
+    users,
+    auth_sessions,
+    system_metadata,
     storage_scopes,
     artifacts,
     storage_scope_artifacts,

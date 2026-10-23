@@ -49,8 +49,7 @@ impl IngestionRepo {
                 .inner_join(schema::workspaces::table.inner_join(schema::sessions::table))
                 .filter(schema::ingestions::workspace_id.eq(workspace_id))
                 .filter(schema::ingestions::client_batch_id.eq(batch))
-                .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(&scope.key))
+                .filter(schema::sessions::user_id.eq(&scope.key))
                 .select(schema::ingestions::all_columns)
                 .first::<Ingestion>(&mut conn)
                 .optional()?;
@@ -125,8 +124,7 @@ impl IngestionRepo {
             let ingestion = schema::ingestions::table
                 .inner_join(schema::workspaces::table.inner_join(schema::sessions::table))
                 .filter(schema::ingestions::id.eq(id))
-                .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(&scope.key))
+                .filter(schema::sessions::user_id.eq(&scope.key))
                 .select(schema::ingestions::all_columns)
                 .first::<Ingestion>(&mut conn)
                 .optional()?
@@ -279,8 +277,7 @@ fn ensure_workspace(
     let exists = schema::workspaces::table
         .inner_join(schema::sessions::table)
         .filter(schema::workspaces::id.eq(workspace_id))
-        .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-        .filter(schema::sessions::access_scope_key.eq(&scope.key))
+        .filter(schema::sessions::user_id.eq(&scope.key))
         .select(schema::workspaces::id)
         .first::<i32>(conn)
         .optional()?

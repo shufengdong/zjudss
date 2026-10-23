@@ -24,8 +24,7 @@ impl MessageRepo {
             conn.immediate_transaction::<Message, diesel::result::Error, _>(|conn| {
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(new.session_id))
-                    .filter(schema::sessions::access_scope_kind.eq(&scope.kind))
-                    .filter(schema::sessions::access_scope_key.eq(&scope.key))
+                    .filter(schema::sessions::user_id.eq(&scope.key))
                     .select(schema::sessions::id)
                     .first::<i32>(conn)?;
                 diesel::insert_into(schema::messages::table)
@@ -70,8 +69,7 @@ impl MessageRepo {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let exists = schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id)
                 .first::<i32>(&mut conn)
                 .optional()
@@ -101,8 +99,7 @@ impl MessageRepo {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
-                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.key))
                 .select(schema::sessions::id)
                 .first::<i32>(&mut conn)
                 .map_err(|error| match error {
