@@ -1,7 +1,7 @@
 mod common;
 use backend::{
     application::now_ms,
-    auth::{AccessScope, Principal, StorageScopeRef},
+    auth::CurrentUser,
     db::{
         models::{NewMessage, NewSimulationTask},
         repositories::{SearchFilters, TaskRepo},
@@ -15,24 +15,14 @@ struct IdRow {
     #[diesel(sql_type = Integer)]
     id: i32,
 }
-fn p(key: &str) -> Principal {
-    Principal {
-        access: AccessScope {
-            kind: "instance".into(),
-            key: key.into(),
-        },
-        storage: StorageScopeRef {
-            kind: "instance".into(),
-            key: key.into(),
-        },
-        subject: key.into(),
-    }
+fn p(key: &str) -> CurrentUser {
+    common::test_user(key)
 }
-async fn message(app: &TestApp, p: &Principal, session: i32, text: &str, at: i64) -> i32 {
+async fn message(app: &TestApp, p: &CurrentUser, session: i32, text: &str, at: i64) -> i32 {
     app.state
         .message_repo
         .create(
-            &p.access,
+            &p.id,
             NewMessage {
                 session_id: session,
                 task_id: None,
@@ -55,7 +45,7 @@ async fn chinese_substring_short_query_filters_delete_and_scope_are_bounded() {
     let s = app
         .state
         .session_repo
-        .create(&owner.access, "", 1)
+        .create(&owner.id, "", 1)
         .await
         .unwrap();
     message(&app, &owner, s.id, "请分析配电网电压越限情况", 10).await;
@@ -96,7 +86,7 @@ async fn chinese_substring_short_query_filters_delete_and_scope_are_bounded() {
     let renamed = app
         .state
         .session_repo
-        .find(&owner.access, s.id)
+        .find(&owner.id, s.id)
         .await
         .unwrap()
         .unwrap();
@@ -104,14 +94,14 @@ async fn chinese_substring_short_query_filters_delete_and_scope_are_bounded() {
     assert!(renamed.title.contains("配电网"));
     app.state
         .session_repo
-        .rename(&owner.access, s.id, "手工标题", 20)
+        .rename(&owner.id, s.id, "手工标题", 20)
         .await
         .unwrap();
     message(&app, &owner, s.id, "新的自动标题候选", 21).await;
     let renamed = app
         .state
         .session_repo
-        .find(&owner.access, s.id)
+        .find(&owner.id, s.id)
         .await
         .unwrap()
         .unwrap();
@@ -121,7 +111,7 @@ async fn chinese_substring_short_query_filters_delete_and_scope_are_bounded() {
     let fs = app
         .state
         .session_repo
-        .create(&foreign.access, "外部", 1)
+        .create(&foreign.id, "外部", 1)
         .await
         .unwrap();
     message(&app, &foreign, fs.id, "配电网电压越限", 2).await;
@@ -146,7 +136,7 @@ async fn chinese_substring_short_query_filters_delete_and_scope_are_bounded() {
     );
     app.state
         .session_repo
-        .delete(&owner.access, s.id)
+        .delete(&owner.id, s.id)
         .await
         .unwrap();
     assert!(
@@ -176,7 +166,7 @@ async fn messages_support_latest_before_and_around_windows_with_hard_limits() {
     let s = app
         .state
         .session_repo
-        .create(&owner.access, "pages", 1)
+        .create(&owner.id, "pages", 1)
         .await
         .unwrap();
     let mut ids = Vec::new();
@@ -223,7 +213,7 @@ async fn task_filters_work_and_missing_fts_does_not_break_plain_history_reads() 
     let s = app
         .state
         .session_repo
-        .create(&owner.access, "tasks", 1)
+        .create(&owner.id, "tasks", 1)
         .await
         .unwrap();
     let mut conn = app.pool.get().unwrap();
@@ -247,7 +237,7 @@ async fn task_filters_work_and_missing_fts_does_not_break_plain_history_reads() 
     drop(conn);
     TaskRepo::new(app.pool.clone())
         .create(
-            &owner.access,
+            &owner.id,
             NewSimulationTask {
                 session_id: s.id,
                 status: "succeeded".into(),

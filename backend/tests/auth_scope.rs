@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
+use backend::auth::UserId;
 use common::TestApp;
 
 #[derive(QueryableByName)]
@@ -252,4 +253,56 @@ async fn logout_is_idempotent_and_revokes_only_current_browser() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
     }
+}
+
+#[tokio::test]
+async fn repository_boundary_and_http_resources_are_scoped_by_user_id() {
+    let app = TestApp::spawn().await;
+    let (alice, _, _) = login(&app, "alice", "alice").await;
+    let (bob, _, _) = login(&app, "bob", "bob").await;
+    let created = app
+        .router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/sessions",
+            Some(&alice),
+            json!({"title":"Alice private"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let session_id = json_body(created).await["id"].as_str().unwrap().to_string();
+
+    let rows = app
+        .state
+        .session_repo
+        .list(&UserId("alice".into()))
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    let hidden = app
+        .router
+        .clone()
+        .oneshot(request(
+            "GET",
+            &format!("/api/sessions/{session_id}/messages"),
+            Some(&bob),
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    let missing = app
+        .router
+        .clone()
+        .oneshot(request(
+            "GET",
+            "/api/sessions/2147483647/messages",
+            Some(&bob),
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
+    assert_eq!(json_body(hidden).await, json_body(missing).await);
 }

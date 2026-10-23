@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::application::{AppState, ArtifactService, StorageLimits};
-use crate::auth::{AuthService, StorageScopeRef, seed_users};
+use crate::auth::{AuthService, seed_users};
 use crate::db::{self, DbPool};
 
 use super::{
@@ -235,17 +235,27 @@ async fn set_storage_limits(
     State(state): State<ControlState>,
     Json(request): Json<StorageLimitsRequest>,
 ) -> Result<Json<Value>, StatusCode> {
+    if request.kind != "user" {
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
+    }
     let artifacts = state.artifacts.ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let scope = artifacts
-        .resolve_scope(&StorageScopeRef {
-            kind: request.kind,
-            key: request.key,
-        })
-        .await
-        .map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
+    let pool = state.pool.ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let user_id = request.key;
+    let scope_id = tokio::task::spawn_blocking(move || {
+        use diesel::prelude::*;
+        let mut connection = pool.get().map_err(|_| ())?;
+        crate::db::schema::users::table
+            .find(user_id)
+            .select(crate::db::schema::users::storage_scope_id)
+            .first::<i32>(&mut connection)
+            .map_err(|_| ())
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
     artifacts
         .set_limits(
-            scope.id,
+            scope_id,
             StorageLimits {
                 artifact_limit: request.artifact_limit,
                 byte_limit: request.byte_limit,

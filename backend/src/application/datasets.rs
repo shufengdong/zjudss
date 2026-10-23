@@ -11,7 +11,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::application::ArtifactService;
-use crate::auth::Principal;
+use crate::auth::CurrentUser;
 use crate::db::models::{DatasetView, ResultDataset};
 use crate::db::repositories::{DatasetRepo, RepoError};
 use crate::storage::ParquetInspector;
@@ -112,10 +112,10 @@ impl DatasetService {
     }
     pub async fn list(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         task_id: i32,
     ) -> Result<Vec<DatasetMetadata>, DatasetError> {
-        let rows = self.repo.list_task(&p.access, task_id).await?;
+        let rows = self.repo.list_task(&p.id, task_id).await?;
         let mut out = Vec::new();
         for d in rows {
             out.push(self.metadata_from(p, d).await?);
@@ -124,30 +124,34 @@ impl DatasetService {
     }
     pub async fn list_analysis(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         id: i32,
     ) -> Result<Vec<DatasetMetadata>, DatasetError> {
-        let rows = self.repo.list_analysis(&p.access, id).await?;
+        let rows = self.repo.list_analysis(&p.id, id).await?;
         let mut out = Vec::new();
         for d in rows {
             out.push(self.metadata_from(p, d).await?);
         }
         Ok(out)
     }
-    pub async fn metadata(&self, p: &Principal, id: i32) -> Result<DatasetMetadata, DatasetError> {
-        let d = self.repo.find(&p.access, id).await?;
+    pub async fn metadata(
+        &self,
+        p: &CurrentUser,
+        id: i32,
+    ) -> Result<DatasetMetadata, DatasetError> {
+        let d = self.repo.find(&p.id, id).await?;
         self.metadata_from(p, d).await
     }
     async fn metadata_from(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         d: ResultDataset,
     ) -> Result<DatasetMetadata, DatasetError> {
         let columns: Vec<DatasetColumn> = serde_json::from_str(&d.schema_json)
             .map_err(|e| DatasetError::Storage(e.to_string()))?;
         let views = self
             .repo
-            .views(&p.access, d.id)
+            .views(&p.id, d.id)
             .await?
             .into_iter()
             .map(view_dto)
@@ -163,10 +167,10 @@ impl DatasetService {
             views,
         })
     }
-    async fn path(&self, p: &Principal, d: &ResultDataset) -> Result<PathBuf, DatasetError> {
+    async fn path(&self, p: &CurrentUser, d: &ResultDataset) -> Result<PathBuf, DatasetError> {
         let scope = self
             .artifacts
-            .resolve_scope(&p.storage)
+            .resolve_scope(p.storage_scope_id)
             .await
             .map_err(|e| DatasetError::Storage(e.to_string()))?;
         let a = self
@@ -181,13 +185,13 @@ impl DatasetService {
     }
     pub async fn page(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         id: i32,
         limit: Option<usize>,
         cursor: Option<&str>,
         columns: &[String],
     ) -> Result<DatasetPage, DatasetError> {
-        let d = self.repo.find(&p.access, id).await?;
+        let d = self.repo.find(&p.id, id).await?;
         let limit = limit.unwrap_or(100);
         if !(1..=500).contains(&limit) {
             return Err(DatasetError::InvalidPage("limit 必须在 1..=500".into()));
@@ -240,8 +244,12 @@ impl DatasetService {
             diagnostics,
         })
     }
-    pub async fn download(&self, p: &Principal, id: i32) -> Result<DatasetDownload, DatasetError> {
-        let d = self.repo.find(&p.access, id).await?;
+    pub async fn download(
+        &self,
+        p: &CurrentUser,
+        id: i32,
+    ) -> Result<DatasetDownload, DatasetError> {
+        let d = self.repo.find(&p.id, id).await?;
         let path = self.path(p, &d).await?;
         let safe = d
             .result_name
@@ -262,10 +270,10 @@ impl DatasetService {
     }
     pub async fn view_data(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         view_id: i32,
     ) -> Result<DatasetViewData, DatasetError> {
-        let (view, d) = self.repo.find_view(&p.access, view_id).await?;
+        let (view, d) = self.repo.find_view(&p.id, view_id).await?;
         let spec: Value = serde_json::from_str(&view.spec_json)
             .map_err(|e| DatasetError::Storage(e.to_string()))?;
         let schema: Vec<DatasetColumn> = serde_json::from_str(&d.schema_json)

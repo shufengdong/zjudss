@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 
-use crate::auth::AccessScope;
+use crate::auth::UserId;
 use crate::db::models::{
     DataframeBinding, ModelVersion, NewDataframeBinding, NewModelVersion, NewVersionArtifact,
     NewWorkspace, VersionArtifact, Workspace,
@@ -62,7 +62,7 @@ impl WorkspaceRepo {
 
     pub async fn get_or_create(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         session_id: i32,
         now_ms: i64,
     ) -> RepoResult<WorkspaceRecord> {
@@ -93,7 +93,7 @@ impl WorkspaceRepo {
 
     pub async fn find_by_session(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         session_id: i32,
     ) -> RepoResult<WorkspaceRecord> {
         let pool = self.pool.clone();
@@ -114,7 +114,7 @@ impl WorkspaceRepo {
 
     pub async fn publish(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         workspace_id: i32,
         expected_base: Option<i32>,
         version: PreparedVersion,
@@ -126,7 +126,7 @@ impl WorkspaceRepo {
             conn.immediate_transaction::<(ModelVersion, WorkspaceRecord), RepoError, _>(|conn| {
                 let workspace = scoped_workspace(conn, &scope, workspace_id)?;
                 let storage_scope_id = schema::users::table
-                    .find(&scope.key)
+                    .find(&scope.0)
                     .select(schema::users::storage_scope_id)
                     .first::<i32>(conn)?;
                 let current_base = workspace.draft_version_id.or(workspace.active_version_id);
@@ -231,7 +231,7 @@ impl WorkspaceRepo {
 
     pub async fn activate(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         workspace_id: i32,
         version_id: i32,
         now_ms: i64,
@@ -274,7 +274,7 @@ impl WorkspaceRepo {
 
     pub async fn activate_checked(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         workspace_id: i32,
         version_id: i32,
         expected_base: Option<i32>,
@@ -319,7 +319,7 @@ impl WorkspaceRepo {
 
     pub async fn rollback(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         workspace_id: i32,
         version_id: i32,
         now_ms: i64,
@@ -364,7 +364,7 @@ impl WorkspaceRepo {
 
     pub async fn rollback_checked(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         workspace_id: i32,
         version_id: i32,
         expected_base: Option<i32>,
@@ -411,7 +411,7 @@ impl WorkspaceRepo {
 
     pub async fn list_versions(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         session_id: i32,
     ) -> RepoResult<Vec<ModelVersion>> {
         let pool = self.pool.clone();
@@ -438,11 +438,7 @@ impl WorkspaceRepo {
         .map_err(RepoError::Join)?
     }
 
-    pub async fn find_version(
-        &self,
-        scope: &AccessScope,
-        version_id: i32,
-    ) -> RepoResult<ModelVersion> {
+    pub async fn find_version(&self, scope: &UserId, version_id: i32) -> RepoResult<ModelVersion> {
         let pool = self.pool.clone();
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || -> RepoResult<ModelVersion> {
@@ -450,7 +446,7 @@ impl WorkspaceRepo {
             schema::model_versions::table
                 .inner_join(schema::workspaces::table.inner_join(schema::sessions::table))
                 .filter(schema::model_versions::id.eq(version_id))
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::model_versions::all_columns)
                 .first(&mut conn)
                 .optional()?
@@ -462,7 +458,7 @@ impl WorkspaceRepo {
 
     pub async fn inputs(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         version_id: i32,
     ) -> RepoResult<Vec<(VersionArtifact, Option<DataframeBinding>)>> {
         self.find_version(scope, version_id).await?;
@@ -489,11 +485,7 @@ impl WorkspaceRepo {
         .map_err(RepoError::Join)?
     }
 
-    pub async fn references_artifact(
-        &self,
-        scope: &AccessScope,
-        artifact_id: i32,
-    ) -> RepoResult<bool> {
+    pub async fn references_artifact(&self, scope: &UserId, artifact_id: i32) -> RepoResult<bool> {
         let pool = self.pool.clone();
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || -> RepoResult<bool> {
@@ -501,9 +493,17 @@ impl WorkspaceRepo {
             let count = schema::version_artifacts::table
                 .inner_join(
                     schema::model_versions::table
-                        .inner_join(schema::workspaces::table.inner_join(schema::sessions::table)),
+                        .on(schema::version_artifacts::version_id.eq(schema::model_versions::id)),
                 )
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .inner_join(
+                    schema::workspaces::table
+                        .on(schema::model_versions::workspace_id.eq(schema::workspaces::id)),
+                )
+                .inner_join(
+                    schema::sessions::table
+                        .on(schema::workspaces::session_id.eq(schema::sessions::id)),
+                )
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .filter(
                     schema::version_artifacts::artifact_id
                         .eq(artifact_id)
@@ -518,14 +518,10 @@ impl WorkspaceRepo {
     }
 }
 
-fn ensure_session(
-    conn: &mut SqliteConnection,
-    scope: &AccessScope,
-    session_id: i32,
-) -> RepoResult<()> {
+fn ensure_session(conn: &mut SqliteConnection, scope: &UserId, session_id: i32) -> RepoResult<()> {
     schema::sessions::table
         .filter(schema::sessions::id.eq(session_id))
-        .filter(schema::sessions::user_id.eq(&scope.key))
+        .filter(schema::sessions::user_id.eq(&scope.0))
         .select(schema::sessions::id)
         .first::<i32>(conn)
         .optional()?
@@ -535,13 +531,13 @@ fn ensure_session(
 
 fn scoped_workspace(
     conn: &mut SqliteConnection,
-    scope: &AccessScope,
+    scope: &UserId,
     workspace_id: i32,
 ) -> RepoResult<Workspace> {
     schema::workspaces::table
         .inner_join(schema::sessions::table)
         .filter(schema::workspaces::id.eq(workspace_id))
-        .filter(schema::sessions::user_id.eq(&scope.key))
+        .filter(schema::sessions::user_id.eq(&scope.0))
         .select(schema::workspaces::all_columns)
         .first(conn)
         .optional()?

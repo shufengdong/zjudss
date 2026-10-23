@@ -4,42 +4,37 @@ use backend::application::{
     AnalysisInput, AnalysisRequest, ArtifactMetadata, DataframeBindingDraft, ModelVersionStatus,
     RunStudyRequest, SourceKind, VersionDraft, VersionInputDraft, VersionOrigin,
 };
-use backend::auth::{AccessScope, Principal, StorageScopeRef};
+use backend::auth::{CurrentUser, UserId};
 use backend::storage::StageLimits;
 use common::TestApp;
 use serde_json::{Value, json};
 use std::{collections::HashMap, io::Cursor};
-fn principal() -> Principal {
-    Principal {
-        access: AccessScope {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        storage: StorageScopeRef {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        subject: "instance".into(),
+fn principal() -> CurrentUser {
+    CurrentUser {
+        id: UserId("instance".into()),
+        name: "Instance".into(),
+        storage_scope_id: 1,
+        auth_session_hash: "test".into(),
     }
 }
-async fn source_dataset(app: &TestApp) -> (Principal, i32, i32) {
+async fn source_dataset(app: &TestApp) -> (CurrentUser, i32, i32) {
     let p = principal();
     let session = app
         .state
         .session_repo
-        .create(&p.access, "analysis", 1)
+        .create(&p.id, "analysis", 1)
         .await
         .unwrap();
     let ws = app
         .state
         .workspace_service
-        .get_or_create(&p.access, session.id)
+        .get_or_create(&p.id, session.id)
         .await
         .unwrap();
     let scope = app
         .state
         .artifact_service
-        .resolve_scope(&p.storage)
+        .resolve_scope(p.storage_scope_id)
         .await
         .unwrap();
     let staged = app
@@ -65,7 +60,7 @@ async fn source_dataset(app: &TestApp) -> (Principal, i32, i32) {
         .state
         .workspace_service
         .publish_version(
-            &p.access,
+            &p.id,
             ws.workspace.id,
             None,
             VersionDraft {
@@ -160,7 +155,7 @@ async fn analysis_persists_lineage_script_outputs_views_and_result_message() {
     let messages = app
         .state
         .message_repo
-        .list_by_session(&p.access, session)
+        .list_by_session(&p.id, session)
         .await
         .unwrap();
     assert!(messages.iter().any(|m| {

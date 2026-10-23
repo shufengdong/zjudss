@@ -167,11 +167,11 @@
 - Modify: `backend/src/tools/*.rs`
 - Modify: `backend/tests/*.rs`
 
-- [ ] First change the isolation tests to log in as two seeded users and enumerate every protected resource class: session, message, attachment/import, workspace, version, script/run once introduced, dataset rows/download, analysis, comparison, history, and storage usage. Add a direct-ID probe for each class and assert the same 404 body as a missing ID.
+- [x] First change the isolation tests to log in as two seeded users and enumerate every protected resource class: session, message, attachment/import, workspace, version, script/run once introduced, dataset rows/download, analysis, comparison, history, and storage usage. Add a direct-ID probe for each class and assert the same 404 body as a missing ID.
 
-- [ ] Run `cd backend && cargo test --test auth_scope --features e2e-test` and retain the expected compile/test failures while old scopes remain.
+- [x] Run `cd backend && cargo test --test auth_scope --features e2e-test` and retain the expected compile/test failures while old scopes remain.
 
-- [ ] Replace repository signatures consistently:
+- [x] Replace repository signatures consistently:
 
   ```rust
   // old
@@ -182,11 +182,11 @@
 
   Session queries use `sessions.user_id = ?`. Every child-resource query joins to `sessions` and applies the same predicate. Artifact quota operations receive the trusted `storage_scope_id` from `CurrentUser`; they never resolve a client-supplied scope. Remove `Principal`, `AccessScope`, and `StorageScopeRef` from application requests, EventWriter, scheduler owner keys, tools, and handlers.
 
-- [ ] Make scheduler ownership `UserId`, while preserving global/per-user concurrency semantics. Update stored SSE/event routing keys to `UserId`. Use `CurrentUser` extractor/extension in handlers and pass only `&current.id` plus trusted `current.storage_scope_id` downward.
+- [x] Make scheduler ownership `UserId`, while preserving global/per-user concurrency semantics. Update stored SSE/event routing keys to `UserId`. Use `CurrentUser` extractor/extension in handlers and pass only `&current.id` plus trusted `current.storage_scope_id` downward.
 
-- [ ] Run all backend tests: `cd backend && cargo test --features e2e-test`. Fix each former instance/proxy fixture by authenticating through the real login route; do not add a test-only production bypass.
+- [x] Run all backend tests: `cd backend && cargo test --features e2e-test`. Fix each former instance/proxy fixture by authenticating through the real login route; do not add a test-only production bypass.
 
-- [ ] Search for forbidden V2 identity remnants:
+- [x] Search for forbidden V2 identity remnants:
 
   `rg -n 'AccessScope|StorageScopeRef|CurrentPrincipal|trusted_proxy|AUTH_MODE|AUTH_PROXY_TOKEN|x-zjudss-subject|x-zjudss-proxy-token' backend integration-tests frontend docs`
 

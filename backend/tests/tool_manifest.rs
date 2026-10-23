@@ -7,7 +7,7 @@ use std::sync::Arc;
 use backend::adapters::StubEngine;
 use backend::agent::knowledge::AgentKnowledge;
 use backend::application::{ArtifactMetadata, EventWriter};
-use backend::auth::{AccessScope, Principal, StorageScopeRef};
+use backend::auth::CurrentUser;
 use backend::storage::StageLimits;
 use backend::tools::{self, ToolServices};
 use rig::tool::{Tool, ToolContext};
@@ -15,25 +15,15 @@ use tokio::sync::{Mutex, Semaphore};
 
 use common::TestApp;
 
-fn principal(key: &str) -> Principal {
-    Principal {
-        access: AccessScope {
-            kind: "owner".into(),
-            key: key.into(),
-        },
-        storage: StorageScopeRef {
-            kind: "owner".into(),
-            key: key.into(),
-        },
-        subject: key.into(),
-    }
+fn principal(key: &str) -> CurrentUser {
+    common::test_user(key)
 }
 
-fn services(app: &TestApp, principal: Principal) -> Arc<ToolServices> {
+fn services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
     Arc::new(ToolServices {
         engine: Arc::new(StubEngine),
         writer: EventWriter::new(
-            principal.access.clone(),
+            principal.id.clone(),
             0,
             app.state.message_repo.clone(),
             app.state.events.clone(),
@@ -42,7 +32,7 @@ fn services(app: &TestApp, principal: Principal) -> Arc<ToolServices> {
         request_message_id: 0,
         task_repo: app.state.task_repo.clone(),
         semaphore: Arc::new(Semaphore::new(1)),
-        scope: principal.access.clone(),
+        scope: principal.id.clone(),
         principal,
         workspaces: app.state.workspace_service.clone(),
         example_import: app.state.example_import_service.clone(),
@@ -89,14 +79,8 @@ fn manifest_allowed_tools_equal_runtime_registry() {
 async fn get_storage_usage_returns_current_scope_only() {
     let app = TestApp::spawn().await;
     let artifacts = &app.state.artifact_service;
-    for (key, bytes) in [("alice", b"alice".as_slice()), ("bob", b"bob".as_slice())] {
-        let scope = artifacts
-            .resolve_scope(&StorageScopeRef {
-                kind: "owner".into(),
-                key: key.into(),
-            })
-            .await
-            .unwrap();
+    for (scope_id, bytes) in [(2, b"alice".as_slice()), (3, b"bob".as_slice())] {
+        let scope = artifacts.resolve_scope(scope_id).await.unwrap();
         let staged = artifacts
             .store()
             .stage(Cursor::new(bytes), StageLimits::default())
@@ -121,7 +105,7 @@ async fn get_storage_usage_returns_current_scope_only() {
             .await
             .unwrap();
 
-    assert_eq!(value["scope"], "owner");
+    assert_eq!(value["scope"], "user");
     assert_eq!(value["artifactCount"], 1);
     assert_eq!(value["logicalBytes"], 5);
     assert_eq!(value["artifactLimit"], 20_000);

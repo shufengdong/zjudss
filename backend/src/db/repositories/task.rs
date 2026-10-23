@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use diesel::prelude::*;
 use diesel::sql_types::{Integer, Text};
 
-use crate::auth::AccessScope;
+use crate::auth::UserId;
 use crate::db::models::{NewSimulationTask, SimulationTask};
 use crate::db::{DbPool, schema};
 
@@ -29,7 +29,7 @@ impl TaskRepo {
 
     pub async fn create(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         new: NewSimulationTask,
     ) -> RepoResult<SimulationTask> {
         let pool = self.pool.clone();
@@ -39,7 +39,7 @@ impl TaskRepo {
             conn.immediate_transaction::<SimulationTask, diesel::result::Error, _>(|conn| {
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(new.session_id))
-                    .filter(schema::sessions::user_id.eq(&scope.key))
+                    .filter(schema::sessions::user_id.eq(&scope.0))
                     .select(schema::sessions::id)
                     .first::<i32>(conn)?;
                 diesel::insert_into(schema::simulation_tasks::table)
@@ -61,7 +61,7 @@ impl TaskRepo {
 
     pub async fn mark_running(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         task_id: i32,
         stage: &str,
         now_ms: i64,
@@ -72,7 +72,7 @@ impl TaskRepo {
         tokio::task::spawn_blocking(move || -> RepoResult<()> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let session_ids = schema::sessions::table
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id);
             let target = schema::simulation_tasks::table
                 .filter(schema::simulation_tasks::id.eq(task_id))
@@ -96,7 +96,7 @@ impl TaskRepo {
 
     pub async fn mark_done(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         task_id: i32,
         status: &str,
         stage: &str,
@@ -111,7 +111,7 @@ impl TaskRepo {
         tokio::task::spawn_blocking(move || -> RepoResult<()> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let session_ids = schema::sessions::table
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id);
             let target = schema::simulation_tasks::table
                 .filter(schema::simulation_tasks::id.eq(task_id))
@@ -135,17 +135,13 @@ impl TaskRepo {
         .map_err(RepoError::Join)?
     }
 
-    pub async fn find(
-        &self,
-        scope: &AccessScope,
-        task_id: i32,
-    ) -> RepoResult<Option<SimulationTask>> {
+    pub async fn find(&self, scope: &UserId, task_id: i32) -> RepoResult<Option<SimulationTask>> {
         let pool = self.pool.clone();
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || -> RepoResult<Option<SimulationTask>> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let session_ids = schema::sessions::table
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id);
             schema::simulation_tasks::table
                 .filter(schema::simulation_tasks::id.eq(task_id))
@@ -160,7 +156,7 @@ impl TaskRepo {
 
     pub async fn latest_status_for_session(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         session_id: i32,
     ) -> RepoResult<Option<String>> {
         let pool = self.pool.clone();
@@ -169,7 +165,7 @@ impl TaskRepo {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let exists = schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id)
                 .first::<i32>(&mut conn)
                 .optional()
@@ -189,7 +185,7 @@ impl TaskRepo {
         .map_err(RepoError::Join)?
     }
 
-    pub async fn latest_statuses(&self, scope: &AccessScope) -> RepoResult<HashMap<i32, String>> {
+    pub async fn latest_statuses(&self, scope: &UserId) -> RepoResult<HashMap<i32, String>> {
         let pool = self.pool.clone();
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || -> RepoResult<HashMap<i32, String>> {
@@ -199,14 +195,12 @@ impl TaskRepo {
                  JOIN sessions s ON s.id = t.session_id \
                  JOIN (SELECT t2.session_id, MAX(t2.id) AS max_id \
                        FROM simulation_tasks t2 JOIN sessions s2 ON s2.id=t2.session_id \
-                       WHERE s2.access_scope_kind=? AND s2.access_scope_key=? \
+                       WHERE s2.user_id=? \
                        GROUP BY t2.session_id) m ON t.id = m.max_id \
-                 WHERE s.access_scope_kind=? AND s.access_scope_key=?",
+                 WHERE s.user_id=?",
             )
-            .bind::<Text, _>(&scope.kind)
-            .bind::<Text, _>(&scope.key)
-            .bind::<Text, _>(&scope.kind)
-            .bind::<Text, _>(&scope.key)
+            .bind::<Text, _>(&scope.0)
+            .bind::<Text, _>(&scope.0)
             .load(&mut conn)
             .map_err(RepoError::Query)?;
             Ok(rows

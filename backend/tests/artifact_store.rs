@@ -5,18 +5,10 @@ use std::io::Cursor;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use backend::application::{ArtifactError, ArtifactMetadata, StorageLimits};
-use backend::auth::StorageScopeRef;
 use backend::storage::StageLimits;
 use tower::ServiceExt;
 
 use common::TestApp;
-
-fn owner(key: &str) -> StorageScopeRef {
-    StorageScopeRef {
-        kind: "owner".to_string(),
-        key: key.to_string(),
-    }
-}
 
 fn metadata(_name: &str) -> ArtifactMetadata {
     ArtifactMetadata {
@@ -29,14 +21,8 @@ fn metadata(_name: &str) -> ArtifactMetadata {
 async fn deduplicates_per_scope_but_charges_each_scope() {
     let app = TestApp::spawn().await;
     let service = &app.state.artifact_service;
-    let alice = service
-        .resolve_scope(&owner("alice"))
-        .await
-        .expect("alice scope");
-    let bob = service
-        .resolve_scope(&owner("bob"))
-        .await
-        .expect("bob scope");
+    let alice = service.resolve_scope(2).await.expect("alice scope");
+    let bob = service.resolve_scope(3).await.expect("bob scope");
 
     let first = service
         .commit(
@@ -83,10 +69,7 @@ async fn deduplicates_per_scope_but_charges_each_scope() {
 async fn quota_failures_roll_back_and_concurrent_commits_cannot_oversubscribe() {
     let app = TestApp::spawn().await;
     let service = app.state.artifact_service.clone();
-    let scope = service
-        .resolve_scope(&owner("limited"))
-        .await
-        .expect("limited scope");
+    let scope = service.resolve_scope(2).await.expect("limited scope");
     let scope_id = scope.id;
     service
         .set_limits(
@@ -145,7 +128,7 @@ async fn quota_failures_roll_back_and_concurrent_commits_cannot_oversubscribe() 
 async fn object_paths_stay_inside_data_dir_and_gc_removes_unreferenced_blobs() {
     let app = TestApp::spawn().await;
     let service = &app.state.artifact_service;
-    let scope = service.resolve_scope(&owner("gc")).await.expect("gc scope");
+    let scope = service.resolve_scope(2).await.expect("gc scope");
     let artifact = service
         .commit(
             scope.id,
@@ -194,10 +177,12 @@ fn staging_enforces_stream_limit_and_cleans_partial_file() {
 #[tokio::test]
 async fn storage_usage_is_resolved_from_the_authenticated_principal() {
     let app = TestApp::spawn().await;
+    let cookie = app.login_cookie("instance").await;
     let response = app
         .router
         .oneshot(
             Request::get("/api/storage-usage")
+                .header("cookie", cookie)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -206,7 +191,7 @@ async fn storage_usage_is_resolved_from_the_authenticated_principal() {
     assert_eq!(response.status(), StatusCode::OK);
     let body: serde_json::Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 16 * 1024).await.unwrap()).unwrap();
-    assert_eq!(body["scope"], "instance");
+    assert_eq!(body["scope"], "user");
     assert_eq!(body["artifactCount"], 0);
     assert_eq!(body["artifactLimit"], 20_000);
     assert_eq!(body["logicalBytes"], 0);

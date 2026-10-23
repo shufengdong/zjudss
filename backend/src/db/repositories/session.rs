@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 
-use crate::auth::AccessScope;
+use crate::auth::UserId;
 use crate::db::models::{NewSession, Session};
 use crate::db::{DbPool, schema};
 
@@ -16,14 +16,9 @@ impl SessionRepo {
         Self { pool }
     }
 
-    pub async fn create(
-        &self,
-        scope: &AccessScope,
-        title: &str,
-        now_ms: i64,
-    ) -> RepoResult<Session> {
+    pub async fn create(&self, user_id: &UserId, title: &str, now_ms: i64) -> RepoResult<Session> {
         let pool = self.pool.clone();
-        let scope = scope.clone();
+        let user_id = user_id.clone();
         let title = title.to_string();
         tokio::task::spawn_blocking(move || -> RepoResult<Session> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
@@ -33,7 +28,7 @@ impl SessionRepo {
                         title,
                         created_at_ms: now_ms,
                         updated_at_ms: now_ms,
-                        user_id: scope.key.clone(),
+                        user_id: user_id.0.clone(),
                     })
                     .execute(conn)?;
                 let id: i32 =
@@ -47,13 +42,13 @@ impl SessionRepo {
         .map_err(RepoError::Join)?
     }
 
-    pub async fn list(&self, scope: &AccessScope) -> RepoResult<Vec<Session>> {
+    pub async fn list(&self, user_id: &UserId) -> RepoResult<Vec<Session>> {
         let pool = self.pool.clone();
-        let scope = scope.clone();
+        let user_id = user_id.clone();
         tokio::task::spawn_blocking(move || -> RepoResult<Vec<Session>> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             schema::sessions::table
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(user_id.0))
                 .order(schema::sessions::updated_at_ms.desc())
                 .load(&mut conn)
                 .map_err(RepoError::Query)
@@ -62,15 +57,15 @@ impl SessionRepo {
         .map_err(RepoError::Join)?
     }
 
-    pub async fn touch(&self, scope: &AccessScope, session_id: i32, now_ms: i64) -> RepoResult<()> {
+    pub async fn touch(&self, user_id: &UserId, session_id: i32, now_ms: i64) -> RepoResult<()> {
         let pool = self.pool.clone();
-        let scope = scope.clone();
+        let user_id = user_id.clone();
         tokio::task::spawn_blocking(move || -> RepoResult<()> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let updated = diesel::update(
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(session_id))
-                    .filter(schema::sessions::user_id.eq(scope.key)),
+                    .filter(schema::sessions::user_id.eq(user_id.0)),
             )
             .set(schema::sessions::updated_at_ms.eq(now_ms))
             .execute(&mut conn)
@@ -84,14 +79,14 @@ impl SessionRepo {
         .map_err(RepoError::Join)?
     }
 
-    pub async fn find(&self, scope: &AccessScope, session_id: i32) -> RepoResult<Option<Session>> {
+    pub async fn find(&self, user_id: &UserId, session_id: i32) -> RepoResult<Option<Session>> {
         let pool = self.pool.clone();
-        let scope = scope.clone();
+        let user_id = user_id.clone();
         tokio::task::spawn_blocking(move || -> RepoResult<Option<Session>> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(user_id.0))
                 .first(&mut conn)
                 .optional()
                 .map_err(RepoError::Query)
@@ -102,19 +97,19 @@ impl SessionRepo {
 
     pub async fn rename(
         &self,
-        scope: &AccessScope,
+        user_id: &UserId,
         session_id: i32,
         title: &str,
         now_ms: i64,
     ) -> RepoResult<Session> {
         let pool = self.pool.clone();
-        let scope = scope.clone();
+        let user_id = user_id.clone();
         let title = title.to_string();
         tokio::task::spawn_blocking(move || -> RepoResult<Session> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let target = schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::user_id.eq(&scope.key));
+                .filter(schema::sessions::user_id.eq(&user_id.0));
             let updated = diesel::update(target)
                 .set((
                     schema::sessions::title.eq(title),
@@ -128,7 +123,7 @@ impl SessionRepo {
             }
             schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(user_id.0))
                 .first(&mut conn)
                 .map_err(RepoError::Query)
         })
@@ -136,15 +131,15 @@ impl SessionRepo {
         .map_err(RepoError::Join)?
     }
 
-    pub async fn delete(&self, scope: &AccessScope, session_id: i32) -> RepoResult<()> {
+    pub async fn delete(&self, user_id: &UserId, session_id: i32) -> RepoResult<()> {
         let pool = self.pool.clone();
-        let scope = scope.clone();
+        let user_id = user_id.clone();
         tokio::task::spawn_blocking(move || -> RepoResult<()> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let deleted = diesel::delete(
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(session_id))
-                    .filter(schema::sessions::user_id.eq(scope.key)),
+                    .filter(schema::sessions::user_id.eq(user_id.0)),
             )
             .execute(&mut conn)
             .map_err(RepoError::Query)?;

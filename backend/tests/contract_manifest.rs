@@ -10,9 +10,11 @@ fn production_router_and_manifest_share_one_declaration() {
         .map(|route| (route.method, route.path))
         .collect::<HashSet<_>>();
 
-    assert_eq!(routes.len(), 27);
-    assert_eq!(unique.len(), 27);
+    assert_eq!(routes.len(), 29);
+    assert_eq!(unique.len(), 29);
     assert!(unique.contains(&("GET", "/health")));
+    assert!(unique.contains(&("POST", "/api/auth/login")));
+    assert!(unique.contains(&("POST", "/api/auth/logout")));
     assert!(unique.contains(&("POST", "/api/sessions/{id}/attachments")));
     assert!(unique.contains(&("GET", "/api/task-comparisons/{id}")));
 
@@ -64,6 +66,12 @@ fn contract_manifest_contains_all_public_enums() {
         ["line", "bar", "scatter", "heatmap", "boxplot", "histogram"]
     );
     assert!(manifest.stable_error_codes.contains(&"agent_queue_full"));
+    assert!(manifest.stable_error_codes.contains(&"invalid_credentials"));
+    assert!(
+        manifest
+            .stable_error_codes
+            .contains(&"authentication_required")
+    );
     assert!(manifest.stable_error_codes.contains(&"version_conflict"));
     assert!(
         manifest

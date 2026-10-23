@@ -1,6 +1,6 @@
 use super::ApiError;
 use crate::application::{AppState, ms_to_iso};
-use crate::auth::CurrentPrincipal;
+use crate::auth::CurrentUser;
 use crate::db::repositories::SimulationRepo;
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -29,10 +29,10 @@ pub struct TaskDto {
 }
 pub async fn get(
     State(s): State<AppState>,
-    CurrentPrincipal(p): CurrentPrincipal,
+    p: CurrentUser,
     Path(id): Path<i32>,
 ) -> Result<Json<TaskDto>, ApiError> {
-    let t = SimulationRepo::new(s.pool).find(&p.access, id).await?;
+    let t = SimulationRepo::new(s.pool).find(&p.id, id).await?;
     Ok(Json(TaskDto {
         id: t.id.to_string(),
         session_id: t.session_id.to_string(),
@@ -63,7 +63,7 @@ pub struct TaskListQuery {
 
 pub async fn list_session(
     State(s): State<AppState>,
-    CurrentPrincipal(p): CurrentPrincipal,
+    p: CurrentUser,
     Path(session_id): Path<i32>,
     Query(query): Query<TaskListQuery>,
 ) -> Result<Json<Vec<TaskDto>>, ApiError> {
@@ -99,7 +99,7 @@ fn task_dto(t: crate::db::models::SimulationTask) -> TaskDto {
 }
 pub async fn datasets(
     State(s): State<AppState>,
-    CurrentPrincipal(p): CurrentPrincipal,
+    p: CurrentUser,
     Path(id): Path<i32>,
 ) -> Result<Json<Vec<crate::application::datasets::DatasetMetadata>>, ApiError> {
     Ok(Json(s.dataset_service.list(&p, id).await?))

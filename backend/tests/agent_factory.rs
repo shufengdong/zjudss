@@ -39,6 +39,7 @@ impl AgentFactory for RecordingFactory {
 async fn chat_builds_one_agent_per_user_message() {
     let factory = Arc::new(RecordingFactory::default());
     let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let cookie = app.login_cookie("instance").await;
     let create = app
         .router
         .clone()
@@ -47,6 +48,7 @@ async fn chat_builds_one_agent_per_user_message() {
                 .method("POST")
                 .uri("/api/sessions")
                 .header("content-type", "application/json")
+                .header("cookie", &cookie)
                 .body(Body::from(r#"{"title":"factory"}"#))
                 .unwrap(),
         )
@@ -70,6 +72,7 @@ async fn chat_builds_one_agent_per_user_message() {
                     .method("POST")
                     .uri(format!("/api/sessions/{session_id}/messages"))
                     .header("content-type", "application/json")
+                    .header("cookie", &cookie)
                     .body(Body::from(
                         serde_json::json!({"message": message}).to_string(),
                     ))

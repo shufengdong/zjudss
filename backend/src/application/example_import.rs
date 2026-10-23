@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::auth::Principal;
+use crate::auth::CurrentUser;
 use crate::db::models::ModelVersion;
 use crate::engine_resources::{EngineExample, EngineResourceSnapshot};
 use crate::storage::StageLimits;
@@ -95,7 +95,7 @@ impl ExampleImportService {
 
     pub async fn import(
         &self,
-        principal: &Principal,
+        principal: &CurrentUser,
         session_id: i32,
         example_id: &str,
         snapshot_id: &str,
@@ -117,7 +117,7 @@ impl ExampleImportService {
         }
         let workspace = self
             .workspaces
-            .get_or_create(&principal.access, session_id)
+            .get_or_create(&principal.id, session_id)
             .await?;
         if workspace
             .workspace
@@ -130,7 +130,7 @@ impl ExampleImportService {
         }
         for version in self
             .workspaces
-            .list_versions(&principal.access, session_id)
+            .list_versions(&principal.id, session_id)
             .await?
         {
             let manifest: Value = serde_json::from_str(&version.manifest_json).unwrap_or_default();
@@ -152,7 +152,10 @@ impl ExampleImportService {
             return Err(WorkspaceError::VersionConflict.into());
         }
 
-        let storage_scope = self.artifacts.resolve_scope(&principal.storage).await?;
+        let storage_scope = self
+            .artifacts
+            .resolve_scope(principal.storage_scope_id)
+            .await?;
         let mut committed = Vec::<ArtifactRef>::new();
         let result = self
             .copy_files(storage_scope.id, example, &mut committed)
@@ -172,7 +175,7 @@ impl ExampleImportService {
         match self
             .workspaces
             .publish_version(
-                &principal.access,
+                &principal.id,
                 workspace.workspace.id,
                 expected_base,
                 VersionDraft {

@@ -7,6 +7,8 @@ use crate::ingestion::UPLOAD_SOURCES;
 use crate::tools::registered_tool_names;
 
 pub const STABLE_ERROR_CODES: &[&str] = &[
+    "invalid_credentials",
+    "authentication_required",
     "archive_invalid",
     "archive_unsafe_path",
     "artifact_too_large",

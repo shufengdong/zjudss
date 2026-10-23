@@ -45,7 +45,7 @@ impl Tool for GetStorageUsageTool {
         let usage = self
             .services
             .artifact_service
-            .usage_for(&self.services.principal.storage)
+            .usage_for(self.services.principal.storage_scope_id)
             .await
             .map_err(|error| DomainToolError::new("storage_usage_error", error.to_string()))?;
         serde_json::to_value(usage)

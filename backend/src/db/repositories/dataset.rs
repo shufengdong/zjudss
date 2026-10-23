@@ -1,5 +1,5 @@
 use super::{RepoError, RepoResult};
-use crate::auth::AccessScope;
+use crate::auth::UserId;
 use crate::db::models::{DatasetView, ResultDataset};
 use crate::db::{DbPool, schema};
 use diesel::prelude::*;
@@ -14,11 +14,11 @@ impl DatasetRepo {
     }
     fn ensure_scope(
         conn: &mut SqliteConnection,
-        scope: &AccessScope,
+        scope: &UserId,
         d: &ResultDataset,
     ) -> RepoResult<()> {
         let sessions = schema::sessions::table
-            .filter(schema::sessions::user_id.eq(&scope.key))
+            .filter(schema::sessions::user_id.eq(&scope.0))
             .select(schema::sessions::id);
         let ok = if let Some(id) = d.task_id {
             schema::simulation_tasks::table
@@ -41,7 +41,7 @@ impl DatasetRepo {
         };
         if ok { Ok(()) } else { Err(RepoError::NotFound) }
     }
-    pub async fn find(&self, scope: &AccessScope, id: i32) -> RepoResult<ResultDataset> {
+    pub async fn find(&self, scope: &UserId, id: i32) -> RepoResult<ResultDataset> {
         let pool = self.pool.clone();
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || {
@@ -57,17 +57,13 @@ impl DatasetRepo {
         .await
         .map_err(RepoError::Join)?
     }
-    pub async fn list_task(
-        &self,
-        scope: &AccessScope,
-        task_id: i32,
-    ) -> RepoResult<Vec<ResultDataset>> {
+    pub async fn list_task(&self, scope: &UserId, task_id: i32) -> RepoResult<Vec<ResultDataset>> {
         let pool = self.pool.clone();
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id);
             schema::simulation_tasks::table
                 .filter(schema::simulation_tasks::id.eq(task_id))
@@ -84,11 +80,7 @@ impl DatasetRepo {
         .await
         .map_err(RepoError::Join)?
     }
-    pub async fn views(
-        &self,
-        scope: &AccessScope,
-        dataset_id: i32,
-    ) -> RepoResult<Vec<DatasetView>> {
+    pub async fn views(&self, scope: &UserId, dataset_id: i32) -> RepoResult<Vec<DatasetView>> {
         self.find(scope, dataset_id).await?;
         let pool = self.pool.clone();
         tokio::task::spawn_blocking(move || {
@@ -103,7 +95,7 @@ impl DatasetRepo {
     }
     pub async fn list_analysis(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         analysis_id: i32,
     ) -> RepoResult<Vec<ResultDataset>> {
         let pool = self.pool.clone();
@@ -111,7 +103,7 @@ impl DatasetRepo {
         tokio::task::spawn_blocking(move || {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id);
             schema::result_analysis_runs::table
                 .filter(schema::result_analysis_runs::id.eq(analysis_id))
@@ -130,7 +122,7 @@ impl DatasetRepo {
     }
     pub async fn find_view(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         id: i32,
     ) -> RepoResult<(DatasetView, ResultDataset)> {
         let pool = self.pool.clone();
@@ -151,7 +143,7 @@ impl DatasetRepo {
         .await
         .map_err(RepoError::Join)?
     }
-    pub async fn session_id(&self, scope: &AccessScope, dataset_id: i32) -> RepoResult<i32> {
+    pub async fn session_id(&self, scope: &UserId, dataset_id: i32) -> RepoResult<i32> {
         let dataset = self.find(scope, dataset_id).await?;
         let pool = self.pool.clone();
         tokio::task::spawn_blocking(move || {

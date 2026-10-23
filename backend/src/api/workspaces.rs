@@ -3,22 +3,22 @@ use axum::extract::{Path, State};
 use serde_json::{Value, json};
 
 use crate::application::{AppState, WorkspaceError, ms_to_iso};
-use crate::auth::{AccessScope, CurrentPrincipal};
+use crate::auth::{CurrentUser, UserId};
 use crate::db::models::ModelVersion;
 
 use super::ApiError;
 
 pub async fn workspace(
     State(state): State<AppState>,
-    CurrentPrincipal(principal): CurrentPrincipal,
+    principal: CurrentUser,
     Path(session_id): Path<i32>,
 ) -> Result<Json<Value>, ApiError> {
     let record = state
         .workspace_service
-        .get_or_create(&principal.access, session_id)
+        .get_or_create(&principal.id, session_id)
         .await?;
-    let active = version_json(&state, &principal.access, record.active).await?;
-    let draft = version_json(&state, &principal.access, record.draft).await?;
+    let active = version_json(&state, &principal.id, record.active).await?;
+    let draft = version_json(&state, &principal.id, record.draft).await?;
     let active_ingestions = state
         .ingestion_service
         .active(&principal, record.workspace.id)
@@ -34,21 +34,21 @@ pub async fn workspace(
 
 pub async fn versions(
     State(state): State<AppState>,
-    CurrentPrincipal(principal): CurrentPrincipal,
+    principal: CurrentUser,
     Path(session_id): Path<i32>,
 ) -> Result<Json<Value>, ApiError> {
     state
         .workspace_service
-        .get_or_create(&principal.access, session_id)
+        .get_or_create(&principal.id, session_id)
         .await?;
     let versions = state
         .workspace_service
-        .list_versions(&principal.access, session_id)
+        .list_versions(&principal.id, session_id)
         .await?;
     let mut items = Vec::with_capacity(versions.len());
     for version in versions {
         items.push(
-            version_json(&state, &principal.access, Some(version))
+            version_json(&state, &principal.id, Some(version))
                 .await?
                 .unwrap(),
         );
@@ -58,15 +58,15 @@ pub async fn versions(
 
 pub async fn version(
     State(state): State<AppState>,
-    CurrentPrincipal(principal): CurrentPrincipal,
+    principal: CurrentUser,
     Path(version_id): Path<i32>,
 ) -> Result<Json<Value>, ApiError> {
     let version = state
         .workspace_service
-        .find_version(&principal.access, version_id)
+        .find_version(&principal.id, version_id)
         .await?;
     Ok(Json(
-        version_json(&state, &principal.access, Some(version))
+        version_json(&state, &principal.id, Some(version))
             .await?
             .unwrap(),
     ))
@@ -74,7 +74,7 @@ pub async fn version(
 
 async fn version_json(
     state: &AppState,
-    scope: &AccessScope,
+    scope: &UserId,
     version: Option<ModelVersion>,
 ) -> Result<Option<Value>, WorkspaceError> {
     let Some(version) = version else {

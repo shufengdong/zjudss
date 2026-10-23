@@ -517,7 +517,7 @@ impl AppState {
     }
 
     /// 派生一次对话的编排服务（共享引擎/事件/仓储，克隆成本低）。
-    pub fn chat(&self, principal: crate::auth::Principal) -> ChatService {
+    pub fn chat(&self, principal: crate::auth::CurrentUser) -> ChatService {
         ChatService::new(self, principal)
     }
 }

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-use crate::auth::AccessScope;
+use crate::auth::UserId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppError {
@@ -36,8 +36,8 @@ struct SchedulerInner {
     queue_capacity: usize,
     waiting: AtomicUsize,
     active: AtomicUsize,
-    owners: Mutex<HashMap<AccessScope, Weak<Semaphore>>>,
-    sessions: Mutex<HashMap<(AccessScope, i32), Weak<Semaphore>>>,
+    owners: Mutex<HashMap<UserId, Weak<Semaphore>>>,
+    sessions: Mutex<HashMap<(UserId, i32), Weak<Semaphore>>>,
 }
 
 impl RunScheduler {
@@ -58,7 +58,7 @@ impl RunScheduler {
         }
     }
 
-    pub fn try_admit(&self, scope: &AccessScope, session_id: i32) -> Result<RunTicket, AppError> {
+    pub fn try_admit(&self, scope: &UserId, session_id: i32) -> Result<RunTicket, AppError> {
         let owner = semaphore_for(&self.inner.owners, scope.clone(), self.inner.owner_limit);
         let session = semaphore_for(&self.inner.sessions, (scope.clone(), session_id), 1);
 

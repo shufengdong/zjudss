@@ -8,24 +8,19 @@ use backend::application::{
     IngestionError, ModelVersionStatus, SourceKind, StorageLimits, UploadBatch, UploadFile,
     VersionDraft, VersionOrigin,
 };
-use backend::auth::{AccessScope, Principal, StorageScopeRef};
+use backend::auth::{CurrentUser, UserId};
 use backend::storage::StageLimits;
 use serde_json::json;
 use tower::ServiceExt;
 
 use common::TestApp;
 
-fn principal() -> Principal {
-    Principal {
-        access: AccessScope {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        storage: StorageScopeRef {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        subject: "instance".into(),
+fn principal() -> CurrentUser {
+    CurrentUser {
+        id: UserId("instance".into()),
+        name: "Instance".into(),
+        storage_scope_id: 1,
+        auth_session_hash: "test".into(),
     }
 }
 
@@ -53,7 +48,7 @@ fn batch(app: &TestApp, batch_id: &str, files: &[(&str, &str, &[u8])]) -> Upload
 async fn session(app: &TestApp) -> i32 {
     app.state
         .session_repo
-        .create(&principal().access, "ingestion", 1)
+        .create(&principal().id, "ingestion", 1)
         .await
         .unwrap()
         .id
@@ -158,7 +153,7 @@ async fn partial_failure_publishes_collecting_draft_and_persists_recoverable_sta
     let workspace = app
         .state
         .workspace_service
-        .get(&principal().access, session_id)
+        .get(&principal().id, session_id)
         .await
         .unwrap();
     assert_eq!(workspace.draft.as_ref().unwrap().status, "collecting");
@@ -171,7 +166,7 @@ async fn quota_failure_does_not_advance_workspace_and_stale_base_is_recorded() {
     let scope = app
         .state
         .artifact_service
-        .resolve_scope(&principal().storage)
+        .resolve_scope(principal().storage_scope_id)
         .await
         .unwrap();
     app.state
@@ -203,7 +198,7 @@ async fn quota_failure_does_not_advance_workspace_and_stale_base_is_recorded() {
     let workspace = app
         .state
         .workspace_service
-        .get_or_create(&principal().access, session_id)
+        .get_or_create(&principal().id, session_id)
         .await
         .unwrap();
     assert!(workspace.workspace.draft_version_id.is_none());
@@ -233,7 +228,7 @@ async fn quota_failure_does_not_advance_workspace_and_stale_base_is_recorded() {
     app.state
         .workspace_service
         .publish_version(
-            &principal().access,
+            &principal().id,
             workspace.workspace.id,
             None,
             VersionDraft {
@@ -265,6 +260,7 @@ async fn quota_failure_does_not_advance_workspace_and_stale_base_is_recorded() {
 async fn multipart_api_returns_202_and_get_restores_terminal_state() {
     let app = TestApp::spawn().await;
     let session_id = session(&app).await;
+    let cookie = app.login_cookie("instance").await;
     let boundary = "zjudss-v2-boundary";
     let body = format!(
         "--{boundary}\r\nContent-Disposition: form-data; name=\"clientBatchId\"\r\n\r\nhttp-batch\r\n\
@@ -276,6 +272,7 @@ async fn multipart_api_returns_202_and_get_restores_terminal_state() {
         .clone()
         .oneshot(
             Request::post(format!("/api/sessions/{session_id}/attachments"))
+                .header("cookie", &cookie)
                 .header(
                     "content-type",
                     format!("multipart/form-data; boundary={boundary}"),
@@ -299,6 +296,7 @@ async fn multipart_api_returns_202_and_get_restores_terminal_state() {
                 .clone()
                 .oneshot(
                     Request::get(format!("/api/ingestions/{ingestion_id}"))
+                        .header("cookie", &cookie)
                         .body(Body::empty())
                         .unwrap(),
                 )

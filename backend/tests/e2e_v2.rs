@@ -8,24 +8,19 @@ use backend::{
         ModelVersionStatus, RunStudyRequest, SourceKind, VersionDraft, VersionInputDraft,
         VersionOrigin,
     },
-    auth::{AccessScope, Principal, StorageScopeRef},
+    auth::{CurrentUser, UserId},
     storage::StageLimits,
 };
 use common::TestApp;
 use diesel::{RunQueryDsl, sql_query, sql_types::BigInt};
 use serde_json::json;
 
-fn principal() -> Principal {
-    Principal {
-        access: AccessScope {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        storage: StorageScopeRef {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        subject: "instance".into(),
+fn principal() -> CurrentUser {
+    CurrentUser {
+        id: UserId("instance".into()),
+        name: "Instance".into(),
+        storage_scope_id: 1,
+        auth_session_hash: "test".into(),
     }
 }
 
@@ -36,19 +31,19 @@ async fn dataframe_modify_run_analyze_rerun_compare_and_refresh_journey() {
     let session = app
         .state
         .session_repo
-        .create(&p.access, "v2 e2e", 1)
+        .create(&p.id, "v2 e2e", 1)
         .await
         .unwrap();
     let workspace = app
         .state
         .workspace_service
-        .get_or_create(&p.access, session.id)
+        .get_or_create(&p.id, session.id)
         .await
         .unwrap();
     let scope = app
         .state
         .artifact_service
-        .resolve_scope(&p.storage)
+        .resolve_scope(p.storage_scope_id)
         .await
         .unwrap();
     let staged = app
@@ -92,7 +87,7 @@ async fn dataframe_modify_run_analyze_rerun_compare_and_refresh_journey() {
         .state
         .workspace_service
         .publish_version(
-            &p.access,
+            &p.id,
             workspace.workspace.id,
             None,
             VersionDraft {
@@ -110,7 +105,7 @@ async fn dataframe_modify_run_analyze_rerun_compare_and_refresh_journey() {
         .state
         .workspace_service
         .publish_version(
-            &p.access,
+            &p.id,
             workspace.workspace.id,
             Some(baseline.id),
             VersionDraft {
@@ -127,7 +122,7 @@ async fn dataframe_modify_run_analyze_rerun_compare_and_refresh_journey() {
     app.state
         .workspace_service
         .activate_checked(
-            &p.access,
+            &p.id,
             workspace.workspace.id,
             candidate.id,
             Some(candidate.id),
@@ -230,7 +225,7 @@ async fn dataframe_modify_run_analyze_rerun_compare_and_refresh_journey() {
     let restored_workspace = app
         .state
         .workspace_service
-        .get(&p.access, session.id)
+        .get(&p.id, session.id)
         .await
         .unwrap();
     assert_eq!(
@@ -287,7 +282,7 @@ async fn clean_schema_has_no_legacy_tables() {
     ).get_result(&mut connection).unwrap();
     assert_eq!(count, 0);
     // The FTS release gate is executable on the clean database.
-    sql_query("INSERT INTO sessions(title,created_at_ms,updated_at_ms,access_scope_kind,access_scope_key,storage_scope_id) VALUES('配电网门禁',1,1,'instance','instance',1)")
+    sql_query("INSERT INTO sessions(title,created_at_ms,updated_at_ms,user_id) VALUES('配电网门禁',1,1,'instance')")
         .execute(&mut connection).unwrap();
     let indexed: i64 = diesel::dsl::sql::<BigInt>(
         "SELECT count(*) FROM chat_search_fts WHERE chat_search_fts MATCH '配电网'",

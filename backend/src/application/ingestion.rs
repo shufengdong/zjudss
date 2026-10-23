@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
-use crate::auth::Principal;
+use crate::auth::CurrentUser;
 use crate::catalog::{SchemaCatalog, infer_tables};
 use crate::db::models::{IngestionArtifact, NewIngestion};
 use crate::db::repositories::{IngestionItemDraft, IngestionRecord, IngestionRepo, RepoError};
@@ -175,7 +175,7 @@ impl IngestionService {
 
     pub async fn accept_batch(
         &self,
-        principal: &Principal,
+        principal: &CurrentUser,
         session_id: i32,
         batch: UploadBatch,
     ) -> Result<AcceptedBatch, IngestionError> {
@@ -194,7 +194,7 @@ impl IngestionService {
         }
         let workspace = self
             .workspaces
-            .get_or_create(&principal.access, session_id)
+            .get_or_create(&principal.id, session_id)
             .await?;
         let expected: BTreeMap<_, _> = batch
             .files
@@ -204,7 +204,7 @@ impl IngestionService {
         if let Some(record) = self
             .repo
             .find_by_batch(
-                &principal.access,
+                &principal.id,
                 workspace.workspace.id,
                 &batch.client_batch_id,
             )
@@ -213,7 +213,10 @@ impl IngestionService {
             return compare_idempotent(record, &expected);
         }
 
-        let storage_scope = self.artifacts.resolve_scope(&principal.storage).await?;
+        let storage_scope = self
+            .artifacts
+            .resolve_scope(principal.storage_scope_id)
+            .await?;
         let mut committed = Vec::with_capacity(batch.files.len());
         for file in batch.files {
             let format = extension(&file.file_name).unwrap_or("file").to_string();
@@ -280,7 +283,7 @@ impl IngestionService {
             .collect();
         let record = match self
             .repo
-            .create(&principal.access, new_ingestion, item_drafts)
+            .create(&principal.id, new_ingestion, item_drafts)
             .await
         {
             Ok(record) => record,
@@ -288,7 +291,7 @@ impl IngestionService {
                 let existing = self
                     .repo
                     .find_by_batch(
-                        &principal.access,
+                        &principal.id,
                         workspace.workspace.id,
                         &batch.client_batch_id,
                     )
@@ -319,27 +322,27 @@ impl IngestionService {
 
     pub async fn get(
         &self,
-        principal: &Principal,
+        principal: &CurrentUser,
         ingestion_id: i32,
     ) -> Result<AcceptedBatch, IngestionError> {
-        Ok(view(self.repo.find(&principal.access, ingestion_id).await?))
+        Ok(view(self.repo.find(&principal.id, ingestion_id).await?))
     }
 
     pub async fn active(
         &self,
-        principal: &Principal,
+        principal: &CurrentUser,
         workspace_id: i32,
     ) -> Result<Vec<AcceptedBatch>, IngestionError> {
         Ok(self
             .repo
-            .list_active(&principal.access, workspace_id)
+            .list_active(&principal.id, workspace_id)
             .await?
             .into_iter()
             .map(view)
             .collect())
     }
 
-    pub async fn process(&self, principal: Principal, ingestion_id: i32) {
+    pub async fn process(&self, principal: CurrentUser, ingestion_id: i32) {
         if let Err(error) = self.process_inner(&principal, ingestion_id).await {
             let code = match &error {
                 IngestionError::Workspace(WorkspaceError::VersionConflict) => "version_conflict",
@@ -358,14 +361,18 @@ impl IngestionService {
                     now_ms(),
                 )
                 .await;
-            if let Ok(record) = self.repo.find(&principal.access, ingestion_id).await {
+            if let Ok(record) = self.repo.find(&principal.id, ingestion_id).await {
                 let writer = self.writer(&principal, record.session_id);
-                let storage_scope = self.artifacts.resolve_scope(&principal.storage).await.ok();
+                let storage_scope = self
+                    .artifacts
+                    .resolve_scope(principal.storage_scope_id)
+                    .await
+                    .ok();
                 for (item, artifact) in &record.items {
                     if let Some(scope) = &storage_scope {
                         let referenced = self
                             .workspaces
-                            .references_artifact(&principal.access, artifact.id)
+                            .references_artifact(&principal.id, artifact.id)
                             .await
                             .unwrap_or(true);
                         if !referenced {
@@ -409,10 +416,10 @@ impl IngestionService {
 
     async fn process_inner(
         &self,
-        principal: &Principal,
+        principal: &CurrentUser,
         ingestion_id: i32,
     ) -> Result<(), IngestionError> {
-        let first = self.repo.find(&principal.access, ingestion_id).await?;
+        let first = self.repo.find(&principal.id, ingestion_id).await?;
         if !matches!(
             first.ingestion.status.as_str(),
             "accepted" | "extracting" | "inferring" | "validating"
@@ -427,7 +434,7 @@ impl IngestionService {
                 .clone()
         };
         let _guard = lock.lock().await;
-        let record = self.repo.find(&principal.access, ingestion_id).await?;
+        let record = self.repo.find(&principal.id, ingestion_id).await?;
         if !matches!(
             record.ingestion.status.as_str(),
             "accepted" | "extracting" | "inferring" | "validating"
@@ -455,7 +462,10 @@ impl IngestionService {
                 .await?;
         }
 
-        let scope = self.artifacts.resolve_scope(&principal.storage).await?;
+        let scope = self
+            .artifacts
+            .resolve_scope(principal.storage_scope_id)
+            .await?;
         let temp = self
             .artifacts
             .store()
@@ -681,7 +691,7 @@ impl IngestionService {
 
         let mut inputs = base_inputs(
             &self.workspaces,
-            &principal.access,
+            &principal.id,
             record.ingestion.base_version_id,
         )
         .await?;
@@ -748,7 +758,7 @@ impl IngestionService {
         let version = self
             .workspaces
             .publish_version(
-                &principal.access,
+                &principal.id,
                 record.ingestion.workspace_id,
                 record.ingestion.base_version_id,
                 VersionDraft {
@@ -797,7 +807,7 @@ impl IngestionService {
 
     async fn set_stage(
         &self,
-        principal: &Principal,
+        principal: &CurrentUser,
         record: &IngestionRecord,
         current: usize,
         error: Option<(String, String)>,
@@ -833,7 +843,7 @@ impl IngestionService {
 
     async fn process_model_tree(
         &self,
-        principal: &Principal,
+        principal: &CurrentUser,
         record: &IngestionRecord,
         writer: &EventWriter,
         scope_id: i32,
@@ -1004,7 +1014,7 @@ impl IngestionService {
         self.set_stage(principal, record, 2, None).await?;
         let mut inputs = base_inputs(
             &self.workspaces,
-            &principal.access,
+            &principal.id,
             record.ingestion.base_version_id,
         )
         .await?;
@@ -1041,7 +1051,7 @@ impl IngestionService {
         let version = self
             .workspaces
             .publish_version(
-                &principal.access,
+                &principal.id,
                 record.ingestion.workspace_id,
                 record.ingestion.base_version_id,
                 VersionDraft {
@@ -1103,9 +1113,9 @@ impl IngestionService {
         Ok(())
     }
 
-    fn writer(&self, principal: &Principal, session_id: i32) -> EventWriter {
+    fn writer(&self, principal: &CurrentUser, session_id: i32) -> EventWriter {
         EventWriter::new(
-            principal.access.clone(),
+            principal.id.clone(),
             session_id,
             self.messages.clone(),
             self.events.clone(),
@@ -1115,7 +1125,7 @@ impl IngestionService {
 
 async fn base_inputs(
     workspaces: &WorkspaceService,
-    scope: &crate::auth::AccessScope,
+    scope: &crate::auth::UserId,
     version_id: Option<i32>,
 ) -> Result<Vec<VersionInputDraft>, IngestionError> {
     let Some(version_id) = version_id else {

@@ -1,7 +1,7 @@
 use super::ApiError;
 use crate::{
     application::{AppState, ms_to_iso},
-    auth::CurrentPrincipal,
+    auth::CurrentUser,
 };
 use axum::{
     Json,
@@ -23,7 +23,7 @@ pub struct ComparisonDto {
 }
 pub async fn get(
     State(s): State<AppState>,
-    CurrentPrincipal(p): CurrentPrincipal,
+    p: CurrentUser,
     Path(id): Path<i32>,
 ) -> Result<Json<ComparisonDto>, ApiError> {
     let (c, compatibility, _) = s.comparison_service.find(&p, id).await?;

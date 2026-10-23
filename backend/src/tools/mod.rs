@@ -40,7 +40,7 @@ use crate::application::{
     AnalysisService, ArtifactService, ComparisonService, DatasetService, EventWriter,
     ExampleImportService, HistoryService, ModelPatchService, SimulationService, WorkspaceService,
 };
-use crate::auth::{AccessScope, Principal};
+use crate::auth::{CurrentUser, UserId};
 use crate::db::repositories::TaskRepo;
 use crate::engine_resources::EngineResourceSnapshot;
 
@@ -53,8 +53,8 @@ pub struct ToolServices {
     pub request_message_id: i32,
     pub task_repo: TaskRepo,
     pub semaphore: Arc<Semaphore>,
-    pub scope: AccessScope,
-    pub principal: Principal,
+    pub scope: UserId,
+    pub principal: CurrentUser,
     pub workspaces: WorkspaceService,
     pub example_import: ExampleImportService,
     pub model_patch: ModelPatchService,

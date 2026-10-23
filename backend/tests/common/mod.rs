@@ -7,7 +7,7 @@ use backend::adapters::{SimEngine, StubEngine};
 use backend::agent::knowledge::AgentKnowledge;
 use backend::agent::{AgentFactory, DeepSeekAgentFactory, LlmConfig};
 use backend::application::{AppState, RunScheduler};
-use backend::auth::AuthService;
+use backend::auth::{AuthService, CurrentUser, UserId};
 use backend::catalog::SchemaCatalog;
 use backend::config::RuntimeConfig;
 use backend::db::{self, DbPool};
@@ -39,7 +39,41 @@ pub fn seed_test_users(pool: &DbPool, csv_bytes: &[u8]) -> backend::auth::UserSe
     .expect("seed test users")
 }
 
+pub fn test_user(id: &str) -> CurrentUser {
+    let (name, storage_scope_id) = match id {
+        "instance" => ("Instance", 1),
+        "alice" => ("Alice", 2),
+        "bob" => ("Bob", 3),
+        "foreign" => ("Foreign", 4),
+        "alice@example.com" => ("Alice Example", 5),
+        "bob@example.com" => ("Bob Example", 6),
+        "owner:alice@example.com" => ("Alice Owner", 7),
+        "owner:bob@example.com" => ("Bob Owner", 8),
+        "owner:foreign" => ("Foreign Owner", 9),
+        other => panic!("unknown seeded test user: {other}"),
+    };
+    CurrentUser {
+        id: UserId(id.to_string()),
+        name: name.to_string(),
+        storage_scope_id,
+        auth_session_hash: "test".to_string(),
+    }
+}
+
 impl TestApp {
+    pub async fn login_cookie(&self, id: &str) -> String {
+        self.state
+            .auth
+            .login(id.to_string(), id.to_string())
+            .await
+            .expect("login seeded test user")
+            .set_cookie
+            .split(';')
+            .next()
+            .expect("session cookie pair")
+            .to_string()
+    }
+
     pub async fn spawn() -> Self {
         Self::spawn_with_auth_settings(std::time::Duration::from_secs(30 * 24 * 60 * 60), false)
             .await
@@ -176,7 +210,10 @@ impl TestApp {
             let mut conn = pool.get().expect("checkout test database");
             db::run_migrations(&mut conn).expect("run test migrations");
         }
-        seed_test_users(&pool, b"ID,NAME\ninstance,Instance\nalice,Alice\nbob,Bob\n");
+        seed_test_users(
+            &pool,
+            b"ID,NAME\ninstance,Instance\nalice,Alice\nbob,Bob\nforeign,Foreign\nalice@example.com,Alice Example\nbob@example.com,Bob Example\nowner:alice@example.com,Alice Owner\nowner:bob@example.com,Bob Owner\nowner:foreign,Foreign Owner\n",
+        );
         let auth = AuthService::new(pool.clone(), ttl, secure);
 
         let state = AppState::new_with_resources_and_agent_factory(

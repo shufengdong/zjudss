@@ -8,7 +8,7 @@ use backend::application::{
     ArtifactMetadata, DataframeBindingDraft, ModelVersionStatus, SourceKind, VersionDraft,
     VersionInputDraft, VersionOrigin, WorkspaceError, canonical_json,
 };
-use backend::auth::{AccessScope, StorageScopeRef};
+use backend::auth::UserId;
 use backend::storage::StageLimits;
 use diesel::RunQueryDsl;
 use serde_json::json;
@@ -16,13 +16,8 @@ use tower::ServiceExt;
 
 use common::TestApp;
 
-const TOKEN: &str = "workspace-test-token";
-
-fn scope(subject: &str) -> AccessScope {
-    AccessScope {
-        kind: "owner".to_string(),
-        key: format!("owner:{subject}"),
-    }
+fn scope(subject: &str) -> UserId {
+    UserId(format!("owner:{subject}"))
 }
 
 fn draft(tag: &str, origin: VersionOrigin) -> VersionDraft {
@@ -52,10 +47,7 @@ fn canonical_json_sorts_object_keys_recursively() {
 #[tokio::test]
 async fn ready_versions_follow_active_draft_activation_and_rollback_rules() {
     let app = TestApp::spawn().await;
-    let access = AccessScope {
-        kind: "instance".into(),
-        key: "instance".into(),
-    };
+    let access = UserId("instance".into());
     let session = app
         .state
         .session_repo
@@ -221,6 +213,8 @@ async fn ready_versions_follow_active_draft_activation_and_rollback_rules() {
 async fn workspace_read_endpoints_hide_foreign_sessions_and_versions() {
     let app = TestApp::spawn().await;
     let alice = scope("alice@example.com");
+    let alice_cookie = app.login_cookie("owner:alice@example.com").await;
+    let bob_cookie = app.login_cookie("owner:bob@example.com").await;
     let session = app
         .state
         .session_repo
@@ -250,8 +244,7 @@ async fn workspace_read_endpoints_hide_foreign_sessions_and_versions() {
         .clone()
         .oneshot(
             Request::get(format!("/api/sessions/{}/workspace", session.id))
-                .header("x-zjudss-subject", "alice@example.com")
-                .header("x-zjudss-proxy-token", TOKEN)
+                .header("cookie", &alice_cookie)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -274,8 +267,7 @@ async fn workspace_read_endpoints_hide_foreign_sessions_and_versions() {
             .clone()
             .oneshot(
                 Request::get(uri)
-                    .header("x-zjudss-subject", "bob@example.com")
-                    .header("x-zjudss-proxy-token", TOKEN)
+                    .header("cookie", &bob_cookie)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -289,15 +281,8 @@ async fn workspace_read_endpoints_hide_foreign_sessions_and_versions() {
 async fn version_inputs_require_owned_artifacts_and_are_returned_by_the_api() {
     let app = TestApp::spawn().await;
     let alice = scope("alice@example.com");
-    let bob_storage = app
-        .state
-        .artifact_service
-        .resolve_scope(&StorageScopeRef {
-            kind: "owner".into(),
-            key: "owner:bob@example.com".into(),
-        })
-        .await
-        .unwrap();
+    let alice_cookie = app.login_cookie("owner:alice@example.com").await;
+    let bob_storage = app.state.artifact_service.resolve_scope(8).await.unwrap();
     let artifact = app
         .state
         .artifact_service
@@ -359,15 +344,7 @@ async fn version_inputs_require_owned_artifacts_and_are_returned_by_the_api() {
         .expect_err("alice cannot reference bob's artifact");
     assert!(matches!(error, WorkspaceError::NotFound));
 
-    let alice_storage = app
-        .state
-        .artifact_service
-        .resolve_scope(&StorageScopeRef {
-            kind: "owner".into(),
-            key: "owner:alice@example.com".into(),
-        })
-        .await
-        .unwrap();
+    let alice_storage = app.state.artifact_service.resolve_scope(7).await.unwrap();
     let alice_artifact = app
         .state
         .artifact_service
@@ -423,8 +400,7 @@ async fn version_inputs_require_owned_artifacts_and_are_returned_by_the_api() {
         .router
         .oneshot(
             Request::get(format!("/api/versions/{}", version.id))
-                .header("x-zjudss-subject", "alice@example.com")
-                .header("x-zjudss-proxy-token", TOKEN)
+                .header("cookie", alice_cookie)
                 .body(Body::empty())
                 .unwrap(),
         )

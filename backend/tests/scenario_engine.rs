@@ -13,7 +13,7 @@ use backend::application::{
     AnalysisInput, AnalysisRequest, ArtifactMetadata, DataframeBindingDraft, ModelVersionStatus,
     RunStudyRequest, SourceKind, VersionDraft, VersionInputDraft, VersionOrigin,
 };
-use backend::auth::{AccessScope, Principal, StorageScopeRef};
+use backend::auth::{CurrentUser, UserId};
 use backend::db::repositories::SimulationRepo;
 use backend::storage::StageLimits;
 use backend::testing::{DatasetFixture, EngineScenario, ScenarioEngine};
@@ -84,37 +84,32 @@ fn assert_manifest_dataset(
     }
 }
 
-fn principal() -> Principal {
-    Principal {
-        access: AccessScope {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        storage: StorageScopeRef {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        subject: "instance".into(),
+fn principal() -> CurrentUser {
+    CurrentUser {
+        id: UserId("instance".into()),
+        name: "Instance".into(),
+        storage_scope_id: 1,
+        auth_session_hash: "test".into(),
     }
 }
 
-async fn ready_dataframe(app: &TestApp, principal: &Principal) -> (i32, i32) {
+async fn ready_dataframe(app: &TestApp, principal: &CurrentUser) -> (i32, i32) {
     let session = app
         .state
         .session_repo
-        .create(&principal.access, "scenario", 1)
+        .create(&principal.id, "scenario", 1)
         .await
         .unwrap();
     let workspace = app
         .state
         .workspace_service
-        .get_or_create(&principal.access, session.id)
+        .get_or_create(&principal.id, session.id)
         .await
         .unwrap();
     let scope = app
         .state
         .artifact_service
-        .resolve_scope(&principal.storage)
+        .resolve_scope(principal.storage_scope_id)
         .await
         .unwrap();
     let staged = app
@@ -140,7 +135,7 @@ async fn ready_dataframe(app: &TestApp, principal: &Principal) -> (i32, i32) {
         .state
         .workspace_service
         .publish_version(
-            &principal.access,
+            &principal.id,
             workspace.workspace.id,
             None,
             VersionDraft {
@@ -318,7 +313,7 @@ async fn simulation_and_analysis_fail_without_partial_publication_and_clean_stag
         .unwrap_err();
     let task_id = simulation_error.task_id.unwrap();
     let task = SimulationRepo::new(app.pool.clone())
-        .find(&principal.access, task_id)
+        .find(&principal.id, task_id)
         .await
         .unwrap();
     assert_eq!(task.status, "failed");

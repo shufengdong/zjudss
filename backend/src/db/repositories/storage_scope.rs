@@ -1,7 +1,6 @@
 use diesel::prelude::*;
 
-use crate::auth::StorageScopeRef;
-use crate::db::models::{NewStorageScope, StorageScope};
+use crate::db::models::StorageScope;
 use crate::db::{DbPool, schema};
 
 use super::{RepoError, RepoResult};
@@ -47,56 +46,27 @@ impl From<StorageScope> for StorageUsage {
 #[derive(Clone)]
 pub struct StorageScopeRepo {
     pool: DbPool,
-    defaults: StorageLimits,
+    _defaults: StorageLimits,
 }
 
 impl StorageScopeRepo {
     pub fn new(pool: DbPool, defaults: StorageLimits) -> Self {
-        Self { pool, defaults }
+        Self {
+            pool,
+            _defaults: defaults,
+        }
     }
 
-    pub async fn resolve(
-        &self,
-        reference: &StorageScopeRef,
-        now_ms: i64,
-    ) -> RepoResult<StorageScope> {
+    pub async fn find(&self, scope_id: i32) -> RepoResult<StorageScope> {
         let pool = self.pool.clone();
-        let reference = reference.clone();
-        let defaults = self.defaults;
         tokio::task::spawn_blocking(move || -> RepoResult<StorageScope> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            conn.immediate_transaction::<StorageScope, RepoError, _>(|conn| {
-                diesel::insert_into(schema::storage_scopes::table)
-                    .values(NewStorageScope {
-                        kind: reference.kind.clone(),
-                        scope_key: reference.key.clone(),
-                        created_at_ms: now_ms,
-                    })
-                    .on_conflict((
-                        schema::storage_scopes::kind,
-                        schema::storage_scopes::scope_key,
-                    ))
-                    .do_nothing()
-                    .execute(conn)?;
-                diesel::update(
-                    schema::storage_scopes::table
-                        .filter(schema::storage_scopes::kind.eq(&reference.kind))
-                        .filter(schema::storage_scopes::scope_key.eq(&reference.key))
-                        .filter(schema::storage_scopes::updated_at_ms.eq(0)),
-                )
-                .set((
-                    schema::storage_scopes::artifact_limit.eq(defaults.artifact_limit),
-                    schema::storage_scopes::byte_limit.eq(defaults.byte_limit),
-                    schema::storage_scopes::warning_ratio.eq(defaults.warning_ratio),
-                    schema::storage_scopes::updated_at_ms.eq(now_ms),
-                ))
-                .execute(conn)?;
-                schema::storage_scopes::table
-                    .filter(schema::storage_scopes::kind.eq(reference.kind))
-                    .filter(schema::storage_scopes::scope_key.eq(reference.key))
-                    .first(conn)
-                    .map_err(RepoError::Query)
-            })
+            schema::storage_scopes::table
+                .find(scope_id)
+                .first(&mut conn)
+                .optional()
+                .map_err(RepoError::Query)?
+                .ok_or(RepoError::NotFound)
         })
         .await
         .map_err(RepoError::Join)?

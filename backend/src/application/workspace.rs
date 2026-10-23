@@ -7,7 +7,7 @@ use crate::application::{
     EventBus, EventWriter, ModelAmbiguity, ModelScope, ModelVersionSnapshot, ModelVersionStatus,
     RecognizedTable, now_ms,
 };
-use crate::auth::AccessScope;
+use crate::auth::UserId;
 use crate::db::models::{DataframeBinding, ModelVersion, VersionArtifact};
 use crate::db::repositories::{
     BindingDraft, MessageRepo, PreparedVersion, RepoError, VersionArtifactDraft, WorkspaceRecord,
@@ -154,7 +154,7 @@ impl WorkspaceService {
 
     pub async fn get_or_create(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         session_id: i32,
     ) -> Result<WorkspaceRecord, WorkspaceError> {
         self.repo
@@ -165,7 +165,7 @@ impl WorkspaceService {
 
     pub async fn get(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         session_id: i32,
     ) -> Result<WorkspaceRecord, WorkspaceError> {
         self.repo
@@ -176,7 +176,7 @@ impl WorkspaceService {
 
     pub async fn publish_version(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         workspace_id: i32,
         expected_base: Option<i32>,
         draft: VersionDraft,
@@ -192,7 +192,7 @@ impl WorkspaceService {
 
     pub async fn activate(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         workspace_id: i32,
         version_id: i32,
     ) -> Result<WorkspaceRecord, WorkspaceError> {
@@ -206,7 +206,7 @@ impl WorkspaceService {
 
     pub async fn rollback(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         workspace_id: i32,
         version_id: i32,
     ) -> Result<WorkspaceRecord, WorkspaceError> {
@@ -220,7 +220,7 @@ impl WorkspaceService {
 
     pub async fn activate_checked(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         workspace_id: i32,
         version_id: i32,
         expected_base: Option<i32>,
@@ -235,7 +235,7 @@ impl WorkspaceService {
 
     pub async fn rollback_checked(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         workspace_id: i32,
         version_id: i32,
         expected_base: Option<i32>,
@@ -250,7 +250,7 @@ impl WorkspaceService {
 
     pub async fn list_versions(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         session_id: i32,
     ) -> Result<Vec<ModelVersion>, WorkspaceError> {
         self.repo
@@ -261,7 +261,7 @@ impl WorkspaceService {
 
     pub async fn find_version(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         version_id: i32,
     ) -> Result<ModelVersion, WorkspaceError> {
         self.repo
@@ -272,7 +272,7 @@ impl WorkspaceService {
 
     pub async fn inputs(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         version_id: i32,
     ) -> Result<Vec<(VersionArtifact, Option<DataframeBinding>)>, WorkspaceError> {
         self.repo
@@ -283,7 +283,7 @@ impl WorkspaceService {
 
     pub async fn references_artifact(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         artifact_id: i32,
     ) -> Result<bool, WorkspaceError> {
         self.repo
@@ -294,7 +294,7 @@ impl WorkspaceService {
 
     async fn emit_status(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         record: &WorkspaceRecord,
     ) -> Result<(), WorkspaceError> {
         let writer = EventWriter::new(

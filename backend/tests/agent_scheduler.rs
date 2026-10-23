@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use backend::application::{RunScheduler, SchedulerError};
-use backend::auth::AccessScope;
+use backend::auth::UserId;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
@@ -14,16 +14,13 @@ use tower::ServiceExt;
 
 use common::TestApp;
 
-fn scope(key: &str) -> AccessScope {
-    AccessScope {
-        kind: "owner".to_string(),
-        key: key.to_string(),
-    }
+fn scope(key: &str) -> UserId {
+    UserId(key.to_string())
 }
 
 async fn observed_max(
     scheduler: RunScheduler,
-    jobs: impl IntoIterator<Item = (AccessScope, i32)>,
+    jobs: impl IntoIterator<Item = (UserId, i32)>,
     expected_maximum: usize,
 ) -> usize {
     let active = Arc::new(AtomicUsize::new(0));
@@ -125,6 +122,7 @@ async fn queue_rejection_has_stable_error_and_does_not_write_message() {
         scheduler.clone(),
     )
     .await;
+    let cookie = app.login_cookie("instance").await;
 
     let create = app
         .router
@@ -134,6 +132,7 @@ async fn queue_rejection_has_stable_error_and_does_not_write_message() {
                 .method("POST")
                 .uri("/api/sessions")
                 .header("content-type", "application/json")
+                .header("cookie", &cookie)
                 .body(Body::from(r#"{"title":"queue test"}"#))
                 .expect("create request"),
         )
@@ -144,10 +143,7 @@ async fn queue_rejection_has_stable_error_and_does_not_write_message() {
         .expect("session id")
         .to_string();
 
-    let instance = AccessScope {
-        kind: "instance".to_string(),
-        key: "instance".to_string(),
-    };
+    let instance = UserId("instance".to_string());
     let _active = scheduler.try_admit(&instance, 900).expect("active slot");
     let _queued = scheduler.try_admit(&instance, 901).expect("waiting slot");
 
@@ -159,6 +155,7 @@ async fn queue_rejection_has_stable_error_and_does_not_write_message() {
                 .method("POST")
                 .uri(format!("/api/sessions/{session_id}/messages"))
                 .header("content-type", "application/json")
+                .header("cookie", &cookie)
                 .body(Body::from(r#"{"message":"should not persist"}"#))
                 .expect("post message request"),
         )
@@ -179,6 +176,7 @@ async fn queue_rejection_has_stable_error_and_does_not_write_message() {
         .oneshot(
             Request::builder()
                 .uri(format!("/api/sessions/{session_id}/messages"))
+                .header("cookie", cookie)
                 .body(Body::empty())
                 .expect("history request"),
         )

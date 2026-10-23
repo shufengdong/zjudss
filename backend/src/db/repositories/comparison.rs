@@ -1,6 +1,6 @@
 use super::{RepoError, RepoResult};
 use crate::{
-    auth::AccessScope,
+    auth::UserId,
     db::models::{NewTaskComparison, TaskComparison},
     db::{DbPool, schema},
 };
@@ -15,7 +15,7 @@ impl ComparisonRepo {
     }
     pub async fn create(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         new: NewTaskComparison,
     ) -> RepoResult<TaskComparison> {
         let pool = self.pool.clone();
@@ -25,7 +25,7 @@ impl ComparisonRepo {
             c.immediate_transaction::<_, RepoError, _>(|c| {
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(new.session_id))
-                    .filter(schema::sessions::user_id.eq(&scope.key))
+                    .filter(schema::sessions::user_id.eq(&scope.0))
                     .select(schema::sessions::id)
                     .first::<i32>(c)
                     .optional()?
@@ -60,7 +60,7 @@ impl ComparisonRepo {
         .await
         .map_err(RepoError::Join)?
     }
-    pub async fn find(&self, scope: &AccessScope, id: i32) -> RepoResult<TaskComparison> {
+    pub async fn find(&self, scope: &UserId, id: i32) -> RepoResult<TaskComparison> {
         let pool = self.pool.clone();
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || {
@@ -68,7 +68,7 @@ impl ComparisonRepo {
             schema::task_comparisons::table
                 .inner_join(schema::sessions::table)
                 .filter(schema::task_comparisons::id.eq(id))
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::task_comparisons::all_columns)
                 .first(&mut c)
                 .optional()?

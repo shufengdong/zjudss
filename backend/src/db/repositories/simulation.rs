@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 
-use crate::auth::AccessScope;
+use crate::auth::UserId;
 use crate::db::models::{NewResultDataset, NewSimulationTask, ResultDataset, SimulationTask};
 use crate::db::{DbPool, schema};
 
@@ -18,7 +18,7 @@ impl SimulationRepo {
 
     pub async fn create(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         task: NewSimulationTask,
     ) -> RepoResult<SimulationTask> {
         let pool = self.pool.clone();
@@ -30,13 +30,13 @@ impl SimulationRepo {
                 let script_id = task.script_artifact_id;
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(task.session_id))
-                    .filter(schema::sessions::user_id.eq(&scope.key))
+                    .filter(schema::sessions::user_id.eq(&scope.0))
                     .select(schema::sessions::id)
                     .first::<i32>(conn)
                     .optional()?
                     .ok_or(RepoError::NotFound)?;
                 let storage_scope_id = schema::users::table
-                    .find(&scope.key)
+                    .find(&scope.0)
                     .select(schema::users::storage_scope_id)
                     .first::<i32>(conn)?;
                 schema::model_versions::table
@@ -70,7 +70,7 @@ impl SimulationRepo {
 
     pub async fn set_stage(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         id: i32,
         stage: &str,
         started_at_ms: i64,
@@ -81,7 +81,7 @@ impl SimulationRepo {
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id);
             let count = diesel::update(
                 schema::simulation_tasks::table
@@ -106,7 +106,7 @@ impl SimulationRepo {
 
     pub async fn complete(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         id: i32,
         datasets: Vec<NewResultDataset>,
         now_ms: i64,
@@ -117,7 +117,7 @@ impl SimulationRepo {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.immediate_transaction::<_, RepoError, _>(|conn| {
                 let sessions = schema::sessions::table
-                    .filter(schema::sessions::user_id.eq(&scope.key))
+                    .filter(schema::sessions::user_id.eq(&scope.0))
                     .select(schema::sessions::id);
                 let found = schema::simulation_tasks::table
                     .filter(schema::simulation_tasks::id.eq(id))
@@ -154,7 +154,7 @@ impl SimulationRepo {
 
     pub async fn fail(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         id: i32,
         stage: &str,
         error_json: String,
@@ -166,7 +166,7 @@ impl SimulationRepo {
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id);
             let count = diesel::update(
                 schema::simulation_tasks::table
@@ -191,13 +191,13 @@ impl SimulationRepo {
         .map_err(RepoError::Join)?
     }
 
-    pub async fn find(&self, scope: &AccessScope, id: i32) -> RepoResult<SimulationTask> {
+    pub async fn find(&self, scope: &UserId, id: i32) -> RepoResult<SimulationTask> {
         let pool = self.pool.clone();
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id);
             schema::simulation_tasks::table
                 .filter(schema::simulation_tasks::id.eq(id))
@@ -211,7 +211,7 @@ impl SimulationRepo {
     }
     pub async fn list_session(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         session_id: i32,
         limit: i64,
     ) -> RepoResult<Vec<SimulationTask>> {
@@ -221,7 +221,7 @@ impl SimulationRepo {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id)
                 .first::<i32>(&mut c)
                 .optional()?

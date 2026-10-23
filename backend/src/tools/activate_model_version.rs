@@ -38,7 +38,7 @@ impl Tool for ActivateModelVersionTool {
         let r = self
             .services
             .workspaces
-            .get(&self.services.principal.access, self.services.session_id)
+            .get(&self.services.principal.id, self.services.session_id)
             .await?;
         if r.workspace
             .draft_version_id
@@ -55,7 +55,7 @@ impl Tool for ActivateModelVersionTool {
             .services
             .workspaces
             .activate_checked(
-                &self.services.principal.access,
+                &self.services.principal.id,
                 r.workspace.id,
                 a.version_id,
                 a.expected_draft_version_id,
@@ -90,7 +90,7 @@ impl Tool for RollbackModelVersionTool {
         let r = self
             .services
             .workspaces
-            .get(&self.services.principal.access, self.services.session_id)
+            .get(&self.services.principal.id, self.services.session_id)
             .await?;
         if r.workspace
             .draft_version_id
@@ -107,7 +107,7 @@ impl Tool for RollbackModelVersionTool {
             .services
             .workspaces
             .rollback_checked(
-                &self.services.principal.access,
+                &self.services.principal.id,
                 r.workspace.id,
                 a.version_id,
                 a.expected_draft_version_id,

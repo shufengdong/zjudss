@@ -13,7 +13,7 @@ use crate::application::{
     ArtifactMetadata, ArtifactService, EventBus, EventWriter, OperationKind, OperationRef,
     ResultColumn, ResultOutputRef, Stage, StageStatus, WorkspaceService, now_ms,
 };
-use crate::auth::Principal;
+use crate::auth::CurrentUser;
 use crate::db::models::{
     DataframeBinding, NewResultDataset, NewSimulationTask, ResultDataset, SimulationTask,
     VersionArtifact,
@@ -24,7 +24,7 @@ use crate::storage::{ParquetInspector, StageLimits};
 
 #[derive(Debug, Clone)]
 pub struct RunStudyRequest {
-    pub principal: Principal,
+    pub principal: CurrentUser,
     pub session_id: i32,
     pub model_version_id: i32,
     pub study_type: String,
@@ -105,7 +105,7 @@ impl SimulationService {
     ) -> Result<SimulationOutcome, SimulationError> {
         let version = self
             .workspaces
-            .find_version(&request.principal.access, request.model_version_id)
+            .find_version(&request.principal.id, request.model_version_id)
             .await
             .map_err(|e| SimulationError::new("model_version_not_found", e.to_string()))?;
         if version.status != "ready" {
@@ -116,7 +116,7 @@ impl SimulationService {
         }
         let workspace = self
             .workspaces
-            .get(&request.principal.access, request.session_id)
+            .get(&request.principal.id, request.session_id)
             .await
             .map_err(|e| SimulationError::new("workspace_not_found", e.to_string()))?;
         if workspace.workspace.id != version.workspace_id {
@@ -127,12 +127,12 @@ impl SimulationService {
         }
         let inputs = self
             .workspaces
-            .inputs(&request.principal.access, version.id)
+            .inputs(&request.principal.id, version.id)
             .await
             .map_err(|e| SimulationError::new("model_inputs_unavailable", e.to_string()))?;
         let scope = self
             .artifacts
-            .resolve_scope(&request.principal.storage)
+            .resolve_scope(request.principal.storage_scope_id)
             .await
             .map_err(|e| SimulationError::new("storage_unavailable", e.to_string()))?;
         let entry = inputs
@@ -174,7 +174,7 @@ impl SimulationService {
         let task = self
             .repo
             .create(
-                &request.principal.access,
+                &request.principal.id,
                 NewSimulationTask {
                     session_id: request.session_id,
                     status: "pending".into(),
@@ -215,7 +215,7 @@ impl SimulationService {
             Ok(datasets) => {
                 let task = self
                     .repo
-                    .find(&request.principal.access, task.id)
+                    .find(&request.principal.id, task.id)
                     .await
                     .map_err(|e| {
                         SimulationError::new("task_read_failed", e.to_string()).task(task.id)
@@ -226,16 +226,10 @@ impl SimulationService {
                 let stable = json!({"code": error.code, "message": error.message}).to_string();
                 let _ = self
                     .repo
-                    .fail(
-                        &request.principal.access,
-                        task.id,
-                        "collect",
-                        stable,
-                        now_ms(),
-                    )
+                    .fail(&request.principal.id, task.id, "collect", stable, now_ms())
                     .await;
                 let writer = EventWriter::new(
-                    request.principal.access.clone(),
+                    request.principal.id.clone(),
                     request.session_id,
                     self.messages.clone(),
                     self.events.clone(),
@@ -272,7 +266,7 @@ impl SimulationService {
             .and_then(|_| std::fs::create_dir_all(&result_dir))
             .map_err(|e| SimulationError::new("task_staging_failed", e.to_string()))?;
         let writer = EventWriter::new(
-            request.principal.access.clone(),
+            request.principal.id.clone(),
             request.session_id,
             self.messages.clone(),
             self.events.clone(),
@@ -335,7 +329,7 @@ impl SimulationService {
         let (drafts, committed) = self.collect(scope_id, task.id, output).await?;
         let datasets = match self
             .repo
-            .complete(&request.principal.access, task.id, drafts, now_ms())
+            .complete(&request.principal.id, task.id, drafts, now_ms())
             .await
         {
             Ok(v) => v,
@@ -557,13 +551,13 @@ impl SimulationService {
 
     async fn stage(
         &self,
-        principal: &Principal,
+        principal: &CurrentUser,
         id: i32,
         name: &str,
         writer: &EventWriter,
     ) -> Result<(), SimulationError> {
         self.repo
-            .set_stage(&principal.access, id, name, now_ms())
+            .set_stage(&principal.id, id, name, now_ms())
             .await
             .map_err(|e| SimulationError::new("task_update_failed", e.to_string()))?;
         writer

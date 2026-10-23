@@ -14,7 +14,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
 use crate::application::{AppEvent, AppState};
-use crate::auth::CurrentPrincipal;
+use crate::auth::CurrentUser;
 use crate::db::repositories::RepoError;
 
 use super::ApiError;
@@ -40,13 +40,13 @@ fn resync_frame() -> SseEvent {
 
 pub async fn stream(
     State(state): State<AppState>,
-    CurrentPrincipal(principal): CurrentPrincipal,
+    principal: CurrentUser,
     Path(session_id): Path<i32>,
     headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>, ApiError> {
     state
         .session_repo
-        .find(&principal.access, session_id)
+        .find(&principal.id, session_id)
         .await?
         .ok_or_else(|| ApiError::not_found("资源不存在"))?;
 
@@ -65,7 +65,7 @@ pub async fn stream(
     } else if let Some(after_id) = parsed_cursor {
         match state
             .message_repo
-            .list_after(&principal.access, session_id, after_id)
+            .list_after(&principal.id, session_id, after_id)
             .await
         {
             Ok(messages) => {

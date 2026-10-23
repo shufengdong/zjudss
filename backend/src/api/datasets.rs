@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 use super::ApiError;
 use crate::application::AppState;
-use crate::auth::CurrentPrincipal;
+use crate::auth::CurrentUser;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,14 +18,14 @@ pub struct RowsQuery {
 
 pub async fn metadata(
     State(s): State<AppState>,
-    CurrentPrincipal(p): CurrentPrincipal,
+    p: CurrentUser,
     Path(id): Path<i32>,
 ) -> Result<Json<crate::application::datasets::DatasetMetadata>, ApiError> {
     Ok(Json(s.dataset_service.metadata(&p, id).await?))
 }
 pub async fn rows(
     State(s): State<AppState>,
-    CurrentPrincipal(p): CurrentPrincipal,
+    p: CurrentUser,
     Path(id): Path<i32>,
     Query(q): Query<RowsQuery>,
 ) -> Result<Json<crate::application::datasets::DatasetPage>, ApiError> {
@@ -45,7 +45,7 @@ pub async fn rows(
 }
 pub async fn download(
     State(s): State<AppState>,
-    CurrentPrincipal(p): CurrentPrincipal,
+    p: CurrentUser,
     Path(id): Path<i32>,
 ) -> Result<Response<Body>, ApiError> {
     let f = s.dataset_service.download(&p, id).await?;

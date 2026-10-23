@@ -35,14 +35,14 @@ impl Tool for InspectWorkspaceTool {
         let record = self
             .services
             .workspaces
-            .get_or_create(&self.services.principal.access, self.services.session_id)
+            .get_or_create(&self.services.principal.id, self.services.session_id)
             .await?;
         let mut versions = Vec::new();
         for (scope, version) in [("active", record.active), ("draft", record.draft)] {
             if let Some(version) = version {
                 let manifest: Value =
                     serde_json::from_str(&version.manifest_json).unwrap_or_else(|_| json!({}));
-                let inputs=self.services.workspaces.inputs(&self.services.principal.access,version.id).await?.into_iter().map(|(input,binding)|json!({"inputId":input.id,"fileName":input.display_name,"relativePath":input.relative_path,"sheetName":input.sheet_name,"role":input.role,"tableKind":binding.as_ref().and_then(|b|b.table_kind.clone()),"resolution":binding.as_ref().map(|b|b.resolution.clone()),"evidence":binding.and_then(|b|serde_json::from_str::<Value>(&b.evidence_json).ok())})).collect::<Vec<_>>();
+                let inputs=self.services.workspaces.inputs(&self.services.principal.id,version.id).await?.into_iter().map(|(input,binding)|json!({"inputId":input.id,"fileName":input.display_name,"relativePath":input.relative_path,"sheetName":input.sheet_name,"role":input.role,"tableKind":binding.as_ref().and_then(|b|b.table_kind.clone()),"resolution":binding.as_ref().map(|b|b.resolution.clone()),"evidence":binding.and_then(|b|serde_json::from_str::<Value>(&b.evidence_json).ok())})).collect::<Vec<_>>();
                 versions.push(json!({"scope":scope,"versionId":version.id,"status":version.status,"sourceKind":version.source_kind,"contentHash":version.content_hash,"inputs":inputs,"missing":manifest.get("missing").cloned().unwrap_or_else(||json!([])),"diagnostics":manifest.get("diagnostics").cloned().unwrap_or_else(||json!([]))}));
             }
         }

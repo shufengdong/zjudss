@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use backend::application::{EventWriter, now_ms};
-use backend::auth::{AccessScope, Principal, StorageScopeRef};
+use backend::auth::{CurrentUser, UserId};
 use backend::testing::{
     FaultInjector, FaultPoint, ScriptScenario, ScriptTurn, ScriptedAgentFactory,
 };
@@ -15,17 +15,12 @@ use tower::ServiceExt;
 
 use common::TestApp;
 
-fn principal() -> Principal {
-    Principal {
-        access: AccessScope {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        storage: StorageScopeRef {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        subject: "instance".into(),
+fn principal() -> CurrentUser {
+    CurrentUser {
+        id: UserId("instance".into()),
+        name: "Instance".into(),
+        storage_scope_id: 1,
+        auth_session_hash: "test".into(),
     }
 }
 
@@ -36,11 +31,11 @@ async fn injected_event_commit_failure_publishes_nothing_and_keeps_history_reada
     let session = app
         .state
         .session_repo
-        .create(&p.access, "atomic", now_ms())
+        .create(&p.id, "atomic", now_ms())
         .await
         .unwrap();
     let writer = EventWriter::new(
-        p.access.clone(),
+        p.id.clone(),
         session.id,
         app.state.message_repo.clone(),
         app.state.events.clone(),
@@ -53,7 +48,7 @@ async fn injected_event_commit_failure_publishes_nothing_and_keeps_history_reada
     let history = app
         .state
         .message_repo
-        .list_by_session(&p.access, session.id)
+        .list_by_session(&p.id, session.id)
         .await
         .unwrap();
     assert_eq!(history.len(), 1);
@@ -62,7 +57,7 @@ async fn injected_event_commit_failure_publishes_nothing_and_keeps_history_reada
     assert_eq!(
         app.state
             .message_repo
-            .list_by_session(&p.access, session.id)
+            .list_by_session(&p.id, session.id)
             .await
             .unwrap()
             .len(),
@@ -85,9 +80,10 @@ async fn provider_errors_release_the_permit_without_exposing_internal_details() 
     let session = app
         .state
         .session_repo
-        .create(&p.access, "redaction", now_ms())
+        .create(&p.id, "redaction", now_ms())
         .await
         .unwrap();
+    let cookie = app.login_cookie("instance").await;
     let response = app
         .router
         .clone()
@@ -96,6 +92,7 @@ async fn provider_errors_release_the_permit_without_exposing_internal_details() 
                 .method("POST")
                 .uri(format!("/api/sessions/{}/messages", session.id))
                 .header("content-type", "application/json")
+                .header("cookie", cookie)
                 .body(Body::from(r#"{"message":"触发错误"}"#))
                 .unwrap(),
         )
@@ -107,7 +104,7 @@ async fn provider_errors_release_the_permit_without_exposing_internal_details() 
             let messages = app
                 .state
                 .message_repo
-                .list_by_session(&p.access, session.id)
+                .list_by_session(&p.id, session.id)
                 .await
                 .unwrap();
             if messages.iter().any(|message| message.role == "assistant") {

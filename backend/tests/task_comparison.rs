@@ -3,43 +3,38 @@ use backend::application::{
     ArtifactMetadata, DataframeBindingDraft, ModelVersionStatus, RunStudyRequest, SourceKind,
     VersionDraft, VersionInputDraft, VersionOrigin,
 };
-use backend::auth::{AccessScope, Principal, StorageScopeRef};
+use backend::auth::{CurrentUser, UserId};
 use backend::storage::StageLimits;
 use common::TestApp;
 use diesel::prelude::*;
 use serde_json::json;
 use std::io::Cursor;
-fn p() -> Principal {
-    Principal {
-        access: AccessScope {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        storage: StorageScopeRef {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        subject: "instance".into(),
+fn p() -> CurrentUser {
+    CurrentUser {
+        id: UserId("instance".into()),
+        name: "Instance".into(),
+        storage_scope_id: 1,
+        auth_session_hash: "test".into(),
     }
 }
-async fn two_tasks(app: &TestApp) -> (Principal, i32, i32, i32) {
+async fn two_tasks(app: &TestApp) -> (CurrentUser, i32, i32, i32) {
     let p = p();
     let s = app
         .state
         .session_repo
-        .create(&p.access, "compare", 1)
+        .create(&p.id, "compare", 1)
         .await
         .unwrap();
     let w = app
         .state
         .workspace_service
-        .get_or_create(&p.access, s.id)
+        .get_or_create(&p.id, s.id)
         .await
         .unwrap();
     let scope = app
         .state
         .artifact_service
-        .resolve_scope(&p.storage)
+        .resolve_scope(p.storage_scope_id)
         .await
         .unwrap();
     let staged = app
@@ -65,7 +60,7 @@ async fn two_tasks(app: &TestApp) -> (Principal, i32, i32, i32) {
         .state
         .workspace_service
         .publish_version(
-            &p.access,
+            &p.id,
             w.workspace.id,
             None,
             VersionDraft {
@@ -146,7 +141,7 @@ async fn compatible_tasks_create_traceable_analysis_and_difference_dataset() {
     let scope = app
         .state
         .artifact_service
-        .resolve_scope(&p.storage)
+        .resolve_scope(p.storage_scope_id)
         .await
         .unwrap();
     let artifact = app
@@ -198,7 +193,7 @@ async fn compatible_tasks_create_traceable_analysis_and_difference_dataset() {
     let msgs = app
         .state
         .message_repo
-        .list_by_session(&p.access, session)
+        .list_by_session(&p.id, session)
         .await
         .unwrap();
     assert!(msgs.iter().any(|m| m.kind == "comparison"));

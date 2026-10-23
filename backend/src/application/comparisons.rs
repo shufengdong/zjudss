@@ -2,7 +2,7 @@ use crate::application::{
     AnalysisInput, AnalysisRequest, AnalysisService, EventBus, EventWriter, ResultColumn,
     ResultOutputRef, now_ms,
 };
-use crate::auth::Principal;
+use crate::auth::CurrentUser;
 use crate::db::models::{NewTaskComparison, ResultDataset, TaskComparison};
 use crate::db::repositories::{ComparisonRepo, DatasetRepo, MessageRepo, SimulationRepo};
 use serde_json::{Value, json};
@@ -55,7 +55,7 @@ impl ComparisonService {
     }
     pub async fn compare(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         session_id: i32,
         baseline_task_id: i32,
         candidate_task_id: i32,
@@ -70,12 +70,12 @@ impl ComparisonService {
         }
         let baseline = self
             .tasks
-            .find(&p.access, baseline_task_id)
+            .find(&p.id, baseline_task_id)
             .await
             .map_err(|_| ComparisonError::new("not_found", "资源不存在"))?;
         let candidate = self
             .tasks
-            .find(&p.access, candidate_task_id)
+            .find(&p.id, candidate_task_id)
             .await
             .map_err(|_| ComparisonError::new("not_found", "资源不存在"))?;
         if baseline.session_id != session_id || candidate.session_id != session_id {
@@ -83,12 +83,12 @@ impl ComparisonService {
         }
         let left = self
             .datasets
-            .list_task(&p.access, baseline_task_id)
+            .list_task(&p.id, baseline_task_id)
             .await
             .map_err(|_| ComparisonError::new("not_found", "资源不存在"))?;
         let right = self
             .datasets
-            .list_task(&p.access, candidate_task_id)
+            .list_task(&p.id, candidate_task_id)
             .await
             .map_err(|_| ComparisonError::new("not_found", "资源不存在"))?;
         let (left, right, compatibility) = compatible_pair(&baseline.study_type, left, right)?;
@@ -96,7 +96,7 @@ impl ComparisonService {
         let comparison = self
             .repo
             .create(
-                &p.access,
+                &p.id,
                 NewTaskComparison {
                     session_id,
                     baseline_task_id,
@@ -110,7 +110,7 @@ impl ComparisonService {
             .map_err(|e| ComparisonError::new("comparison_publish_failed", e.to_string()))?;
         let outputs = analysis.datasets.iter().map(result_ref).collect();
         EventWriter::new(
-            p.access.clone(),
+            p.id.clone(),
             session_id,
             self.messages.clone(),
             self.events.clone(),
@@ -129,12 +129,12 @@ impl ComparisonService {
     }
     pub async fn find(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         id: i32,
     ) -> Result<(TaskComparison, Value, Vec<ResultDataset>), ComparisonError> {
         let c = self
             .repo
-            .find(&p.access, id)
+            .find(&p.id, id)
             .await
             .map_err(|_| ComparisonError::new("not_found", "资源不存在"))?;
         let (_, datasets) = self

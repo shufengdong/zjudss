@@ -15,7 +15,7 @@ use crate::application::{
     ArtifactError, ArtifactMetadata, ArtifactService, DataframeBindingDraft, SourceKind,
     VersionDraft, VersionInputDraft, VersionOrigin, WorkspaceError, WorkspaceService,
 };
-use crate::auth::Principal;
+use crate::auth::CurrentUser;
 use crate::db::models::{DataframeBinding, ModelVersion, VersionArtifact};
 use crate::storage::StageLimits;
 
@@ -91,7 +91,7 @@ impl ModelPatchService {
 
     pub async fn confirm_mapping(
         &self,
-        principal: &Principal,
+        principal: &CurrentUser,
         session_id: i32,
         input_id: i32,
         table_kind: String,
@@ -137,7 +137,7 @@ impl ModelPatchService {
 
     pub async fn remove_input(
         &self,
-        principal: &Principal,
+        principal: &CurrentUser,
         session_id: i32,
         input_id: i32,
         expected_base: Option<i32>,
@@ -172,7 +172,7 @@ impl ModelPatchService {
 
     pub async fn replace_input(
         &self,
-        principal: &Principal,
+        principal: &CurrentUser,
         session_id: i32,
         target_input_id: i32,
         replacement_input_id: i32,
@@ -220,7 +220,7 @@ impl ModelPatchService {
 
     pub async fn modify(
         &self,
-        principal: &Principal,
+        principal: &CurrentUser,
         session_id: i32,
         input_id: i32,
         patch: ModelPatch,
@@ -240,7 +240,10 @@ impl ModelPatchService {
             .ok_or_else(|| ModelMutationError::new("input_not_found", "inputId 不属于当前基线"))?;
         let target = &inputs[target_index];
         validate_units(&patch)?;
-        let scope = self.artifacts.resolve_scope(&principal.storage).await?;
+        let scope = self
+            .artifacts
+            .resolve_scope(principal.storage_scope_id)
+            .await?;
         let artifact = self
             .artifacts
             .find_owned(scope.id, target.input.artifact_id)
@@ -332,7 +335,7 @@ impl ModelPatchService {
 
     async fn base(
         &self,
-        principal: &Principal,
+        principal: &CurrentUser,
         session_id: i32,
         expected_base: Option<i32>,
     ) -> Result<
@@ -344,7 +347,7 @@ impl ModelPatchService {
         ),
         ModelMutationError,
     > {
-        let record = self.workspaces.get(&principal.access, session_id).await?;
+        let record = self.workspaces.get(&principal.id, session_id).await?;
         let current = record
             .workspace
             .draft_version_id
@@ -363,15 +366,15 @@ impl ModelPatchService {
         }
         let base_id = current
             .ok_or_else(|| ModelMutationError::new("workspace_empty", "工作区尚无模型版本"))?;
-        let base = self
-            .workspaces
-            .find_version(&principal.access, base_id)
-            .await?;
+        let base = self.workspaces.find_version(&principal.id, base_id).await?;
         let manifest: Value = serde_json::from_str(&base.manifest_json)
             .map_err(|_| ModelMutationError::new("invalid_manifest", "版本 manifest 无效"))?;
         let mut states = Vec::new();
-        let scope = self.artifacts.resolve_scope(&principal.storage).await?;
-        for (input, binding) in self.workspaces.inputs(&principal.access, base.id).await? {
+        let scope = self
+            .artifacts
+            .resolve_scope(principal.storage_scope_id)
+            .await?;
+        for (input, binding) in self.workspaces.inputs(&principal.id, base.id).await? {
             let artifact = self
                 .artifacts
                 .find_owned(scope.id, input.artifact_id)
@@ -392,7 +395,7 @@ impl ModelPatchService {
 
     async fn publish(
         &self,
-        principal: &Principal,
+        principal: &CurrentUser,
         workspace_id: i32,
         expected: Option<i32>,
         base: &ModelVersion,
@@ -419,7 +422,7 @@ impl ModelPatchService {
         }
         self.workspaces
             .publish_version(
-                &principal.access,
+                &principal.id,
                 workspace_id,
                 expected,
                 VersionDraft {

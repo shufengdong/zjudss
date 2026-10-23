@@ -4,7 +4,7 @@ use std::io::Cursor;
 use std::io::Write;
 
 use backend::application::{UploadBatch, UploadFile};
-use backend::auth::{AccessScope, Principal, StorageScopeRef};
+use backend::auth::{CurrentUser, UserId};
 use backend::ingestion::{
     ArchiveExtractor, ArchiveLimits, BundleValidator, ExtractedTree, RssInspector,
 };
@@ -14,17 +14,12 @@ use zip::write::SimpleFileOptions;
 
 use common::TestApp;
 
-fn principal() -> Principal {
-    Principal {
-        access: AccessScope {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        storage: StorageScopeRef {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        subject: "instance".into(),
+fn principal() -> CurrentUser {
+    CurrentUser {
+        id: UserId("instance".into()),
+        name: "Instance".into(),
+        storage_scope_id: 1,
+        auth_session_hash: "test".into(),
     }
 }
 
@@ -56,7 +51,7 @@ fn upload_batch(
 async fn create_session(app: &TestApp, title: &str) -> i32 {
     app.state
         .session_repo
-        .create(&principal().access, title, 1)
+        .create(&principal().id, title, 1)
         .await
         .unwrap()
         .id
@@ -294,7 +289,7 @@ async fn uploaded_single_rss_with_missing_dependency_publishes_collecting_versio
         .state
         .workspace_service
         .find_version(
-            &principal().access,
+            &principal().id,
             ingestion.published_version_id.unwrap().parse().unwrap(),
         )
         .await
@@ -303,7 +298,7 @@ async fn uploaded_single_rss_with_missing_dependency_publishes_collecting_versio
     let input = app
         .state
         .workspace_service
-        .inputs(&principal().access, version.id)
+        .inputs(&principal().id, version.id)
         .await
         .unwrap()[0]
         .0
@@ -311,7 +306,7 @@ async fn uploaded_single_rss_with_missing_dependency_publishes_collecting_versio
     let scope = app
         .state
         .artifact_service
-        .resolve_scope(&principal().storage)
+        .resolve_scope(principal().storage_scope_id)
         .await
         .unwrap();
     let artifact = app
@@ -394,7 +389,7 @@ async fn zip_and_directory_upload_publish_equal_canonical_content() {
         .state
         .workspace_service
         .find_version(
-            &principal().access,
+            &principal().id,
             direct.published_version_id.unwrap().parse().unwrap(),
         )
         .await
@@ -440,7 +435,7 @@ async fn zip_and_directory_upload_publish_equal_canonical_content() {
         .state
         .workspace_service
         .find_version(
-            &principal().access,
+            &principal().id,
             zipped.published_version_id.unwrap().parse().unwrap(),
         )
         .await

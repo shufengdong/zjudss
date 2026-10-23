@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 
-use crate::auth::AccessScope;
+use crate::auth::UserId;
 use crate::db::models::{Message, NewMessage};
 use crate::db::{DbPool, schema};
 
@@ -16,7 +16,7 @@ impl MessageRepo {
         Self { pool }
     }
 
-    pub async fn create(&self, scope: &AccessScope, new: NewMessage) -> RepoResult<Message> {
+    pub async fn create(&self, scope: &UserId, new: NewMessage) -> RepoResult<Message> {
         let pool = self.pool.clone();
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || -> RepoResult<Message> {
@@ -24,7 +24,7 @@ impl MessageRepo {
             conn.immediate_transaction::<Message, diesel::result::Error, _>(|conn| {
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(new.session_id))
-                    .filter(schema::sessions::user_id.eq(&scope.key))
+                    .filter(schema::sessions::user_id.eq(&scope.0))
                     .select(schema::sessions::id)
                     .first::<i32>(conn)?;
                 diesel::insert_into(schema::messages::table)
@@ -60,7 +60,7 @@ impl MessageRepo {
 
     pub async fn list_by_session(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         session_id: i32,
     ) -> RepoResult<Vec<Message>> {
         let pool = self.pool.clone();
@@ -69,7 +69,7 @@ impl MessageRepo {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let exists = schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id)
                 .first::<i32>(&mut conn)
                 .optional()
@@ -89,7 +89,7 @@ impl MessageRepo {
 
     pub async fn list_after(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         session_id: i32,
         after_id: i32,
     ) -> RepoResult<Vec<Message>> {
@@ -99,7 +99,7 @@ impl MessageRepo {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id)
                 .first::<i32>(&mut conn)
                 .map_err(|error| match error {

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
-use crate::auth::AccessScope;
+use crate::auth::UserId;
 use crate::db::models::{Message, NewMessage};
 use crate::db::repositories::{MessageRepo, RepoError};
 
@@ -439,7 +439,7 @@ fn normalize_tool_args(args: serde_json::Value) -> serde_json::Value {
 /// 事件并发布到 session 的 broadcast 通道，保证「DB 真相」与「SSE 实时」同 id。
 #[derive(Clone)]
 pub struct EventWriter {
-    scope: AccessScope,
+    scope: UserId,
     session_id: i32,
     message_repo: MessageRepo,
     events: EventBus,
@@ -447,7 +447,7 @@ pub struct EventWriter {
 
 impl EventWriter {
     pub fn new(
-        scope: AccessScope,
+        scope: UserId,
         session_id: i32,
         message_repo: MessageRepo,
         events: EventBus,

@@ -1,5 +1,4 @@
 use crate::application::now_ms;
-use crate::auth::StorageScopeRef;
 use crate::db::models::{Artifact, StorageScope};
 use crate::db::repositories::{ArtifactDraft, ArtifactRepo, RepoError, StorageScopeRepo};
 use crate::storage::{ArtifactStore, StagedArtifact, StorageError};
@@ -109,14 +108,8 @@ impl ArtifactService {
         &self.store
     }
 
-    pub async fn resolve_scope(
-        &self,
-        reference: &StorageScopeRef,
-    ) -> Result<StorageScope, ArtifactError> {
-        self.scopes
-            .resolve(reference, now_ms())
-            .await
-            .map_err(Into::into)
+    pub async fn resolve_scope(&self, scope_id: i32) -> Result<StorageScope, ArtifactError> {
+        self.scopes.find(scope_id).await.map_err(Into::into)
     }
 
     pub async fn commit(
@@ -153,16 +146,13 @@ impl ArtifactService {
         self.scopes.usage(scope_id).await.map_err(Into::into)
     }
 
-    pub async fn usage_for(
-        &self,
-        reference: &StorageScopeRef,
-    ) -> Result<StorageUsageSummary, ArtifactError> {
-        let scope = self.resolve_scope(reference).await?;
+    pub async fn usage_for(&self, scope_id: i32) -> Result<StorageUsageSummary, ArtifactError> {
+        let scope = self.resolve_scope(scope_id).await?;
         let usage = self.get_usage(scope.id).await?;
         let artifact_ratio = usage.used_artifacts as f64 / usage.artifact_limit as f64;
         let byte_ratio = usage.used_bytes as f64 / usage.byte_limit as f64;
         Ok(StorageUsageSummary {
-            scope: reference.kind.clone(),
+            scope: "user".to_string(),
             artifact_limit: usage.artifact_limit,
             byte_limit: usage.byte_limit,
             warning_ratio: usage.warning_ratio,

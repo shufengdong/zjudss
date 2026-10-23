@@ -23,7 +23,10 @@ fn config_defaults_are_safe() {
     assert_eq!(config.database_url, "sqlite://backend.db");
     assert_eq!(config.data_dir, root.path().join("data"));
     assert_eq!(config.tensoreval_cwd, engine_root);
-    assert_eq!(config.session_ttl, std::time::Duration::from_secs(30 * 24 * 60 * 60));
+    assert_eq!(
+        config.session_ttl,
+        std::time::Duration::from_secs(30 * 24 * 60 * 60)
+    );
     assert!(!config.session_cookie_secure);
     assert_eq!(config.agent_max_concurrent_runs, 8);
     assert_eq!(config.agent_max_owner_runs, 2);

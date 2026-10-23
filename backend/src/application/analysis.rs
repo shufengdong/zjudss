@@ -5,7 +5,7 @@ use crate::application::{
     ArtifactMetadata, ArtifactService, DatasetViewRef, EventBus, EventWriter, OperationKind,
     OperationRef, ResultColumn, ResultOutputRef, Stage, StageStatus, VisualizationKind, now_ms,
 };
-use crate::auth::Principal;
+use crate::auth::CurrentUser;
 use crate::db::models::{
     NewDatasetView, NewResultAnalysisRun, NewResultDataset, ResultAnalysisInput, ResultAnalysisRun,
     ResultDataset,
@@ -28,7 +28,7 @@ pub struct AnalysisInput {
 }
 #[derive(Debug, Clone)]
 pub struct AnalysisRequest {
-    pub principal: Principal,
+    pub principal: CurrentUser,
     pub session_id: i32,
     pub request_message_id: Option<i32>,
     pub intent: Value,
@@ -109,7 +109,7 @@ impl AnalysisService {
         validate_request(&r)?;
         let scope = self
             .artifacts
-            .resolve_scope(&r.principal.storage)
+            .resolve_scope(r.principal.storage_scope_id)
             .await
             .map_err(|e| AnalysisError::new("storage_unavailable", e.to_string()))?;
         let staged = self
@@ -148,7 +148,7 @@ impl AnalysisService {
         let run = self
             .repo
             .create(
-                &r.principal.access,
+                &r.principal.id,
                 NewResultAnalysisRun {
                     session_id: r.session_id,
                     request_message_id: r.request_message_id,
@@ -181,7 +181,7 @@ impl AnalysisService {
                 let _ = self
                     .repo
                     .fail(
-                        &r.principal.access,
+                        &r.principal.id,
                         run.id,
                         "present",
                         json!({"code":e.code,"message":e.message}).to_string(),
@@ -206,7 +206,7 @@ impl AnalysisService {
             .and_then(|_| std::fs::create_dir_all(&results))
             .map_err(|e| AnalysisError::new("analysis_staging_failed", e.to_string()))?;
         let writer = EventWriter::new(
-            r.principal.access.clone(),
+            r.principal.id.clone(),
             r.session_id,
             self.messages.clone(),
             self.events.clone(),
@@ -225,7 +225,7 @@ impl AnalysisService {
         for input in &r.inputs {
             let d = self
                 .datasets
-                .find(&r.principal.access, input.dataset_id)
+                .find(&r.principal.id, input.dataset_id)
                 .await
                 .map_err(|e| AnalysisError::new("analysis_input_not_found", e.to_string()))?;
             let a = self
@@ -369,7 +369,7 @@ impl AnalysisService {
         self.stage(&r.principal, run.id, "present", &writer).await?;
         let (run, datasets) = match self
             .repo
-            .complete(&r.principal.access, run.id, drafts, now_ms())
+            .complete(&r.principal.id, run.id, drafts, now_ms())
             .await
         {
             Ok(v) => v,
@@ -402,13 +402,13 @@ impl AnalysisService {
     }
     async fn stage(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         id: i32,
         name: &str,
         w: &EventWriter,
     ) -> Result<(), AnalysisError> {
         self.repo
-            .set_stage(&p.access, id, name, now_ms())
+            .set_stage(&p.id, id, name, now_ms())
             .await
             .map_err(|e| AnalysisError::new("analysis_update_failed", e.to_string()))?;
         w.progress(
@@ -424,14 +424,14 @@ impl AnalysisService {
     }
     pub async fn create_view(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         dataset_id: i32,
         name: String,
         spec: Value,
     ) -> Result<crate::db::models::DatasetView, AnalysisError> {
         let d = self
             .datasets
-            .find(&p.access, dataset_id)
+            .find(&p.id, dataset_id)
             .await
             .map_err(|e| AnalysisError::new("dataset_not_found", e.to_string()))?;
         let columns: Vec<crate::application::datasets::DatasetColumn> =
@@ -452,7 +452,7 @@ impl AnalysisService {
         let view = self
             .repo
             .create_view(
-                &p.access,
+                &p.id,
                 dataset_id,
                 NewDatasetView {
                     dataset_id,
@@ -467,11 +467,11 @@ impl AnalysisService {
             .map_err(|e| AnalysisError::new("view_create_failed", e.to_string()))?;
         let session_id = self
             .datasets
-            .session_id(&p.access, dataset_id)
+            .session_id(&p.id, dataset_id)
             .await
             .map_err(|e| AnalysisError::new("dataset_not_found", e.to_string()))?;
         let writer = EventWriter::new(
-            p.access.clone(),
+            p.id.clone(),
             session_id,
             self.messages.clone(),
             self.events.clone(),
@@ -489,31 +489,31 @@ impl AnalysisService {
     }
     pub async fn find(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         id: i32,
     ) -> Result<(ResultAnalysisRun, Vec<ResultDataset>), AnalysisError> {
         let run = self
             .repo
-            .find(&p.access, id)
+            .find(&p.id, id)
             .await
             .map_err(|e| AnalysisError::new("analysis_not_found", e.to_string()))?;
         let ds = self
             .datasets
-            .list_analysis(&p.access, id)
+            .list_analysis(&p.id, id)
             .await
             .map_err(|e| AnalysisError::new("analysis_not_found", e.to_string()))?;
         Ok((run, ds))
     }
     async fn result_ref(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         d: &ResultDataset,
     ) -> Result<ResultOutputRef, AnalysisError> {
         let columns: Vec<crate::application::datasets::DatasetColumn> =
             serde_json::from_str(&d.schema_json).unwrap_or_default();
         let views = self
             .datasets
-            .views(&p.access, d.id)
+            .views(&p.id, d.id)
             .await
             .map_err(|e| AnalysisError::new("dataset_view_read_failed", e.to_string()))?;
         let default_view_id = views

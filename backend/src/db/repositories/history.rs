@@ -1,6 +1,6 @@
 use super::{RepoError, RepoResult};
 use crate::{
-    auth::AccessScope,
+    auth::UserId,
     db::{DbPool, models::Message, schema},
 };
 use diesel::{
@@ -51,7 +51,7 @@ impl HistoryRepo {
     }
     pub async fn search(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         query: String,
         filters: SearchFilters,
         limit: i64,
@@ -63,15 +63,15 @@ impl HistoryRepo {
             let limit=limit.clamp(1,20);
             let rows=if query.chars().count()<=2 {
                 let pattern=format!("%{}%",escape_like(&query));
-                sql_query("SELECT s.id AS session_id,s.title,s.updated_at_ms,0.0 AS score,d.search_text AS snippet FROM chat_search_documents d JOIN sessions s ON s.id=d.session_id WHERE s.access_scope_kind=? AND s.access_scope_key=? AND d.search_text LIKE ? ESCAPE '\\' AND (? IS NULL OR s.updated_at_ms>=?) AND (? IS NULL OR s.updated_at_ms<=?) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_tasks t WHERE t.session_id=s.id AND t.study_type=?)) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_tasks t WHERE t.session_id=s.id AND t.status=?)) ORDER BY s.updated_at_ms DESC,s.id DESC LIMIT ?")
-                    .bind::<Text,_>(&scope.kind).bind::<Text,_>(&scope.key).bind::<Text,_>(pattern)
+                sql_query("SELECT s.id AS session_id,s.title,s.updated_at_ms,0.0 AS score,d.search_text AS snippet FROM chat_search_documents d JOIN sessions s ON s.id=d.session_id WHERE s.user_id=? AND d.search_text LIKE ? ESCAPE '\\' AND (? IS NULL OR s.updated_at_ms>=?) AND (? IS NULL OR s.updated_at_ms<=?) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_tasks t WHERE t.session_id=s.id AND t.study_type=?)) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_tasks t WHERE t.session_id=s.id AND t.status=?)) ORDER BY s.updated_at_ms DESC,s.id DESC LIMIT ?")
+                    .bind::<Text,_>(&scope.0).bind::<Text,_>(pattern)
                     .bind::<Nullable<BigInt>,_>(filters.from_ms).bind::<Nullable<BigInt>,_>(filters.from_ms).bind::<Nullable<BigInt>,_>(filters.to_ms).bind::<Nullable<BigInt>,_>(filters.to_ms)
                     .bind::<Nullable<Text>,_>(filters.study_type.clone()).bind::<Nullable<Text>,_>(filters.study_type.clone()).bind::<Nullable<Text>,_>(filters.status.clone()).bind::<Nullable<Text>,_>(filters.status.clone())
                     .bind::<BigInt,_>(limit*10).load::<HitRow>(&mut conn)?
             } else {
                 let literal=format!("\"{}\"",query.replace('"',"\"\""));
-                sql_query("SELECT s.id AS session_id,s.title,s.updated_at_ms,bm25(chat_search_fts) AS score,snippet(chat_search_fts,0,'','', '…',16) AS snippet FROM chat_search_fts JOIN chat_search_documents d ON d.id=chat_search_fts.rowid JOIN sessions s ON s.id=d.session_id WHERE chat_search_fts MATCH ? AND s.access_scope_kind=? AND s.access_scope_key=? AND (? IS NULL OR s.updated_at_ms>=?) AND (? IS NULL OR s.updated_at_ms<=?) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_tasks t WHERE t.session_id=s.id AND t.study_type=?)) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_tasks t WHERE t.session_id=s.id AND t.status=?)) ORDER BY score ASC,s.updated_at_ms DESC,s.id DESC LIMIT ?")
-                    .bind::<Text,_>(literal).bind::<Text,_>(&scope.kind).bind::<Text,_>(&scope.key)
+                sql_query("SELECT s.id AS session_id,s.title,s.updated_at_ms,bm25(chat_search_fts) AS score,snippet(chat_search_fts,0,'','', '…',16) AS snippet FROM chat_search_fts JOIN chat_search_documents d ON d.id=chat_search_fts.rowid JOIN sessions s ON s.id=d.session_id WHERE chat_search_fts MATCH ? AND s.user_id=? AND (? IS NULL OR s.updated_at_ms>=?) AND (? IS NULL OR s.updated_at_ms<=?) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_tasks t WHERE t.session_id=s.id AND t.study_type=?)) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_tasks t WHERE t.session_id=s.id AND t.status=?)) ORDER BY score ASC,s.updated_at_ms DESC,s.id DESC LIMIT ?")
+                    .bind::<Text,_>(literal).bind::<Text,_>(&scope.0)
                     .bind::<Nullable<BigInt>,_>(filters.from_ms).bind::<Nullable<BigInt>,_>(filters.from_ms).bind::<Nullable<BigInt>,_>(filters.to_ms).bind::<Nullable<BigInt>,_>(filters.to_ms)
                     .bind::<Nullable<Text>,_>(filters.study_type.clone()).bind::<Nullable<Text>,_>(filters.study_type).bind::<Nullable<Text>,_>(filters.status.clone()).bind::<Nullable<Text>,_>(filters.status)
                     .bind::<BigInt,_>(limit*10).load::<HitRow>(&mut conn)?
@@ -82,7 +82,7 @@ impl HistoryRepo {
     }
     pub async fn messages(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         session_id: i32,
         before: Option<i32>,
         around: Option<i32>,
@@ -94,7 +94,7 @@ impl HistoryRepo {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id)
                 .first::<i32>(&mut c)
                 .optional()?

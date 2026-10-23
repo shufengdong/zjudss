@@ -5,7 +5,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{application::AppState, auth::CurrentPrincipal};
+use crate::{application::AppState, auth::CurrentUser};
 
 use super::ApiError;
 
@@ -20,7 +20,7 @@ pub struct ExampleQuery {
 
 pub async fn list(
     State(state): State<AppState>,
-    CurrentPrincipal(_): CurrentPrincipal,
+    _: CurrentUser,
     Query(query): Query<ExampleQuery>,
 ) -> Json<Value> {
     let needle = query.query.unwrap_or_default().to_lowercase();
@@ -54,7 +54,7 @@ pub async fn list(
 
 pub async fn get(
     State(state): State<AppState>,
-    CurrentPrincipal(_): CurrentPrincipal,
+    _: CurrentUser,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let example = state

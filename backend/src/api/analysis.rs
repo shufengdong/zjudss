@@ -1,7 +1,7 @@
 use super::ApiError;
 use crate::{
     application::{AppState, ms_to_iso},
-    auth::CurrentPrincipal,
+    auth::CurrentUser,
 };
 use axum::{
     Json,
@@ -29,7 +29,7 @@ pub struct AnalysisDto {
 }
 pub async fn get(
     State(s): State<AppState>,
-    CurrentPrincipal(p): CurrentPrincipal,
+    p: CurrentUser,
     Path(id): Path<i32>,
 ) -> Result<Json<AnalysisDto>, ApiError> {
     let (run, _) = s.analysis_service.find(&p, id).await?;
@@ -57,7 +57,7 @@ pub async fn get(
 }
 pub async fn view_data(
     State(s): State<AppState>,
-    CurrentPrincipal(p): CurrentPrincipal,
+    p: CurrentUser,
     Path(id): Path<i32>,
 ) -> Result<Json<crate::application::datasets::DatasetViewData>, ApiError> {
     Ok(Json(s.dataset_service.view_data(&p, id).await?))

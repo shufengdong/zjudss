@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 
-use crate::auth::AccessScope;
+use crate::auth::UserId;
 use crate::db::models::{
     Artifact, Ingestion, IngestionArtifact, NewIngestion, NewIngestionArtifact,
 };
@@ -36,7 +36,7 @@ impl IngestionRepo {
 
     pub async fn find_by_batch(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         workspace_id: i32,
         client_batch_id: &str,
     ) -> RepoResult<Option<IngestionRecord>> {
@@ -49,7 +49,7 @@ impl IngestionRepo {
                 .inner_join(schema::workspaces::table.inner_join(schema::sessions::table))
                 .filter(schema::ingestions::workspace_id.eq(workspace_id))
                 .filter(schema::ingestions::client_batch_id.eq(batch))
-                .filter(schema::sessions::user_id.eq(&scope.key))
+                .filter(schema::sessions::user_id.eq(&scope.0))
                 .select(schema::ingestions::all_columns)
                 .first::<Ingestion>(&mut conn)
                 .optional()?;
@@ -63,7 +63,7 @@ impl IngestionRepo {
 
     pub async fn create(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         draft: NewIngestion,
         items: Vec<IngestionItemDraft>,
     ) -> RepoResult<IngestionRecord> {
@@ -116,7 +116,7 @@ impl IngestionRepo {
         .map_err(RepoError::Join)?
     }
 
-    pub async fn find(&self, scope: &AccessScope, id: i32) -> RepoResult<IngestionRecord> {
+    pub async fn find(&self, scope: &UserId, id: i32) -> RepoResult<IngestionRecord> {
         let pool = self.pool.clone();
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || {
@@ -124,7 +124,7 @@ impl IngestionRepo {
             let ingestion = schema::ingestions::table
                 .inner_join(schema::workspaces::table.inner_join(schema::sessions::table))
                 .filter(schema::ingestions::id.eq(id))
-                .filter(schema::sessions::user_id.eq(&scope.key))
+                .filter(schema::sessions::user_id.eq(&scope.0))
                 .select(schema::ingestions::all_columns)
                 .first::<Ingestion>(&mut conn)
                 .optional()?
@@ -137,7 +137,7 @@ impl IngestionRepo {
 
     pub async fn list_active(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         workspace_id: i32,
     ) -> RepoResult<Vec<IngestionRecord>> {
         let pool = self.pool.clone();
@@ -271,13 +271,13 @@ impl IngestionRepo {
 
 fn ensure_workspace(
     conn: &mut SqliteConnection,
-    scope: &AccessScope,
+    scope: &UserId,
     workspace_id: i32,
 ) -> RepoResult<()> {
     let exists = schema::workspaces::table
         .inner_join(schema::sessions::table)
         .filter(schema::workspaces::id.eq(workspace_id))
-        .filter(schema::sessions::user_id.eq(&scope.key))
+        .filter(schema::sessions::user_id.eq(&scope.0))
         .select(schema::workspaces::id)
         .first::<i32>(conn)
         .optional()?

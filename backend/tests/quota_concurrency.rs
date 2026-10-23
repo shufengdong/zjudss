@@ -3,7 +3,6 @@ mod common;
 use std::io::Cursor;
 
 use backend::application::{ArtifactError, ArtifactMetadata, StorageLimits};
-use backend::auth::StorageScopeRef;
 use backend::storage::StageLimits;
 use diesel::prelude::*;
 
@@ -20,15 +19,7 @@ fn metadata() -> ArtifactMetadata {
 async fn production_limits_include_four_engine_slots_and_twenty_gib_storage() {
     let app = TestApp::spawn().await;
     assert_eq!(app.state.semaphore.available_permits(), 4);
-    let scope = app
-        .state
-        .artifact_service
-        .resolve_scope(&StorageScopeRef {
-            kind: "owner".into(),
-            key: "defaults".into(),
-        })
-        .await
-        .unwrap();
+    let scope = app.state.artifact_service.resolve_scope(2).await.unwrap();
     let usage = app
         .state
         .artifact_service
@@ -44,11 +35,7 @@ async fn production_limits_include_four_engine_slots_and_twenty_gib_storage() {
 async fn concurrent_same_hash_commits_charge_once_and_preserve_refs_at_quota() {
     let app = TestApp::spawn().await;
     let service = app.state.artifact_service.clone();
-    let reference = StorageScopeRef {
-        kind: "owner".into(),
-        key: "concurrent-quota".into(),
-    };
-    let scope = service.resolve_scope(&reference).await.unwrap();
+    let scope = service.resolve_scope(2).await.unwrap();
     service
         .set_limits(
             scope.id,
@@ -81,7 +68,7 @@ async fn concurrent_same_hash_commits_charge_once_and_preserve_refs_at_quota() {
     let second = second.await.unwrap().unwrap();
     assert_eq!(first.id, second.id);
 
-    let summary = service.usage_for(&reference).await.unwrap();
+    let summary = service.usage_for(scope.id).await.unwrap();
     assert_eq!(summary.artifact_count, 1);
     assert_eq!(summary.logical_bytes, 12);
     assert!(summary.is_warning);

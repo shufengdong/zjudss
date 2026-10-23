@@ -10,7 +10,7 @@ use backend::application::{
     ArtifactMetadata, DataframeBindingDraft, ModelChange, ModelPatch, ModelVersionStatus,
     SourceKind, VersionDraft, VersionInputDraft, VersionOrigin,
 };
-use backend::auth::{AccessScope, Principal, StorageScopeRef};
+use backend::auth::{CurrentUser, UserId};
 use backend::db::models::{NewMessage, NewSimulationTask};
 use backend::storage::StageLimits;
 use backend::tools::{self, ToolServices};
@@ -20,17 +20,12 @@ use tokio::sync::{Mutex, Semaphore};
 
 use common::TestApp;
 
-fn principal() -> Principal {
-    Principal {
-        access: AccessScope {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        storage: StorageScopeRef {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        subject: "instance".into(),
+fn principal() -> CurrentUser {
+    CurrentUser {
+        id: UserId("instance".into()),
+        name: "Instance".into(),
+        storage_scope_id: 1,
+        auth_session_hash: "test".into(),
     }
 }
 
@@ -39,19 +34,19 @@ async fn workspace_with_csv(app: &TestApp, csvs: &[(&str, &[u8])]) -> (i32, i32)
     let session = app
         .state
         .session_repo
-        .create(&p.access, "tools", 1)
+        .create(&p.id, "tools", 1)
         .await
         .unwrap();
     let workspace = app
         .state
         .workspace_service
-        .get_or_create(&p.access, session.id)
+        .get_or_create(&p.id, session.id)
         .await
         .unwrap();
     let scope = app
         .state
         .artifact_service
-        .resolve_scope(&p.storage)
+        .resolve_scope(p.storage_scope_id)
         .await
         .unwrap();
     let mut inputs = Vec::new();
@@ -101,7 +96,7 @@ async fn workspace_with_csv(app: &TestApp, csvs: &[(&str, &[u8])]) -> (i32, i32)
         .state
         .workspace_service
         .publish_version(
-            &p.access,
+            &p.id,
             workspace.workspace.id,
             None,
             VersionDraft {
@@ -123,19 +118,19 @@ async fn example_workspace_with_rss(app: &TestApp, bytes: &[u8]) -> (i32, i32, i
     let session = app
         .state
         .session_repo
-        .create(&p.access, "example patch", 1)
+        .create(&p.id, "example patch", 1)
         .await
         .unwrap();
     let workspace = app
         .state
         .workspace_service
-        .get_or_create(&p.access, session.id)
+        .get_or_create(&p.id, session.id)
         .await
         .unwrap();
     let scope = app
         .state
         .artifact_service
-        .resolve_scope(&p.storage)
+        .resolve_scope(p.storage_scope_id)
         .await
         .unwrap();
     let staged = app
@@ -161,7 +156,7 @@ async fn example_workspace_with_rss(app: &TestApp, bytes: &[u8]) -> (i32, i32, i
         .state
         .workspace_service
         .publish_version(
-            &p.access,
+            &p.id,
             workspace.workspace.id,
             None,
             VersionDraft {
@@ -192,7 +187,7 @@ async fn example_workspace_with_rss(app: &TestApp, bytes: &[u8]) -> (i32, i32, i
     let input_id = app
         .state
         .workspace_service
-        .inputs(&p.access, version.id)
+        .inputs(&p.id, version.id)
         .await
         .unwrap()[0]
         .0
@@ -205,7 +200,7 @@ fn services(app: &TestApp, session_id: i32) -> Arc<ToolServices> {
     Arc::new(ToolServices {
         engine: Arc::new(StubEngine),
         writer: backend::application::EventWriter::new(
-            p.access.clone(),
+            p.id.clone(),
             session_id,
             app.state.message_repo.clone(),
             app.state.events.clone(),
@@ -214,7 +209,7 @@ fn services(app: &TestApp, session_id: i32) -> Arc<ToolServices> {
         request_message_id: 0,
         task_repo: app.state.task_repo.clone(),
         semaphore: Arc::new(Semaphore::new(1)),
-        scope: p.access.clone(),
+        scope: p.id.clone(),
         principal: p,
         workspaces: app.state.workspace_service.clone(),
         example_import: app.state.example_import_service.clone(),
@@ -453,7 +448,7 @@ async fn history_tools_search_list_and_read_only_the_bound_scope() {
         .state
         .message_repo
         .create(
-            &principal().access,
+            &principal().id,
             NewMessage {
                 session_id,
                 task_id: None,
@@ -529,7 +524,7 @@ async fn mapping_replace_remove_and_concurrency_create_only_child_versions() {
     let initial = app
         .state
         .workspace_service
-        .inputs(&p.access, base_id)
+        .inputs(&p.id, base_id)
         .await
         .unwrap();
     let old_id = initial[0].0.id;
@@ -543,7 +538,7 @@ async fn mapping_replace_remove_and_concurrency_create_only_child_versions() {
     assert_eq!(
         app.state
             .workspace_service
-            .list_versions(&p.access, session_id)
+            .list_versions(&p.id, session_id)
             .await
             .unwrap()
             .len(),
@@ -565,7 +560,7 @@ async fn mapping_replace_remove_and_concurrency_create_only_child_versions() {
     assert_eq!(
         app.state
             .workspace_service
-            .list_versions(&p.access, session_id)
+            .list_versions(&p.id, session_id)
             .await
             .unwrap()
             .len(),
@@ -581,7 +576,7 @@ async fn mapping_replace_remove_and_concurrency_create_only_child_versions() {
     let confirmed_inputs = app
         .state
         .workspace_service
-        .inputs(&p.access, confirmed.id)
+        .inputs(&p.id, confirmed.id)
         .await
         .unwrap();
     let confirmed_old = confirmed_inputs
@@ -623,7 +618,7 @@ async fn mapping_replace_remove_and_concurrency_create_only_child_versions() {
     let replaced_inputs = app
         .state
         .workspace_service
-        .inputs(&p.access, replaced.id)
+        .inputs(&p.id, replaced.id)
         .await
         .unwrap();
     assert_eq!(replaced_inputs.len(), 1);
@@ -649,7 +644,7 @@ async fn structured_patch_fails_closed_then_writes_a_new_parquet_child() {
     let input_id = app
         .state
         .workspace_service
-        .inputs(&p.access, base_id)
+        .inputs(&p.id, base_id)
         .await
         .unwrap()[0]
         .0
@@ -657,7 +652,7 @@ async fn structured_patch_fails_closed_then_writes_a_new_parquet_child() {
     let count = || async {
         app.state
             .workspace_service
-            .list_versions(&p.access, session_id)
+            .list_versions(&p.id, session_id)
             .await
             .unwrap()
             .len()
@@ -711,7 +706,7 @@ async fn structured_patch_fails_closed_then_writes_a_new_parquet_child() {
     let inputs = app
         .state
         .workspace_service
-        .inputs(&p.access, version.id)
+        .inputs(&p.id, version.id)
         .await
         .unwrap();
     assert!(inputs[0].0.display_name.ends_with(".parquet"));
@@ -747,7 +742,7 @@ async fn imported_rss_parameter_patch_creates_user_child_and_ambiguous_text_fail
     assert_eq!(
         app.state
             .workspace_service
-            .list_versions(&p.access, session_id)
+            .list_versions(&p.id, session_id)
             .await
             .unwrap()
             .len(),
@@ -784,7 +779,7 @@ async fn imported_rss_parameter_patch_creates_user_child_and_ambiguous_text_fail
     assert_eq!(
         app.state
             .workspace_service
-            .list_versions(&p.access, ambiguous_session)
+            .list_versions(&p.id, ambiguous_session)
             .await
             .unwrap()
             .len(),
@@ -800,7 +795,7 @@ async fn checked_activation_and_rollback_only_move_workspace_pointers() {
     let input_id = app
         .state
         .workspace_service
-        .inputs(&p.access, base_id)
+        .inputs(&p.id, base_id)
         .await
         .unwrap()[0]
         .0
@@ -815,7 +810,7 @@ async fn checked_activation_and_rollback_only_move_workspace_pointers() {
         .state
         .task_repo
         .create(
-            &p.access,
+            &p.id,
             NewSimulationTask {
                 session_id,
                 status: "succeeded".into(),
@@ -826,7 +821,7 @@ async fn checked_activation_and_rollback_only_move_workspace_pointers() {
                 script_artifact_id: app
                     .state
                     .workspace_service
-                    .inputs(&p.access, base_id)
+                    .inputs(&p.id, base_id)
                     .await
                     .unwrap()[0]
                     .0
@@ -846,13 +841,13 @@ async fn checked_activation_and_rollback_only_move_workspace_pointers() {
     let workspace = app
         .state
         .workspace_service
-        .get(&p.access, session_id)
+        .get(&p.id, session_id)
         .await
         .unwrap();
     let stale = app
         .state
         .workspace_service
-        .activate_checked(&p.access, workspace.workspace.id, child.id, Some(base_id))
+        .activate_checked(&p.id, workspace.workspace.id, child.id, Some(base_id))
         .await
         .unwrap_err();
     assert!(matches!(
@@ -861,18 +856,18 @@ async fn checked_activation_and_rollback_only_move_workspace_pointers() {
     ));
     app.state
         .workspace_service
-        .activate_checked(&p.access, workspace.workspace.id, child.id, Some(child.id))
+        .activate_checked(&p.id, workspace.workspace.id, child.id, Some(child.id))
         .await
         .unwrap();
     app.state
         .workspace_service
-        .rollback_checked(&p.access, workspace.workspace.id, base_id, Some(child.id))
+        .rollback_checked(&p.id, workspace.workspace.id, base_id, Some(child.id))
         .await
         .unwrap();
     let unchanged = app
         .state
         .task_repo
-        .find(&p.access, task.id)
+        .find(&p.id, task.id)
         .await
         .unwrap()
         .unwrap();

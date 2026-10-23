@@ -3,30 +3,25 @@ mod common;
 use backend::application::{
     ExampleImportError, ModelVersionStatus, SourceKind, StorageLimits, VersionDraft, VersionOrigin,
 };
-use backend::auth::{AccessScope, Principal, StorageScopeRef};
+use backend::auth::{CurrentUser, UserId};
 use diesel::RunQueryDsl;
 use serde_json::json;
 
 use common::TestApp;
 
-fn principal() -> Principal {
-    Principal {
-        access: AccessScope {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        storage: StorageScopeRef {
-            kind: "instance".into(),
-            key: "instance".into(),
-        },
-        subject: "instance".into(),
+fn principal() -> CurrentUser {
+    CurrentUser {
+        id: UserId("instance".into()),
+        name: "Instance".into(),
+        storage_scope_id: 1,
+        auth_session_hash: "test".into(),
     }
 }
 
 async fn session(app: &TestApp, title: &str) -> i32 {
     app.state
         .session_repo
-        .create(&principal().access, title, 1)
+        .create(&principal().id, title, 1)
         .await
         .unwrap()
         .id
@@ -51,7 +46,7 @@ async fn root_rss_import_copies_full_closure_is_idempotent_and_creates_no_task()
     let workspace = app
         .state
         .workspace_service
-        .get(&principal().access, session_id)
+        .get(&principal().id, session_id)
         .await
         .unwrap();
     assert_eq!(workspace.workspace.active_version_id, Some(version.id));
@@ -59,7 +54,7 @@ async fn root_rss_import_copies_full_closure_is_idempotent_and_creates_no_task()
     let inputs = app
         .state
         .workspace_service
-        .inputs(&principal().access, version.id)
+        .inputs(&principal().id, version.id)
         .await
         .unwrap();
     assert_eq!(
@@ -111,14 +106,14 @@ async fn existing_active_keeps_active_and_import_advances_draft() {
     let workspace = app
         .state
         .workspace_service
-        .get_or_create(&principal().access, session_id)
+        .get_or_create(&principal().id, session_id)
         .await
         .unwrap();
     let active = app
         .state
         .workspace_service
         .publish_version(
-            &principal().access,
+            &principal().id,
             workspace.workspace.id,
             None,
             VersionDraft {
@@ -148,7 +143,7 @@ async fn existing_active_keeps_active_and_import_advances_draft() {
     let workspace = app
         .state
         .workspace_service
-        .get(&principal().access, session_id)
+        .get(&principal().id, session_id)
         .await
         .unwrap();
     assert_eq!(workspace.workspace.active_version_id, Some(active.id));
@@ -168,16 +163,11 @@ async fn snapshot_source_scope_and_quota_failures_publish_no_partial_version() {
         Err(ExampleImportError::SnapshotMismatch)
     ));
 
-    let foreign = Principal {
-        access: AccessScope {
-            kind: "owner".into(),
-            key: "owner:foreign".into(),
-        },
-        storage: StorageScopeRef {
-            kind: "owner".into(),
-            key: "owner:foreign".into(),
-        },
-        subject: "foreign".into(),
+    let foreign = CurrentUser {
+        id: UserId("foreign".into()),
+        name: "Foreign".into(),
+        storage_scope_id: 4,
+        auth_session_hash: "test-foreign".into(),
     };
     assert!(matches!(
         app.state
@@ -190,7 +180,7 @@ async fn snapshot_source_scope_and_quota_failures_publish_no_partial_version() {
     let scope = app
         .state
         .artifact_service
-        .resolve_scope(&principal().storage)
+        .resolve_scope(principal().storage_scope_id)
         .await
         .unwrap();
     app.state
@@ -217,7 +207,7 @@ async fn snapshot_source_scope_and_quota_failures_publish_no_partial_version() {
     assert!(
         app.state
             .workspace_service
-            .list_versions(&principal().access, session_id)
+            .list_versions(&principal().id, session_id)
             .await
             .unwrap()
             .is_empty()
@@ -255,7 +245,7 @@ async fn changed_snapshot_source_is_rejected_before_version_publication() {
     assert!(
         app.state
             .workspace_service
-            .list_versions(&principal().access, session_id)
+            .list_versions(&principal().id, session_id)
             .await
             .unwrap()
             .is_empty()

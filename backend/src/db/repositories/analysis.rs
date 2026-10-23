@@ -1,5 +1,5 @@
 use super::{RepoError, RepoResult};
-use crate::auth::AccessScope;
+use crate::auth::UserId;
 use crate::db::models::{
     DatasetView, NewDatasetView, NewResultAnalysisRun, NewResultDataset, ResultAnalysisInput,
     ResultAnalysisRun, ResultDataset,
@@ -17,7 +17,7 @@ impl AnalysisRepo {
     }
     pub async fn create(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         run: NewResultAnalysisRun,
         inputs: Vec<ResultAnalysisInput>,
     ) -> RepoResult<ResultAnalysisRun> {
@@ -29,7 +29,7 @@ impl AnalysisRepo {
                 let session_id = run.session_id;
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(session_id))
-                    .filter(schema::sessions::user_id.eq(&scope.key))
+                    .filter(schema::sessions::user_id.eq(&scope.0))
                     .select(schema::sessions::id)
                     .first::<i32>(c)
                     .optional()?
@@ -81,7 +81,7 @@ impl AnalysisRepo {
     }
     pub async fn set_stage(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         id: i32,
         stage: &str,
         now: i64,
@@ -92,7 +92,7 @@ impl AnalysisRepo {
         tokio::task::spawn_blocking(move || {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id);
             let n = diesel::update(
                 schema::result_analysis_runs::table
@@ -116,7 +116,7 @@ impl AnalysisRepo {
     }
     pub async fn complete(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         id: i32,
         datasets: Vec<(NewResultDataset, Vec<NewDatasetView>)>,
         now: i64,
@@ -127,7 +127,7 @@ impl AnalysisRepo {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             c.immediate_transaction::<_, RepoError, _>(|c| {
                 let sessions = schema::sessions::table
-                    .filter(schema::sessions::user_id.eq(&scope.key))
+                    .filter(schema::sessions::user_id.eq(&scope.0))
                     .select(schema::sessions::id);
                 schema::result_analysis_runs::table
                     .filter(schema::result_analysis_runs::id.eq(id))
@@ -173,7 +173,7 @@ impl AnalysisRepo {
     }
     pub async fn fail(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         id: i32,
         stage: &str,
         error: String,
@@ -185,7 +185,7 @@ impl AnalysisRepo {
         tokio::task::spawn_blocking(move || {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id);
             let n = diesel::update(
                 schema::result_analysis_runs::table
@@ -208,13 +208,13 @@ impl AnalysisRepo {
         .await
         .map_err(RepoError::Join)?
     }
-    pub async fn find(&self, scope: &AccessScope, id: i32) -> RepoResult<ResultAnalysisRun> {
+    pub async fn find(&self, scope: &UserId, id: i32) -> RepoResult<ResultAnalysisRun> {
         let pool = self.pool.clone();
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || {
             let mut c = pool.get().map_err(RepoError::Pool)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::user_id.eq(scope.key))
+                .filter(schema::sessions::user_id.eq(scope.0))
                 .select(schema::sessions::id);
             schema::result_analysis_runs::table
                 .filter(schema::result_analysis_runs::id.eq(id))
@@ -228,7 +228,7 @@ impl AnalysisRepo {
     }
     pub async fn create_view(
         &self,
-        scope: &AccessScope,
+        scope: &UserId,
         dataset_id: i32,
         view: NewDatasetView,
     ) -> RepoResult<DatasetView> {
@@ -242,7 +242,7 @@ impl AnalysisRepo {
                 .optional()?
                 .ok_or(RepoError::NotFound)?;
             let sessions = schema::sessions::table
-                .filter(schema::sessions::user_id.eq(&scope.key))
+                .filter(schema::sessions::user_id.eq(&scope.0))
                 .select(schema::sessions::id);
             let ok = if let Some(t) = d.task_id {
                 schema::simulation_tasks::table

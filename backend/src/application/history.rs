@@ -1,5 +1,5 @@
 use crate::{
-    auth::Principal,
+    auth::CurrentUser,
     db::{
         models::{Message, SimulationTask},
         repositories::{HistoryHit, HistoryRepo, RepoError, SearchFilters, SimulationRepo},
@@ -35,7 +35,7 @@ impl HistoryService {
     }
     pub async fn search_sessions(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         query: String,
         filters: SearchFilters,
         limit: i64,
@@ -50,26 +50,26 @@ impl HistoryService {
             ));
         }
         self.repo
-            .search(&p.access, query, filters, limit)
+            .search(&p.id, query, filters, limit)
             .await
             .map_err(map)
     }
     pub async fn list_messages(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         session: i32,
         before: Option<i32>,
         around: Option<i32>,
         limit: i64,
     ) -> Result<Vec<Message>, HistoryError> {
         self.repo
-            .messages(&p.access, session, before, around, limit)
+            .messages(&p.id, session, before, around, limit)
             .await
             .map_err(map)
     }
     pub async fn read_context(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         session: i32,
         around: i32,
         radius: i64,
@@ -79,12 +79,12 @@ impl HistoryService {
     }
     pub async fn list_simulations(
         &self,
-        p: &Principal,
+        p: &CurrentUser,
         session: i32,
         limit: i64,
     ) -> Result<Vec<SimulationTask>, HistoryError> {
         self.tasks
-            .list_session(&p.access, session, limit)
+            .list_session(&p.id, session, limit)
             .await
             .map_err(map)
     }

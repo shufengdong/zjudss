@@ -13,7 +13,7 @@ use backend::application::{
     VersionDraft, VersionInputDraft, VersionOrigin,
 };
 use backend::application::{SimulationService, StorageLimits};
-use backend::auth::{AccessScope, Principal, StorageScopeRef};
+use backend::auth::CurrentUser;
 use backend::db::repositories::SimulationRepo;
 use backend::storage::StageLimits;
 use common::TestApp;
@@ -21,20 +21,10 @@ use serde_json::json;
 use std::{io::Cursor, sync::Arc};
 use tower::ServiceExt;
 
-fn principal(key: &str) -> Principal {
-    Principal {
-        access: AccessScope {
-            kind: "instance".into(),
-            key: key.into(),
-        },
-        storage: StorageScopeRef {
-            kind: "instance".into(),
-            key: key.into(),
-        },
-        subject: key.into(),
-    }
+fn principal(key: &str) -> CurrentUser {
+    common::test_user(key)
 }
-fn instance() -> Principal {
+fn instance() -> CurrentUser {
     principal("instance")
 }
 
@@ -64,23 +54,23 @@ impl SimEngine for RssEntryEngine {
     }
 }
 
-async fn ready_dataframe(app: &TestApp, p: &Principal) -> (i32, i32) {
+async fn ready_dataframe(app: &TestApp, p: &CurrentUser) -> (i32, i32) {
     let session = app
         .state
         .session_repo
-        .create(&p.access, "simulation", 1)
+        .create(&p.id, "simulation", 1)
         .await
         .unwrap();
     let workspace = app
         .state
         .workspace_service
-        .get_or_create(&p.access, session.id)
+        .get_or_create(&p.id, session.id)
         .await
         .unwrap();
     let scope = app
         .state
         .artifact_service
-        .resolve_scope(&p.storage)
+        .resolve_scope(p.storage_scope_id)
         .await
         .unwrap();
     let staged = app
@@ -106,7 +96,7 @@ async fn ready_dataframe(app: &TestApp, p: &Principal) -> (i32, i32) {
         .state
         .workspace_service
         .publish_version(
-            &p.access,
+            &p.id,
             workspace.workspace.id,
             None,
             VersionDraft {
@@ -196,7 +186,7 @@ async fn ready_version_persists_reproducible_task_and_generic_parquet_dataset() 
     let messages = app
         .state
         .message_repo
-        .list_by_session(&p.access, session)
+        .list_by_session(&p.id, session)
         .await
         .unwrap();
     let result = messages.iter().find(|m| m.kind == "result").unwrap();
@@ -210,7 +200,7 @@ async fn rss_studies_execute_the_immutable_entry_artifact_without_generated_scri
     let session = app
         .state
         .session_repo
-        .create(&p.access, "rss entry", 1)
+        .create(&p.id, "rss entry", 1)
         .await
         .unwrap();
     let snapshot = app.state.example_import_service.snapshot();
@@ -228,7 +218,7 @@ async fn rss_studies_execute_the_immutable_entry_artifact_without_generated_scri
     let entry = app
         .state
         .workspace_service
-        .inputs(&p.access, version.id)
+        .inputs(&p.id, version.id)
         .await
         .unwrap()
         .into_iter()
@@ -273,6 +263,7 @@ async fn task_dataset_rows_and_download_hide_foreign_scope_and_use_parquet_heade
         .await
         .unwrap();
     let dataset = out.datasets[0].id;
+    let cookie = app.login_cookie("instance").await;
     let foreign = principal("foreign");
     assert!(matches!(
         app.state.dataset_service.metadata(&foreign, dataset).await,
@@ -287,7 +278,13 @@ async fn task_dataset_rows_and_download_hide_foreign_scope_and_use_parquet_heade
         let response = app
             .router
             .clone()
-            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -298,6 +295,7 @@ async fn task_dataset_rows_and_download_hide_foreign_scope_and_use_parquet_heade
         .oneshot(
             Request::builder()
                 .uri(format!("/api/datasets/{dataset}/download"))
+                .header("cookie", cookie)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -415,7 +413,7 @@ async fn engine_bad_parquet_quota_and_db_failure_publish_no_partial_result() {
             .unwrap_err();
         let id = error.task_id.unwrap();
         let task = SimulationRepo::new(app.pool.clone())
-            .find(&p.access, id)
+            .find(&p.id, id)
             .await
             .unwrap();
         assert_eq!(task.status, "failed");
@@ -437,7 +435,7 @@ async fn engine_bad_parquet_quota_and_db_failure_publish_no_partial_result() {
         assert!(
             app.state
                 .message_repo
-                .list_by_session(&p.access, session)
+                .list_by_session(&p.id, session)
                 .await
                 .unwrap()
                 .iter()
@@ -450,7 +448,7 @@ async fn engine_bad_parquet_quota_and_db_failure_publish_no_partial_result() {
     let scope = app
         .state
         .artifact_service
-        .resolve_scope(&p.storage)
+        .resolve_scope(p.storage_scope_id)
         .await
         .unwrap();
     let usage = app
@@ -488,7 +486,7 @@ async fn engine_bad_parquet_quota_and_db_failure_publish_no_partial_result() {
     let id = error.task_id.unwrap();
     assert_eq!(
         SimulationRepo::new(app.pool.clone())
-            .find(&p.access, id)
+            .find(&p.id, id)
             .await
             .unwrap()
             .status,

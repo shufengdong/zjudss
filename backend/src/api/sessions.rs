@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use crate::application::{
     AppEvent, AppState, EventWriter, UploadBatch, UploadFile, ms_to_iso, now_ms,
 };
-use crate::auth::CurrentPrincipal;
+use crate::auth::CurrentUser;
 use crate::db::models::{Message, NewMessage};
 use crate::storage::StageLimits;
 
@@ -29,10 +29,10 @@ fn derive_status(latest: Option<&str>) -> &'static str {
 
 pub async fn list(
     State(state): State<AppState>,
-    CurrentPrincipal(principal): CurrentPrincipal,
+    principal: CurrentUser,
 ) -> Result<Json<Value>, ApiError> {
-    let sessions = state.session_repo.list(&principal.access).await?;
-    let statuses = state.task_repo.latest_statuses(&principal.access).await?;
+    let sessions = state.session_repo.list(&principal.id).await?;
+    let statuses = state.task_repo.latest_statuses(&principal.id).await?;
     let items: Vec<Value> = sessions
         .into_iter()
         .map(|s| {
@@ -56,13 +56,13 @@ pub struct CreateSessionBody {
 
 pub async fn create(
     State(state): State<AppState>,
-    CurrentPrincipal(principal): CurrentPrincipal,
+    principal: CurrentUser,
     Json(body): Json<CreateSessionBody>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let now = now_ms();
     let session = state
         .session_repo
-        .create(&principal.access, &body.title, now)
+        .create(&principal.id, &body.title, now)
         .await?;
     Ok((
         StatusCode::CREATED,
@@ -84,17 +84,17 @@ pub struct RenameSessionBody {
 /// `PATCH /api/sessions/{id}` → 200 改名后的 Session。
 pub async fn rename(
     State(state): State<AppState>,
-    CurrentPrincipal(principal): CurrentPrincipal,
+    principal: CurrentUser,
     Path(session_id): Path<i32>,
     Json(body): Json<RenameSessionBody>,
 ) -> Result<Json<Value>, ApiError> {
     let session = state
         .session_repo
-        .rename(&principal.access, session_id, &body.title, now_ms())
+        .rename(&principal.id, session_id, &body.title, now_ms())
         .await?;
     let latest = state
         .task_repo
-        .latest_status_for_session(&principal.access, session_id)
+        .latest_status_for_session(&principal.id, session_id)
         .await?;
     let status = derive_status(latest.as_deref());
     Ok(Json(json!({
@@ -108,13 +108,10 @@ pub async fn rename(
 /// `DELETE /api/sessions/{id}` → 204；未知会话 → 404。同时注销事件通道。
 pub async fn delete(
     State(state): State<AppState>,
-    CurrentPrincipal(principal): CurrentPrincipal,
+    principal: CurrentUser,
     Path(session_id): Path<i32>,
 ) -> Result<StatusCode, ApiError> {
-    state
-        .session_repo
-        .delete(&principal.access, session_id)
-        .await?;
+    state.session_repo.delete(&principal.id, session_id).await?;
     state.events.unregister(session_id);
     Ok(StatusCode::NO_CONTENT)
 }
@@ -124,13 +121,13 @@ pub async fn delete(
 /// `POST /api/sessions/{id}/attachments`：v2 多文件流式上传。
 pub async fn upload_attachment(
     State(state): State<AppState>,
-    CurrentPrincipal(principal): CurrentPrincipal,
+    principal: CurrentUser,
     Path(session_id): Path<i32>,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     state
         .session_repo
-        .find(&principal.access, session_id)
+        .find(&principal.id, session_id)
         .await?
         .ok_or_else(|| ApiError::not_found("会话不存在"))?;
 
@@ -285,7 +282,7 @@ pub async fn upload_attachment(
 
 pub async fn messages(
     State(state): State<AppState>,
-    CurrentPrincipal(principal): CurrentPrincipal,
+    principal: CurrentUser,
     Path(session_id): Path<i32>,
     Query(query): Query<MessagePageQuery>,
 ) -> Result<Json<Value>, ApiError> {
@@ -326,7 +323,7 @@ pub struct HistorySearchQuery {
 }
 pub async fn search_history(
     State(state): State<AppState>,
-    CurrentPrincipal(principal): CurrentPrincipal,
+    principal: CurrentUser,
     Query(q): Query<HistorySearchQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let hits = state
@@ -353,7 +350,7 @@ pub struct PostMessageBody {
 
 pub async fn post_message(
     State(state): State<AppState>,
-    CurrentPrincipal(principal): CurrentPrincipal,
+    principal: CurrentUser,
     Path(session_id): Path<i32>,
     Json(body): Json<PostMessageBody>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
@@ -362,17 +359,17 @@ pub async fn post_message(
     // 先校验归属并完成 admission；队列满时不能写入用户消息。
     state
         .session_repo
-        .find(&principal.access, session_id)
+        .find(&principal.id, session_id)
         .await?
         .ok_or_else(|| ApiError::not_found("资源不存在"))?;
-    let ticket = state.scheduler.try_admit(&principal.access, session_id)?;
+    let ticket = state.scheduler.try_admit(&principal.id, session_id)?;
     let queued = ticket.is_queued();
 
     // 1. admission 成功后落用户消息。
     let user_msg = state
         .message_repo
         .create(
-            &principal.access,
+            &principal.id,
             NewMessage {
                 session_id,
                 task_id: None,
@@ -393,7 +390,7 @@ pub async fn post_message(
     let queue_call_id = format!("agent-admission:{}", user_msg.id);
     let queue_writer = if queued {
         let writer = EventWriter::new(
-            principal.access.clone(),
+            principal.id.clone(),
             session_id,
             state.message_repo.clone(),
             state.events.clone(),
@@ -415,7 +412,7 @@ pub async fn post_message(
     // 3. 更新会话活跃时间。
     state
         .session_repo
-        .touch(&principal.access, session_id, now)
+        .touch(&principal.id, session_id, now)
         .await?;
 
     // 4. 后台 agent run：真正的流式驱动（第 3 步）。

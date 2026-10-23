@@ -5,7 +5,7 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::http::Request;
 use backend::application::{EventWriter, now_ms};
-use backend::auth::AccessScope;
+use backend::auth::UserId;
 use backend::db::models::NewMessage;
 use backend::db::repositories::RepoError;
 use futures::StreamExt;
@@ -13,11 +13,8 @@ use tower::ServiceExt;
 
 use common::TestApp;
 
-fn instance_scope() -> AccessScope {
-    AccessScope {
-        kind: "instance".to_string(),
-        key: "instance".to_string(),
-    }
+fn instance_scope() -> UserId {
+    UserId("instance".to_string())
 }
 
 async fn read_events(body: Body, count: usize) -> String {
@@ -52,6 +49,7 @@ async fn reconnect_replays_then_switches_to_live_without_duplicates() {
     );
     let first = writer.assistant("one").await.expect("first message");
     let second = writer.assistant("two").await.expect("second message");
+    let cookie = app.login_cookie("instance").await;
 
     let response = app
         .router
@@ -60,6 +58,7 @@ async fn reconnect_replays_then_switches_to_live_without_duplicates() {
             Request::builder()
                 .uri(format!("/api/sessions/{}/events", session.id))
                 .header("last-event-id", first.message_id().unwrap().to_string())
+                .header("cookie", cookie)
                 .body(Body::empty())
                 .expect("SSE request"),
         )
@@ -110,10 +109,8 @@ async fn foreign_or_missing_cursor_requests_resync_without_leaking_messages() {
         .await
         .expect("foreign message");
 
-    let other_scope = AccessScope {
-        kind: "owner".to_string(),
-        key: "owner:bob".to_string(),
-    };
+    let other_scope = UserId("bob".to_string());
+    let cookie = app.login_cookie("instance").await;
     assert!(matches!(
         app.state
             .message_repo
@@ -130,6 +127,7 @@ async fn foreign_or_missing_cursor_requests_resync_without_leaking_messages() {
                 Request::builder()
                     .uri(format!("/api/sessions/{}/events", first_session.id))
                     .header("last-event-id", cursor)
+                    .header("cookie", &cookie)
                     .body(Body::empty())
                     .expect("SSE request"),
             )

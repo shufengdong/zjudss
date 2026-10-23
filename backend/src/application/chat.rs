@@ -15,7 +15,7 @@ use rig::streaming::{Item, StreamEvent};
 use crate::adapters::SimEngine;
 use crate::agent::{AgentBuildRequest, AgentFactory};
 use crate::application::{AppState, EventBus, EventWriter, ToolStatus, now_ms};
-use crate::auth::Principal;
+use crate::auth::CurrentUser;
 use crate::db::repositories::{MessageRepo, SessionRepo, TaskRepo};
 use crate::tools::{self, ToolServices};
 use tokio::sync::Semaphore;
@@ -32,7 +32,7 @@ pub struct ChatService {
     task_repo: TaskRepo,
     agent_factory: Arc<dyn AgentFactory>,
     semaphore: Arc<Semaphore>,
-    principal: Principal,
+    principal: CurrentUser,
     workspaces: crate::application::WorkspaceService,
     example_import: crate::application::ExampleImportService,
     model_patch: crate::application::ModelPatchService,
@@ -47,7 +47,7 @@ pub struct ChatService {
 }
 
 impl ChatService {
-    pub fn new(state: &AppState, principal: Principal) -> Self {
+    pub fn new(state: &AppState, principal: CurrentUser) -> Self {
         Self {
             engine: state.engine.clone(),
             events: state.events.clone(),
@@ -74,7 +74,7 @@ impl ChatService {
     /// 触发一次对话。`prompt_id` 是刚落库的 user 消息 id，历史只取比它更早的消息。
     pub async fn run(&self, session_id: i32, prompt_id: i32, prompt: String) {
         let writer = EventWriter::new(
-            self.principal.access.clone(),
+            self.principal.id.clone(),
             session_id,
             self.message_repo.clone(),
             self.events.clone(),
@@ -88,7 +88,7 @@ impl ChatService {
             request_message_id: prompt_id,
             task_repo: self.task_repo.clone(),
             semaphore: self.semaphore.clone(),
-            scope: self.principal.access.clone(),
+            scope: self.principal.id.clone(),
             principal: self.principal.clone(),
             workspaces: self.workspaces.clone(),
             example_import: self.example_import.clone(),
@@ -148,7 +148,7 @@ impl ChatService {
         }
         let _ = self
             .session_repo
-            .touch(&self.principal.access, session_id, now_ms())
+            .touch(&self.principal.id, session_id, now_ms())
             .await;
     }
 
@@ -156,7 +156,7 @@ impl ChatService {
     async fn load_history(&self, session_id: i32, prompt_id: i32) -> Vec<Message> {
         let msgs = self
             .message_repo
-            .list_by_session(&self.principal.access, session_id)
+            .list_by_session(&self.principal.id, session_id)
             .await
             .unwrap_or_default();
         msgs.into_iter()

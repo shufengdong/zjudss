@@ -13,6 +13,7 @@ use tower::ServiceExt;
 use common::TestApp;
 
 async fn create_session(app: &TestApp) -> String {
+    let cookie = app.login_cookie("instance").await;
     let response = app
         .router
         .clone()
@@ -21,6 +22,7 @@ async fn create_session(app: &TestApp) -> String {
                 .method("POST")
                 .uri("/api/sessions")
                 .header("content-type", "application/json")
+                .header("cookie", cookie)
                 .body(Body::from(r#"{"title":"scripted"}"#))
                 .unwrap(),
         )
@@ -35,6 +37,7 @@ async fn create_session(app: &TestApp) -> String {
 }
 
 async fn post_and_wait(app: &TestApp, session_id: &str, message: &str) -> StatusCode {
+    let cookie = app.login_cookie("instance").await;
     let response = app
         .router
         .clone()
@@ -43,6 +46,7 @@ async fn post_and_wait(app: &TestApp, session_id: &str, message: &str) -> Status
                 .method("POST")
                 .uri(format!("/api/sessions/{session_id}/messages"))
                 .header("content-type", "application/json")
+                .header("cookie", cookie)
                 .body(Body::from(json!({"message": message}).to_string()))
                 .unwrap(),
         )
@@ -60,12 +64,14 @@ async fn post_and_wait(app: &TestApp, session_id: &str, message: &str) -> Status
 }
 
 async fn messages(app: &TestApp, session_id: &str) -> Vec<Value> {
+    let cookie = app.login_cookie("instance").await;
     let response = app
         .router
         .clone()
         .oneshot(
             Request::builder()
                 .uri(format!("/api/sessions/{session_id}/messages"))
+                .header("cookie", cookie)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -245,6 +251,7 @@ async fn barrier_holds_and_releases_agent_run_without_sleep() {
     });
     let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
     let session = create_session(&app).await;
+    let cookie = app.login_cookie("instance").await;
     let response = app
         .router
         .clone()
@@ -253,6 +260,7 @@ async fn barrier_holds_and_releases_agent_run_without_sleep() {
                 .method("POST")
                 .uri(format!("/api/sessions/{session}/messages"))
                 .header("content-type", "application/json")
+                .header("cookie", cookie)
                 .body(Body::from(r#"{"message":"等待"}"#))
                 .unwrap(),
         )
