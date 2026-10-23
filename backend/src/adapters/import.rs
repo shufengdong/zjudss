@@ -30,6 +30,44 @@ pub const STATIC_MODEL_TABLES: [&str; 21] = [
     "para",
 ];
 
+pub const EXECUTION_IMPORT_TABLES: [&str; 35] = [
+    "bus",
+    "line",
+    "linecode",
+    "load",
+    "transformer",
+    "voltage_source",
+    "motor",
+    "transformer_winding",
+    "transformer_impedance",
+    "current_source",
+    "generator",
+    "ibr",
+    "switch",
+    "shunt",
+    "capacitor",
+    "reactor",
+    "spectrum",
+    "control_profile",
+    "xy_curve",
+    "storage",
+    "solution",
+    "load_shape",
+    "shape_assignment",
+    "storage_controller",
+    "switch_control",
+    "tcc_curve",
+    "fuse",
+    "recloser",
+    "relay",
+    "monitor",
+    "energy_meter",
+    "fault",
+    "para",
+    "diagnostics",
+    "events",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImportProfile {

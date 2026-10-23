@@ -30,7 +30,7 @@ describe('candidate release workflows', () => {
     expect(JSON.stringify(job.steps)).not.toContain('continue-on-error')
   })
 
-  it('requires the protected environment, PR gate, engine artifact and strict release gate', () => {
+  it('builds the current default eig-rs branch and runs the strict release gate without pins', () => {
     const release = workflow('release-integration.yml')
     const job = release.jobs['release-gate']
     const run = commands(job)
@@ -39,10 +39,16 @@ describe('candidate release workflows', () => {
     expect(job.needs).toBe('pr-gate')
     expect(job.environment).toBe('candidate-release')
     expect(job.env.DEEPSEEK_API_KEY).toContain('secrets.DEEPSEEK_API_KEY')
-    expect(job.env.EXPECTED_TENSOREVAL_SHA256).toContain('vars.TENSOREVAL_SHA256')
-    expect(JSON.stringify(job.steps)).toContain('actions/download-artifact@v4')
-    expect(run).toContain('sha256sum "$TENSOREVAL_BIN"')
-    expect(run).toContain('EXPECTED_TENSOREVAL_SHA256')
+    expect(release.on.workflow_dispatch?.inputs).toBeUndefined()
+    expect(job.env.EXPECTED_TENSOREVAL_SHA256).toBeUndefined()
+    expect(JSON.stringify(job.steps)).not.toContain('actions/download-artifact@v4')
+    const engineCheckout = job.steps.find((step: any) => step.name === 'Checkout current eig-rs')
+    expect(engineCheckout.uses).toBe('actions/checkout@v4')
+    expect(engineCheckout.with.repository).toBe('shufengdong/eig-rc')
+    expect(engineCheckout.with.submodules).toBe('recursive')
+    expect(engineCheckout.with.ref).toBeUndefined()
+    expect(run).toContain('cargo build --manifest-path target/eig-rs/Cargo.toml --release -p mems --bin tensoreval')
+    expect(run).not.toContain('EXPECTED_TENSOREVAL_SHA256')
     expect(run).toContain('./scripts/test-release-integration')
     expect(run).toContain('./scripts/check-functional-coverage --require-release')
     expect(JSON.stringify(job.steps)).not.toContain('continue-on-error')

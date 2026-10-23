@@ -3,6 +3,14 @@ set -eu
 
 # real_engine_imports_all_examples_and_runs_representative_studies
 
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ "${ZJUDSS_SKIP_DOTENV:-0}" != "1" ] && [ -f "$repo_root/backend/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$repo_root/backend/.env"
+  set +a
+fi
+
 if [ -z "${TENSOREVAL_BIN:-}" ]; then
   echo "release_engine_missing:TENSOREVAL_BIN" >&2
   exit 2
@@ -37,7 +45,6 @@ case "$help_output" in
   *) echo "release_engine_capability_mismatch:named_parquet_input" >&2; exit 2 ;;
 esac
 
-repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 report_dir="$repo_root/target/release-integration"
 mkdir -p "$report_dir"
 export RELEASE_ENGINE_REPORT="$report_dir/engine-report.json"

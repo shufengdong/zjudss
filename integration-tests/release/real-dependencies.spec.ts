@@ -5,6 +5,7 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import {
   agentTurnCompleted,
   expectDomainState,
+  expectEngineReleaseEvidence,
   expectToolTrace,
   type ToolTraceEntry,
 } from './semantic-assertions'
@@ -274,6 +275,7 @@ test('real DeepSeek and tensoreval complete the V3 semantic release journey', as
     await mkdir(dirname(reportPath), { recursive: true })
     const engineReportPath = process.env.RELEASE_ENGINE_REPORT
     const engineReport = engineReportPath ? JSON.parse(await readFile(engineReportPath, 'utf8')) : null
+    expectEngineReleaseEvidence(engineReport)
     const agentBundle = await agentBundleEvidence()
     const seed = await fixedUserSeed()
     await writeFile(reportPath, JSON.stringify({
@@ -288,6 +290,14 @@ test('real DeepSeek and tensoreval complete the V3 semantic release journey', as
       engineContract: engineReport?.engineContract ?? null,
       engineContractChecks: engineReport?.contractChecks ?? null,
       engineBinarySha256: engineReport?.binarySha256 ?? null,
+      engineResourceSnapshot: engineReport?.engineResourceSnapshot ?? null,
+      engineExampleCounts: engineReport ? {
+        discovered: engineReport.discoveredExamples,
+        importable: engineReport.importableExamples,
+        nonImportable: engineReport.nonImportableExamples?.length ?? 0,
+        rootRss: engineReport.rootRssExamples,
+        bundles: engineReport.bundleExamples,
+      } : null,
       attempts,
       finalState,
       success,

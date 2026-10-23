@@ -87,6 +87,10 @@ node -e '
   if (!/^[a-f0-9]{64}$/.test(report.userSeedSha256 ?? "") || !(report.userCount > 0)) process.exit(1);
   if (!["ENGINE-RELEASE-001", "REAL-RELEASE-001"].every((id) => report.testIds?.includes(id))) process.exit(1);
   if (!/^[a-f0-9]{64}$/.test(report.engineBinarySha256 ?? "") || !report.engineContract) process.exit(1);
+  if (!/^ers_[a-f0-9]{32}$/.test(report.engineResourceSnapshot ?? "")) process.exit(1);
+  const counts = report.engineExampleCounts;
+  if (!counts || counts.rootRss < 1 || counts.bundles < 1 || counts.importable < 1) process.exit(1);
+  if (counts.discovered !== counts.importable + counts.nonImportable) process.exit(1);
   if (!report.engineContractChecks?.staticModelImport || !report.engineContractChecks?.singleSolveModelImport) process.exit(1);
   if (report.finalState?.runCount !== 2 || report.finalState?.datasetCount !== 1 || report.finalState?.analysisRunCount !== 2 || report.finalState?.comparisonCount !== 1) process.exit(1);
   const text = JSON.stringify(report);

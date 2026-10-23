@@ -14,8 +14,8 @@ use async_trait::async_trait;
 
 pub use contract::{ENGINE_CONTRACT_VERSION, EngineCapabilities};
 pub use import::{
-    ImportEntryCandidate, ImportInspectSpec, ImportInspection, ImportProfile, ImportSpec,
-    ImportedModel, STATIC_MODEL_TABLES,
+    EXECUTION_IMPORT_TABLES, ImportEntryCandidate, ImportInspectSpec, ImportInspection,
+    ImportProfile, ImportSpec, ImportedModel, STATIC_MODEL_TABLES,
 };
 pub use process::{
     EngineCommand, EngineConfig, OutputLimits, ProcessEngine, build_command, validate_outputs,

@@ -9,8 +9,9 @@ use async_trait::async_trait;
 use tokio::process::Command;
 
 use super::{
-    AdapterError, EngineCapabilities, EngineRunOutput, ErrorCategory, ImportProfile, ImportSpec,
-    ImportedModel, InspectOutcome, InspectSpec, RunMode, RunSpec, STATIC_MODEL_TABLES, SimEngine,
+    AdapterError, EXECUTION_IMPORT_TABLES, EngineCapabilities, EngineRunOutput, ErrorCategory,
+    ImportProfile, ImportSpec, ImportedModel, InspectOutcome, InspectSpec, RunMode, RunSpec,
+    STATIC_MODEL_TABLES, SimEngine,
 };
 pub use command::{EngineCommand, build_command};
 pub use output::{OutputLimits, validate_outputs};
@@ -205,9 +206,11 @@ impl SimEngine for ProcessEngine {
     }
     async fn import_model(&self, spec: ImportSpec) -> Result<ImportedModel, AdapterError> {
         let (entry, profile) = super::import::resolve_entry(&spec)?;
-        let function = match profile {
-            ImportProfile::StaticDss => "import_dss",
-            ImportProfile::SingleSolveExecution => "import_dss_execution",
+        let (function, output_names): (&str, &[&str]) = match profile {
+            ImportProfile::StaticDss => ("import_dss", STATIC_MODEL_TABLES.as_slice()),
+            ImportProfile::SingleSolveExecution => {
+                ("import_dss_execution", EXECUTION_IMPORT_TABLES.as_slice())
+            }
         };
         let entry = entry.to_str().ok_or_else(|| {
             AdapterError::new(
@@ -217,7 +220,7 @@ impl SimEngine for ProcessEngine {
             )
         })?;
         let script_name = ".zjudss-model-import.rss";
-        let outputs = STATIC_MODEL_TABLES.join(", ");
+        let outputs = output_names.join(", ");
         let entry_literal = serde_json::to_string(&entry.replace('\\', "/")).map_err(|error| {
             AdapterError::new(
                 "model_import_script_failed",
@@ -249,9 +252,21 @@ impl SimEngine for ProcessEngine {
                 &[RunMode::Dataframe],
             )
             .await?;
+        let datasets = if profile == ImportProfile::SingleSolveExecution {
+            let model_names = STATIC_MODEL_TABLES
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>();
+            output
+                .datasets
+                .into_iter()
+                .filter(|dataset| model_names.contains(dataset.name.as_str()))
+                .collect()
+        } else {
+            output.datasets
+        };
         Ok(ImportedModel {
             profile,
-            dataframes: super::import::order_model_outputs(output.datasets)?,
+            dataframes: super::import::order_model_outputs(datasets)?,
             diagnostics: serde_json::json!({
                 "importMethod": function,
                 "tableCount": STATIC_MODEL_TABLES.len()

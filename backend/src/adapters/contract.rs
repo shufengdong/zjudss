@@ -13,7 +13,7 @@ use parquet::file::properties::WriterProperties;
 
 use serde::Serialize;
 
-use super::{AdapterError, ErrorCategory, STATIC_MODEL_TABLES};
+use super::{AdapterError, EXECUTION_IMPORT_TABLES, ErrorCategory, STATIC_MODEL_TABLES};
 
 pub const ENGINE_CONTRACT_VERSION: &str = "tensoreval-parquet-v3";
 
@@ -216,12 +216,14 @@ fn model_import_smoke(binary: &Path, function: &str) -> bool {
             root.join("model.dss"),
             format!("New Circuit.probe basekv=10\n{solve}"),
         )?;
+        let outputs = if function == "import_dss_execution" {
+            EXECUTION_IMPORT_TABLES.as_slice()
+        } else {
+            STATIC_MODEL_TABLES.as_slice()
+        };
         std::fs::write(
             root.join("import.rss"),
-            format!(
-                "[{}] = {function}(\"model.dss\");\n",
-                STATIC_MODEL_TABLES.join(", ")
-            ),
+            format!("[{}] = {function}(\"model.dss\");\n", outputs.join(", ")),
         )?;
         let output_dir = root.join("out");
         let output = Command::new(binary)
@@ -236,7 +238,7 @@ fn model_import_smoke(binary: &Path, function: &str) -> bool {
         if !output.status.success() {
             return Ok(false);
         }
-        for name in STATIC_MODEL_TABLES {
+        for name in outputs {
             let metadata = crate::storage::ParquetInspector::metadata(
                 &output_dir.join(format!("{name}.parquet")),
             )?;

@@ -2,11 +2,6 @@ name: V3 candidate release gate
 
 on:
   workflow_dispatch:
-    inputs:
-      engine_artifact_run_id:
-        description: Run ID containing the tensoreval-release artifact
-        required: true
-        type: string
 
 permissions:
   actions: read
@@ -23,11 +18,16 @@ jobs:
     environment: candidate-release
     env:
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-      EXPECTED_TENSOREVAL_SHA256: ${{ vars.TENSOREVAL_SHA256 }}
-      TENSOREVAL_BIN: ${{ github.workspace }}/target/tensoreval-release/tensoreval
-      TENSOREVAL_CWD: ${{ github.workspace }}/target/tensoreval-release/cwd
+      TENSOREVAL_BIN: ${{ github.workspace }}/target/eig-rs/target/release/tensoreval
+      TENSOREVAL_CWD: ${{ github.workspace }}/target/eig-rs
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout current eig-rs
+        uses: actions/checkout@v4
+        with:
+          repository: shufengdong/eig-rc
+          path: target/eig-rs
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -41,22 +41,13 @@ jobs:
         run: |
           npm ci --prefix frontend
           npx --prefix frontend playwright install --with-deps chromium
-      - name: Download pinned engine artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tensoreval-release
-          path: target/tensoreval-release
-          run-id: ${{ inputs.engine_artifact_run_id }}
-          github-token: ${{ github.token }}
-      - name: Validate engine artifact layout
+      - name: Build current tensoreval
+        run: cargo build --manifest-path target/eig-rs/Cargo.toml --release -p mems --bin tensoreval
+      - name: Validate current engine layout
         run: |
-          test -n "$EXPECTED_TENSOREVAL_SHA256"
-          chmod +x "$TENSOREVAL_BIN"
           test -x "$TENSOREVAL_BIN"
-          actual_sha256=$(sha256sum "$TENSOREVAL_BIN" | cut -d ' ' -f 1)
-          test "$actual_sha256" = "$EXPECTED_TENSOREVAL_SHA256"
           test -d "$TENSOREVAL_CWD/sparrowzz/dss/docs"
-          test -d "$TENSOREVAL_CWD/sparrowzz/dss/models"
+          test -f "$TENSOREVAL_CWD/sparrowzz/dss/docs/catalog/dataframes.json"
       - name: Run real DeepSeek and tensoreval journey
         run: ./scripts/test-release-integration
       - name: Require complete release functional coverage
