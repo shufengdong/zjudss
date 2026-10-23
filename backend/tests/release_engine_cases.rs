@@ -340,11 +340,11 @@ async fn real_engine_imports_all_examples_and_runs_representative_studies() {
     let engine = ProcessEngine::new(config);
     let snapshot = EngineResourceRegistry::load(&cwd)
         .unwrap_or_else(|error| panic!("release_engine_snapshot_invalid:{}", error.code()));
-    assert_eq!(snapshot.examples.len(), 73, "release_engine_example_count");
+    assert_eq!(snapshot.examples.len(), 97, "release_engine_example_count");
 
     let temp = tempfile::tempdir().unwrap();
     let importable = import_all_examples(&snapshot, &temp.path().join("imports"));
-    assert_eq!(importable, 73, "release_engine_import_count");
+    assert_eq!(importable, 97, "release_engine_import_count");
     let contract_checks = verify_expr_df(&engine, temp.path()).await;
 
     let cases = [

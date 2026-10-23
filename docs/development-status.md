@@ -25,7 +25,9 @@
 | 前端工作台 | ✅ | scope 恢复、历史搜索、目录上传、案例、工作区、任务、表格、ECharts |
 | v2 schema | ✅ | 单一 initial migration，无原型结果表或兼容分支 |
 
-当前运行合同为 Agent bundle `v2.0.0` 和 engine contract `dss-v2-d2b6d88a`。生产启动会验证
+当前运行合同为 Agent bundle `v2.0.1` 和 engine contract `dss-v2-b3fc74c0`，固定到
+eig-rs `9a01af9a60bcbb3b2814f08dc269456ac1399280` 记录的 sparrowzz
+`b3fc74c0ff1fd25deb4448edd3a9c0e8644bb3c1`。生产启动会验证
 `TENSOREVAL_BIN` capability，以及 `TENSOREVAL_CWD` 的 docs/catalog/examples 内容 hash；任一不符
 都会在接流量前失败。manifest 中的来源提交和 `sourceDirty` 是生成合同的审计信息，运行时以固定内容
 hash 为准。相邻 `../eig-rs` 只用于开发期合同生成或核验，不是可随工作树
@@ -81,13 +83,15 @@ v2 仅支持空库初始化。部署前删除旧开发 SQLite 和 DATA_DIR；不
   `288/288`、100%，且会拒绝缺项、重复/未知合同、错误 lane、`manual-only`、skip、不存在的测试声明，
   以及用路由/工具/枚举清单测试冒充合同行为覆盖。27 个公开路由还必须由目录关联的已通过 Playwright
   用例产生实际成功响应证据；任意无关测试映射不能通过门禁。
-- 2026-10-23 已用真实 DeepSeek 和合同 `dss-v2-d2b6d88a` 的 release tensoreval 完成 DataFrame 潮流、
+- 2026-10-23 已用真实 DeepSeek 和上一合同 `dss-v2-d2b6d88a` 的 release tensoreval 完成 DataFrame 潮流、
   RSS 短路、结果分析、案例导入、参数修改、重跑和比较：8 个模型版本、3 个任务、3 个结果数据集、
   2 次分析和 1 次比较。候选发布 workflow 要求受保护环境 secret、固定 engine artifact SHA-256，报告记录
-  测试 ID、agent bundle hash、engine contract 和 binary hash；缺失或不匹配即失败。
+  测试 ID、agent bundle hash、engine contract 和 binary hash；缺失或不匹配即失败。新合同
+  `dss-v2-b3fc74c0` 必须重新通过同一发布门禁后才能替代这份历史证据。
 - Agent manifest 与运行时注册表已由双向枚举测试锁定为同一组 22 个工具，包含 `get_storage_usage` 和
   `list_result_datasets`。
 
+当前资源快照包含 11 份引擎文档、2 份 catalog、16 个根 RSS 和 81 个 rssbundle，共 97 个内置案例。
 从主仓库运行后端测试时，`engine_resources` 中的外部工作树核验会在检测到相邻 `../eig-rs` 后将它与
 内置发布合同比较。该目录在合同范围内存在未固化修改或 hash 漂移时，相关测试会按设计失败；不要通过
 放宽校验来消除失败。确定性 CI 使用固定 fixture，候选发布使用固定 SHA-256 的引擎 artifact。

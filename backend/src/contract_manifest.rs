@@ -59,7 +59,7 @@ pub struct ContractManifest {
 }
 
 pub fn contract_manifest() -> Result<ContractManifest, KnowledgeError> {
-    let knowledge = AgentKnowledge::load_embedded("v2.0.0")?;
+    let knowledge = AgentKnowledge::load_embedded("v2.0.1")?;
     let mut skill_ids = knowledge
         .skill_index()
         .map(|skill| skill.id.clone())

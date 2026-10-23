@@ -36,7 +36,21 @@ fn skill(id: &str, path: &str, tool: &str, content: &str) -> Value {
 
 #[test]
 fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
-    let knowledge = AgentKnowledge::load_embedded("v2.0.0").expect("embedded knowledge");
+    let knowledge = AgentKnowledge::load_embedded("v2.0.1").expect("embedded knowledge");
+    assert_eq!(knowledge.manifest.agent_bundle_version, "v2.0.1");
+    assert_eq!(
+        knowledge.manifest.engine_contract_version,
+        "dss-v2-b3fc74c0"
+    );
+    assert_eq!(
+        knowledge.manifest.eig_rs_commit,
+        "9a01af9a60bcbb3b2814f08dc269456ac1399280"
+    );
+    assert_eq!(
+        knowledge.manifest.sparrowzz_commit,
+        "b3fc74c0ff1fd25deb4448edd3a9c0e8644bb3c1"
+    );
+    assert!(!knowledge.manifest.source_dirty);
     assert_eq!(knowledge.skill_index().count(), 6);
     assert!(knowledge.skill("result-analysis").is_some());
     assert!(!knowledge.system_prompt.contains("/Users/"));

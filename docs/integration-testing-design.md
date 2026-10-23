@@ -16,7 +16,7 @@
 
 发布条件是功能覆盖率 100%，且不存在 `manual-only`、没有理由的 `skip` 或未关联测试的功能项。源码行、
 分支和 mutation coverage 作为实现质量指标单独报告，不替代功能覆盖率。组合爆炸通过等价类、边界值和
-风险场景处理；例如 73 个案例都验证可发现和可导入，每类引擎能力至少选择一个代表案例真实运行，
+风险场景处理；例如 97 个案例都验证可发现和可导入，每类引擎能力至少选择一个代表案例真实运行，
 无需对每个案例穷举全部 study、参数和图表组合。
 
 覆盖依据按以下优先级冻结：
@@ -143,7 +143,7 @@ L0、L1、L2 不依赖网络。L3 允许使用 secret，禁止在日志中输出
 | INPUT-DF | CSV、Parquet、Excel 多 sheet；分批补传；列名推断；文件/sheet 名只展示 | L0/L1 |
 | INFERENCE | 高置信命中、未知、歧义、缺列、dtype 冲突、同类型重复、对话确认映射 | L0/L1 |
 | WORKSPACE | active/draft、collecting/ready、诊断、不可变父子版本、替换/移除/修改/激活/回退 | L0/L1 |
-| EXAMPLE | 73 个案例 snapshot、搜索/详情、全部可导入、依赖复制、导入后修改、不写共享目录 | L0/L1/L3 |
+| EXAMPLE | 97 个案例 snapshot、搜索/详情、全部可导入、依赖复制、导入后修改、不写共享目录 | L0/L1/L3 |
 | AGENT | prompt 合同、短生命周期 run、上下文恢复、工具白名单、skill gate、稳定 ID、拒绝路径/命令/SQL | L0/L1/L3 |
 | STUDY | 潮流、短路、QSTS、谐波和开放 study；spec 校验；绑定版本/RSS/bundle/skills/engine | L0/L1/L3 |
 | TASK | queued/running/succeeded/failed；进度；列表/详情；失败原子性；旧任务绑定旧版本 | L0/L1/L2 |
@@ -247,7 +247,7 @@ fixture 必须小、确定、可审查，并包含 CSV、Excel 多 sheet、Parqu
 
 L3 候选发布执行：
 
-- 当前 `TENSOREVAL_CWD` 的 docs/catalog/全部 73 个案例 hash 和导入验证；
+- 当前 `TENSOREVAL_CWD` 的 docs/catalog/全部 97 个案例 hash 和导入验证；
 - 命名 Parquet 输入、`--result-dir`、`--output-format parquet`、expr_df 和 Snappy 编码合同；
 - DataFrame 潮流、RSS 短路，以及覆盖 QSTS、谐波和开放 study 能力的代表案例；
 - 一次真实结果问答、派生 DataFrame、参数修改重跑和任务比较；
@@ -306,5 +306,6 @@ CI 归档 JUnit、功能覆盖 JSON/HTML、Playwright trace 和真实引擎合�
 当前仓库已实现 Playwright、Scripted LLM、ScenarioEngine、机器可读功能目录和真实 DeepSeek 发布链路。
 普通 PR 由 `.github/workflows/ci.yml` 执行 L0/L1/L2 和严格 PR 目录门禁；候选发布由受保护环境中的
 `.github/workflows/release-integration.yml` 在 PR 门禁后执行 L3 和严格发布目录门禁。2026-10-23 的本地候选
-发布验收已通过真实 DeepSeek 与合同 `dss-v2-d2b6d88a` 的 tensoreval；GitHub 发布记录以对应 workflow
-归档的 `release-gate-evidence-*` 为准。
+上一合同 `dss-v2-d2b6d88a` 已通过真实 DeepSeek/tensoreval 发布验收；当前合同
+`dss-v2-b3fc74c0` 必须重新执行 L3。GitHub 发布记录以对应 workflow 归档的
+`release-gate-evidence-*` 为准。

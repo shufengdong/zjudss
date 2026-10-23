@@ -21,7 +21,7 @@ test('natural language runs all study families and exposes reproducible multi-re
     expect(task.status).toBe('succeeded')
     expect(task.modelVersionId).toBe(versionId)
     expect(task.scriptArtifactId).not.toBe('')
-    expect(task.agentBundleVersion).toBe('v2.0.0')
+    expect(task.agentBundleVersion).toBe('v2.0.1')
     expect(task.engineContractVersion).toBe('tensoreval-parquet-v2')
     expect(task.agentSkillRefs.map((item: any) => item.id)).toEqual(['study-planning', 'rss-generation'])
   }

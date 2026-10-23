@@ -99,20 +99,20 @@ cwd/                         # TENSOREVAL_CWD，只读资源根
 ```
 
 `cwd/` 还必须包含固定案例显式引用的跨目录依赖，例如合同需要的 `psa/tests/bmopf` 或
-`sparrowzz/rspower/lib`。具体文件集合由 engine resource manifest 和 73 个案例的依赖闭包决定，不能只按
+`sparrowzz/rspower/lib`。具体文件集合由 engine resource manifest 和 97 个案例的依赖闭包决定，不能只按
 上面的目录示意手工挑选。artifact 应从获批的来源快照生成；下载后 workflow 校验 binary，后端启动
-preflight 再校验 catalog、11 份文档、16 个根 RSS、57 个 rssbundle 及其依赖内容。
+preflight 再校验 catalog、11 份文档、16 个根 RSS、81 个 rssbundle 及其依赖内容。
 
 受保护环境还必须配置 `TENSOREVAL_SHA256` 变量。workflow 在执行前计算下载 binary 的 SHA-256 并与该
 变量精确比较，因此仅有同名 artifact 或任意 run ID 不能替换已批准的仿真内核。发布报告保存测试 ID、
 agent bundle 版本与目录 SHA-256、engine contract 和 binary SHA-256。
 
 `.github/workflows/release-integration.yml` 先复用完整 PR 门禁，再执行 `scripts/test-release-integration` 和
-`--require-release`。真实旅程验证全部 73 个固定案例、代表 study、DataFrame 潮流、RSS 短路、结果问答、
+`--require-release`。真实旅程验证全部 97 个固定案例、代表 study、DataFrame 潮流、RSS 短路、结果问答、
 参数修改重跑和比较，并归档去敏后的 engine/LLM 报告、功能覆盖 JSON/HTML 与 Playwright 失败 trace。
 缺少 binary、资源目录、secret、合同 hash 或任一语义断言时发布失败，不能静默跳过。2026-10-23 本地候选
-发布验收已通过，engine contract 为 `dss-v2-d2b6d88a`；正式发布以 workflow 的
-`release-gate-evidence-*` artifact 为审计记录。
+发布验收已通过的历史合同为 `dss-v2-d2b6d88a`；当前合同 `dss-v2-b3fc74c0` 必须重新执行本节门禁。
+正式发布以 workflow 的 `release-gate-evidence-*` artifact 为审计记录。
 
 若启动报告 `engine_resource_hash_mismatch`、`example_source_changed` 或 `engine_contract_mismatch`，应恢复
 与当前 bundle 匹配的完整资源 artifact；如果变化是计划内升级，则按 Agent/engine 资源变更流程更新

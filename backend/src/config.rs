@@ -165,7 +165,7 @@ impl RuntimeConfig {
                 20 * 1024 * MIB,
             )?,
             storage_warning_ratio: ratio(&values, "STORAGE_WARNING_RATIO", 0.8)?,
-            agent_bundle_version: get("AGENT_BUNDLE_VERSION").unwrap_or("v2.0.0").to_string(),
+            agent_bundle_version: get("AGENT_BUNDLE_VERSION").unwrap_or("v2.0.1").to_string(),
         })
     }
 }

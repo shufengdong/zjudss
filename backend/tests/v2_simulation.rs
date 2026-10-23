@@ -164,7 +164,7 @@ async fn ready_version_persists_reproducible_task_and_generic_parquet_dataset() 
     assert_eq!(out.task.status, "succeeded");
     assert_eq!(out.task.model_version_id, version);
     assert!(out.task.script_artifact_id > 0);
-    assert_eq!(out.task.agent_bundle_version, "v2.0.0");
+    assert_eq!(out.task.agent_bundle_version, "v2.0.1");
     assert_eq!(
         out.task.engine_contract_version,
         backend::adapters::ENGINE_CONTRACT_VERSION
@@ -386,7 +386,7 @@ fn failure_service(app: &TestApp, mode: FailureMode) -> SimulationService {
         app.state.message_repo.clone(),
         app.state.events.clone(),
         Arc::new(FailureEngine(mode)),
-        Arc::new(AgentKnowledge::load_embedded("v2.0.0").unwrap()),
+        Arc::new(AgentKnowledge::load_embedded("v2.0.1").unwrap()),
         app.state.data_dir.clone(),
     )
 }

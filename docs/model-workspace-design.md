@@ -160,7 +160,7 @@ active 后，新 draft 必须在 ready 且用户通过自然语言确认使用�
 ### 4.5 从内置案例创建模型
 
 服务启动时从 `${TENSOREVAL_CWD}/sparrowzz/dss` 建立只读引擎资源快照和案例目录。当前来源包含根目录
-16 个 `.rss` 与 `rssbundle/` 下 57 个已发布 `.rssbundle`；具体数量属于当前合同事实，升级后以新快照
+16 个 `.rss` 与 `rssbundle/` 下 81 个已发布 `.rssbundle`；具体数量属于当前合同事实，升级后以新快照
 为准。根目录 RSS 必须把 `import_dss/import_bmopf`、`ds_*_plan` 和 `#include` 引用解析成完整依赖
 闭包；依赖可位于 `models/`、`psa/tests/bmopf` 或 `sparrowzz/rspower/lib`，但不得逃逸
 `TENSOREVAL_CWD`。bundle 必须验证 `manifest.json`、entry、文件 hash 和 tree hash。

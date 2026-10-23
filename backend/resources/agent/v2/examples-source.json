@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "sourceCommit": "d2b6d88a740293074273fd5df4237898ac66657a",
+  "sourceCommit": "b3fc74c0ff1fd25deb4448edd3a9c0e8644bb3c1",
   "rootRss": [
     {
       "path": "4bus_daily_qsts.rss",
@@ -89,6 +89,66 @@
       "sha256": "bc1d9f282cce9d3ca1e751c4502fdb69841da0a9bbc8d26ab176936673f09caa"
     },
     {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/MonitoredVoltage/Local_voltage_2-2.rssbundle/manifest.json",
+      "sha256": "6eeb76a4ed24b6b8421d4874487b612815466d5ca4cb1342122ba50044584958"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/MonitoredVoltage/Local_voltage_average-2.rssbundle/manifest.json",
+      "sha256": "27dce07095eba404aae0d0661ded1eab67ac55dc262d6535c581e134f3295ee1"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/MonitoredVoltage/Local_voltage_max-2.rssbundle/manifest.json",
+      "sha256": "429e4479c80b97c57b7cb1e7388a9ef7f2dd71f1c6e0dd8a42b4edc7dee362ce"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/MonitoredVoltage/Local_voltage_min-2.rssbundle/manifest.json",
+      "sha256": "2dd63536d1dbe7038852bd74c79e58f20d48ee3857e85801e71172f77bd46b78"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/MonitoredVoltage/Mon_voltage_average-2.rssbundle/manifest.json",
+      "sha256": "8e883ead5c91263ab47cf5f01fc7a687b6efe2515743fe2c24442213db79ccfe"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/MonitoredVoltage/Mon_voltage_average_LL-2.rssbundle/manifest.json",
+      "sha256": "bf0c0cbc849e6cefe3364c1c8ee78a3cc173d16e7e643bfbecde6938e69f68ce"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/MonitoredVoltage/Mon_voltage_average_Mix-2.rssbundle/manifest.json",
+      "sha256": "fa8b403562f60c9d91c963ab0a81cdd1ca35821d5709fa52b50dfa389ae0b59b"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/VV_VW/Daily_voltvar_pctPmpp60-2.rssbundle/manifest.json",
+      "sha256": "836e23bee6e16525bb72dd7c5d88f38244f0ed71fd4e98bbde0689f0c11b8cbf"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-var/Daily_voltvar_Standard-2.rssbundle/manifest.json",
+      "sha256": "5d040d362f64671f8ce18e14b2c7a17ab9ca0e3e4c3341e0c24577524d827f3e"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-var/Daily_voltvar_avg-2.rssbundle/manifest.json",
+      "sha256": "fe7961168a7e9ceb8e3e13c6945c5012a3fe63267b20651c0ba4c804f0de453f"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-var/Daily_voltvar_greater_kVA_ppriority-2.rssbundle/manifest.json",
+      "sha256": "68d5a99b583305a3ae50b3bca98816ac5fd08610ae9b9cb98bd1e5f6e961e853"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-var/Daily_voltvar_greater_kVA_qpriority-2.rssbundle/manifest.json",
+      "sha256": "3f09084f098d5c1ed444723490815c08678708c65b49f4165e53dcacbe383a91"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-var/Daily_voltvar_kvarlimit-2.rssbundle/manifest.json",
+      "sha256": "8e8f5ee9f5a53f59553c47fd471b5e27e229bef4155181fa5a22980ce705a7bf"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-var/Daily_voltvar_pctPmpp60-2.rssbundle/manifest.json",
+      "sha256": "5291fcf88c6d1de4eb1ab05bb56747e3fcb53a367e1dc25e42cafe7fe752358c"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-var/Daily_voltvar_ravg-2.rssbundle/manifest.json",
+      "sha256": "ac7c203d60624f3ef16d2ce1f6a9444e66f361571e8af410d129550acf8c5a07"
+    },
+    {
       "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-var/SnapShot_voltvar_Standard-2.rssbundle/manifest.json",
       "sha256": "ca30c6fbbfd082881e66eded09d3f7e36945e80683761df6d6f6ad7760b45b2d"
     },
@@ -111,6 +171,42 @@
     {
       "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-var/SnapShot_voltvar_pctPmpp60-2.rssbundle/manifest.json",
       "sha256": "a65ada4c82086e6c0fa8581ffc6984d45e720a94d7885b084fe23c8c65e123ea"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-watt/Daily_voltwatt_PAVAILABLEPU-2.rssbundle/manifest.json",
+      "sha256": "daf7eced874d40b131e816f59c08186fcdbac6192fbd87ebe00c74b1e074841a"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-watt/Daily_voltwatt_PAVAILABLEPU_pctPmpp60-2.rssbundle/manifest.json",
+      "sha256": "f1830ad43ee3ef9d428261e5392766b8d43acbd6efcb08b58330116a235403cc"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-watt/Daily_voltwatt_PCTPMPPPU-2.rssbundle/manifest.json",
+      "sha256": "ab5d0b5c055b714b0fa9d267fe44a65fb796a7d9aab0ecafde4f3776f954accb"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-watt/Daily_voltwatt_PMPPPU-2.rssbundle/manifest.json",
+      "sha256": "f25c824eb8cb2bc00865f8f98660697f4287ee78222c8be23814ec46a8c9d2f7"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-watt/Daily_voltwatt_PMPPPU_PF-2.rssbundle/manifest.json",
+      "sha256": "067f5aad15ecc6f4d44d6249706a1f72dadfaad7ce1c984c0dedeb4538f3fc33"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-watt/Daily_voltwatt_PMPPPU_pctPmpp60-2.rssbundle/manifest.json",
+      "sha256": "f61ee022b8f95c02a7e1f2f79a043343dc01ecdf9ceca6018fa01ca6038b5af5"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-watt/Daily_voltwatt_PMPPPU_pctPmpp60_PF-2.rssbundle/manifest.json",
+      "sha256": "f61b2057c8711bcaa94b3d9aae7ae820997beb33d977b9efeba2d5c65a099aeb"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-watt/Daily_voltwatt_noOperation-2.rssbundle/manifest.json",
+      "sha256": "632ff38f97218f52d4d71e33ad8f5b5e4faf91473dcca5bd685c3f69226ac311"
+    },
+    {
+      "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-watt/Daily_voltwatt_noOperation_PF-2.rssbundle/manifest.json",
+      "sha256": "9de6a4e39e3fb9ee7d343675f63270e66d3535d46a3629ba761a968b9d3cf65a"
     },
     {
       "path": "rssbundle/Examples/InverterModels/PVSystem/InvControl/volt-watt/SnapShot_voltwatt_KVARATINGPU-2.rssbundle/manifest.json",

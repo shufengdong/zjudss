@@ -4,8 +4,8 @@
 > 并在仿真和分析 run 中固化技能引用。
 > 适用范围：zjudss 后端通过 rig 0.45 构建的配电网仿真 agent。
 > 引擎知识源：`${TENSOREVAL_CWD}/sparrowzz/dss/docs/`，当前核对版本固定到 eig-rs superproject commit
-> `3698864f0856e16ee77c56be89ef3d1c1424007b` 及其 sparrowzz submodule commit
-> `d2b6d88a740293074273fd5df4237898ac66657a`。
+> `9a01af9a60bcbb3b2814f08dc269456ac1399280` 及其记录的 sparrowzz submodule commit
+> `b3fc74c0ff1fd25deb4448edd3a9c0e8644bb3c1`。
 
 ## 1. 实现与术语
 
@@ -52,20 +52,19 @@ Markdown。zjudss 不硬编码 `../eig-rs` 相对路径；统一从配置后的
 `${TENSOREVAL_CWD}/sparrowzz/dss` 建立只读快照，并记录来源 commit、相对路径与 SHA-256。
 
 当前固定 catalog 为 schema version 2；外层 eig-rs commit 通过 Git tree 指向上述 sparrowzz commit。
-资源固化时 `dss_to_rss.md` 和 `opendss_compatibility_matrix.md` 含未提交修改，因此 manifest 显式记录
-`sourceDirty: true` 并锁定整个 docs tree hash；运行目录只要再发生变化，启动 preflight 就会失败：
+资源从这两个已提交 Git 对象生成，manifest 记录 `sourceDirty: false`，并锁定整个 docs tree hash；
+运行目录中的合同内容只要发生变化，启动 preflight 就会失败：
 
 - `dataframes.json` SHA-256：`ead67bd4354e0acb99a957c4f96fd80f85e96268a7a190fb36ac65cce98cd471`
 - `functions.json` SHA-256：`d84b715c62b79ba95931b04e2df1c351928c02c8124b73f18b709f2430331496`
 
-案例 allowlist 从 sparrowzz commit 的 Git 对象生成，固定为 16 个根 RSS 和 57 个 bundle。工作树中
+案例 allowlist 从 sparrowzz commit 的 Git 对象生成，固定为 16 个根 RSS 和 81 个 bundle。工作树中
 额外的未提交 bundle 不进入快照。开发工作区里的 eig-rs 可能含未提交修改，因此 manifest 同时记录
 HEAD、submodule commit、dirty 状态和逐类内容 hash，不能默认为当前工作树就是发布事实。
 
-`sourceDirty: true` 表示生成当前合同的受控来源快照包含两份已知文档修改，并且这些内容已由完整 tree
-hash 固定；它不表示可以接受任意 dirty 工作树。该字段用于来源审计，启动 preflight 实际校验合同范围
-内的 catalog、文档和案例内容 hash，而不读取 Git 工作树状态；相关内容发生变化就按资源漂移处理。
-若这些修改需要成为新的基线，应按第 11 节更新合同、bundle 和测试。
+`sourceDirty` 用于来源审计，启动 preflight 实际校验合同范围内的 catalog、文档和案例内容 hash，而不
+读取 Git 工作树状态；相关内容发生变化就按资源漂移处理。若 eig-rs 发布了新提交，应按第 11 节显式
+更新提交、合同、bundle 和测试，不能在运行时静默跟随可变工作树。
 
 ## 4. v2 资源布局
 
@@ -102,7 +101,7 @@ catalog hash、每个 prompt/skill 文件 hash、允许的工具名称和生成�
 
 “让 agent 提前学习”在本系统中定义为 **服务启动时预检、切分和索引，执行某一请求时按需注入**，不在
 启动时微调模型，也不把全部文档永久塞进每轮上下文。当前目录包含 11 份 Markdown、2 份 JSON catalog、
-16 个根目录 RSS 示例和 57 个已发布 `.rssbundle`；完整文本约数百 KiB，全部常驻 prompt 会挤占用户模型
+16 个根目录 RSS 示例和 81 个已发布 `.rssbundle`；完整文本约数百 KiB，全部常驻 prompt 会挤占用户模型
 和结果 schema 的上下文空间。
 
 启动时 `EngineResourceRegistry` 执行：
@@ -126,8 +125,12 @@ catalog hash、每个 prompt/skill 文件 hash、允许的工具名称和生成�
 - `sparrowzz/dss/*.rss`：当前 16 个经过回归验证的脚本；导入时必须解析 `import_dss/import_bmopf`、
   `ds_*_plan` 和 `#include` 的完整依赖闭包，不能只复制入口脚本。依赖可能位于 `models/`，也可能是
   `psa/tests/bmopf` 或 `sparrowzz/rspower/lib`；只要显式引用解析后仍位于 `TENSOREVAL_CWD` 内即可；
-- `sparrowzz/dss/rssbundle/**/*.rssbundle`：当前 57 个有 `manifest.json`、文件 hash 和自执行验证证据的
-  自包含 bundle，包含 execution plan、静态潮流、谐波和短路案例。
+- `sparrowzz/dss/rssbundle/**/*.rssbundle`：当前 81 个有 `manifest.json`、文件 hash 和自执行验证证据的
+  自包含 bundle，包含 execution plan、静态潮流、谐波、短路及新增 InvControl 案例。
+
+当前文档基线还补充了多节点 `MonBus` 的 `monitored_nodes/monitored_v_bases`、PVSystem 省略
+`%CutIn/%CutOut` 时的默认值、InvControl 停机归零和 QSTS 控制记忆边界。这些细节由固定文档 section
+按需提供给 agent，不复制为未经验证的常驻 Prompt 规则。
 
 `examples.json` 的每项至少包含稳定 `exampleId`、标题、说明、标签、`sourceKind`、入口相对路径、分析
 类型、solver、required features、文件数/字节数、tree hash、验证状态、来源与许可证说明、

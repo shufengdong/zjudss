@@ -67,11 +67,11 @@ fn fixture(required_feature: Option<&str>) -> Fixture {
 }
 
 #[test]
-fn embedded_contract_pins_eleven_docs_sixteen_rss_and_fifty_seven_bundles() {
+fn embedded_contract_pins_eleven_docs_sixteen_rss_and_eighty_one_bundles() {
     let contract = EngineResourceRegistry::embedded_contract().unwrap();
     assert_eq!(contract.doc_paths.len(), 11);
     assert_eq!(contract.root_rss.len(), 16);
-    assert_eq!(contract.bundles.len(), 57);
+    assert_eq!(contract.bundles.len(), 81);
 }
 
 #[test]
@@ -253,6 +253,6 @@ fn current_eig_rs_tree_matches_the_embedded_release_contract_when_available() {
     {
         let snapshot = EngineResourceRegistry::load(path)
             .expect("configured eig-rs resources must match the pinned contract");
-        assert_eq!(snapshot.examples.len(), 73);
+        assert_eq!(snapshot.examples.len(), 97);
     }
 }

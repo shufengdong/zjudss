@@ -727,7 +727,7 @@
       name: real_engine_imports_all_examples_and_runs_representative_studies
   assertions:
     - 发布命令要求显式真实依赖并稳定拒绝缺失或不兼容环境
-    - 73 个固定案例的依赖哈希均正确且可导入临时 scope
+    - 97 个固定案例的依赖哈希均正确且可导入临时 scope
     - 命名 Parquet、expr_df、多结果、Snappy、失败诊断和五类代表 study 均通过真实引擎
   fixtures: []
 - id: REAL-RELEASE-001

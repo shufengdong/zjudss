@@ -397,7 +397,7 @@ impl AppState {
         let dataset_service =
             DatasetService::new(DatasetRepo::new(pool.clone()), artifact_service.clone());
         let agent_knowledge = Arc::new(
-            AgentKnowledge::load_embedded("v2.0.0").expect("内置 agent knowledge 已在构建时校验"),
+            AgentKnowledge::load_embedded("v2.0.1").expect("内置 agent knowledge 已在构建时校验"),
         );
         let simulation_service = SimulationService::new(
             SimulationRepo::new(pool.clone()),
