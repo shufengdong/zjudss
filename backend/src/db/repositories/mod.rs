@@ -21,7 +21,7 @@ pub use dataset::DatasetRepo;
 pub use history::{HistoryHit, HistoryRepo, SearchFilters};
 pub use ingestion::{IngestionItemDraft, IngestionRecord, IngestionRepo};
 pub use message::MessageRepo;
-pub use model_import::ModelImportRepo;
+pub use model_import::{ModelImportRecord, ModelImportRepo};
 pub use script::ScriptRepo;
 pub use session::SessionRepo;
 pub use simulation::SimulationRepo;

@@ -7,6 +7,7 @@ mod datasets;
 mod events;
 mod examples;
 mod ingestions;
+mod model_imports;
 mod sessions;
 mod storage;
 mod tasks;
@@ -28,6 +29,7 @@ use crate::application::ComparisonError;
 use crate::application::DatasetError;
 use crate::application::HistoryError;
 use crate::application::IngestionError;
+use crate::application::ModelImportError;
 use crate::application::WorkspaceError;
 use crate::db::repositories::RepoError;
 
@@ -184,6 +186,34 @@ impl From<IngestionError> for ApiError {
     }
 }
 
+impl From<ModelImportError> for ApiError {
+    fn from(error: ModelImportError) -> Self {
+        match error {
+            ModelImportError::NotFound => Self::not_found("资源不存在"),
+            ModelImportError::IdempotencyConflict => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "idempotency_conflict",
+                details: None,
+            },
+            ModelImportError::DraftRevisionConflict => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "draft_revision_conflict",
+                details: None,
+            },
+            ModelImportError::Invalid(message) => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message,
+                code: "model_import_unsupported",
+                details: None,
+            },
+            ModelImportError::Artifact(error) => error.into(),
+            ModelImportError::Repository(error) => error.into(),
+        }
+    }
+}
+
 impl From<WorkspaceError> for ApiError {
     fn from(error: WorkspaceError) -> Self {
         match error {
@@ -328,6 +358,21 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
     add_route!(
         "/api/sessions/{id}/attachments",
         post(sessions::upload_attachment).layer(DefaultBodyLimit::disable()),
+        ["POST"]
+    );
+    add_route!(
+        "/api/sessions/{id}/model-imports",
+        post(model_imports::create).layer(DefaultBodyLimit::disable()),
+        ["POST"]
+    );
+    add_route!(
+        "/api/model-imports/{id}",
+        get(model_imports::get).delete(model_imports::discard),
+        ["GET", "DELETE"]
+    );
+    add_route!(
+        "/api/model-imports/{id}/resolve",
+        post(model_imports::resolve),
         ["POST"]
     );
     add_route!("/api/sessions/{id}/events", get(events::stream), ["GET"]);

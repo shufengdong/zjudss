@@ -131,7 +131,9 @@ pub fn normalize_excel_to_parquet(
         let path = output_dir.join(format!("sheet-{sheet_index}.parquet"));
         let file = std::fs::File::create(&path)
             .map_err(|error| TabularError::new("tabular_normalize_failed", error.to_string()))?;
-        let properties = WriterProperties::builder().build();
+        let properties = WriterProperties::builder()
+            .set_compression(parquet::basic::Compression::SNAPPY)
+            .build();
         let mut writer = ArrowWriter::try_new(file, schema, Some(properties))
             .map_err(|error| TabularError::new("tabular_normalize_failed", error.to_string()))?;
         writer

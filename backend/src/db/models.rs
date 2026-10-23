@@ -158,6 +158,39 @@ pub struct WorkspaceDraft {
     pub updated_at_ms: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelImportStatus {
+    Accepted,
+    Processing,
+    AwaitingResolution,
+    ReadyToApply,
+    Applied,
+    Failed,
+    Discarded,
+}
+
+impl ModelImportStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::Processing => "processing",
+            Self::AwaitingResolution => "awaiting_resolution",
+            Self::ReadyToApply => "ready_to_apply",
+            Self::Applied => "applied",
+            Self::Failed => "failed",
+            Self::Discarded => "discarded",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftRef {
+    pub id: i32,
+    pub revision: i64,
+}
+
 #[derive(Insertable, Debug, Clone)]
 #[diesel(table_name = workspace_drafts)]
 pub struct NewWorkspaceDraft {
@@ -235,10 +268,27 @@ pub struct NewModelImport {
     pub updated_at_ms: i64,
 }
 
-#[derive(Queryable, Insertable, Debug, Clone)]
+#[derive(Queryable, Debug, Clone)]
 #[diesel(table_name = model_import_candidates)]
 pub struct ModelImportCandidate {
     pub id: i32,
+    pub import_id: i32,
+    pub candidate_id: String,
+    pub candidate_kind: String,
+    pub display_name: String,
+    pub table_name: Option<String>,
+    pub artifact_id: Option<i32>,
+    pub schema_json: Option<String>,
+    pub row_count: Option<i64>,
+    pub content_hash: Option<String>,
+    pub evidence_json: String,
+    pub selected: bool,
+    pub created_at_ms: i64,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = model_import_candidates)]
+pub struct NewModelImportCandidate {
     pub import_id: i32,
     pub candidate_id: String,
     pub candidate_kind: String,

@@ -12,6 +12,7 @@ mod events;
 pub mod example_import;
 pub mod history;
 pub mod ingestion;
+pub mod model_import;
 pub mod model_patch;
 pub mod scheduler;
 pub mod simulations;
@@ -31,7 +32,8 @@ use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
     AnalysisRepo, ArtifactRepo, ComparisonRepo, DatasetRepo, HistoryRepo, IngestionRepo,
-    MessageRepo, SessionRepo, SimulationRepo, StorageScopeRepo, TaskRepo, WorkspaceRepo,
+    MessageRepo, ModelImportRepo, SessionRepo, SimulationRepo, StorageScopeRepo, TaskRepo,
+    WorkspaceRepo,
 };
 use crate::engine_resources::{EngineKnowledge, EngineResourceSnapshot};
 use crate::ingestion::ArchiveLimits;
@@ -56,6 +58,7 @@ pub use events::{
 pub use example_import::{ExampleImportError, ExampleImportService};
 pub use history::{HistoryError, HistoryService};
 pub use ingestion::{AcceptedBatch, IngestionError, IngestionService, UploadBatch, UploadFile};
+pub use model_import::{ModelImportError, ModelImportService, ModelImportView};
 pub use model_patch::{ModelChange, ModelMutationError, ModelPatch, ModelPatchService};
 pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
 pub use simulations::{RunStudyRequest, SimulationError, SimulationOutcome, SimulationService};
@@ -74,6 +77,7 @@ pub struct AppState {
     pub artifact_service: ArtifactService,
     pub workspace_service: WorkspaceService,
     pub ingestion_service: IngestionService,
+    pub model_import_service: ModelImportService,
     pub example_import_service: ExampleImportService,
     pub model_patch_service: ModelPatchService,
     pub dataset_service: DatasetService,
@@ -396,6 +400,13 @@ impl AppState {
             events.clone(),
             archive_limits,
         );
+        let model_import_service = ModelImportService::new(
+            ModelImportRepo::new(pool.clone()),
+            artifact_service.clone(),
+            engine.clone(),
+            data_dir.clone(),
+            archive_limits,
+        );
         let example_import_service = ExampleImportService::new(
             engine_snapshot.clone(),
             artifact_service.clone(),
@@ -449,6 +460,7 @@ impl AppState {
             artifact_service,
             workspace_service,
             ingestion_service,
+            model_import_service,
             example_import_service,
             model_patch_service,
             dataset_service,
