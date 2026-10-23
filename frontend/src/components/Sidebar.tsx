@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import type { Session, SessionStatus } from '../types'
 import { MoreIcon, PanelLeftIcon, PencilIcon, PlusIcon, TrashIcon } from './icons'
 
@@ -11,6 +11,7 @@ interface SidebarProps {
   onRename: (id: string, title: string) => void
   onDelete: (id: string) => void
   onToggleCollapse: () => void
+  footer?: ReactNode
 }
 
 type Group = '今天' | '昨天' | '更早'
@@ -45,6 +46,7 @@ export default function Sidebar({
   onRename,
   onDelete,
   onToggleCollapse,
+  footer,
 }: SidebarProps) {
   const [menuId, setMenuId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -197,6 +199,7 @@ export default function Sidebar({
             </div>
           ))}
         </div>
+        {footer}
       </div>
     </aside>
   )

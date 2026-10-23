@@ -229,11 +229,11 @@
 - Add tests: `frontend/src/state/auth.test.ts`
 - Modify tests: `frontend/src/api/events.test.ts`, `frontend/src/test/smoke.test.tsx`, `frontend/src/release/semantic-assertions.test.ts`
 
-- [ ] Write failing Vitest coverage for `loading | anonymous | authenticated`, keyboard login, duplicate-submit protection, unified credential error, successful state replacement, global 401 reset, user-menu name/ID/logout, mobile menu behavior, and SSE authentication failure stopping reconnect.
+- [x] Write failing Vitest coverage for `loading | anonymous | authenticated`, keyboard login, duplicate-submit protection, unified credential error, successful state replacement, global 401 reset, user-menu name/ID/logout, mobile menu behavior, and SSE authentication failure stopping reconnect.
 
-- [ ] Run `cd frontend && npm test -- --run` and confirm the new tests fail.
+- [x] Run `cd frontend && npm test -- --run` and confirm the new tests fail.
 
-- [ ] Define the public client contract:
+- [x] Define the public client contract:
 
   ```ts
   export interface User { id: string; name: string }
@@ -250,11 +250,11 @@
 
   Have the shared request client emit one `authentication-required` event on any protected 401. Do not persist credentials or user objects in localStorage.
 
-- [ ] Refactor `App` so it renders no business hooks/SSE until authenticated. Mount the authenticated workspace under `key={`${user.id}:${epoch}`}` (or an equivalent child component boundary) so logout/login destroys all messages, drafts, workspaces, runs, datasets, selections, and timers. Change the navigation preference key to `zjudss:last-session:${user.id}`.
+- [x] Refactor `App` so it renders no business hooks/SSE until authenticated. Mount the authenticated workspace under `key={`${user.id}:${epoch}`}` (or an equivalent child component boundary) so logout/login destroys all messages, drafts, workspaces, runs, datasets, selections, and timers. Change the navigation preference key to `zjudss:last-session:${user.id}`.
 
-- [ ] Put `UserMenu` at the bottom of `HistorySidebar`, showing name and an avatar initial; its menu shows ID and logout. Preserve session rename/delete and the existing narrow-screen overlay. Use `BroadcastChannel('zjudss-auth')` for immediate same-origin logout UX; still rely on the server for authority.
+- [x] Put `UserMenu` at the bottom of `HistorySidebar`, showing name and an avatar initial; its menu shows ID and logout. Preserve session rename/delete and the existing narrow-screen overlay. Use `BroadcastChannel('zjudss-auth')` for immediate same-origin logout UX; still rely on the server for authority.
 
-- [ ] Run `cd frontend && npm test -- --run && npm run build`.
+- [x] Run `cd frontend && npm test -- --run && npm run build`.
 
 - [ ] Commit: `git add frontend/src && git commit -m "feat: add fixed-user login experience"`.
 

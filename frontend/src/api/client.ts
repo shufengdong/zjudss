@@ -1,8 +1,9 @@
 import type {
   AnalysisRun, DatasetMetadata, DatasetPage, DatasetViewData, ExampleDetail, ExampleSummary,
-  HistoryHit, Ingestion, Message, MessagePage, Principal, Session, SimulationTask, StorageUsage,
-  TaskComparison, Workspace,
+  HistoryHit, Ingestion, Message, MessagePage, Session, SimulationTask, StorageUsage,
+  TaskComparison, User, Workspace,
 } from '../types'
+import { emitAuthenticationRequired } from '../state/auth'
 
 export class ApiError extends Error {
   constructor(public status:number, message:string, public code?:string, public details?:unknown) {
@@ -15,11 +16,15 @@ async function errorFrom(res:Response) {
     return new ApiError(res.status,body.error??`请求失败（${res.status}）`,body.code,body.details)
   } catch { return new ApiError(res.status,`请求失败（${res.status}）`) }
 }
-export async function request<T>(url:string,init:RequestInit={},parse:(r:Response)=>Promise<T>=(r)=>r.json() as Promise<T>):Promise<T>{
+export async function request<T>(url:string,init:RequestInit={},parse:(r:Response)=>Promise<T>=(r)=>r.json() as Promise<T>,reportAuthentication=true):Promise<T>{
   const headers=new Headers(init.headers)
   if(init.body!==undefined&&!(init.body instanceof FormData)&&!headers.has('Content-Type')) headers.set('Content-Type','application/json')
   const res=await fetch(url,{...init,headers})
-  if(!res.ok) throw await errorFrom(res)
+  if(!res.ok) {
+    const error=await errorFrom(res)
+    if(reportAuthentication&&res.status===401) emitAuthenticationRequired()
+    throw error
+  }
   return parse(res)
 }
 const params=(values:Record<string,string|number|undefined|null>)=>{
@@ -27,7 +32,9 @@ const params=(values:Record<string,string|number|undefined|null>)=>{
   Object.entries(values).forEach(([k,v])=>{if(v!==undefined&&v!==null&&v!=='')p.set(k,String(v))})
   const value=p.toString(); return value?`?${value}`:''
 }
-export const getPrincipal=()=>request<Principal>('/api/me')
+export const login=(id:string,password:string)=>request<{user:User}>('/api/auth/login',{method:'POST',body:JSON.stringify({id,password})},(r)=>r.json() as Promise<{user:User}>,false)
+export const logout=()=>request<void>('/api/auth/logout',{method:'POST'},async()=>undefined,false)
+export const getCurrentUser=()=>request<User>('/api/me')
 export const listSessions=async()=>(await request<{sessions:Session[]}>('/api/sessions')).sessions
 export const createSession=(title='')=>request<Session>('/api/sessions',{method:'POST',body:JSON.stringify({title})})
 export const renameSession=(id:string,title:string)=>request<Session>(`/api/sessions/${id}`,{method:'PATCH',body:JSON.stringify({title})})
@@ -58,6 +65,6 @@ export const getAnalysis=(id:string)=>request<AnalysisRun>(`/api/analysis-runs/$
 export const getComparison=(id:string)=>request<TaskComparison>(`/api/task-comparisons/${id}`)
 export const getStorageUsage=()=>request<StorageUsage>('/api/storage-usage')
 export async function downloadDataset(id:string,name='dataset'){
-  const res=await fetch(`/api/datasets/${id}/download`); if(!res.ok)throw await errorFrom(res)
+  const res=await fetch(`/api/datasets/${id}/download`); if(!res.ok){const error=await errorFrom(res);if(res.status===401)emitAuthenticationRequired();throw error}
   return {blob:await res.blob(),filename:`${name}.parquet`}
 }

@@ -1,15 +1,17 @@
-import{useCallback,useEffect,useMemo,useRef,useState}from'react'
-import type{Message,MessageHandlers,Principal,Session}from'./types'
-import{createSession,deleteSession as deleteSessionApi,getPrincipal,listSessions,listTaskDatasets,postMessage,renameSession as renameSessionApi}from'./api/client'
+import{useCallback,useEffect,useMemo,useReducer,useRef,useState}from'react'
+import type{Message,MessageHandlers,Session,User}from'./types'
+import{createSession,deleteSession as deleteSessionApi,getCurrentUser,listSessions,listTaskDatasets,logout,postMessage,renameSession as renameSessionApi}from'./api/client'
 import{useSessionFeed}from'./hooks/useSessionFeed';import{useWorkspace}from'./hooks/useWorkspace';import{useIngestion}from'./hooks/useIngestion'
 import{useSimulationHistory}from'./hooks/useSimulationHistory';import{useStorageUsage}from'./hooks/useStorageUsage';import{useMediaQuery}from'./hooks/useMediaQuery'
 import HistorySidebar from'./components/history/HistorySidebar';import Composer from'./components/Composer';import UploadQueue from'./components/uploads/UploadQueue'
 import ResultPanel,{type WorkbenchTab}from'./components/ResultPanel';import DatasetWorkbench from'./components/datasets/DatasetWorkbench'
 import ComparisonView from'./components/tasks/ComparisonView';import ExampleLibrary from'./components/examples/ExampleLibrary';import MessageItem from'./components/messages/MessageItem'
 import{PanelLeftIcon,PanelRightIcon}from'./components/icons'
+import LoginPage from'./components/auth/LoginPage'
+import{AUTHENTICATION_REQUIRED_EVENT,authReducer,initialAuthState,preferenceKey}from'./state/auth'
 const localId=()=>`local-user-${Date.now()}-${Math.random()}`
-function App(){
-  const[sessions,setSessions]=useState<Session[]>([]),[selectedId,setSelectedId]=useState<string|null>(null),[principal,setPrincipal]=useState<Principal|null>(null)
+function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
+  const[sessions,setSessions]=useState<Session[]>([]),[selectedId,setSelectedId]=useState<string|null>(null)
   const[draft,setDraft]=useState(''),[sidebarCollapsed,setSidebarCollapsed]=useState(false),[panelOpen,setPanelOpen]=useState(true)
   const[tab,setTab]=useState<WorkbenchTab>('workspace'),[datasetId,setDatasetId]=useState<string|null>(null),[comparisonId,setComparisonId]=useState<string|null>(null)
   const[examplesOpen,setExamplesOpen]=useState(false),[toast,setToast]=useState<string|null>(null)
@@ -17,10 +19,10 @@ function App(){
   const{feed,older,add,remove}=useSessionFeed(selectedId),workspaceState=useWorkspace(selectedId),ingestion=useIngestion(selectedId)
   const tasks=useSimulationHistory(selectedId,feed?.messages.length??0),usage=useStorageUsage(feed?.messages.length??0)
   const notify=useCallback((text:string)=>{setToast(text);if(timer.current)clearTimeout(timer.current);timer.current=window.setTimeout(()=>setToast(null),2500)},[])
-  const select=useCallback((id:string)=>{setSelectedId(id);setDatasetId(null);setComparisonId(null);if(isNarrow)setSidebarCollapsed(true);if(principal)localStorage.setItem(`zjudss:last-session:${principal.scopeKey}`,id)},[principal,isNarrow])
+  const select=useCallback((id:string)=>{setSelectedId(id);setDatasetId(null);setComparisonId(null);if(isNarrow)setSidebarCollapsed(true);localStorage.setItem(preferenceKey(user.id),id)},[user.id,isNarrow])
   useEffect(()=>{if(isNarrow){setSidebarCollapsed(true);setPanelOpen(false)}},[isNarrow])
-  useEffect(()=>{let live=true;void Promise.all([getPrincipal(),listSessions()]).then(([me,list])=>{if(!live)return;setPrincipal(me);setSessions(list)
-    const remembered=localStorage.getItem(`zjudss:last-session:${me.scopeKey}`),next=list.some(s=>s.id===remembered)?remembered:list[0]?.id??null;if(next)setSelectedId(next)
+  useEffect(()=>{let live=true;void listSessions().then(list=>{if(!live)return;setSessions(list)
+    const remembered=localStorage.getItem(preferenceKey(user.id)),next=list.some(s=>s.id===remembered)?remembered:list[0]?.id??null;if(next)setSelectedId(next)
   }).catch(e=>notify(e instanceof Error?e.message:'初始化失败'));return()=>{live=false}},[notify])
   useEffect(()=>{const messages=feed?.messages??[];const last=[...messages].reverse().find((m):m is Extract<Message,{type:'model-status'}>=>m.type==='model-status');if(last){workspaceState.accept(last);if(selectedId)void workspaceState.reload(selectedId)}},[feed?.messages,selectedId])
   const newSession=useCallback(async()=>{try{const value=await createSession();setSessions(v=>[value,...v]);select(value.id)}catch(e){notify(e instanceof Error?e.message:'新建失败')}},[notify,select])
@@ -36,7 +38,7 @@ function App(){
   const title=sessions.find(s=>s.id===selectedId)?.title??'配电网仿真智能体'
   return <div className="flex h-screen w-full overflow-hidden">
     {isNarrow&&!sidebarCollapsed&&<button className="fixed inset-0 z-30 bg-black/30" aria-label="关闭历史侧栏" onClick={()=>setSidebarCollapsed(true)}/>}
-    {(!isNarrow||!sidebarCollapsed)&&<div className={isNarrow?'fixed inset-y-0 left-0 z-40 shadow-2xl':''}><HistorySidebar sessions={sessions} selectedId={selectedId} collapsed={sidebarCollapsed} onSelect={select} onNew={()=>void newSession()} onRename={(id,title)=>void rename(id,title)} onDelete={id=>void removeSession(id)} onToggleCollapse={()=>setSidebarCollapsed(v=>!v)}/></div>}
+    {(!isNarrow||!sidebarCollapsed)&&<div className={isNarrow?'fixed inset-y-0 left-0 z-40 shadow-2xl':''}><HistorySidebar sessions={sessions} selectedId={selectedId} collapsed={sidebarCollapsed} onSelect={select} onNew={()=>void newSession()} onRename={(id,title)=>void rename(id,title)} onDelete={id=>void removeSession(id)} onToggleCollapse={()=>setSidebarCollapsed(v=>!v)} user={user} onLogout={onLogout}/></div>}
     <main inert={isNarrow&&!sidebarCollapsed?true:undefined} aria-hidden={isNarrow&&!sidebarCollapsed?true:undefined} className="flex min-w-0 flex-1 flex-col bg-slate-50"><header className="flex h-14 items-center gap-2 border-b bg-white px-4">
       <button aria-label={sidebarCollapsed?'展开历史侧栏':'收起历史侧栏'} onClick={()=>setSidebarCollapsed(v=>!v)}><PanelLeftIcon className="h-5 w-5"/></button><h1 className="truncate text-sm font-semibold">{title}</h1>
       {usage?.isWarning&&<span className="ml-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">存储已使用 {Math.round(usage.logicalBytes/usage.byteLimit*100)}%</span>}
@@ -55,5 +57,23 @@ function App(){
     {examplesOpen&&<ExampleLibrary onClose={()=>setExamplesOpen(false)} onUse={(id,name)=>{setExamplesOpen(false);sendText(`请导入内置案例“${name}”（exampleId: ${id}），导入后先不要运行，告诉我模型状态`)}}/>}
     {toast&&<div className="fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white">{toast}</div>}
   </div>
+}
+function App(){
+  const[auth,dispatch]=useReducer(authReducer,initialAuthState)
+  const channel=useRef<BroadcastChannel|null>(null)
+  useEffect(()=>{let live=true
+    void getCurrentUser().then(user=>{if(live)dispatch({type:'authenticated',user})}).catch(()=>{if(live)dispatch({type:'anonymous'})})
+    const unauthenticated=()=>dispatch({type:'anonymous'})
+    window.addEventListener(AUTHENTICATION_REQUIRED_EVENT,unauthenticated)
+    if(typeof BroadcastChannel!=='undefined'){
+      channel.current=new BroadcastChannel('zjudss-auth')
+      channel.current.onmessage=event=>{if(event.data==='logout')unauthenticated()}
+    }
+    return()=>{live=false;window.removeEventListener(AUTHENTICATION_REQUIRED_EVENT,unauthenticated);channel.current?.close();channel.current=null}
+  },[])
+  const onLogout=useCallback(()=>{void logout().catch(()=>undefined).finally(()=>{dispatch({type:'anonymous'});channel.current?.postMessage('logout')})},[])
+  if(auth.status==='loading')return <main className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">正在连接…</main>
+  if(auth.status==='anonymous')return <LoginPage onAuthenticated={user=>dispatch({type:'authenticated',user})}/>
+  return <AuthenticatedApp key={`${auth.user.id}:${auth.epoch}`} user={auth.user} onLogout={onLogout}/>
 }
 export default App

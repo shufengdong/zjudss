@@ -22,7 +22,10 @@ class FakeEventSource {
   }
 }
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 
 describe('subscribeEvents', () => {
   it('exposes readiness, messages, control events and close', async () => {
@@ -56,5 +59,22 @@ describe('subscribeEvents', () => {
     expect(controls).toEqual(['cursor_unavailable'])
     subscription.close()
     expect(source.closed).toBe(true)
+  })
+
+  it('closes permanently when an error probe reports missing authentication', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ error: '请先登录', code: 'authentication_required' }),
+      { status: 401, headers: { 'content-type': 'application/json' } },
+    )))
+    const listener = vi.fn()
+    window.addEventListener('zjudss:authentication-required', listener)
+    const subscription = subscribeEvents('7', { onMessage: () => undefined, onControl: () => undefined })
+    void subscription.opened.catch(() => undefined)
+
+    FakeEventSource.latest.onerror?.()
+    await vi.waitFor(() => expect(FakeEventSource.latest.closed).toBe(true))
+    expect(listener).toHaveBeenCalledTimes(1)
+    window.removeEventListener('zjudss:authentication-required', listener)
   })
 })

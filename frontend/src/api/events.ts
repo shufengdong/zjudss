@@ -1,4 +1,5 @@
 import type { Message } from '../types'
+import { ApiError, getCurrentUser } from './client'
 
 export interface SseControlEvent {
   type: 'resync-required'
@@ -23,6 +24,8 @@ export interface EventCallbacks {
 export function subscribeEvents(sessionId: string, callbacks: EventCallbacks): EventSubscription {
   const source = new EventSource(`/api/sessions/${sessionId}/events`)
   let opened = false
+  let probing = false
+  let stopped = false
   let resolveOpened!: () => void
   let rejectOpened!: (reason: Error) => void
   const openedPromise = new Promise<void>((resolve, reject) => {
@@ -55,10 +58,18 @@ export function subscribeEvents(sessionId: string, callbacks: EventCallbacks): E
   source.onerror = () => {
     if (!opened) rejectOpened(new Error('事件流连接失败'))
     callbacks.onError?.()
+    if (probing || stopped) return
+    probing = true
+    void getCurrentUser().catch((error: unknown) => {
+      if (error instanceof ApiError && error.status === 401) {
+        stopped = true
+        source.close()
+      }
+    }).finally(() => { probing = false })
   }
 
   return {
     opened: openedPromise,
-    close: () => source.close(),
+    close: () => { stopped = true; source.close() },
   }
 }
