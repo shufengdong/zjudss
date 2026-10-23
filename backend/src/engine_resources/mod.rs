@@ -177,48 +177,190 @@ impl EngineResourceRegistry {
     }
 
     pub fn publish(
-        snapshot: &EngineResourceSnapshot,
+        mut snapshot: EngineResourceSnapshot,
         data_dir: &Path,
-    ) -> Result<PathBuf, EngineResourceError> {
+    ) -> Result<(EngineResourceSnapshot, PathBuf), EngineResourceError> {
         let parent = data_dir.join("system/engine-resources");
         std::fs::create_dir_all(&parent).map_err(EngineResourceError::io)?;
         let destination = parent.join(&snapshot.id);
+        let generated = generated_snapshot_files(&snapshot)?;
+        let mut inventory = generated
+            .iter()
+            .map(|(path, bytes)| (path.clone(), hash_bytes(bytes)))
+            .collect::<BTreeMap<_, _>>();
+        inventory.extend(
+            snapshot
+                .source_hashes
+                .iter()
+                .map(|(path, hash)| (format!("source/{path}"), hash.clone())),
+        );
         if destination.is_dir() {
-            return Ok(destination);
+            verify_published_snapshot(&destination, &snapshot.id, &inventory)?;
+            rebase_snapshot(&mut snapshot, &destination)?;
+            return Ok((snapshot, destination));
         }
         let staging = parent.join(format!(".{}-{}", snapshot.id, std::process::id()));
         if staging.exists() {
             std::fs::remove_dir_all(&staging).map_err(EngineResourceError::io)?;
         }
-        std::fs::create_dir_all(staging.join("catalog")).map_err(EngineResourceError::io)?;
-        for (name, bytes) in &snapshot.catalog_bytes {
-            std::fs::write(staging.join("catalog").join(name), bytes)
-                .map_err(EngineResourceError::io)?;
-        }
-        for (relative, bytes) in &snapshot.documents {
-            let relative = relative.strip_prefix("docs/").unwrap_or(relative);
-            let path = staging.join("docs").join(relative);
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(EngineResourceError::io)?;
+        let result = (|| {
+            std::fs::create_dir_all(&staging).map_err(EngineResourceError::io)?;
+            for (relative, bytes) in &generated {
+                write_published_file(&staging, relative, bytes)?;
             }
-            std::fs::write(path, bytes).map_err(EngineResourceError::io)?;
+            for (relative, expected_hash) in &snapshot.source_hashes {
+                let source = safe_file(&snapshot.engine_root, relative).map_err(|_| {
+                    EngineResourceError::new(
+                        "engine_resource_changed_during_scan",
+                        format!("resource disappeared: {relative}"),
+                    )
+                })?;
+                let bytes = std::fs::read(&source).map_err(|_| {
+                    EngineResourceError::new(
+                        "engine_resource_changed_during_scan",
+                        format!("resource unreadable: {relative}"),
+                    )
+                })?;
+                if hash_bytes(&bytes) != *expected_hash {
+                    return Err(EngineResourceError::new(
+                        "engine_resource_changed_during_scan",
+                        format!("resource changed: {relative}"),
+                    ));
+                }
+                write_published_file(&staging, &format!("source/{relative}"), &bytes)?;
+            }
+            write_published_file(
+                &staging,
+                "manifest.json",
+                &serde_json::to_vec_pretty(&serde_json::json!({
+                    "snapshotId": snapshot.id,
+                    "engineContractVersion": snapshot.contract_version,
+                    "catalogSchemaVersion": snapshot.catalog_schema_version,
+                    "files": inventory,
+                }))
+                .map_err(|error| {
+                    EngineResourceError::new("engine_resource_io", error.to_string())
+                })?,
+            )?;
+            std::fs::rename(&staging, &destination).map_err(EngineResourceError::io)
+        })();
+        if let Err(error) = result {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(error);
         }
-        std::fs::write(
-            staging.join("docs-index.json"),
-            serde_json::to_vec_pretty(&snapshot.knowledge.sections).unwrap(),
-        )
-        .map_err(EngineResourceError::io)?;
-        std::fs::write(
-            staging.join("examples.json"),
-            serde_json::to_vec_pretty(&snapshot.examples).unwrap(),
-        )
-        .map_err(EngineResourceError::io)?;
-        std::fs::write(staging.join("manifest.json"), serde_json::to_vec_pretty(&serde_json::json!({
-            "snapshotId": snapshot.id, "engineContractVersion": snapshot.contract_version, "catalogSchemaVersion": snapshot.catalog_schema_version
-        })).unwrap()).map_err(EngineResourceError::io)?;
-        std::fs::rename(&staging, &destination).map_err(EngineResourceError::io)?;
-        Ok(destination)
+        verify_published_snapshot(&destination, &snapshot.id, &inventory)?;
+        rebase_snapshot(&mut snapshot, &destination)?;
+        Ok((snapshot, destination))
     }
+}
+
+fn generated_snapshot_files(
+    snapshot: &EngineResourceSnapshot,
+) -> Result<BTreeMap<String, Vec<u8>>, EngineResourceError> {
+    let mut files = BTreeMap::new();
+    for (name, bytes) in &snapshot.catalog_bytes {
+        files.insert(format!("catalog/{name}"), bytes.clone());
+    }
+    for (relative, bytes) in &snapshot.documents {
+        let relative = relative.strip_prefix("docs/").unwrap_or(relative);
+        files.insert(format!("docs/{relative}"), bytes.clone());
+    }
+    files.insert(
+        "docs-index.json".to_string(),
+        serde_json::to_vec_pretty(&snapshot.knowledge.sections)
+            .map_err(|error| EngineResourceError::new("engine_resource_io", error.to_string()))?,
+    );
+    files.insert(
+        "examples.json".to_string(),
+        serde_json::to_vec_pretty(&snapshot.examples)
+            .map_err(|error| EngineResourceError::new("engine_resource_io", error.to_string()))?,
+    );
+    Ok(files)
+}
+
+fn write_published_file(
+    root: &Path,
+    relative: &str,
+    bytes: &[u8],
+) -> Result<(), EngineResourceError> {
+    let relative = Path::new(relative);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(EngineResourceError::new(
+            "engine_resource_path_escape",
+            "invalid published resource path",
+        ));
+    }
+    let path = root.join(relative);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(EngineResourceError::io)?;
+    }
+    std::fs::write(path, bytes).map_err(EngineResourceError::io)
+}
+
+fn verify_published_snapshot(
+    destination: &Path,
+    snapshot_id: &str,
+    expected: &BTreeMap<String, String>,
+) -> Result<(), EngineResourceError> {
+    let manifest =
+        std::fs::read(safe_file(destination, "manifest.json")?).map_err(EngineResourceError::io)?;
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest).map_err(|error| {
+        EngineResourceError::new("engine_resource_hash_mismatch", error.to_string())
+    })?;
+    if manifest
+        .get("snapshotId")
+        .and_then(serde_json::Value::as_str)
+        != Some(snapshot_id)
+    {
+        return Err(EngineResourceError::new(
+            "engine_resource_hash_mismatch",
+            "published snapshot id mismatch",
+        ));
+    }
+    let declared: BTreeMap<String, String> =
+        serde_json::from_value(manifest.get("files").cloned().ok_or_else(|| {
+            EngineResourceError::new(
+                "engine_resource_hash_mismatch",
+                "published file inventory missing",
+            )
+        })?)
+        .map_err(|error| {
+            EngineResourceError::new("engine_resource_hash_mismatch", error.to_string())
+        })?;
+    if &declared != expected {
+        return Err(EngineResourceError::new(
+            "engine_resource_hash_mismatch",
+            "published file inventory mismatch",
+        ));
+    }
+    for (relative, expected_hash) in expected {
+        let path = safe_file(destination, relative).map_err(|_| {
+            EngineResourceError::new(
+                "engine_resource_hash_mismatch",
+                format!("published file missing: {relative}"),
+            )
+        })?;
+        if hash_file(&path)? != *expected_hash {
+            return Err(EngineResourceError::new(
+                "engine_resource_hash_mismatch",
+                format!("published file changed: {relative}"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn rebase_snapshot(
+    snapshot: &mut EngineResourceSnapshot,
+    destination: &Path,
+) -> Result<(), EngineResourceError> {
+    snapshot.engine_root = safe_directory(destination, "source")?;
+    snapshot.source_root = safe_directory(&snapshot.engine_root, "sparrowzz/dss")?;
+    Ok(())
 }
 
 pub(crate) fn hash_file(path: &Path) -> Result<String, EngineResourceError> {

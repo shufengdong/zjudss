@@ -18,6 +18,7 @@ pub struct TestApp {
     pub router: Router,
     pub pool: DbPool,
     pub state: AppState,
+    pub live_engine_root: std::path::PathBuf,
     _root: TempDir,
 }
 
@@ -162,6 +163,7 @@ impl TestApp {
         )
         .unwrap();
 
+        let live_engine_root = engine_root.clone();
         let config = RuntimeConfig::from_values(
             root.path(),
             BTreeMap::from([(
@@ -175,8 +177,9 @@ impl TestApp {
             .expect("preflight embedded agent knowledge");
         let engine_snapshot = EngineResourceRegistry::load(&config.tensoreval_cwd, &HashSet::new())
             .expect("preflight isolated engine resource fixture");
-        EngineResourceRegistry::publish(&engine_snapshot, &config.data_dir)
-            .expect("publish isolated engine snapshot");
+        let (engine_snapshot, _) =
+            EngineResourceRegistry::publish(engine_snapshot, &config.data_dir)
+                .expect("publish isolated engine snapshot");
         let catalog = std::sync::Arc::new(
             SchemaCatalog::from_snapshot(&engine_snapshot, &engine_snapshot.contract_version)
                 .expect("load isolated schema catalog"),
@@ -218,6 +221,7 @@ impl TestApp {
             router,
             pool,
             state,
+            live_engine_root,
             _root: root,
         }
     }

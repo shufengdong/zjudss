@@ -85,6 +85,51 @@ fn discovers_current_tree_deterministically_and_snapshot_changes_with_loaded_byt
 }
 
 #[test]
+fn publish_freezes_every_loaded_source_and_rebases_the_snapshot() {
+    let fixture = fixture(None);
+    let snapshot = fixture.load();
+    let data = tempfile::tempdir().unwrap();
+    let (published, path) = EngineResourceRegistry::publish(snapshot, data.path()).unwrap();
+    assert_eq!(published.engine_root, path.join("source"));
+    assert!(path.join("catalog/dataframes.json").is_file());
+    assert!(path.join("docs/nested/guide.md").is_file());
+    assert!(path.join("source/sparrowzz/dss/demo.rss").is_file());
+    assert!(
+        path.join("source/sparrowzz/dss/rssbundle/demo.rssbundle/manifest.json")
+            .is_file()
+    );
+    assert!(
+        path.join("source/sparrowzz/dss/rssbundle/demo.rssbundle/main.rss")
+            .is_file()
+    );
+}
+
+#[test]
+fn publish_rejects_source_changes_and_corrupt_existing_snapshots() {
+    let changed = fixture(None);
+    let snapshot = changed.load();
+    std::fs::write(changed.dss().join("demo.rss"), "changed").unwrap();
+    assert_eq!(
+        EngineResourceRegistry::publish(snapshot, tempfile::tempdir().unwrap().path())
+            .unwrap_err()
+            .code(),
+        "engine_resource_changed_during_scan"
+    );
+
+    let fixture = fixture(None);
+    let snapshot = fixture.load();
+    let data = tempfile::tempdir().unwrap();
+    let (_, path) = EngineResourceRegistry::publish(snapshot.clone(), data.path()).unwrap();
+    std::fs::write(path.join("source/sparrowzz/dss/demo.rss"), "corrupt").unwrap();
+    assert_eq!(
+        EngineResourceRegistry::publish(snapshot, data.path())
+            .unwrap_err()
+            .code(),
+        "engine_resource_hash_mismatch"
+    );
+}
+
+#[test]
 fn validates_catalog_schema_and_required_shape_but_allows_no_examples() {
     let empty = fixture(None);
     std::fs::remove_file(empty.dss().join("demo.rss")).unwrap();

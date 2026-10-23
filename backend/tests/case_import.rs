@@ -26,6 +26,7 @@ async fn applying_a_case_uses_model_import_and_changes_only_the_mutable_draft() 
         .iter()
         .find(|example| backend::application::CaseImportService::is_modelizable(example))
         .unwrap();
+    std::fs::remove_dir_all(&app.live_engine_root).unwrap();
     let response = app.router.clone().oneshot(
         Request::post(format!("/api/sessions/{}/draft/example", session.id))
             .header("cookie", &cookie).header("content-type", "application/json")
