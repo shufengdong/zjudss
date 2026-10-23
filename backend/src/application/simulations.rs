@@ -7,9 +7,7 @@ use std::{
     time::Duration,
 };
 
-use crate::adapters::{
-    ENGINE_CONTRACT_VERSION, InspectSpec, NamedInput, RunMode, RunSpec, SimEngine,
-};
+use crate::adapters::{ENGINE_CONTRACT_VERSION, NamedInput, RunMode, RunSpec, SimEngine};
 use crate::agent::knowledge::AgentKnowledge;
 use crate::application::{
     ArtifactMetadata, ArtifactService, EventBus, EventWriter, OperationKind, OperationRef,
@@ -305,21 +303,6 @@ impl SimulationService {
         };
         self.stage(&request.principal, task.id, "inspect", &writer)
             .await?;
-        if source_kind == "rss" {
-            let inspect = entry
-                .as_ref()
-                .and_then(|v| v.relative_path.as_deref())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| script_path.clone());
-            self.engine
-                .inspect(InspectSpec {
-                    input_tree: input_tree.clone(),
-                    model_path: inspect,
-                    timeout: Duration::from_secs(60),
-                })
-                .await
-                .map_err(|e| SimulationError::new("engine_inspect_failed", e.to_string()))?;
-        }
         self.stage(&request.principal, task.id, "sim", &writer)
             .await?;
         let mode = match source_kind {

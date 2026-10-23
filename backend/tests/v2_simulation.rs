@@ -5,7 +5,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use backend::adapters::{
     AdapterError, EngineDatasetOutput, EngineRunOutput, ErrorCategory, InspectOutcome, InspectSpec,
-    RunSpec, SimEngine,
+    RunSpec, SimEngine, StubEngine,
 };
 use backend::agent::knowledge::AgentKnowledge;
 use backend::application::{
@@ -36,6 +36,32 @@ fn principal(key: &str) -> Principal {
 }
 fn instance() -> Principal {
     principal("instance")
+}
+
+#[derive(Debug)]
+struct RssEntryEngine;
+
+#[async_trait]
+impl SimEngine for RssEntryEngine {
+    async fn inspect(&self, _: InspectSpec) -> Result<InspectOutcome, AdapterError> {
+        Err(AdapterError::new(
+            "dss_inspect_must_not_run_for_rss",
+            ErrorCategory::Model,
+            "RSS 已是可执行脚本",
+        ))
+    }
+
+    async fn run_dataframe(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError> {
+        StubEngine.run_dataframe(spec).await
+    }
+
+    async fn run_bundle(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError> {
+        StubEngine.run_bundle(spec).await
+    }
+
+    async fn run_analysis(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError> {
+        StubEngine.run_analysis(spec).await
+    }
 }
 
 async fn ready_dataframe(app: &TestApp, p: &Principal) -> (i32, i32) {
@@ -179,7 +205,7 @@ async fn ready_version_persists_reproducible_task_and_generic_parquet_dataset() 
 
 #[tokio::test]
 async fn rss_studies_execute_the_immutable_entry_artifact_without_generated_script() {
-    let app = TestApp::spawn().await;
+    let app = TestApp::spawn_with_engine(Arc::new(RssEntryEngine)).await;
     let p = instance();
     let session = app
         .state

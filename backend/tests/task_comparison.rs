@@ -137,6 +137,36 @@ async fn compatible_tasks_create_traceable_analysis_and_difference_dataset() {
     let (found, compat, datasets) = app.state.comparison_service.find(&p, c.id).await.unwrap();
     assert_eq!(found.analysis_run_id, c.analysis_run_id);
     assert_eq!(compat["stableKeys"], json!(["id"]));
+    let (analysis, _) = app
+        .state
+        .analysis_service
+        .find(&p, c.analysis_run_id)
+        .await
+        .unwrap();
+    let scope = app
+        .state
+        .artifact_service
+        .resolve_scope(&p.storage)
+        .await
+        .unwrap();
+    let artifact = app
+        .state
+        .artifact_service
+        .find_owned(scope.id, analysis.script_artifact_id)
+        .await
+        .unwrap();
+    let script = std::fs::read_to_string(
+        app.state
+            .artifact_service
+            .store()
+            .resolve(&artifact.storage_path)
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(script.starts_with("joined = join("));
+    assert!(script.contains("absolute"));
+    assert!(!script.contains("compare_frames"));
+    assert!(!script.contains('#'));
     assert_eq!(datasets.len(), 1);
     let meta = app
         .state
@@ -173,6 +203,45 @@ async fn compatible_tasks_create_traceable_analysis_and_difference_dataset() {
         .unwrap();
     assert!(msgs.iter().any(|m| m.kind == "comparison"));
 }
+
+#[tokio::test]
+async fn short_circuit_results_use_bus_and_kind_as_stable_business_keys() {
+    let app = TestApp::spawn().await;
+    let (p, session, left, right) = two_tasks(&app).await;
+    let fault_schema = json!([
+        {"name":"bus","dtype":"Utf8View","nullable":true,"unit":null},
+        {"name":"kind","dtype":"Utf8View","nullable":true,"unit":null},
+        {"name":"i_f_mag","dtype":"LargeList(Float64, field: 'element')","nullable":true,"unit":null},
+        {"name":"i_residual_mag","dtype":"Float64","nullable":true,"unit":null}
+    ])
+    .to_string();
+    let mut conn = app.pool.get().unwrap();
+    diesel::update(
+        backend::db::schema::result_datasets::table.filter(
+            backend::db::schema::result_datasets::task_id.eq_any([Some(left), Some(right)]),
+        ),
+    )
+    .set(backend::db::schema::result_datasets::schema_json.eq(&fault_schema))
+    .execute(&mut conn)
+    .unwrap();
+    drop(conn);
+
+    let comparison = app
+        .state
+        .comparison_service
+        .compare(&p, session, left, right, None, vec![])
+        .await
+        .unwrap();
+    let (_, compatibility, _) = app
+        .state
+        .comparison_service
+        .find(&p, comparison.id)
+        .await
+        .unwrap();
+    assert_eq!(compatibility["stableKeys"], json!(["bus", "kind"]));
+    assert_eq!(compatibility["values"][0]["column"], "i_residual_mag");
+}
+
 #[tokio::test]
 async fn same_task_foreign_session_and_missing_stable_key_fail_without_comparison() {
     let app = TestApp::spawn().await;

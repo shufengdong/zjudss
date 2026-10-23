@@ -173,8 +173,11 @@ fn compatible_pair(
                         || n == "key"
                         || n.ends_with("_id")
                         || n == "name"
+                        || n == "bus"
+                        || n == "kind"
                         || n == "time"
                         || n == "time_s")
+                        && rss_identifier(&c.name)
                         && rm.get(c.name.as_str()).is_some_and(|v| v.dtype == c.dtype)
                 })
                 .map(|c| c.name.clone())
@@ -191,7 +194,7 @@ fn compatible_pair(
             let mut values = Vec::new();
             let mut unit_error = false;
             for c in &lc {
-                if keys.contains(&c.name) || !numeric(&c.dtype) {
+                if keys.contains(&c.name) || !numeric(&c.dtype) || !rss_identifier(&c.name) {
                     continue;
                 }
                 if let Some(other) = rm.get(c.name.as_str()) {
@@ -229,11 +232,53 @@ fn numeric(v: &str) -> bool {
         || v == "int64"
         || v == "float64"
 }
+
+fn rss_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 fn comparison_script(c: &Value) -> String {
-    format!(
-        "# controlled comparison\n# compatibility={}\nresult = compare_frames(baseline, candidate)\n",
-        crate::application::canonical_json(c)
-    )
+    let keys = c
+        .get("stableKeys")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    let values = c
+        .get("values")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.get("column").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    let key_array = serde_json::to_string(&keys).unwrap_or_else(|_| "[]".into());
+    let mut script =
+        format!("joined = join(baseline, candidate, {key_array}, {key_array}, inner);\n");
+    for (index, column) in values.iter().enumerate() {
+        let metric = serde_json::to_string(column).unwrap();
+        let keys = keys
+            .iter()
+            .map(|key| format!("    col({key}),\n"))
+            .collect::<String>();
+        script.push_str(&format!(
+            "metric_{index} = select(\n{keys}    alias({metric}, metric),\n    alias(col({column}), baseline_value),\n    alias(col({column}_right), candidate_value),\n    alias(abs(col({column}_right) - col({column})), absolute),\n    alias((col({column}_right) - col({column})) / col({column}), relative),\n    joined\n);\n"
+        ));
+    }
+    if values.len() == 1 {
+        script.push_str("result = select(all(), metric_0);\n");
+    } else {
+        let frames = (0..values.len())
+            .map(|index| format!("metric_{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        script.push_str(&format!("result = concat(\"vertical\", {frames});\n"));
+    }
+    script
 }
 fn result_ref(d: &ResultDataset) -> ResultOutputRef {
     let columns: Vec<crate::application::datasets::DatasetColumn> =

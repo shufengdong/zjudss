@@ -232,6 +232,50 @@ fn services(app: &TestApp, session_id: i32) -> Arc<ToolServices> {
 }
 
 #[tokio::test]
+async fn inspect_workspace_exposes_stable_input_display_names_to_the_agent() {
+    let app = TestApp::spawn().await;
+    let (session_id, _) = workspace_with_csv(&app, &[("bus-upload.csv", b"id,p\nb1,100\n")]).await;
+    let result = tools::inspect_workspace::InspectWorkspaceTool::new(services(&app, session_id))
+        .call(&mut ToolContext::new(), tools::inspect_workspace::Args {})
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result["versions"][0]["inputs"][0]["fileName"],
+        "bus-upload.csv"
+    );
+    assert_eq!(
+        result["versions"][0]["inputs"][0]["relativePath"],
+        "tables/bus-upload.csv"
+    );
+    assert!(result["versions"][0]["inputs"][0]["sheetName"].is_null());
+}
+
+#[tokio::test]
+async fn activate_tool_explains_that_expected_draft_is_the_current_candidate() {
+    let app = TestApp::spawn().await;
+    let (session_id, _) = workspace_with_csv(&app, &[("bus-upload.csv", b"id,p\nb1,100\n")]).await;
+    let description =
+        tools::activate_model_version::ActivateModelVersionTool::new(services(&app, session_id))
+            .description();
+
+    assert!(description.contains("expectedDraftVersionId"));
+    assert!(description.contains("versionId 相同"));
+}
+
+#[tokio::test]
+async fn modify_tool_documents_the_reserved_dss_property_patch_shape() {
+    let app = TestApp::spawn().await;
+    let (session_id, _) = workspace_with_csv(&app, &[("bus-upload.csv", b"id,p\nb1,100\n")]).await;
+    let description =
+        tools::modify_model::ModifyModelTool::new(services(&app, session_id)).description();
+
+    assert!(description.contains("dss_property 不是引擎函数"));
+    assert!(description.contains("rowKey.object"));
+    assert!(description.contains("changes.<property>"));
+}
+
+#[tokio::test]
 async fn prompt_skill_document_and_example_tools_are_id_bounded() {
     let app = TestApp::spawn().await;
     let (session_id, _) = workspace_with_csv(&app, &[("bus.csv", b"id,p\nb1,100\n")]).await;

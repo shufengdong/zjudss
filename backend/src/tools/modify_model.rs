@@ -28,7 +28,7 @@ impl Tool for ModifyModelTool {
     type Output = Value;
     type Error = DomainToolError;
     fn description(&self) -> String {
-        "校验 tableKind、唯一 rowKey、from/to 和 unit，写新 Parquet artifact 并派生模型版本。"
+        "校验 tableKind、唯一 rowKey、from/to 和 unit，并派生不可变模型版本。对 .dss 文本使用保留 tableKind=dss_property（dss_property 不是引擎函数），rowKey.object 指定如 circuit.IEEE13Nodeckt 的对象，changes.<property> 指定唯一属性及 {from,to,unit}；对 .rss 参数使用 tableKind=rss_parameter、rowKey.name 和 changes.value。"
             .into()
     }
     fn parameters(&self) -> Value {

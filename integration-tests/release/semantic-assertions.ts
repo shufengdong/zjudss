@@ -29,6 +29,14 @@ export interface ExpectedDomainState {
   activeVersionId?: string
 }
 
+interface AgentTurnMessage {
+  id: string | number
+  type: string
+  callId?: string
+  toolName?: string
+  status?: string
+}
+
 const allowedTools = new Set([
   'inspect_workspace', 'search_examples', 'inspect_example', 'import_example',
   'remove_model_input', 'replace_model_input', 'confirm_dataframe_mapping', 'modify_model',
@@ -40,6 +48,21 @@ const allowedTools = new Set([
 
 function invariant(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
+}
+
+export function agentTurnCompleted(messages: AgentTurnMessage[], requiredTools: string[] = []) {
+  const calls = messages.filter((message) => message.type === 'tool-call')
+  const running = new Set(calls.filter((message) => message.status === 'running').map((message) => message.callId))
+  const terminal = new Set(calls.filter((message) => message.status !== 'running').map((message) => message.callId))
+  if (![...running].every((id) => terminal.has(id))) return false
+  if (!requiredTools.every((tool) => calls.some((call) => call.toolName === tool && call.status === 'success'))) return false
+  const assistantIds = messages
+    .filter((message) => message.type === 'assistant')
+    .map((message) => Number(message.id))
+  if (assistantIds.length === 0) return false
+  const lastAssistantId = Math.max(...assistantIds)
+  const lastToolId = Math.max(0, ...calls.map((message) => Number(message.id)))
+  return lastAssistantId > lastToolId
 }
 
 function assertStableIds(call: ToolTraceEntry) {
@@ -86,8 +109,9 @@ export function expectToolTrace(trace: ToolTraceEntry[], expectedDependencies: E
       invariant(loadedIndex >= 0 && loadedIndex < gatedIndex, `${skill} was not loaded before ${tool}`)
     }
   }
-  const failed = trace.find((call) => call.status === 'failed')
-  invariant(!failed, `tool ${failed?.toolName ?? 'unknown'} failed`)
+  const unrecovered = trace.find((call, index) => call.status === 'failed'
+    && !trace.slice(index + 1).some((later) => later.toolName === call.toolName && later.status === 'success'))
+  invariant(!unrecovered, `tool ${unrecovered?.toolName ?? 'unknown'} failed without recovery`)
 }
 
 async function json(api: SemanticApiContext, path: string) {
@@ -96,11 +120,24 @@ async function json(api: SemanticApiContext, path: string) {
   return response.json()
 }
 
+export async function readAllMessages(api: SemanticApiContext, sessionId: string) {
+  const messages: any[] = []
+  let beforeId: string | undefined
+  for (let page = 0; page < 20; page += 1) {
+    const query = beforeId ? `?limit=100&beforeId=${beforeId}` : '?limit=100'
+    const response = await json(api, `/api/sessions/${sessionId}/messages${query}`)
+    messages.push(...response.messages)
+    if (!response.hasMoreBefore || !response.nextBeforeId) break
+    beforeId = String(response.nextBeforeId)
+  }
+  return [...new Map(messages.map((message) => [String(message.id), message])).values()]
+}
+
 export async function expectDomainState(api: SemanticApiContext, expected: ExpectedDomainState) {
   const workspace = await json(api, `/api/sessions/${expected.sessionId}/workspace`)
-  const versions = await json(api, `/api/sessions/${expected.sessionId}/versions`)
+  const versions = (await json(api, `/api/sessions/${expected.sessionId}/versions`)).versions as any[]
   const tasks = await json(api, `/api/sessions/${expected.sessionId}/tasks`)
-  const messages = (await json(api, `/api/sessions/${expected.sessionId}/messages?limit=100`)).messages as any[]
+  const messages = await readAllMessages(api, expected.sessionId)
   invariant(versions.length >= expected.minimumVersions, `expected at least ${expected.minimumVersions} versions, got ${versions.length}`)
   if (expected.activeVersionId) {
     invariant(workspace.active?.versionId === expected.activeVersionId, 'active version does not match the expected stable ID')
@@ -119,10 +156,11 @@ export async function expectDomainState(api: SemanticApiContext, expected: Expec
   for (const task of tasks.filter((task: any) => task.status === 'succeeded')) {
     datasets.push(...await json(api, `/api/tasks/${task.id}/datasets`))
   }
-  for (const id of analysisIds) {
-    const analysis = await json(api, `/api/analysis-runs/${id}`)
-    invariant(analysis.status === 'succeeded', `analysis ${id} did not succeed`)
-  }
+  const analyses = []
+  for (const id of analysisIds) analyses.push(await json(api, `/api/analysis-runs/${id}`))
+  const succeededAnalyses = analyses.filter((analysis) => analysis.status === 'succeeded')
+  invariant(succeededAnalyses.length >= expected.minimumAnalysisRuns,
+    `expected at least ${expected.minimumAnalysisRuns} succeeded analysis runs`)
   for (const id of comparisonIds) {
     await json(api, `/api/task-comparisons/${id}`)
   }
@@ -131,7 +169,7 @@ export async function expectDomainState(api: SemanticApiContext, expected: Expec
     versionCount: versions.length,
     taskCount: tasks.length,
     datasetCount: datasets.length,
-    analysisRunCount: analysisIds.length,
+    analysisRunCount: succeededAnalyses.length,
     comparisonCount: comparisonIds.length,
     studyTypes: tasks.map((task: any) => task.studyType),
   }

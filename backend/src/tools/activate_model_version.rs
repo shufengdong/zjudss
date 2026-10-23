@@ -26,7 +26,7 @@ impl Tool for ActivateModelVersionTool {
     type Output = Value;
     type Error = DomainToolError;
     fn description(&self) -> String {
-        "激活当前 ready draft；要求预期基线以防并发覆盖。".into()
+        "激活当前 ready draft；expectedDraftVersionId 必须是当前 draft 的版本 ID，通常与要激活的 versionId 相同，不是创建该 draft 时的旧基线。".into()
     }
     fn parameters(&self) -> Value {
         object_schema(

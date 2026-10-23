@@ -20,7 +20,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'cargo run --quiet',
+      command: 'cargo run --quiet --bin backend',
       cwd: '../backend',
       url: 'http://127.0.0.1:8080/health',
       reuseExistingServer: false,
