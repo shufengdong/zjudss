@@ -1,4 +1,4 @@
 #!/bin/sh
 set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-exec node "$repo_root/frontend/scripts/check-functional-coverage.mjs" "$repo_root/integration-tests/catalog/features.yaml"
+exec node "$repo_root/frontend/scripts/check-functional-coverage.mjs" "$repo_root/integration-tests/catalog/features.yaml" "$@"

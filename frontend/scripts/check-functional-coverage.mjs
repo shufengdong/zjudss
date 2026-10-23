@@ -10,6 +10,12 @@ import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 
 const REQUIRED_ARRAYS = ['layers', 'lanes', 'tests', 'assertions', 'fixtures']
+export const REQUIRED_FEATURE_SCOPES = [
+  'BOOT', 'AUTH', 'SESSION', 'MESSAGE', 'SSE', 'SCHED', 'UPLOAD',
+  'INPUT-RSS', 'INPUT-BUNDLE', 'INPUT-DF', 'INFERENCE', 'WORKSPACE',
+  'EXAMPLE', 'AGENT', 'STUDY', 'TASK', 'DATASET', 'ANALYSIS', 'VIEW',
+  'COMPARE', 'HISTORY', 'STORAGE', 'UI', 'LEGACY',
+]
 const execFileAsync = promisify(execFile)
 
 export function contractKeys(manifest) {
@@ -72,7 +78,21 @@ async function testSymbolExists(repoRoot, test) {
   }
 }
 
-export async function validateCatalog(entries, repoRoot, manifest = null) {
+async function testSourceHasUnexpectedSkip(repoRoot, test) {
+  try {
+    const content = await fs.readFile(path.join(repoRoot, test.file), 'utf8')
+    return /#\s*\[ignore(?:\s*=|\s*\])|\b(?:test|it|describe)\.(?:skip|fixme)\s*\(/.test(content)
+  } catch {
+    return false
+  }
+}
+
+function runnerCoversLane(runner, lane) {
+  return lane === 'release' ? runner === 'release' : runner !== 'release'
+}
+
+export async function validateCatalog(entries, repoRoot, manifest = null, options = {}) {
+  const requiredLane = options.requiredLane ?? null
   const counts = new Map()
   for (const entry of entries) counts.set(entry.id, (counts.get(entry.id) ?? 0) + 1)
   const duplicateIds = [...counts.entries()]
@@ -81,7 +101,10 @@ export async function validateCatalog(entries, repoRoot, manifest = null) {
     .sort()
   const duplicateSet = new Set(duplicateIds)
   const missing = []
+  const unexpectedSkips = []
   let validEntries = 0
+  let applicableEntries = 0
+  let coveredEntries = 0
 
   for (const entry of entries) {
     const errors = []
@@ -100,6 +123,17 @@ export async function validateCatalog(entries, repoRoot, manifest = null) {
     if (entry?.contracts !== undefined && !Array.isArray(entry.contracts)) {
       errors.push('contracts must be an array')
     }
+    if (entry?.status === 'manual-only' || entry?.lanes?.includes?.('manual-only')) {
+      errors.push('manual-only entries are forbidden')
+    }
+    if (entry?.skip) {
+      const reason = typeof entry.skip === 'object' ? entry.skip.reason : entry.skipReason
+      if (typeof reason !== 'string' || reason.trim().length === 0) {
+        errors.push('skip requires a non-empty reason')
+      } else {
+        errors.push(`skipped entry is uncovered: ${reason.trim()}`)
+      }
+    }
     for (const field of ['layers', 'lanes', 'tests', 'assertions']) {
       if (Array.isArray(entry?.[field]) && entry[field].length === 0) {
         errors.push(`${field} must not be empty`)
@@ -110,19 +144,72 @@ export async function validateCatalog(entries, repoRoot, manifest = null) {
         if (!(await testSymbolExists(repoRoot, test))) {
           errors.push(`test symbol missing ${test?.file ?? ''}::${test?.name ?? ''}`)
         }
+        if (requiredLane && await testSourceHasUnexpectedSkip(repoRoot, test)) {
+          unexpectedSkips.push(`${test.file}::${test.name}`)
+        }
+      }
+    }
+    const applies = requiredLane !== null
+      && Array.isArray(entry?.lanes)
+      && entry.lanes.includes(requiredLane)
+    if (applies) {
+      applicableEntries += 1
+      if (!entry.tests?.some?.((test) => runnerCoversLane(test.runner, requiredLane))) {
+        errors.push(`${requiredLane} lane requires a ${requiredLane === 'release' ? 'release' : 'PR'} runner test`)
       }
     }
     const id = typeof entry?.id === 'string' && entry.id ? entry.id : '<missing-id>'
     missing.push(...errors.map((error) => `${id}: ${error}`))
-    if (errors.length === 0 && !duplicateSet.has(id)) validEntries += 1
+    if (errors.length === 0 && !duplicateSet.has(id)) {
+      validEntries += 1
+      if (applies) coveredEntries += 1
+    }
   }
 
   const allContracts = manifest ? contractKeys(manifest) : null
-  const declaredContracts = new Set(entries.flatMap((entry) => entry?.contracts ?? []))
+  const missingFeatureScopes = requiredLane
+    ? REQUIRED_FEATURE_SCOPES.filter((scope) => !entries.some((entry) => entry?.id?.startsWith(`${scope}-`)))
+    : []
+  const coveredFeatureScopes = requiredLane
+    ? REQUIRED_FEATURE_SCOPES.length - missingFeatureScopes.length
+    : null
+  const contractCounts = new Map()
+  for (const contract of entries.flatMap((entry) => entry?.contracts ?? [])) {
+    contractCounts.set(contract, (contractCounts.get(contract) ?? 0) + 1)
+  }
+  const declaredContracts = new Set(contractCounts.keys())
   const missingContracts = allContracts
     ? allContracts.filter((contract) => !declaredContracts.has(contract))
     : null
-  const covered = allContracts ? allContracts.length - missingContracts.length : null
+  const allContractSet = new Set(allContracts ?? [])
+  const duplicateContracts = [...contractCounts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([contract]) => contract)
+    .sort()
+  const unknownContracts = allContracts
+    ? [...declaredContracts].filter((contract) => !allContractSet.has(contract)).sort()
+    : []
+  const contractCovered = allContracts ? allContracts.length - missingContracts.length : null
+  const strictTotal = requiredLane
+    ? applicableEntries + (allContracts?.length ?? 0) + REQUIRED_FEATURE_SCOPES.length
+    : null
+  const strictCovered = requiredLane
+    ? coveredEntries + (contractCovered ?? 0) + coveredFeatureScopes
+    : null
+  const total = strictTotal ?? allContracts?.length ?? null
+  const covered = strictCovered ?? contractCovered
+  const coveragePercent = total === null
+    ? null
+    : total === 0 ? 100 : (covered / total) * 100
+  const uniqueUnexpectedSkips = [...new Set(unexpectedSkips)].sort()
+  const gatePassed = missing.length === 0
+    && duplicateIds.length === 0
+    && (missingContracts?.length ?? 0) === 0
+    && duplicateContracts.length === 0
+    && unknownContracts.length === 0
+    && missingFeatureScopes.length === 0
+    && uniqueUnexpectedSkips.length === 0
+    && (!requiredLane || coveragePercent === 100)
 
   return {
     catalogEntries: entries.length,
@@ -130,25 +217,65 @@ export async function validateCatalog(entries, repoRoot, manifest = null) {
     missing,
     duplicateIds,
     contractTotal: allContracts?.length ?? null,
-    contractCovered: covered,
+    applicableEntries: requiredLane ? applicableEntries : null,
+    coveredEntries: requiredLane ? coveredEntries : null,
+    total,
+    covered,
+    contractCovered,
     missingContracts,
-    coveragePercent: allContracts
-      ? (allContracts.length === 0 ? 100 : (covered / allContracts.length) * 100)
-      : null,
+    duplicateContracts,
+    unknownContracts,
+    requiredFeatureScopes: requiredLane ? REQUIRED_FEATURE_SCOPES : null,
+    missingFeatureScopes,
+    unexpectedSkips: uniqueUnexpectedSkips,
+    coveragePercent,
+    requiredLane,
+    gatePassed,
   }
+}
+
+function htmlReport(report) {
+  const escape = (value) => String(value)
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+  const gaps = [
+    ...report.missing,
+    ...(report.missingContracts ?? []).map((value) => `missing contract: ${value}`),
+    ...report.duplicateContracts.map((value) => `duplicate contract: ${value}`),
+    ...report.unknownContracts.map((value) => `unknown contract: ${value}`),
+    ...report.missingFeatureScopes.map((value) => `missing feature scope: ${value}`),
+    ...report.unexpectedSkips.map((value) => `unexpected skip: ${value}`),
+  ]
+  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>功能覆盖报告</title><body><h1>功能覆盖报告</h1><dl><dt>Lane</dt><dd>${escape(report.requiredLane ?? 'catalog')}</dd><dt>Coverage</dt><dd>${escape(report.coveragePercent ?? 'n/a')}%</dd><dt>Covered</dt><dd>${escape(report.covered ?? 'n/a')} / ${escape(report.total ?? 'n/a')}</dd><dt>Gate</dt><dd>${report.gatePassed ? 'PASS' : 'FAIL'}</dd></dl><h2>缺口</h2><ul>${gaps.map((gap) => `<li>${escape(gap)}</li>`).join('')}</ul></body></html>\n`
 }
 
 async function main() {
   const here = path.dirname(fileURLToPath(import.meta.url))
   const repoRoot = path.resolve(here, '../..')
   const args = process.argv.slice(2)
-  const checkManifest = args.includes('--check-manifest')
+  const requiredLane = args.includes('--require-release') ? 'release'
+    : args.includes('--require-pr') ? 'pr' : null
+  if (args.includes('--require-pr') && args.includes('--require-release')) {
+    throw new Error('--require-pr and --require-release are mutually exclusive')
+  }
+  const checkManifest = args.includes('--check-manifest') || requiredLane !== null
   const catalogArg = args.find((arg) => !arg.startsWith('--'))
   const catalogPath = catalogArg ?? path.join(repoRoot, 'integration-tests/catalog/features.yaml')
   const manifest = checkManifest ? await loadProductionManifest(repoRoot) : null
-  const report = await validateCatalog(await loadCatalog(catalogPath), repoRoot, manifest)
+  const report = await validateCatalog(
+    await loadCatalog(catalogPath), repoRoot, manifest, { requiredLane },
+  )
+  const jsonPath = args.find((arg) => arg.startsWith('--report-json='))?.slice('--report-json='.length)
+  const htmlPath = args.find((arg) => arg.startsWith('--report-html='))?.slice('--report-html='.length)
+  if (jsonPath) {
+    await fs.mkdir(path.dirname(path.resolve(jsonPath)), { recursive: true })
+    await fs.writeFile(path.resolve(jsonPath), `${JSON.stringify(report, null, 2)}\n`)
+  }
+  if (htmlPath) {
+    await fs.mkdir(path.dirname(path.resolve(htmlPath)), { recursive: true })
+    await fs.writeFile(path.resolve(htmlPath), htmlReport(report))
+  }
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
-  if (report.missing.length > 0 || report.duplicateIds.length > 0) process.exitCode = 1
+  if (!report.gatePassed) process.exitCode = 1
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

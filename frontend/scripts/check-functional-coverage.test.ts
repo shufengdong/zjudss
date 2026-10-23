@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { loadCatalog, validateCatalog } from './check-functional-coverage.mjs'
+import { contractKeys, loadCatalog, validateCatalog } from './check-functional-coverage.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(here, '../..')
@@ -92,5 +92,92 @@ describe('functional coverage catalog', () => {
         'upload:single_rss',
       ],
     })
+  })
+
+  it.each([
+    ['route', 'routes'],
+    ['tool', 'toolNames'],
+    ['message', 'messageTypes'],
+    ['view', 'visualizationKinds'],
+    ['upload', 'uploadSources'],
+    ['skill', 'skillIds'],
+    ['error', 'stableErrorCodes'],
+  ])('strict PR mode reports an exact missing %s contract', async (_kind, field) => {
+    const manifest = {
+      routes: [{ method: 'GET', path: '/health' }],
+      messageTypes: ['user'],
+      toolNames: ['inspect_workspace'],
+      skillIds: ['model-intake'],
+      uploadSources: ['csv'],
+      visualizationKinds: ['line'],
+      stableErrorCodes: ['agent_queue_full'],
+    }
+    const contracts = contractKeys(manifest)
+    const removed = contracts.find((key) => key.startsWith(`${_kind}:`))!
+    const entries = await loadCatalog(fixture('valid.yaml'))
+    entries[0].contracts = contracts.filter((key) => key !== removed)
+
+    const report = await validateCatalog(entries, repoRoot, manifest, { requiredLane: 'pr' })
+
+    expect(report.missingContracts).toEqual([removed])
+    expect(report.gatePassed).toBe(false)
+    expect(report.coveragePercent).toBeLessThan(100)
+    expect(field).toBeTruthy()
+  })
+
+  it('strict mode rejects manual-only and a skip without a reason', async () => {
+    const manual = await validateCatalog(
+      await loadCatalog(fixture('manual-only.yaml')),
+      repoRoot,
+      null,
+      { requiredLane: 'pr' },
+    )
+    const skipped = await validateCatalog(
+      await loadCatalog(fixture('skip-without-reason.yaml')),
+      repoRoot,
+      null,
+      { requiredLane: 'pr' },
+    )
+
+    expect(manual.missing).toContain('MANUAL-001: manual-only entries are forbidden')
+    expect(skipped.missing).toContain('SKIP-001: skip requires a non-empty reason')
+    expect(manual.gatePassed).toBe(false)
+    expect(skipped.gatePassed).toBe(false)
+  })
+
+  it('release entries require a release-runner test', async () => {
+    const report = await validateCatalog(
+      await loadCatalog(fixture('release-pr-only.yaml')),
+      repoRoot,
+      null,
+      { requiredLane: 'release' },
+    )
+
+    expect(report.missing).toContain('RELEASE-001: release lane requires a release runner test')
+    expect(report.gatePassed).toBe(false)
+  })
+
+  it('strict mode rejects duplicate and unknown contract declarations', async () => {
+    const entries = await loadCatalog(fixture('valid.yaml'))
+    entries.push({ ...entries[0], id: 'BOOT-002' })
+    entries[0].contracts = ['route:GET /health', 'route:GET /unknown']
+    entries[1].contracts = ['route:GET /health']
+
+    const report = await validateCatalog(entries, repoRoot, {
+      routes: [{ method: 'GET', path: '/health' }],
+    }, { requiredLane: 'pr' })
+
+    expect(report.duplicateContracts).toEqual(['route:GET /health'])
+    expect(report.unknownContracts).toEqual(['route:GET /unknown'])
+    expect(report.gatePassed).toBe(false)
+  })
+
+  it('strict mode freezes every top-level functional scope', async () => {
+    const entries = await loadCatalog(fixture('valid.yaml'))
+
+    const report = await validateCatalog(entries, repoRoot, null, { requiredLane: 'pr' })
+
+    expect(report.missingFeatureScopes).toContain('LEGACY')
+    expect(report.gatePassed).toBe(false)
   })
 })

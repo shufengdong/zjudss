@@ -18,11 +18,11 @@ test('compatible tasks create a recoverable difference dataset while name and un
   await expect(page.getByText(`任务 ${baseline.id} 与 ${candidate.id}`, { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'result', exact: true }).click()
   await expect(page.getByRole('columnheader', { name: 'value (pu)' })).toBeVisible()
-  await page.getByRole('button', { name: '×' }).last().click()
+  await page.getByRole('button', { name: '关闭数据集' }).click()
   await page.reload()
   await page.getByRole('button', { name: '查看比较' }).click()
   await expect(page.getByText(`任务 ${baseline.id} 与 ${candidate.id}`, { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '×' }).last().click()
+  await page.getByRole('button', { name: '关闭比较' }).click()
 
   const wrongUnit = await runStudy({ page, api, control, sessionId, versionId, prompt: '运行不同单位潮流', studyType: 'power_flow', engine: { kind: 'success', data: [{ name: 'voltage', rows: [['b1', 10]], valueUnit: 'kV' }] } })
   const wrongName = await runStudy({ page, api, control, sessionId, versionId, prompt: '运行不同结果名潮流', studyType: 'power_flow', engine: { kind: 'success', data: [{ name: 'current', rows: [['b1', 1]], valueUnit: 'pu' }] } })

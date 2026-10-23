@@ -1,0 +1,9 @@
+- id: SKIP-001
+  source: docs/integration-testing-design.md#1-目标和覆盖口径
+  title: unexplained skip is forbidden
+  skip: true
+  layers: [backend]
+  lanes: [pr]
+  tests: [{ runner: rust, file: backend/tests/app_bootstrap.rs, name: config_defaults_are_safe }]
+  assertions: [skip needs an explanation]
+  fixtures: []

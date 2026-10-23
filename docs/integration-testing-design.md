@@ -1,6 +1,6 @@
 # v2 自动化集成测试设计
 
-> 状态：设计已确认，待按实施计划落地。本文定义“100% 功能覆盖”的验收口径；它不表示
+> 状态：已于 2026-10-23 落地。本文定义“100% 功能覆盖”的验收口径；它不表示
 > 100% 源码行覆盖，也不表示穷举所有数据组合。系统架构见 [architecture.md](architecture.md)，HTTP/SSE
 > 合同见 [api-design.md](api-design.md)，发布环境要求见 [v2-deployment.md](v2-deployment.md)，详细任务见
 > [2026-10-22-v2-integration-testing.md](superpowers/plans/2026-10-22-v2-integration-testing.md)。
@@ -260,15 +260,16 @@ L3 候选发布执行：
 
 ```bash
 # L0
-cd backend && cargo fmt --check && cargo test
+cd backend && cargo fmt --all -- --check && cargo test --features e2e-test
 cd frontend && npm test -- --run && npm run build
 
-# L1 + L2（命令由实施计划落地）
+# L1 + L2
 npm run test:e2e
-./scripts/check-functional-coverage
+./scripts/check-functional-coverage --require-pr
 
 # L3（候选发布；真实 secret 和 binary 由环境注入）
 ./scripts/test-release-integration
+./scripts/check-functional-coverage --require-release
 ```
 
 CI 归档 JUnit、功能覆盖 JSON/HTML、Playwright trace 和真实引擎合同报告。门禁规则：
@@ -277,6 +278,12 @@ CI 归档 JUnit、功能覆盖 JSON/HTML、Playwright trace 和真实引擎合�
 - 候选发布：在 PR 条件上增加 L3 全绿，全部 release 功能项覆盖率 100%；
 - 已知缺陷只能以带到期日和 issue 的 quarantine 项存在，且功能覆盖率仍显示缺口，因此不能发布；
 - flaky 重跑仅用于收集证据，首次失败仍进入报告，禁止用无限重跑制造绿色结果。
+
+`--require-pr` 和 `--require-release` 都会从生产二进制读取合同 manifest，双向校验 27 个路由、八类消息、
+22 个工具、六个 skill、六种上传来源、六类视图和 37 个稳定错误码。每个合同在目录中只有一个独立 ID；
+缺项、重复项、未知项、测试符号不存在、lane 没有对应 runner、`manual-only` 或 skip 都会使门禁失败。
+报告同时写入 `target/functional-coverage/*.json` 和 `*.html`，成功时 `covered == total` 且
+`coveragePercent == 100`。
 
 ## 10. 落地验收标准
 
@@ -290,6 +297,8 @@ CI 归档 JUnit、功能覆盖 JSON/HTML、Playwright trace 和真实引擎合�
 6. CI 报告显示 PR 和 release 各自适用功能项为 100%，且能由功能 ID 追溯到需求、测试和断言；
 7. `development-status.md` 和 `v2-deployment.md` 的验证状态改为与实际门禁一致。
 
-当前仓库已有后端 in-process 集成测试、真实 tensoreval smoke test 和前端 Vitest，但尚未实现本设计的
-Playwright、Scripted LLM、ScenarioEngine、机器可读功能目录及真实 DeepSeek 发布链路。因此在这些验收
-标准全部通过前，只能声明“v2 功能已实现并通过组件/服务集成测试”，不能声明“100% 全链路自动化验收”。
+当前仓库已实现 Playwright、Scripted LLM、ScenarioEngine、机器可读功能目录和真实 DeepSeek 发布链路。
+普通 PR 由 `.github/workflows/ci.yml` 执行 L0/L1/L2 和严格 PR 目录门禁；候选发布由受保护环境中的
+`.github/workflows/release-integration.yml` 在 PR 门禁后执行 L3 和严格发布目录门禁。2026-10-23 的本地候选
+发布验收已通过真实 DeepSeek 与合同 `dss-v2-d2b6d88a` 的 tensoreval；GitHub 发布记录以对应 workflow
+归档的 `release-gate-evidence-*` 为准。

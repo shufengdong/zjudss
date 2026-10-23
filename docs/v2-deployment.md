@@ -65,7 +65,7 @@ npm run build
 
 ## 6. 发布门禁
 
-当前自动化验收覆盖四条服务级用户路径：
+当前自动化验收覆盖四条服务级用户路径和浏览器 L1/L2 全链路：
 
 | 路径 | 验收用例 |
 |---|---|
@@ -76,24 +76,30 @@ npm run build
 
 ```bash
 cd backend
-cargo fmt --check
-cargo test
+cargo fmt --all -- --check
+cargo test --features e2e-test
 cd ../frontend
 npm test -- --run
 npm run build
+npm run test:e2e
 cd ..
+./scripts/check-functional-coverage --require-pr
 git diff --check
 ```
 
 另外检查 `GET /health`、`GET /api/me`、上传、一次真实 Parquet 仿真、结果分页/下载、SSE 重连和
-跨 owner 404。2026-10-22 已用当前 eig-rs 源码构建的 release binary 通过命名 Parquet 输入、expr_df
-执行和 Snappy Parquet 输出 smoke test。CI 未提供 binary 时 integration test 保持显式 ignored；发布时执行：
+跨 owner 404。候选发布使用受保护的 `candidate-release` 环境，必须提供 `DEEPSEEK_API_KEY`，并从指定
+workflow run 下载名为 `tensoreval-release` 的 artifact。artifact 固定布局为：
 
-```bash
-TENSOREVAL_BIN=/absolute/path/to/eig-rs/target/release/tensoreval \
-  cargo test --test process_engine_v2 real_tensoreval_smoke_writes_snappy_parquet -- --ignored
+```text
+tensoreval
+cwd/sparrowzz/dss/docs/
+cwd/sparrowzz/dss/models/
 ```
 
-目标发布门禁还必须按 [integration-testing-design.md](integration-testing-design.md) 落地并执行浏览器全链路、
-安全/恢复故障注入、机器可读功能覆盖校验，以及真实 DeepSeek + tensoreval 验收。落地后，普通 PR 执行
-L0/L1/L2，候选发布额外执行 L3；缺少外部 binary 或 secret 时发布 job 失败，不能静默跳过。
+`.github/workflows/release-integration.yml` 先复用完整 PR 门禁，再执行 `scripts/test-release-integration` 和
+`--require-release`。真实旅程验证全部 73 个固定案例、代表 study、DataFrame 潮流、RSS 短路、结果问答、
+参数修改重跑和比较，并归档去敏后的 engine/LLM 报告、功能覆盖 JSON/HTML 与 Playwright 失败 trace。
+缺少 binary、资源目录、secret、合同 hash 或任一语义断言时发布失败，不能静默跳过。2026-10-23 本地候选
+发布验收已通过，engine contract 为 `dss-v2-d2b6d88a`；正式发布以 workflow 的
+`release-gate-evidence-*` artifact 为审计记录。

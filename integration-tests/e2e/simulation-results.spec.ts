@@ -46,7 +46,7 @@ test('natural language runs all study families and exposes reproducible multi-re
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: '下载 Parquet' }).click()
   expect((await downloadPromise).suggestedFilename()).toContain('.parquet')
-  await page.getByRole('button', { name: '×' }).last().click()
+  await page.getByRole('button', { name: '关闭数据集' }).click()
 
   await control.enqueueEngine({ kind: 'timeout', data: { barrier_id: 'study-timeout' } })
   await control.enqueueLlm({ id: 'failed-study', expectedPrompt: '运行会失败的分析', turns: [

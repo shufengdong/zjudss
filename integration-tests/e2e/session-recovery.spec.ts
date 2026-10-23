@@ -92,6 +92,7 @@ test('older history, refresh, restart, and invalid localStorage recover committe
     expect(response.status()).toBe(202)
     await expect.poll(async () => ((await control.trace()) as { agent: unknown[] }).agent.length).toBe(baseline + index + 1)
   }
+  await expect.poll(async () => (await messages(api, session.id)).messages.length).toBe(52)
 
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '批量消息 0' })).toBeVisible()

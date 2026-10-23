@@ -42,7 +42,7 @@ test('result analysis creates traceable Parquet and all six controlled ECharts v
     const kind = ['line', 'bar', 'scatter', 'heatmap', 'boxplot', 'histogram'][index]
     await expect(page.getByLabel(`${kind} 图表`)).toBeVisible()
   }
-  await page.getByRole('button', { name: '×' }).last().click()
+  await page.getByRole('button', { name: '关闭数据集' }).click()
 
   await control.enqueueLlm({ id: 'invalid-view', expectedPrompt: '创建一个非法字段图', turns: [
     { kind: 'tool_call', call_id: 'bad-view', name: 'create_dataset_view', args: { datasetId: Number(analysis.datasets[0].id), name: '非法', spec: { kind: 'line', x: 'missing', y: ['value'] } } },

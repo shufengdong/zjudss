@@ -1,0 +1,76 @@
+name: v2 candidate release gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      engine_artifact_run_id:
+        description: Run ID containing the tensoreval-release artifact
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  pr-gate:
+    uses: ./.github/workflows/ci.yml
+
+  release-gate:
+    needs: pr-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: candidate-release
+    env:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      TENSOREVAL_BIN: ${{ github.workspace }}/target/tensoreval-release/tensoreval
+      TENSOREVAL_CWD: ${{ github.workspace }}/target/tensoreval-release/cwd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend and Chromium
+        run: |
+          npm ci --prefix frontend
+          npx --prefix frontend playwright install --with-deps chromium
+      - name: Download pinned engine artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tensoreval-release
+          path: target/tensoreval-release
+          run-id: ${{ inputs.engine_artifact_run_id }}
+          github-token: ${{ github.token }}
+      - name: Validate engine artifact layout
+        run: |
+          chmod +x "$TENSOREVAL_BIN"
+          test -x "$TENSOREVAL_BIN"
+          test -d "$TENSOREVAL_CWD/sparrowzz/dss/docs"
+          test -d "$TENSOREVAL_CWD/sparrowzz/dss/models"
+      - name: Run real DeepSeek and tensoreval journey
+        run: ./scripts/test-release-integration
+      - name: Require complete release functional coverage
+        run: >-
+          ./scripts/check-functional-coverage --require-release
+          --report-json=target/functional-coverage/release.json
+          --report-html=target/functional-coverage/release.html
+      - name: Upload sanitized release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-evidence-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            target/functional-coverage/
+            target/release-integration/engine-report.json
+            target/release-integration/llm-report.json
+            target/release-integration/release.log
+            frontend/test-results/
+

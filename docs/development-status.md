@@ -64,16 +64,18 @@ v2 仅支持空库初始化。部署前删除旧开发 SQLite 和 DATA_DIR；不
 
 ## 验证状态
 
-- 后端全量测试覆盖身份、调度、SSE、配额、四类摄取来源、案例、版本工具、Parquet 合同、仿真失败
+- 后端全量测试覆盖身份、调度、SSE、配额、六种上传来源、案例、版本工具、Parquet 合同、仿真失败
   原子性、结果分析、六类视图、比较、历史和完整 DataFrame e2e。
 - 前端测试覆盖消息归并、session state、workspace null、SSE、分页表格、null/重复行和六类图表。
-- 已用当前 eig-rs 源码重建 release binary，并通过真实 tensoreval 命名 Parquet 输入、expr_df 执行和
-  Snappy Parquet 输出 smoke test。该测试因 CI 不一定安装外部 binary，仍保留为显式 ignored 并在发布时单独运行。
-- 当前尚未覆盖浏览器 → Vite → Axum → SQLite/CAS 的自动化全链路，也没有真实 DeepSeek 发布验收。
-  已在 `integration-testing-design.md` 定义机器可读功能目录、Playwright、可编排 LLM/engine、故障注入和
-  四级门禁，详细实施步骤见 `docs/superpowers/plans/2026-10-22-v2-integration-testing.md`；完成落地并达到
-  目录 100% 前，不宣称全链路功能验收完成。
-- 自动化测试设计审查发现工具合同有一项实现缺口：manifest 中的 `get_storage_usage` 尚未注册，已注册的
-  `list_result_datasets` 尚未进入 manifest。集成测试实施时必须先统一两份清单并加入双向枚举测试。
+- Playwright 已覆盖浏览器 → Vite → Axum → SQLite/CAS 的 L1/L2 全链路、身份隔离、恢复、配额、恶意
+  归档和响应式无障碍；PR workflow 执行 Rust、Vitest、构建、全部浏览器旅程和严格功能目录门禁。
+- 功能目录现有 154 项，逐项覆盖 24 个顶层范围和 112 个生产公共合同；`--require-pr` 报告为
+  `288/288`、100%，且会拒绝
+  缺项、重复/未知合同、错误 lane、`manual-only`、skip 和不存在的测试符号。
+- 2026-10-23 已用真实 DeepSeek 和合同 `dss-v2-d2b6d88a` 的 release tensoreval 完成 DataFrame 潮流、
+  RSS 短路、结果分析、案例导入、参数修改、重跑和比较：8 个模型版本、3 个任务、3 个结果数据集、
+  2 次分析和 1 次比较。候选发布 workflow 要求受保护环境 secret 和固定 engine artifact，缺失即失败。
+- Agent manifest 与运行时注册表已由双向枚举测试锁定为同一组 22 个工具，包含 `get_storage_usage` 和
+  `list_result_datasets`。
 
 发布命令和配置见 `docs/v2-deployment.md`。

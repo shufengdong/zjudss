@@ -1,0 +1,8 @@
+- id: RELEASE-001
+  source: docs/integration-testing-design.md#1-目标和覆盖口径
+  title: release needs its own runner
+  layers: [backend]
+  lanes: [release]
+  tests: [{ runner: rust, file: backend/tests/app_bootstrap.rs, name: config_defaults_are_safe }]
+  assertions: [release dependency must run]
+  fixtures: []
