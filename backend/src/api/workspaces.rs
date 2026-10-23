@@ -1,118 +1,155 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::application::{AppState, WorkspaceError, ms_to_iso};
-use crate::auth::{CurrentUser, UserId};
-use crate::db::models::ModelVersion;
+use crate::application::{ActivateVersionRequest, AppState, PublishDraftRequest, ms_to_iso};
+use crate::auth::CurrentUser;
+use crate::db::repositories::{DraftSnapshot, VersionSnapshot, WorkspaceSnapshot};
 
 use super::ApiError;
 
 pub async fn workspace(
     State(state): State<AppState>,
-    principal: CurrentUser,
+    user: CurrentUser,
     Path(session_id): Path<i32>,
 ) -> Result<Json<Value>, ApiError> {
-    let record = state
-        .workspace_service
-        .get_or_create(&principal.id, session_id)
-        .await?;
-    let active = version_json(&state, &principal.id, record.active).await?;
-    let draft = version_json(&state, &principal.id, record.draft).await?;
-    let active_ingestions = state
-        .ingestion_service
-        .active(&principal, record.workspace.id)
-        .await?;
-    Ok(Json(json!({
-        "id": record.workspace.id.to_string(),
-        "sessionId": record.workspace.session_id.to_string(),
-        "active": active,
-        "draft": draft,
-        "activeIngestions": active_ingestions,
-    })))
+    Ok(Json(workspace_json(
+        state.version_service.workspace(&user, session_id).await?,
+    )))
 }
 
 pub async fn versions(
     State(state): State<AppState>,
-    principal: CurrentUser,
+    user: CurrentUser,
     Path(session_id): Path<i32>,
 ) -> Result<Json<Value>, ApiError> {
-    state
-        .workspace_service
-        .get_or_create(&principal.id, session_id)
+    let versions = state.version_service.versions(&user, session_id).await?;
+    Ok(Json(
+        json!({"versions": versions.into_iter().map(version_json).collect::<Vec<_>>() }),
+    ))
+}
+
+pub async fn publish(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<i32>,
+    Json(request): Json<PublishDraftRequest>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let published = state
+        .version_service
+        .publish(&user, session_id, request)
         .await?;
-    let versions = state
-        .workspace_service
-        .list_versions(&principal.id, session_id)
-        .await?;
-    let mut items = Vec::with_capacity(versions.len());
-    for version in versions {
-        items.push(
-            version_json(&state, &principal.id, Some(version))
-                .await?
-                .unwrap(),
-        );
-    }
-    Ok(Json(json!({ "versions": items })))
+    let status = if published.replayed || published.deduplicated {
+        StatusCode::OK
+    } else {
+        StatusCode::CREATED
+    };
+    Ok((
+        status,
+        Json(
+            json!({"version":version_json(published.version),"deduplicated":published.deduplicated,"replayed":published.replayed}),
+        ),
+    ))
 }
 
 pub async fn version(
     State(state): State<AppState>,
-    principal: CurrentUser,
+    user: CurrentUser,
     Path(version_id): Path<i32>,
 ) -> Result<Json<Value>, ApiError> {
-    let version = state
-        .workspace_service
-        .find_version(&principal.id, version_id)
-        .await?;
+    Ok(Json(version_json(
+        state.version_service.version(&user, version_id).await?,
+    )))
+}
+
+pub async fn activate(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(version_id): Path<i32>,
+    Json(request): Json<ActivateVersionRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(workspace_json(
+        state
+            .version_service
+            .activate(&user, version_id, request)
+            .await?,
+    )))
+}
+
+pub async fn deletion_preview(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(version_id): Path<i32>,
+) -> Result<Json<Value>, ApiError> {
     Ok(Json(
-        version_json(&state, &principal.id, Some(version))
-            .await?
-            .unwrap(),
+        serde_json::to_value(
+            state
+                .version_service
+                .preview_deletion(&user, version_id)
+                .await?,
+        )
+        .map_err(|error| ApiError::internal(error.to_string()))?,
     ))
 }
 
-async fn version_json(
-    state: &AppState,
-    scope: &UserId,
-    version: Option<ModelVersion>,
-) -> Result<Option<Value>, WorkspaceError> {
-    let Some(version) = version else {
-        return Ok(None);
-    };
-    let manifest: Value =
-        serde_json::from_str(&version.manifest_json).unwrap_or_else(|_| json!({}));
-    let mut inputs = Vec::new();
-    for (input, binding) in state.workspace_service.inputs(scope, version.id).await? {
-        let evidence = binding
-            .as_ref()
-            .and_then(|b| serde_json::from_str::<Value>(&b.evidence_json).ok())
-            .unwrap_or_else(|| json!({}));
-        inputs.push(json!({
-            "inputId": input.id.to_string(),
-            "artifactId": input.artifact_id.to_string(),
-            "fileName": input.display_name,
-            "sheetName": input.sheet_name,
-            "tableKind": binding.as_ref().and_then(|b| b.table_kind.clone()),
-            "confidence": binding.as_ref().and_then(|b| b.confidence),
-            "resolution": binding.as_ref().map(|b| b.resolution.as_str()).unwrap_or("pending"),
-            "candidates": evidence.get("candidates").cloned().unwrap_or_else(|| json!([])),
-            "matchedRequiredColumns": evidence.get("matchedRequiredColumns").cloned().unwrap_or_else(|| json!([])),
-            "missingRequiredColumns": evidence.get("missingRequiredColumns").cloned().unwrap_or_else(|| json!([])),
-            "typeConflicts": evidence.get("typeConflicts").cloned().unwrap_or_else(|| json!([])),
-        }));
-    }
-    Ok(Some(json!({
-        "versionId": version.id.to_string(),
-        "parentVersionId": version.parent_version_id.map(|id| id.to_string()),
-        "sourceKind": version.source_kind,
-        "originKind": version.origin_kind,
-        "origin": manifest.get("origin").cloned(),
-        "status": version.status,
-        "contentHash": version.content_hash,
-        "inputs": inputs,
-        "missing": manifest.get("missing").cloned().unwrap_or_else(|| json!([])),
-        "diagnostics": manifest.get("diagnostics").cloned().unwrap_or_else(|| json!([])),
-        "createdAt": ms_to_iso(version.created_at_ms),
-    })))
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteQuery {
+    impact_token: String,
+}
+
+pub async fn delete_version(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(version_id): Path<i32>,
+    Query(query): Query<DeleteQuery>,
+) -> Result<StatusCode, ApiError> {
+    state
+        .version_service
+        .delete(&user, version_id, query.impact_token)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn workspace_json(snapshot: WorkspaceSnapshot) -> Value {
+    json!({
+        "id": snapshot.workspace.id.to_string(),
+        "sessionId": snapshot.workspace.session_id.to_string(),
+        "active": snapshot.active.map(version_json),
+        "draft": snapshot.draft.map(draft_json),
+        "activeModelImports": []
+    })
+}
+
+fn draft_json(snapshot: DraftSnapshot) -> Value {
+    json!({
+        "id": snapshot.draft.id.to_string(),
+        "workspaceId": snapshot.draft.workspace_id.to_string(),
+        "baseVersionId": snapshot.draft.base_version_id.map(|id| id.to_string()),
+        "revision": snapshot.draft.revision,
+        "diagnostics": serde_json::from_str::<Value>(&snapshot.draft.diagnostics_json).unwrap_or_else(|_| json!({})),
+        "tables": snapshot.dataframes.into_iter().map(|table| json!({
+            "id":table.id.to_string(),"tableName":table.table_name,"artifactId":table.artifact_id.to_string(),
+            "schema":serde_json::from_str::<Value>(&table.schema_json).unwrap_or_else(|_| json!([])),
+            "rowCount":table.row_count,"contentHash":table.content_hash
+        })).collect::<Vec<_>>(),
+        "createdAt":ms_to_iso(snapshot.draft.created_at_ms),"updatedAt":ms_to_iso(snapshot.draft.updated_at_ms)
+    })
+}
+
+fn version_json(snapshot: VersionSnapshot) -> Value {
+    json!({
+        "id":snapshot.version.id.to_string(),"workspaceId":snapshot.version.workspace_id.to_string(),
+        "contentHash":snapshot.version.content_hash,
+        "sourceSummary":serde_json::from_str::<Value>(&snapshot.version.source_summary_json).unwrap_or_else(|_| json!({})),
+        "engineContractVersion":snapshot.version.engine_contract_version,
+        "tables":snapshot.dataframes.into_iter().map(|table| json!({
+            "id":table.id.to_string(),"tableName":table.table_name,"artifactId":table.artifact_id.to_string(),
+            "schema":serde_json::from_str::<Value>(&table.schema_json).unwrap_or_else(|_| json!([])),
+            "rowCount":table.row_count,"contentHash":table.content_hash
+        })).collect::<Vec<_>>(),
+        "createdAt":ms_to_iso(snapshot.version.created_at_ms)
+    })
 }

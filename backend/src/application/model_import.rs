@@ -347,9 +347,14 @@ impl ModelImportService {
             let outputs = match extension.as_str() {
                 "csv" => {
                     let output = work.join(format!("{}.parquet", source.candidate_id));
-                    let table = normalize_csv_to_parquet(&path, &output)
+                    normalize_csv_to_parquet(&path, &output)
                         .map_err(|error| ModelImportError::Invalid(error.to_string()))?;
-                    vec![(table.name, output)]
+                    let table_name = std::path::Path::new(&source.display_name)
+                        .file_stem()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("table")
+                        .to_string();
+                    vec![(table_name, output)]
                 }
                 "xls" | "xlsx" => normalize_excel_to_parquet(&path, &work)
                     .map_err(|error| ModelImportError::Invalid(error.to_string()))?

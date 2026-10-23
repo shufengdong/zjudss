@@ -30,6 +30,7 @@ use crate::application::DatasetError;
 use crate::application::HistoryError;
 use crate::application::IngestionError;
 use crate::application::ModelImportError;
+use crate::application::VersionError;
 use crate::application::WorkspaceError;
 use crate::db::repositories::RepoError;
 
@@ -235,6 +236,60 @@ impl From<WorkspaceError> for ApiError {
     }
 }
 
+impl From<VersionError> for ApiError {
+    fn from(error: VersionError) -> Self {
+        match error {
+            VersionError::NotFound => Self::not_found("资源不存在"),
+            VersionError::DraftRevisionConflict => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "draft_revision_conflict",
+                details: None,
+            },
+            VersionError::DraftRequired | VersionError::EmptyDraft | VersionError::Invalid(_) => {
+                Self {
+                    status: StatusCode::UNPROCESSABLE_ENTITY,
+                    message: error.to_string(),
+                    code: "invalid_model_version",
+                    details: None,
+                }
+            }
+            VersionError::DraftDiscardConfirmationRequired => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "draft_discard_confirmation_required",
+                details: None,
+            },
+            VersionError::ActiveVersion => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "active_version_cannot_be_deleted",
+                details: None,
+            },
+            VersionError::Busy => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "version_has_active_consumers",
+                details: None,
+            },
+            VersionError::ImpactChanged => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "deletion_impact_changed",
+                details: None,
+            },
+            VersionError::InvalidImpactToken => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "invalid_deletion_impact_token",
+                details: None,
+            },
+            VersionError::Artifact(error) => error.into(),
+            VersionError::Repository(error) => Self::internal(error.to_string()),
+        }
+    }
+}
+
 impl From<AdapterError> for ApiError {
     fn from(err: AdapterError) -> Self {
         ApiError::internal(err.to_string())
@@ -384,10 +439,24 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
     );
     add_route!(
         "/api/sessions/{id}/versions",
-        get(workspaces::versions),
-        ["GET"]
+        get(workspaces::versions).post(workspaces::publish),
+        ["GET", "POST"]
     );
-    add_route!("/api/versions/{id}", get(workspaces::version), ["GET"]);
+    add_route!(
+        "/api/versions/{id}",
+        get(workspaces::version).delete(workspaces::delete_version),
+        ["GET", "DELETE"]
+    );
+    add_route!(
+        "/api/versions/{id}/activate",
+        post(workspaces::activate),
+        ["POST"]
+    );
+    add_route!(
+        "/api/versions/{id}/deletion-preview",
+        post(workspaces::deletion_preview),
+        ["POST"]
+    );
     add_route!("/api/tasks/{id}", get(tasks::get), ["GET"]);
     add_route!(
         "/api/sessions/{id}/tasks",

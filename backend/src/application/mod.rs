@@ -16,6 +16,7 @@ pub mod model_import;
 pub mod model_patch;
 pub mod scheduler;
 pub mod simulations;
+pub mod versions;
 pub mod visualization;
 pub mod workspace;
 
@@ -33,7 +34,7 @@ use crate::db::DbPool;
 use crate::db::repositories::{
     AnalysisRepo, ArtifactRepo, ComparisonRepo, DatasetRepo, HistoryRepo, IngestionRepo,
     MessageRepo, ModelImportRepo, SessionRepo, SimulationRepo, StorageScopeRepo, TaskRepo,
-    WorkspaceRepo,
+    VersionRepo, WorkspaceRepo,
 };
 use crate::engine_resources::{EngineKnowledge, EngineResourceSnapshot};
 use crate::ingestion::ArchiveLimits;
@@ -62,6 +63,10 @@ pub use model_import::{ModelImportError, ModelImportService, ModelImportView};
 pub use model_patch::{ModelChange, ModelMutationError, ModelPatch, ModelPatchService};
 pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
 pub use simulations::{RunStudyRequest, SimulationError, SimulationOutcome, SimulationService};
+pub use versions::{
+    ActivateVersionRequest, PublishDraftRequest, PublishedVersion, VersionDeletionPreview,
+    VersionError, VersionService,
+};
 pub use workspace::{
     DataframeBindingDraft, SourceKind, VersionDraft, VersionInputDraft, VersionOrigin,
     WorkspaceError, WorkspaceService, canonical_json,
@@ -76,6 +81,7 @@ pub struct AppState {
     pub task_repo: TaskRepo,
     pub artifact_service: ArtifactService,
     pub workspace_service: WorkspaceService,
+    pub version_service: VersionService,
     pub ingestion_service: IngestionService,
     pub model_import_service: ModelImportService,
     pub example_import_service: ExampleImportService,
@@ -391,6 +397,8 @@ impl AppState {
             message_repo.clone(),
             events.clone(),
         );
+        let version_service =
+            VersionService::new(VersionRepo::new(pool.clone()), artifact_service.clone());
         let ingestion_service = IngestionService::new(
             IngestionRepo::new(pool.clone()),
             artifact_service.clone(),
@@ -459,6 +467,7 @@ impl AppState {
             task_repo,
             artifact_service,
             workspace_service,
+            version_service,
             ingestion_service,
             model_import_service,
             example_import_service,

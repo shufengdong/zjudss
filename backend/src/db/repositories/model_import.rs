@@ -38,7 +38,7 @@ impl ModelImportRepo {
             conn.transaction(|conn| {
                 let owns = schema::sessions::table
                     .filter(schema::sessions::id.eq(session_id))
-                    .filter(schema::sessions::user_id.eq(user_id))
+                    .filter(schema::sessions::user_id.eq(&user_id))
                     .select(schema::sessions::id)
                     .first::<i32>(conn)
                     .optional()?
@@ -267,7 +267,7 @@ impl ModelImportRepo {
                             .on(schema::sessions::id.eq(schema::model_imports::session_id)),
                     )
                     .filter(schema::model_imports::id.eq(import_id))
-                    .filter(schema::sessions::user_id.eq(user_id))
+                    .filter(schema::sessions::user_id.eq(&user_id))
                     .select(schema::model_imports::all_columns)
                     .first::<ModelImport>(conn)
                     .optional()?
@@ -315,25 +315,55 @@ impl ModelImportRepo {
                 let (draft_id, revision) = match actual {
                     Some(draft) => (draft.id, draft.revision + 1),
                     None => {
+                        #[derive(diesel::QueryableByName)]
+                        struct ActiveVersion {
+                            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
+                            active_version_id: Option<i32>,
+                        }
+                        let active_version_id = diesel::sql_query(
+                            "SELECT active_version_id FROM workspaces WHERE id=?1",
+                        )
+                        .bind::<diesel::sql_types::Integer, _>(import.workspace_id)
+                        .get_result::<ActiveVersion>(conn)?
+                        .active_version_id;
                         diesel::insert_into(schema::workspace_drafts::table)
                             .values((
                                 schema::workspace_drafts::workspace_id.eq(import.workspace_id),
-                                schema::workspace_drafts::base_version_id.eq::<Option<i32>>(None),
+                                schema::workspace_drafts::base_version_id.eq(active_version_id),
                                 schema::workspace_drafts::revision.eq(1_i64),
                                 schema::workspace_drafts::diagnostics_json.eq("{}"),
                                 schema::workspace_drafts::created_at_ms.eq(now_ms),
                                 schema::workspace_drafts::updated_at_ms.eq(now_ms),
                             ))
                             .execute(conn)?;
-                        (
+                        let draft_id =
                             schema::workspace_drafts::table
                                 .filter(
                                     schema::workspace_drafts::workspace_id.eq(import.workspace_id),
                                 )
                                 .select(schema::workspace_drafts::id)
-                                .first(conn)?,
-                            1,
-                        )
+                                .first(conn)?;
+                        if let Some(version_id) = active_version_id {
+                            diesel::sql_query(
+                                "INSERT INTO draft_dataframes(draft_id,table_name,artifact_id,schema_json,row_count,content_hash,created_at_ms)
+                                 SELECT ?1,table_name,artifact_id,schema_json,row_count,content_hash,?2
+                                 FROM model_dataframes WHERE version_id=?3",
+                            )
+                            .bind::<diesel::sql_types::Integer, _>(draft_id)
+                            .bind::<diesel::sql_types::BigInt, _>(now_ms)
+                            .bind::<diesel::sql_types::Integer, _>(version_id)
+                            .execute(conn)?;
+                            diesel::sql_query(
+                                "UPDATE storage_scope_artifacts
+                                 SET ref_count=ref_count+1
+                                 WHERE storage_scope_id=(SELECT storage_scope_id FROM users WHERE id=?1)
+                                   AND artifact_id IN (SELECT artifact_id FROM model_dataframes WHERE version_id=?2)",
+                            )
+                            .bind::<diesel::sql_types::Text, _>(&user_id)
+                            .bind::<diesel::sql_types::Integer, _>(version_id)
+                            .execute(conn)?;
+                        }
+                        (draft_id, 1)
                     }
                 };
                 let mut replaced = Vec::new();

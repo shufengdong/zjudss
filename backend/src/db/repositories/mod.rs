@@ -12,6 +12,7 @@ mod simulation;
 mod storage_scope;
 mod task;
 mod user;
+mod version;
 mod workspace;
 
 pub use analysis::AnalysisRepo;
@@ -28,6 +29,10 @@ pub use simulation::SimulationRepo;
 pub use storage_scope::{StorageLimits, StorageScopeRepo, StorageUsage};
 pub use task::TaskRepo;
 pub use user::UserRepo;
+pub use version::{
+    DeleteResult, DeletionImpact, DraftSnapshot, PublishResult, VersionDataframeRow, VersionRepo,
+    VersionRepoError, VersionRow, VersionSnapshot, WorkspaceRow, WorkspaceSnapshot,
+};
 pub use workspace::{
     BindingDraft, PreparedVersion, VersionArtifactDraft, WorkspaceRecord, WorkspaceRepo,
 };
