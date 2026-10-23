@@ -237,7 +237,7 @@ impl SimulationService {
                 let _ = writer
                     .progress(
                         OperationRef {
-                            kind: OperationKind::Simulation,
+                            kind: OperationKind::Run,
                             id: task.id.to_string(),
                         },
                         stages(Some("collect"), true),
@@ -353,7 +353,7 @@ impl SimulationService {
         writer
             .progress(
                 OperationRef {
-                    kind: OperationKind::Simulation,
+                    kind: OperationKind::Run,
                     id: task.id.to_string(),
                 },
                 stages(None, false),
@@ -563,7 +563,7 @@ impl SimulationService {
         writer
             .progress(
                 OperationRef {
-                    kind: OperationKind::Simulation,
+                    kind: OperationKind::Run,
                     id: id.to_string(),
                 },
                 stages(Some(name), false),

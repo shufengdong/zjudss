@@ -6,6 +6,7 @@ mod history;
 mod ingestion;
 mod message;
 mod model_import;
+mod run;
 mod script;
 mod session;
 mod simulation;
@@ -23,6 +24,10 @@ pub use history::{HistoryHit, HistoryRepo, SearchFilters};
 pub use ingestion::{IngestionItemDraft, IngestionRecord, IngestionRepo};
 pub use message::MessageRepo;
 pub use model_import::{ModelImportRecord, ModelImportRepo};
+pub use run::{
+    CreateRun, CreatedRun, NewRunDataset, RunContext, RunDataset, RunModelFrame, RunRepo,
+    RunRepoError,
+};
 pub use script::ScriptRepo;
 pub use session::SessionRepo;
 pub use simulation::SimulationRepo;

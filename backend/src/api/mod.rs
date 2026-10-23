@@ -8,10 +8,10 @@ mod events;
 mod examples;
 mod ingestions;
 mod model_imports;
+mod runs;
 mod scripts;
 mod sessions;
 mod storage;
-mod tasks;
 mod workspaces;
 
 use axum::Router;
@@ -32,6 +32,7 @@ use crate::application::DatasetError;
 use crate::application::HistoryError;
 use crate::application::IngestionError;
 use crate::application::ModelImportError;
+use crate::application::RunError;
 use crate::application::ScriptError;
 use crate::application::VersionError;
 use crate::application::WorkspaceError;
@@ -237,6 +238,54 @@ impl From<ScriptError> for ApiError {
             },
             ScriptError::Repository(error) => Self::internal(error.to_string()),
             ScriptError::Io(error) => Self::internal(error.to_string()),
+        }
+    }
+}
+
+impl From<RunError> for ApiError {
+    fn from(error: RunError) -> Self {
+        match error {
+            RunError::NotFound => Self::not_found("资源不存在"),
+            RunError::ActiveModelChanged => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "active_model_changed",
+                details: None,
+            },
+            RunError::ScriptStaticInvalid => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: error.to_string(),
+                code: "script_static_invalid",
+                details: None,
+            },
+            RunError::ScriptIncompatible(missing) => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: "脚本与当前模型不兼容".into(),
+                code: "script_model_incompatible",
+                details: Some(serde_json::json!({"missingAliases":missing})),
+            },
+            RunError::IdempotencyConflict => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "idempotency_conflict",
+                details: None,
+            },
+            RunError::QueueFull => Self {
+                status: StatusCode::TOO_MANY_REQUESTS,
+                message: error.to_string(),
+                code: "run_queue_full",
+                details: None,
+            },
+            RunError::Invalid(message) => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message,
+                code: "invalid_run",
+                details: None,
+            },
+            RunError::Artifact(error) => error.into(),
+            RunError::Adapter(error) => Self::internal(error.to_string()),
+            RunError::Repository(error) => Self::internal(error.to_string()),
+            RunError::Io(error) => Self::internal(error.to_string()),
         }
     }
 }
@@ -518,13 +567,10 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
         post(workspaces::deletion_preview),
         ["POST"]
     );
-    add_route!("/api/tasks/{id}", get(tasks::get), ["GET"]);
-    add_route!(
-        "/api/sessions/{id}/tasks",
-        get(tasks::list_session),
-        ["GET"]
-    );
-    add_route!("/api/tasks/{id}/datasets", get(tasks::datasets), ["GET"]);
+    add_route!("/api/scripts/{id}/runs", post(runs::create), ["POST"]);
+    add_route!("/api/sessions/{id}/runs", get(runs::list), ["GET"]);
+    add_route!("/api/runs/{id}", get(runs::get), ["GET"]);
+    add_route!("/api/runs/{id}/datasets", get(runs::datasets), ["GET"]);
     add_route!("/api/datasets/{id}", get(datasets::metadata), ["GET"]);
     add_route!("/api/datasets/{id}/rows", get(datasets::rows), ["GET"]);
     add_route!(

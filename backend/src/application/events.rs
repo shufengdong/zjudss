@@ -72,7 +72,7 @@ pub struct AttachmentFile {
 #[serde(rename_all = "snake_case")]
 pub enum OperationKind {
     Ingestion,
-    Simulation,
+    Run,
     Analysis,
 }
 
@@ -213,7 +213,7 @@ pub enum AppEvent {
         id: String,
         timestamp: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        task_id: Option<String>,
+        run_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         analysis_run_id: Option<String>,
         title: String,
@@ -280,7 +280,7 @@ struct ProgressPayload {
 #[serde(rename_all = "camelCase")]
 struct ResultPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    task_id: Option<String>,
+    run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     analysis_run_id: Option<String>,
     title: String,
@@ -361,7 +361,7 @@ impl AppEvent {
                 Some(p) => AppEvent::Result {
                     id,
                     timestamp,
-                    task_id: p.task_id,
+                    run_id: p.run_id,
                     analysis_run_id: p.analysis_run_id,
                     title: p.title,
                     outputs: p.outputs,
@@ -569,7 +569,7 @@ impl EventWriter {
         stages: Vec<Stage>,
     ) -> Result<AppEvent, RepoError> {
         let task_id = match operation.kind {
-            OperationKind::Simulation => operation.id.parse().ok(),
+            OperationKind::Run => operation.id.parse().ok(),
             OperationKind::Ingestion | OperationKind::Analysis => None,
         };
         let payload = ProgressPayload {
@@ -588,13 +588,13 @@ impl EventWriter {
 
     pub async fn result(
         &self,
-        task_id: Option<i32>,
+        run_id: Option<i32>,
         analysis_run_id: Option<i32>,
         title: &str,
         outputs: Vec<ResultOutputRef>,
     ) -> Result<AppEvent, RepoError> {
         let payload = ResultPayload {
-            task_id: task_id.map(|id| id.to_string()),
+            run_id: run_id.map(|id| id.to_string()),
             analysis_run_id: analysis_run_id.map(|id| id.to_string()),
             title: title.to_string(),
             outputs,
@@ -604,7 +604,7 @@ impl EventWriter {
             "result",
             format!("结果：{title}"),
             Some(serde_json::to_value(payload).unwrap_or_default()),
-            task_id,
+            run_id,
         )
         .await
     }
@@ -748,7 +748,7 @@ mod tests {
             id: "2".into(),
             timestamp: "t".into(),
             operation: OperationRef {
-                kind: OperationKind::Simulation,
+                kind: OperationKind::Run,
                 id: "42".into(),
             },
             stages: vec![Stage {
@@ -759,24 +759,24 @@ mod tests {
         };
         let v = serde_json::to_value(progress).unwrap();
         assert_eq!(v["type"].as_str(), Some("progress"));
-        assert_eq!(v["operation"]["kind"].as_str(), Some("simulation"));
+        assert_eq!(v["operation"]["kind"].as_str(), Some("run"));
         assert_eq!(v["operation"]["id"].as_str(), Some("42"));
         assert!(v.get("taskId").is_none());
 
         let result = AppEvent::Result {
             id: "3".into(),
             timestamp: "t".into(),
-            task_id: Some("42".into()),
+            run_id: Some("42".into()),
             analysis_run_id: None,
             title: "仿真结果".into(),
             outputs: vec![],
         };
         let v = serde_json::to_value(result).unwrap();
         assert_eq!(v["type"].as_str(), Some("result"));
-        assert_eq!(v["taskId"].as_str(), Some("42"));
+        assert_eq!(v["runId"].as_str(), Some("42"));
         assert_eq!(v["outputs"].as_array().map(Vec::len), Some(0));
         assert!(v.get("metrics").is_none());
-        assert!(v.get("task_id").is_none());
+        assert!(v.get("taskId").is_none());
 
         let attachment = AppEvent::Attachment {
             id: "4".into(),

@@ -15,6 +15,7 @@ pub mod history;
 pub mod ingestion;
 pub mod model_import;
 pub mod model_patch;
+pub mod runs;
 pub mod scheduler;
 pub mod scripts;
 pub mod simulations;
@@ -35,8 +36,8 @@ use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
     AnalysisRepo, ArtifactRepo, ComparisonRepo, DatasetRepo, HistoryRepo, IngestionRepo,
-    MessageRepo, ModelImportRepo, ScriptRepo, SessionRepo, SimulationRepo, StorageScopeRepo,
-    TaskRepo, VersionRepo, WorkspaceRepo,
+    MessageRepo, ModelImportRepo, RunRepo, ScriptRepo, SessionRepo, SimulationRepo,
+    StorageScopeRepo, TaskRepo, VersionRepo, WorkspaceRepo,
 };
 use crate::engine_resources::{EngineKnowledge, EngineResourceSnapshot};
 use crate::ingestion::ArchiveLimits;
@@ -64,6 +65,7 @@ pub use history::{HistoryError, HistoryService};
 pub use ingestion::{AcceptedBatch, IngestionError, IngestionService, UploadBatch, UploadFile};
 pub use model_import::{ModelImportError, ModelImportService, ModelImportView};
 pub use model_patch::{ModelChange, ModelMutationError, ModelPatch, ModelPatchService};
+pub use runs::{CreateRunRequest, RunError, RunService, RunSubmission};
 pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
 pub use scripts::{
     CreateScriptRequest, ScriptDetail, ScriptError, ScriptService, ScriptSource, ScriptSummary,
@@ -91,6 +93,7 @@ pub struct AppState {
     pub ingestion_service: IngestionService,
     pub model_import_service: ModelImportService,
     pub script_service: ScriptService,
+    pub run_service: RunService,
     pub example_import_service: ExampleImportService,
     pub case_import_service: CaseImportService,
     pub model_patch_service: ModelPatchService,
@@ -431,6 +434,16 @@ impl AppState {
             message_repo.clone(),
             events.clone(),
         );
+        let run_service = RunService::new(
+            RunRepo::new(pool.clone()),
+            ScriptRepo::new(pool.clone()),
+            artifact_service.clone(),
+            engine.clone(),
+            scheduler.clone(),
+            message_repo.clone(),
+            events.clone(),
+            data_dir.clone(),
+        );
         let case_import_service = CaseImportService::new(
             engine_snapshot.clone(),
             model_import_service.clone(),
@@ -492,6 +505,7 @@ impl AppState {
             ingestion_service,
             model_import_service,
             script_service,
+            run_service,
             example_import_service,
             case_import_service,
             model_patch_service,

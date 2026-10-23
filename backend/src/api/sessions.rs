@@ -21,7 +21,7 @@ use super::ApiError;
 fn derive_status(latest: Option<&str>) -> &'static str {
     match latest {
         Some("succeeded") => "completed",
-        Some("pending") | Some("running") => "running",
+        Some("pending") | Some("queued") | Some("running") => "running",
         Some("failed") | Some("cancelled") => "failed",
         _ => "completed",
     }
@@ -32,7 +32,7 @@ pub async fn list(
     principal: CurrentUser,
 ) -> Result<Json<Value>, ApiError> {
     let sessions = state.session_repo.list(&principal.id).await?;
-    let statuses = state.task_repo.latest_statuses(&principal.id).await?;
+    let statuses = state.run_service.latest_statuses(&principal).await?;
     let items: Vec<Value> = sessions
         .into_iter()
         .map(|s| {
@@ -92,11 +92,8 @@ pub async fn rename(
         .session_repo
         .rename(&principal.id, session_id, &body.title, now_ms())
         .await?;
-    let latest = state
-        .task_repo
-        .latest_status_for_session(&principal.id, session_id)
-        .await?;
-    let status = derive_status(latest.as_deref());
+    let statuses = state.run_service.latest_statuses(&principal).await?;
+    let status = derive_status(statuses.get(&session_id).map(String::as_str));
     Ok(Json(json!({
         "id": session.id.to_string(),
         "title": session.title,
