@@ -228,6 +228,57 @@ fn individual_dependency_bundle_hash_and_feature_failures_are_non_importable() {
 }
 
 #[test]
+fn malformed_and_unsafe_examples_are_isolated_with_redacted_diagnostics() {
+    let fixture = fixture(None);
+    std::fs::write(
+        fixture.dss().join("demo.rss"),
+        b"model = import_dss(\"/home/operator/private/model.dss\");\n",
+    )
+    .unwrap();
+
+    let malformed = fixture.dss().join("rssbundle/malformed.rssbundle");
+    std::fs::create_dir_all(&malformed).unwrap();
+    std::fs::write(malformed.join("manifest.json"), b"{").unwrap();
+
+    let unsafe_bundle = fixture.dss().join("rssbundle/unsafe.rssbundle");
+    std::fs::create_dir_all(&unsafe_bundle).unwrap();
+    std::fs::write(
+        unsafe_bundle.join("manifest.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "entry":"/home/operator/private/main.rss",
+            "files":[{"path":"/home/operator/private/model.dss","sha256":"bad"}]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let snapshot = fixture.load();
+    for name in ["malformed", "unsafe"] {
+        let example = snapshot
+            .examples
+            .iter()
+            .find(|example| example.title == name)
+            .unwrap();
+        assert!(!example.importable);
+        assert!(!example.diagnostics.is_empty());
+    }
+    assert!(snapshot.examples.iter().any(|example| example.importable));
+    let serialized = serde_json::to_string(&snapshot.examples).unwrap();
+    assert!(!serialized.contains("/home/operator"));
+    assert!(!serialized.contains(fixture.cwd.to_string_lossy().as_ref()));
+    assert!(
+        snapshot
+            .examples
+            .iter()
+            .flat_map(|example| &example.diagnostics)
+            .all(|diagnostic| {
+                !diagnostic.contains("/home/operator")
+                    && !diagnostic.contains(fixture.cwd.to_string_lossy().as_ref())
+            })
+    );
+}
+
+#[test]
 fn duplicate_normalized_example_ids_fail_startup() {
     let fixture = fixture(None);
     std::fs::write(fixture.dss().join("DEMO.rss"), b"result = 2;\n").unwrap();
@@ -311,6 +362,36 @@ fn rejects_symlinks_anywhere_in_global_document_tree() {
             .code(),
         "engine_resource_path_escape"
     );
+}
+
+#[test]
+fn publish_normalizes_lexical_parent_components_in_data_dir() {
+    let fixture = fixture(None);
+    let snapshot = fixture.load();
+    let data = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(data.path().join("nested")).unwrap();
+    let lexical = data.path().join("nested/../data");
+    let (_, published) = EngineResourceRegistry::publish(snapshot, &lexical).unwrap();
+    assert!(published.is_absolute());
+    assert!(!published.to_string_lossy().contains("/../"));
+    assert!(published.join("manifest.json").is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn publish_accepts_a_symlinked_data_dir_root() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = fixture(None);
+    let snapshot = fixture.load();
+    let root = tempfile::tempdir().unwrap();
+    let real = root.path().join("real-data");
+    std::fs::create_dir_all(&real).unwrap();
+    let linked = root.path().join("linked-data");
+    symlink(&real, &linked).unwrap();
+    let (_, published) = EngineResourceRegistry::publish(snapshot, &linked).unwrap();
+    assert!(published.starts_with(real.canonicalize().unwrap()));
+    assert!(published.join("manifest.json").is_file());
 }
 
 #[test]

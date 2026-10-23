@@ -338,6 +338,9 @@ impl ModelImportRepo {
                 if import.status == "applied" {
                     return Err(RepoError::InvalidState("已应用的模型导入不能放弃".into()));
                 }
+                if import.status == "discarded" {
+                    return Ok(Vec::new());
+                }
                 let artifacts = schema::model_import_candidates::table
                     .filter(schema::model_import_candidates::import_id.eq(import_id))
                     .select(schema::model_import_candidates::artifact_id)

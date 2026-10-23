@@ -3,6 +3,7 @@ mod knowledge;
 mod snapshot;
 
 use std::collections::{BTreeMap, HashSet};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -66,8 +67,16 @@ impl EngineResourceRegistry {
             .canonicalize()
             .map_err(EngineResourceError::io)?;
         let dss_root = safe_directory(&engine_root, "sparrowzz/dss")?;
-        let dataframes = read_safe(&dss_root, "docs/catalog/dataframes.json")?;
-        let functions = read_safe(&dss_root, "docs/catalog/functions.json")?;
+        let dataframes = read_safe_bounded(
+            &dss_root,
+            "docs/catalog/dataframes.json",
+            limits.max_document_bytes,
+        )?;
+        let functions = read_safe_bounded(
+            &dss_root,
+            "docs/catalog/functions.json",
+            limits.max_document_bytes,
+        )?;
         let catalog_json: serde_json::Value = serde_json::from_slice(&dataframes)
             .map_err(|error| EngineResourceError::new("catalog_invalid", error.to_string()))?;
         let functions_json: serde_json::Value = serde_json::from_slice(&functions)
@@ -84,14 +93,17 @@ impl EngineResourceRegistry {
         let mut docs = Vec::new();
         let mut documents = BTreeMap::new();
         let mut total_document_bytes = 0_u64;
-        for path in discover_documents(&dss_root)? {
+        for path in discover_documents(&dss_root, limits.max_documents)? {
             let relative = portable_relative(&dss_root, &path)?;
-            let bytes = std::fs::read(&path).map_err(EngineResourceError::io)?;
-            if documents.len() >= limits.max_documents
-                || bytes.len() as u64 > limits.max_document_bytes
-            {
-                return Err(limit_error("documentation count or file size"));
-            }
+            let remaining = limits
+                .max_total_document_bytes
+                .checked_sub(total_document_bytes)
+                .ok_or_else(|| limit_error("documentation total bytes"))?;
+            let bytes = read_bounded_file(
+                &path,
+                limits.max_document_bytes.min(remaining),
+                "documentation file or total size",
+            )?;
             total_document_bytes = total_document_bytes.saturating_add(bytes.len() as u64);
             if total_document_bytes > limits.max_total_document_bytes {
                 return Err(limit_error("documentation total bytes"));
@@ -102,11 +114,12 @@ impl EngineResourceRegistry {
             documents.insert(relative.clone(), content.as_bytes().to_vec());
             docs.push((relative.clone(), content));
         }
-        let root_rss = discover_root_rss(&dss_root)?;
-        let bundles = discover_bundle_manifests(&dss_root)?;
-        if root_rss.len().saturating_add(bundles.len()) > limits.max_examples {
-            return Err(limit_error("example count"));
-        }
+        let root_rss = discover_root_rss(&dss_root, limits.max_examples, limits.max_example_bytes)?;
+        let bundles = discover_bundle_manifests(
+            &dss_root,
+            limits.max_examples.saturating_sub(root_rss.len()),
+            limits.max_example_bytes,
+        )?;
         let examples = examples::load_examples(
             &engine_root,
             &dss_root,
@@ -116,22 +129,31 @@ impl EngineResourceRegistry {
             limits,
         )?;
         let knowledge = EngineKnowledge::from_documents(&docs);
-        let mut source_hashes = BTreeMap::from([
-            (
-                "sparrowzz/dss/docs/catalog/dataframes.json".to_string(),
-                hash_bytes(&dataframes),
-            ),
-            (
-                "sparrowzz/dss/docs/catalog/functions.json".to_string(),
-                hash_bytes(&functions),
-            ),
-        ]);
+        let mut source_hashes = BTreeMap::new();
+        insert_source_hash(
+            &mut source_hashes,
+            "sparrowzz/dss/docs/catalog/dataframes.json".to_string(),
+            hash_bytes(&dataframes),
+        )?;
+        insert_source_hash(
+            &mut source_hashes,
+            "sparrowzz/dss/docs/catalog/functions.json".to_string(),
+            hash_bytes(&functions),
+        )?;
         for (path, bytes) in &documents {
-            source_hashes.insert(format!("sparrowzz/dss/{path}"), hash_bytes(bytes));
+            insert_source_hash(
+                &mut source_hashes,
+                format!("sparrowzz/dss/{path}"),
+                hash_bytes(bytes),
+            )?;
         }
         for example in &examples {
             for file in &example.files {
-                source_hashes.insert(file.source_path.clone(), file.sha256.clone());
+                insert_source_hash(
+                    &mut source_hashes,
+                    file.source_path.clone(),
+                    file.sha256.clone(),
+                )?;
             }
         }
         let mut identity = Sha256::new();
@@ -182,6 +204,7 @@ impl EngineResourceRegistry {
     ) -> Result<(EngineResourceSnapshot, PathBuf), EngineResourceError> {
         let parent = data_dir.join("system/engine-resources");
         std::fs::create_dir_all(&parent).map_err(EngineResourceError::io)?;
+        let parent = parent.canonicalize().map_err(EngineResourceError::io)?;
         let destination = parent.join(&snapshot.id);
         let generated = generated_snapshot_files(&snapshot)?;
         let mut inventory = generated
@@ -215,19 +238,12 @@ impl EngineResourceRegistry {
                         format!("resource disappeared: {relative}"),
                     )
                 })?;
-                let bytes = std::fs::read(&source).map_err(|_| {
-                    EngineResourceError::new(
-                        "engine_resource_changed_during_scan",
-                        format!("resource unreadable: {relative}"),
-                    )
-                })?;
-                if hash_bytes(&bytes) != *expected_hash {
-                    return Err(EngineResourceError::new(
-                        "engine_resource_changed_during_scan",
-                        format!("resource changed: {relative}"),
-                    ));
-                }
-                write_published_file(&staging, &format!("source/{relative}"), &bytes)?;
+                copy_verified_published_file(
+                    &staging,
+                    &format!("source/{relative}"),
+                    &source,
+                    expected_hash,
+                )?;
             }
             write_published_file(
                 &staging,
@@ -283,6 +299,11 @@ fn write_published_file(
     relative: &str,
     bytes: &[u8],
 ) -> Result<(), EngineResourceError> {
+    let path = published_path(root, relative)?;
+    std::fs::write(path, bytes).map_err(EngineResourceError::io)
+}
+
+fn published_path(root: &Path, relative: &str) -> Result<PathBuf, EngineResourceError> {
     let relative = Path::new(relative);
     if relative.is_absolute()
         || relative
@@ -298,7 +319,45 @@ fn write_published_file(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(EngineResourceError::io)?;
     }
-    std::fs::write(path, bytes).map_err(EngineResourceError::io)
+    Ok(path)
+}
+
+fn copy_verified_published_file(
+    root: &Path,
+    relative: &str,
+    source: &Path,
+    expected_hash: &str,
+) -> Result<(), EngineResourceError> {
+    let destination = published_path(root, relative)?;
+    let mut input = std::fs::File::open(source).map_err(|_| {
+        EngineResourceError::new(
+            "engine_resource_changed_during_scan",
+            format!("resource unreadable: {relative}"),
+        )
+    })?;
+    let mut output = std::fs::File::create(destination).map_err(EngineResourceError::io)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = input.read(&mut buffer).map_err(|_| {
+            EngineResourceError::new(
+                "engine_resource_changed_during_scan",
+                format!("resource unreadable: {relative}"),
+            )
+        })?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        std::io::Write::write_all(&mut output, &buffer[..read]).map_err(EngineResourceError::io)?;
+    }
+    if format!("{:x}", hasher.finalize()) != expected_hash {
+        return Err(EngineResourceError::new(
+            "engine_resource_changed_during_scan",
+            format!("resource changed: {relative}"),
+        ));
+    }
+    Ok(())
 }
 
 fn verify_published_snapshot(
@@ -364,8 +423,17 @@ fn rebase_snapshot(
 }
 
 pub(crate) fn hash_file(path: &Path) -> Result<String, EngineResourceError> {
-    let bytes = std::fs::read(path).map_err(EngineResourceError::io)?;
-    Ok(hash_bytes(&bytes))
+    let mut file = std::fs::File::open(path).map_err(EngineResourceError::io)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(EngineResourceError::io)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn hash_bytes(bytes: &[u8]) -> String {
@@ -386,8 +454,54 @@ fn limit_error(kind: &str) -> EngineResourceError {
     )
 }
 
-fn read_safe(root: &Path, relative: &str) -> Result<Vec<u8>, EngineResourceError> {
-    std::fs::read(safe_file(root, relative)?).map_err(EngineResourceError::io)
+fn read_safe_bounded(
+    root: &Path,
+    relative: &str,
+    max_bytes: u64,
+) -> Result<Vec<u8>, EngineResourceError> {
+    read_bounded_file(&safe_file(root, relative)?, max_bytes, "catalog file size")
+}
+
+pub(crate) fn read_bounded_file(
+    path: &Path,
+    max_bytes: u64,
+    kind: &str,
+) -> Result<Vec<u8>, EngineResourceError> {
+    if std::fs::metadata(path)
+        .map_err(EngineResourceError::io)?
+        .len()
+        > max_bytes
+    {
+        return Err(limit_error(kind));
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(EngineResourceError::io)?
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(EngineResourceError::io)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(limit_error(kind));
+    }
+    Ok(bytes)
+}
+
+fn insert_source_hash(
+    hashes: &mut BTreeMap<String, String>,
+    path: String,
+    hash: String,
+) -> Result<(), EngineResourceError> {
+    if let Some(existing) = hashes.get(&path) {
+        if existing != &hash {
+            return Err(EngineResourceError::new(
+                "engine_resource_changed_during_scan",
+                format!("resource changed while scanning: {path}"),
+            ));
+        }
+        return Ok(());
+    }
+    hashes.insert(path, hash);
+    Ok(())
 }
 
 fn catalog_schema(value: &serde_json::Value) -> Result<u32, EngineResourceError> {
@@ -444,27 +558,25 @@ fn portable_relative(root: &Path, path: &Path) -> Result<String, EngineResourceE
         .ok_or_else(|| EngineResourceError::new("engine_resource_path_escape", "路径不在资源根内"))
 }
 
-fn discover_documents(dss_root: &Path) -> Result<Vec<PathBuf>, EngineResourceError> {
+fn discover_documents(
+    dss_root: &Path,
+    max_documents: usize,
+) -> Result<Vec<PathBuf>, EngineResourceError> {
     let docs_root = safe_directory(dss_root, "docs")?;
     let mut files = Vec::new();
-    walk_regular_files(&docs_root, true, &mut files)?;
-    files.retain(|path| {
-        path.extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
-    });
+    walk_matching_files(&docs_root, true, max_documents, is_markdown, &mut files)?;
     files.sort_by_key(|path| portable_relative(dss_root, path).unwrap_or_default());
     Ok(files)
 }
 
-fn discover_root_rss(dss_root: &Path) -> Result<Vec<SourceFileSpec>, EngineResourceError> {
-    let mut paths = std::fs::read_dir(dss_root)
-        .map_err(EngineResourceError::io)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(EngineResourceError::io)?;
-    paths.sort_by_key(std::fs::DirEntry::file_name);
+fn discover_root_rss(
+    dss_root: &Path,
+    max_examples: usize,
+    max_example_bytes: u64,
+) -> Result<Vec<SourceFileSpec>, EngineResourceError> {
     let mut result = Vec::new();
-    for entry in paths {
+    for entry in std::fs::read_dir(dss_root).map_err(EngineResourceError::io)? {
+        let entry = entry.map_err(EngineResourceError::io)?;
         let metadata = std::fs::symlink_metadata(entry.path()).map_err(EngineResourceError::io)?;
         if metadata.is_file()
             && entry
@@ -473,17 +585,25 @@ fn discover_root_rss(dss_root: &Path) -> Result<Vec<SourceFileSpec>, EngineResou
                 .and_then(|extension| extension.to_str())
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("rss"))
         {
+            if result.len() >= max_examples {
+                return Err(limit_error("example count"));
+            }
             let path = entry.path();
             result.push(SourceFileSpec {
                 path: portable_relative(dss_root, &path)?,
-                sha256: hash_file(&path)?,
+                sha256: hash_bounded_file(&path, max_example_bytes, "example bytes")?,
             });
         }
     }
+    result.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(result)
 }
 
-fn discover_bundle_manifests(dss_root: &Path) -> Result<Vec<SourceFileSpec>, EngineResourceError> {
+fn discover_bundle_manifests(
+    dss_root: &Path,
+    max_bundles: usize,
+    max_example_bytes: u64,
+) -> Result<Vec<SourceFileSpec>, EngineResourceError> {
     let root = dss_root.join("rssbundle");
     if !root.exists() {
         return Ok(Vec::new());
@@ -499,38 +619,28 @@ fn discover_bundle_manifests(dss_root: &Path) -> Result<Vec<SourceFileSpec>, Eng
         ));
     }
     let mut files = Vec::new();
-    walk_regular_files(&root, false, &mut files)?;
-    files.retain(|path| {
-        path.file_name().and_then(|name| name.to_str()) == Some("manifest.json")
-            && path
-                .parent()
-                .and_then(Path::extension)
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("rssbundle"))
-    });
+    walk_matching_files(&root, false, max_bundles, is_bundle_manifest, &mut files)?;
     files.sort_by_key(|path| portable_relative(dss_root, path).unwrap_or_default());
     files
         .into_iter()
         .map(|path| {
             Ok(SourceFileSpec {
                 path: portable_relative(dss_root, &path)?,
-                sha256: hash_file(&path)?,
+                sha256: hash_bounded_file(&path, max_example_bytes, "example bytes")?,
             })
         })
         .collect()
 }
 
-fn walk_regular_files(
+fn walk_matching_files(
     root: &Path,
     reject_symlinks: bool,
+    max_files: usize,
+    matches: fn(&Path) -> bool,
     files: &mut Vec<PathBuf>,
 ) -> Result<(), EngineResourceError> {
-    let mut entries = std::fs::read_dir(root)
-        .map_err(EngineResourceError::io)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(EngineResourceError::io)?;
-    entries.sort_by_key(std::fs::DirEntry::file_name);
-    for entry in entries {
+    for entry in std::fs::read_dir(root).map_err(EngineResourceError::io)? {
+        let entry = entry.map_err(EngineResourceError::io)?;
         let path = entry.path();
         let metadata = std::fs::symlink_metadata(&path).map_err(EngineResourceError::io)?;
         if metadata.file_type().is_symlink() {
@@ -543,12 +653,38 @@ fn walk_regular_files(
             continue;
         }
         if metadata.is_dir() {
-            walk_regular_files(&path, reject_symlinks, files)?;
-        } else if metadata.is_file() {
+            walk_matching_files(&path, reject_symlinks, max_files, matches, files)?;
+        } else if metadata.is_file() && matches(&path) {
+            if files.len() >= max_files {
+                return Err(limit_error("resource file count"));
+            }
             files.push(path);
         }
     }
     Ok(())
+}
+
+fn is_markdown(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+}
+
+fn is_bundle_manifest(path: &Path) -> bool {
+    path.file_name().and_then(|name| name.to_str()) == Some("manifest.json")
+        && path
+            .parent()
+            .and_then(Path::extension)
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("rssbundle"))
+}
+
+fn hash_bounded_file(
+    path: &Path,
+    max_bytes: u64,
+    kind: &str,
+) -> Result<String, EngineResourceError> {
+    read_bounded_file(path, max_bytes, kind).map(|bytes| hash_bytes(&bytes))
 }
 
 pub(crate) fn safe_file(root: &Path, relative: &str) -> Result<PathBuf, EngineResourceError> {
@@ -595,4 +731,31 @@ fn safe_path(root: &Path, relative: &str, directory: bool) -> Result<PathBuf, En
         ));
     }
     Ok(canonical)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conflicting_inventory_hashes_fail_as_a_changed_scan() {
+        let mut inventory = BTreeMap::new();
+        insert_source_hash(&mut inventory, "shared/model.dss".into(), "first".into()).unwrap();
+        let error = insert_source_hash(&mut inventory, "shared/model.dss".into(), "second".into())
+            .unwrap_err();
+        assert_eq!(error.code(), "engine_resource_changed_during_scan");
+    }
+
+    #[test]
+    fn bounded_read_rejects_sparse_file_from_metadata() {
+        use std::io::{Seek, SeekFrom, Write};
+
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("large.md");
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.seek(SeekFrom::Start(1024 * 1024)).unwrap();
+        file.write_all(&[0]).unwrap();
+        let error = read_bounded_file(&path, 1024, "test file").unwrap_err();
+        assert_eq!(error.code(), "engine_resource_limit_exceeded");
+    }
 }

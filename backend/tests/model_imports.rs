@@ -4,6 +4,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use backend::application::{UploadBatch, UploadFile};
 use backend::storage::StageLimits;
+use diesel::RunQueryDsl;
 use diesel::connection::SimpleConnection;
 use std::io::Cursor;
 use tower::ServiceExt;
@@ -18,6 +19,74 @@ fn multipart(client_id: &str, bytes: &str) -> (String, String) {
          --{boundary}--\r\n"
     );
     (boundary, body)
+}
+
+#[derive(diesel::QueryableByName)]
+struct RefCountRow {
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    ref_count: i64,
+}
+
+#[tokio::test]
+async fn repeated_discard_releases_a_shared_source_artifact_only_once() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "discard-idempotency", 1)
+        .await
+        .unwrap();
+    for client_id in ["first", "second"] {
+        let staged = app
+            .state
+            .artifact_service
+            .store()
+            .stage(
+                Cursor::new(b"id,name\n1,bus\n".to_vec()),
+                StageLimits::default(),
+            )
+            .unwrap();
+        app.state
+            .model_import_service
+            .accept(
+                &user,
+                session.id,
+                client_id.into(),
+                None,
+                UploadBatch {
+                    client_batch_id: "unused".into(),
+                    files: vec![UploadFile {
+                        client_file_id: "bus".into(),
+                        file_name: "bus.csv".into(),
+                        relative_path: Some("bus.csv".into()),
+                        media_type: Some("text/csv".into()),
+                        staged,
+                    }],
+                },
+            )
+            .await
+            .unwrap();
+    }
+    app.state
+        .model_import_service
+        .discard(&user, 1)
+        .await
+        .unwrap();
+    app.state
+        .model_import_service
+        .discard(&user, 1)
+        .await
+        .unwrap();
+
+    let mut conn = app.pool.get().unwrap();
+    let row = diesel::sql_query(
+        "SELECT ref_count FROM storage_scope_artifacts WHERE storage_scope_id=?1",
+    )
+    .bind::<diesel::sql_types::Integer, _>(user.storage_scope_id)
+    .get_result::<RefCountRow>(&mut conn)
+    .unwrap();
+    assert_eq!(row.ref_count, 1);
 }
 
 #[tokio::test]

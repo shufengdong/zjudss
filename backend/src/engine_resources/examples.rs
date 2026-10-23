@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::snapshot::{ResourceLimits, SourceFileSpec};
-use super::{EngineResourceError, hash_file, safe_file};
+use super::{EngineResourceError, read_bounded_file, safe_file};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,8 +69,12 @@ pub(crate) fn load_examples(
     let mut ids = HashSet::new();
     for spec in root_specs {
         let path = safe_file(dss_root, &spec.path)?;
-        verify_source_hash(&path, &spec.sha256)?;
-        let bytes = std::fs::read(&path).map_err(EngineResourceError::io)?;
+        let bytes = Arc::new(read_bounded_file(
+            &path,
+            limits.max_example_bytes,
+            "example bytes",
+        )?);
+        verify_loaded_hash(&bytes, &spec.sha256)?;
         let id = example_id("rss", &spec.path);
         if !ids.insert(id.clone()) {
             return Err(EngineResourceError::new(
@@ -84,9 +89,11 @@ pub(crate) fn load_examples(
         let dependencies = discover_rss_dependencies(
             engine_root,
             &path,
-            &bytes,
+            Arc::clone(&bytes),
             &mut diagnostics,
             limits.max_dependency_depth,
+            limits.max_example_files,
+            limits.max_example_bytes,
         )?;
         let entry_source = format!("sparrowzz/dss/{}", spec.path);
         let mut files = vec![ExampleSourceFile {
@@ -97,9 +104,8 @@ pub(crate) fn load_examples(
         let mut total = bytes.len() as u64;
         let mut tree = Sha256::new();
         tree.update(spec.path.as_bytes());
-        tree.update(&bytes);
-        for dependency in &dependencies {
-            let data = std::fs::read(dependency).map_err(EngineResourceError::io)?;
+        tree.update(bytes.as_slice());
+        for (dependency, data) in &dependencies {
             total += data.len() as u64;
             let relative = dependency
                 .strip_prefix(engine_root)
@@ -112,11 +118,11 @@ pub(crate) fn load_examples(
                 .to_string_lossy()
                 .replace('\\', "/");
             tree.update(relative.as_bytes());
-            tree.update(&data);
+            tree.update(data.as_slice());
             files.push(ExampleSourceFile {
                 virtual_path: relative.clone(),
                 source_path: relative,
-                sha256: format!("{:x}", Sha256::digest(&data)),
+                sha256: format!("{:x}", Sha256::digest(data.as_slice())),
             });
         }
         if files.len() > limits.max_example_files || total > limits.max_example_bytes {
@@ -145,21 +151,16 @@ pub(crate) fn load_examples(
     }
     for spec in bundle_specs {
         let manifest_path = safe_file(dss_root, &spec.path)?;
-        verify_source_hash(&manifest_path, &spec.sha256)?;
-        let bytes = std::fs::read(&manifest_path).map_err(EngineResourceError::io)?;
-        let manifest: BundleManifest = serde_json::from_slice(&bytes).map_err(|error| {
-            EngineResourceError::new("example_manifest_invalid", error.to_string())
-        })?;
+        let bytes = read_bounded_file(&manifest_path, limits.max_example_bytes, "example bytes")?;
+        verify_loaded_hash(&bytes, &spec.sha256)?;
+        let rel_bundle = spec.path.trim_end_matches("/manifest.json");
+        let id = example_id("rssbundle", rel_bundle);
+        if !ids.insert(id.clone()) {
+            return Err(EngineResourceError::new("duplicate_example_id", rel_bundle));
+        }
         let bundle_root = manifest_path
             .parent()
             .ok_or_else(|| EngineResourceError::new("example_path_invalid", &spec.path))?;
-        safe_relative(&manifest.entry)?;
-        let mut diagnostics = Vec::new();
-        let mut total = bytes.len() as u64;
-        let mut tree = Sha256::new();
-        tree.update(spec.path.as_bytes());
-        tree.update(&bytes);
-        let mut entry_found = false;
         let manifest_source = manifest_path
             .strip_prefix(engine_root)
             .map_err(|_| {
@@ -170,6 +171,32 @@ pub(crate) fn load_examples(
             })?
             .to_string_lossy()
             .replace('\\', "/");
+        let manifest: BundleManifest = match serde_json::from_slice(&bytes) {
+            Ok(manifest) => manifest,
+            Err(_) => {
+                examples.push(invalid_bundle_example(
+                    rel_bundle,
+                    id,
+                    manifest_source,
+                    &bytes,
+                    "invalid manifest",
+                ));
+                continue;
+            }
+        };
+        if manifest.files.len().saturating_add(1) > limits.max_example_files {
+            return Err(super::limit_error("example files"));
+        }
+        let entry_safe = safe_relative(&manifest.entry).is_ok();
+        let mut diagnostics = Vec::new();
+        if !entry_safe {
+            diagnostics.push("unsafe entry: [redacted]".to_string());
+        }
+        let mut total = bytes.len() as u64;
+        let mut tree = Sha256::new();
+        tree.update(spec.path.as_bytes());
+        tree.update(&bytes);
+        let mut entry_found = false;
         let mut files = vec![ExampleSourceFile {
             virtual_path: "manifest.json".to_string(),
             source_path: manifest_source,
@@ -177,7 +204,7 @@ pub(crate) fn load_examples(
         }];
         for file in &manifest.files {
             if safe_relative(&file.path).is_err() {
-                diagnostics.push(format!("unsafe file: {}", file.path));
+                diagnostics.push("unsafe file: [redacted]".to_string());
                 continue;
             }
             let path = match safe_file(bundle_root, &file.path) {
@@ -187,17 +214,20 @@ pub(crate) fn load_examples(
                     continue;
                 }
             };
-            match hash_file(&path) {
-                Ok(hash) => {
-                    total += std::fs::metadata(&path)
-                        .map_err(EngineResourceError::io)?
-                        .len();
+            let remaining = limits
+                .max_example_bytes
+                .checked_sub(total)
+                .ok_or_else(|| super::limit_error("example bytes"))?;
+            match read_bounded_file(&path, remaining, "example bytes") {
+                Ok(data) => {
+                    total += data.len() as u64;
+                    let hash = format!("{:x}", Sha256::digest(&data));
                     tree.update(file.path.as_bytes());
                     tree.update(hash.as_bytes());
                     if hash != file.sha256 {
                         diagnostics.push(format!("hash mismatch: {}", file.path));
                     }
-                    if file.path == manifest.entry {
+                    if entry_safe && file.path == manifest.entry {
                         entry_found = true;
                     }
                     let source_path = path
@@ -227,14 +257,6 @@ pub(crate) fn load_examples(
                 diagnostics.push(format!("missing feature: {feature}"));
             }
         }
-        let rel_bundle = spec.path.trim_end_matches("/manifest.json");
-        let id = example_id("rssbundle", rel_bundle);
-        if !ids.insert(id.clone()) {
-            return Err(EngineResourceError::new("duplicate_example_id", rel_bundle));
-        }
-        if files.len() > limits.max_example_files || total > limits.max_example_bytes {
-            return Err(super::limit_error("example files or bytes"));
-        }
         examples.push(EngineExample {
             id,
             title: Path::new(rel_bundle)
@@ -243,7 +265,11 @@ pub(crate) fn load_examples(
                 .unwrap_or("RSS bundle")
                 .to_string(),
             source_kind: "rssbundle".to_string(),
-            entry_path: format!("{rel_bundle}/{}", manifest.entry),
+            entry_path: if entry_safe {
+                format!("{rel_bundle}/{}", manifest.entry)
+            } else {
+                format!("{rel_bundle}/[invalid-entry]")
+            },
             study_type: manifest
                 .study
                 .as_ref()
@@ -262,15 +288,50 @@ pub(crate) fn load_examples(
     Ok(examples)
 }
 
-fn verify_source_hash(path: &Path, expected: &str) -> Result<(), EngineResourceError> {
-    let actual = hash_file(path)?;
+fn verify_loaded_hash(bytes: &[u8], expected: &str) -> Result<(), EngineResourceError> {
+    let actual = format!("{:x}", Sha256::digest(bytes));
     if actual == expected {
         Ok(())
     } else {
         Err(EngineResourceError::new(
-            "engine_resource_hash_mismatch",
-            path.display().to_string(),
+            "engine_resource_changed_during_scan",
+            "resource changed while reading",
         ))
+    }
+}
+
+fn invalid_bundle_example(
+    rel_bundle: &str,
+    id: String,
+    manifest_source: String,
+    bytes: &[u8],
+    diagnostic: &str,
+) -> EngineExample {
+    let mut tree = Sha256::new();
+    tree.update(format!("{rel_bundle}/manifest.json").as_bytes());
+    tree.update(bytes);
+    EngineExample {
+        id,
+        title: Path::new(rel_bundle)
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("RSS bundle")
+            .to_string(),
+        source_kind: "rssbundle".to_string(),
+        entry_path: format!("{rel_bundle}/[invalid-entry]"),
+        study_type: "unknown".to_string(),
+        solver: None,
+        required_features: Vec::new(),
+        file_count: 1,
+        size_bytes: bytes.len() as u64,
+        tree_hash: format!("{:x}", tree.finalize()),
+        importable: false,
+        diagnostics: vec![diagnostic.to_string()],
+        files: vec![ExampleSourceFile {
+            virtual_path: "manifest.json".to_string(),
+            source_path: manifest_source,
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+        }],
     }
 }
 
@@ -293,18 +354,28 @@ fn safe_relative(path: &str) -> Result<(), EngineResourceError> {
 fn discover_rss_dependencies(
     engine_root: &Path,
     entry_path: &Path,
-    bytes: &[u8],
+    bytes: Arc<Vec<u8>>,
     diagnostics: &mut Vec<String>,
     max_depth: usize,
-) -> Result<Vec<PathBuf>, EngineResourceError> {
+    max_files: usize,
+    max_bytes: u64,
+) -> Result<Vec<(PathBuf, Arc<Vec<u8>>)>, EngineResourceError> {
     let mut dependencies = Vec::new();
     let mut visited = HashSet::from([entry_path.to_path_buf()]);
-    let mut queue = vec![(entry_path.to_path_buf(), bytes.to_vec(), 0_usize)];
+    let mut total_bytes = bytes.len() as u64;
+    if max_files == 0 || total_bytes > max_bytes {
+        return Err(super::limit_error("example files or bytes"));
+    }
+    let mut queue = vec![(entry_path.to_path_buf(), bytes, 0_usize)];
     while let Some((current, data, depth)) = queue.pop() {
         let text = String::from_utf8_lossy(&data);
         for token in dependency_tokens(&text) {
             if token.contains("://") {
-                diagnostics.push(format!("external dependency: {token}"));
+                diagnostics.push("external dependency: [redacted]".to_string());
+                continue;
+            }
+            if safe_relative(&token).is_err() {
+                diagnostics.push("unsafe dependency: [redacted]".to_string());
                 continue;
             }
             let candidate = if token.starts_with("sparrowzz/") || token.starts_with("psa/") {
@@ -315,9 +386,17 @@ fn discover_rss_dependencies(
             match contained_regular_file(engine_root, &candidate) {
                 Some(path) => {
                     if visited.insert(path.clone()) {
-                        match std::fs::read(&path) {
+                        if visited.len() > max_files {
+                            return Err(super::limit_error("example files"));
+                        }
+                        let remaining = max_bytes
+                            .checked_sub(total_bytes)
+                            .ok_or_else(|| super::limit_error("example bytes"))?;
+                        match read_bounded_file(&path, remaining, "example bytes") {
                             Ok(bytes) => {
-                                dependencies.push(path.clone());
+                                total_bytes += bytes.len() as u64;
+                                let bytes = Arc::new(bytes);
+                                dependencies.push((path.clone(), Arc::clone(&bytes)));
                                 if path
                                     .extension()
                                     .and_then(|extension| extension.to_str())
