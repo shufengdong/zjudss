@@ -84,8 +84,8 @@ cd ..
 git diff --check
 ```
 
-普通 PR 使用 Scripted LLM 和 ScenarioEngine 走生产前后端代码路径；候选发布另以真实 DeepSeek 和固定
-hash 的 tensoreval artifact 验证外部依赖。测试分层、覆盖率定义和当前数量见
+普通 PR 使用 Scripted LLM 和 ScenarioEngine 走生产前后端代码路径；候选发布另以真实 DeepSeek 和运行时构建的
+eig-rs 当前默认分支验证外部依赖。测试分层、覆盖率定义和当前数量见
 [自动化集成测试设计](docs/integration-testing-design.md)。
 
 ## 文档入口
@@ -97,7 +97,7 @@ hash 的 tensoreval artifact 验证外部依赖。测试分层、覆盖率定义
 - [前端设计](docs/frontend-design.md)：自然语言交互、状态恢复和可视化。
 - [模型工作区设计](docs/model-workspace-design.md)：摄取、版本、分析、比较和历史。
 - [Agent Prompt 与领域技能](docs/agent-prompt-skills-design.md)：知识快照、技能门控和资源版本。
-- [部署与发布验收](docs/v3-deployment.md)：必需配置、固定用户 seed、资源 artifact 和发布门禁。
+- [部署与发布验收](docs/v3-deployment.md)：必需配置、固定用户 seed、动态引擎资源和发布门禁。
 - [自动化集成测试设计](docs/integration-testing-design.md)：功能目录和各测试层职责。
 
 `docs/superpowers/plans/` 保存已经执行的历史实施计划，不作为当前运行契约；发生差异时以上述当前文档

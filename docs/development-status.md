@@ -21,7 +21,8 @@
 ## Runtime contracts
 
 - Agent bundle：`v3.0.0`，目录 `backend/resources/agent/v3`。
-- Engine contract：`tensoreval-parquet-v3`；资源 snapshot 由内置 contract 的 docs/catalog/examples hash 固定。
+- Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `TENSOREVAL_CWD` 动态发现并验证
+  docs/catalog/examples，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
 - 公共合同：41 条路由、9 类消息、16 个工具、6 个 skills、8 个上传来源、6 类视图。
 - 模型表：adapter 固定输出 21 张规范 DataFrame，包含合法的零行表。
 
@@ -30,6 +31,11 @@
 所有 tensoreval 调用必须经过 adapter；所有 repository 查询带 `UserId`；所有结果使用 Snappy Parquet；浏览器与
 LLM 不接触物理路径。脚本创建不运行，模型修改不发布，案例应用不发布，单条聊天消息不可删除，只能删除整个
 会话。运行记录本身不可删除；历史版本删除和单结果删除使用各自明确规则。
+
+启动会功能性探测当前 `TENSOREVAL_BIN` 的命名 Parquet、两种模型导入和脚本校验能力，并在每次启动子进程前
+复核启动时的 binary SHA-256；替换 binary 后返回 `engine_binary_changed`，必须重启服务。资源扫描限制为 512 篇
+Markdown、单篇 4 MiB、文档合计 64 MiB、2,048 个案例、每案例 10,000 文件/2 GiB、依赖深度 64；变更资源树
+后也必须重启。运行时允许没有案例，但候选发布门禁要求至少一个根 RSS 和一个 bundle。
 
 ## Reset and operation
 

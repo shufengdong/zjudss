@@ -483,7 +483,7 @@
 
 - id: ENGINE-001
   source: docs/integration-testing-design.md#coverage-matrix
-  title: Engine calls use pinned resources and adapter-only process boundaries
+  title: Engine calls use a validated current runtime snapshot and adapter-only process boundaries
   layers: [adapter, agent]
   lanes: [pr, release]
   tests:
@@ -492,12 +492,21 @@
       name: four_commands_use_private_cwd_parquet_results_and_safe_named_inputs
     - runner: rust
       file: backend/tests/engine_resources.rs
-      name: loads_searchable_stable_snapshot_and_publishes_it_atomically
+      name: publish_rejects_source_changes_and_corrupt_existing_snapshots
+    - runner: rust
+      file: backend/tests/engine_resources.rs
+      name: all_resource_limits_fail_with_one_stable_code
+    - runner: rust
+      file: backend/tests/process_engine_v3.rs
+      name: capability_probe_exercises_each_model_import_profile
+    - runner: rust
+      file: backend/tests/process_engine_v3.rs
+      name: process_engine_rejects_binary_replacement_before_every_spawn_path
     - runner: release
       file: scripts/test-release-engine
       name: real_engine_imports_all_examples_and_runs_representative_studies
-  assertions: [process commands are controlled, engine docs use pinned snapshots]
-  fixtures: [fake process engine, embedded engine contract]
+  assertions: [process commands are controlled, current resources are published immutably, limits and binary replacement fail closed]
+  fixtures: [fake process engine, dynamic eig-rs resource tree, current real eig-rs]
   contracts:
     - "tool:search_engine_docs"
     - "tool:read_engine_doc_section"

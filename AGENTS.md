@@ -62,9 +62,10 @@ cd ..
 3. LLM 和前端只传稳定资源 ID 与受控 spec，不得接收服务器路径、命令、SQL 或任意 ECharts option。
 4. artifact、模型版本、任务脚本、结果数据集和分析记录发布后不可修改；更新通过新资源和血缘表达。
 5. 每个 repository 查询显式接收 `UserId`；跨用户与不存在资源统一返回 404。
-6. `TENSOREVAL_CWD` 必须匹配内置 engine resource contract。相邻 `../eig-rs` 只可作为开发期受控来源，
-   不能把任意当前工作树当成发布事实，也不能放宽资源 hash 校验来绕过失败。
-7. Agent Prompt 不常驻整套引擎文档。服务启动时预检并索引固定快照，agent 按需调用文档和 skill 工具；
+6. `TENSOREVAL_CWD` 必须是当前可读的 eig-rs 资源树，并满足代码定义的 catalog schema、路径和容量约束；
+   服务只读取、验证并发布本次启动的不可变 snapshot，不得 checkout、pull、reset、clean 或改写该工作树。
+7. Agent Prompt 不常驻整套引擎文档。服务启动时功能性预检当前 binary，并索引和发布当前资源 snapshot；
+   更新 eig-rs 后必须重启，agent 按需调用文档和 skill 工具；
    生成脚本的 run 必须保存实际 bundle、skill refs 和 engine contract。
 8. 固定按钮只用于上传、会话、案例浏览、历史分页、结果读取和下载等高频无歧义动作。模型修改、激活、
    仿真、分析和比较通过可见的自然语言消息进入 Agent 工具链。

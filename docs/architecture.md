@@ -28,7 +28,8 @@ V3 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axu
 2. 浏览器和 LLM 只提交稳定 ID、草稿 revision 与受控 spec，不提交服务器路径、SQL、命令或任意图表配置。
 3. repository 查询显式接收 `UserId`；跨用户和不存在资源统一 404。
 4. 发布后的模型版本、脚本 artifact、运行快照、结果和分析记录不可修改。
-5. 生产启动必须通过 binary capability、engine resource snapshot、Agent bundle 和用户种子校验。
+5. 生产启动必须通过当前 binary 的功能性 capability 探测、动态 engine resource snapshot、Agent bundle 和用户
+   种子校验；服务不修改 eig-rs 工作树。
 6. 结果事实来源仅为 Snappy Parquet；数据库保存索引、schema、行数、hash、状态和血缘。
 
 ## Consistency and recovery
@@ -36,6 +37,10 @@ V3 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axu
 模型导入在最终确认事务前不改草稿。草稿写入比较 `{id, revision}`；发布和运行使用 client id 幂等。
 服务重启把处理中导入和 queued/running 运行收敛为带 `service_restarted` 诊断的失败态，已提交消息、版本和
 结果保持不变。SSE 先持久化消息再广播，支持 `Last-Event-ID` replay 与 resync。
+
+引擎资源在启动时从当前 `TENSOREVAL_CWD` 读取并按字节生成 snapshot ID；发布阶段再次校验源 hash，并原子复制
+到 `DATA_DIR/system/engine-resources/<snapshotId>`。案例导入只读取这个不可变发布树。源文件在扫描与发布之间变化、
+已发布目录损坏或 catalog 不兼容都会失败关闭；更新 eig-rs 或替换 binary 后必须重启。
 
 ## Capacity and trust
 
