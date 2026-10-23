@@ -25,6 +25,7 @@ use crate::application::AnalysisError;
 use crate::application::AppError;
 use crate::application::AppState;
 use crate::application::ArtifactError;
+use crate::application::CaseImportError;
 use crate::application::ComparisonError;
 use crate::application::DatasetError;
 use crate::application::HistoryError;
@@ -215,6 +216,28 @@ impl From<ModelImportError> for ApiError {
     }
 }
 
+impl From<CaseImportError> for ApiError {
+    fn from(error: CaseImportError) -> Self {
+        match error {
+            CaseImportError::NotFound => Self::not_found("资源不存在"),
+            CaseImportError::SnapshotMismatch => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "engine_resource_snapshot_mismatch",
+                details: None,
+            },
+            CaseImportError::NotModelizable | CaseImportError::SourceChanged => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: error.to_string(),
+                code: "case_not_modelizable",
+                details: None,
+            },
+            CaseImportError::ModelImport(error) => error.into(),
+            CaseImportError::Io(error) => Self::internal(error.to_string()),
+        }
+    }
+}
+
 impl From<WorkspaceError> for ApiError {
     fn from(error: WorkspaceError) -> Self {
         match error {
@@ -390,6 +413,11 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
     add_route!("/api/storage-usage", get(storage::usage), ["GET"]);
     add_route!("/api/examples", get(examples::list), ["GET"]);
     add_route!("/api/examples/{id}", get(examples::get), ["GET"]);
+    add_route!(
+        "/api/sessions/{id}/draft/example",
+        post(examples::apply),
+        ["POST"]
+    );
     add_route!(
         "/api/sessions",
         get(sessions::list).post(sessions::create),

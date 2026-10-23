@@ -93,6 +93,10 @@ pub struct ModelImportService {
 }
 
 impl ModelImportService {
+    pub(crate) fn artifact_store(&self) -> &crate::storage::ArtifactStore {
+        self.artifacts.store()
+    }
+
     pub fn new(
         repo: ModelImportRepo,
         artifacts: ArtifactService,
@@ -264,6 +268,28 @@ impl ModelImportService {
         import_id: i32,
     ) -> Result<ModelImportView, ModelImportError> {
         Ok(view(self.repo.find(&user.id, import_id).await?))
+    }
+
+    pub async fn accept_case(
+        &self,
+        user: &CurrentUser,
+        session_id: i32,
+        client_import_id: String,
+        expected_draft: Option<DraftRef>,
+        batch: UploadBatch,
+        source_summary: serde_json::Value,
+    ) -> Result<ModelImportView, ModelImportError> {
+        let accepted = self
+            .accept(user, session_id, client_import_id, expected_draft, batch)
+            .await?;
+        let import_id = accepted
+            .id
+            .parse::<i32>()
+            .map_err(|_| ModelImportError::Invalid("模型导入 ID 无效".into()))?;
+        self.repo
+            .mark_case_source(import_id, source_summary.to_string(), now_ms())
+            .await?;
+        self.get(user, import_id).await
     }
 
     pub async fn process(

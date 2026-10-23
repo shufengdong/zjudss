@@ -5,7 +5,11 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{application::AppState, auth::CurrentUser};
+use crate::{
+    application::{AppState, CaseImportService},
+    auth::CurrentUser,
+    db::models::DraftRef,
+};
 
 use super::ApiError;
 
@@ -30,9 +34,10 @@ pub async fn list(
         .examples
         .iter()
         .filter(|example| {
-            (needle.is_empty()
-                || example.title.to_lowercase().contains(&needle)
-                || example.id.to_lowercase().contains(&needle))
+            CaseImportService::is_modelizable(example)
+                && (needle.is_empty()
+                    || example.title.to_lowercase().contains(&needle)
+                    || example.id.to_lowercase().contains(&needle))
                 && query
                     .study_type
                     .as_ref()
@@ -50,6 +55,56 @@ pub async fn list(
         "examples": examples,
         "nextCursor": null,
     }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyCaseBody {
+    example_id: String,
+    engine_resource_snapshot: String,
+    client_import_id: String,
+    expected_draft_id: Option<i32>,
+    expected_draft_revision: Option<i64>,
+}
+
+pub async fn apply(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<i32>,
+    Json(body): Json<ApplyCaseBody>,
+) -> Result<(axum::http::StatusCode, Json<Value>), ApiError> {
+    if body.expected_draft_id.is_some() != body.expected_draft_revision.is_some() {
+        return Err(crate::application::ModelImportError::Invalid(
+            "expectedDraftId 与 expectedDraftRevision 必须同时提供".into(),
+        )
+        .into());
+    }
+    let expected = body
+        .expected_draft_id
+        .zip(body.expected_draft_revision)
+        .map(|(id, revision)| DraftRef { id, revision });
+    let service = state.case_import_service.clone();
+    let accepted = service
+        .accept(
+            &user,
+            session_id,
+            &body.example_id,
+            &body.engine_resource_snapshot,
+            body.client_import_id,
+            expected,
+        )
+        .await?;
+    let import_id = accepted
+        .id
+        .parse::<i32>()
+        .map_err(|_| ApiError::internal("模型导入 ID 无效"))?;
+    tokio::spawn(async move {
+        let _ = service.process(&user, import_id).await;
+    });
+    Ok((
+        axum::http::StatusCode::ACCEPTED,
+        Json(json!({"ok":true,"modelImport":accepted})),
+    ))
 }
 
 pub async fn get(

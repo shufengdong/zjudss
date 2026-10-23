@@ -10,7 +10,6 @@ pub mod compare_simulations;
 pub mod confirm_dataframe_mapping;
 pub mod create_dataset_view;
 pub mod get_storage_usage;
-pub mod import_example;
 pub mod inspect_example;
 pub mod inspect_workspace;
 pub mod list_result_datasets;
@@ -38,7 +37,7 @@ use crate::adapters::SimEngine;
 use crate::agent::knowledge::AgentKnowledge;
 use crate::application::{
     AnalysisService, ArtifactService, ComparisonService, DatasetService, EventWriter,
-    ExampleImportService, HistoryService, ModelPatchService, SimulationService, WorkspaceService,
+    HistoryService, ModelPatchService, SimulationService, WorkspaceService,
 };
 use crate::auth::{CurrentUser, UserId};
 use crate::db::repositories::TaskRepo;
@@ -56,7 +55,6 @@ pub struct ToolServices {
     pub scope: UserId,
     pub principal: CurrentUser,
     pub workspaces: WorkspaceService,
-    pub example_import: ExampleImportService,
     pub model_patch: ModelPatchService,
     pub engine_snapshot: Arc<EngineResourceSnapshot>,
     pub agent_knowledge: Arc<AgentKnowledge>,
@@ -104,7 +102,6 @@ define_tool_registry!(
     inspect_workspace::InspectWorkspaceTool,
     search_examples::SearchExamplesTool,
     inspect_example::InspectExampleTool,
-    import_example::ImportExampleTool,
     remove_model_input::RemoveModelInputTool,
     replace_model_input::ReplaceModelInputTool,
     confirm_dataframe_mapping::ConfirmDataframeMappingTool,

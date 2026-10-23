@@ -20,7 +20,6 @@
     "inspect_workspace",
     "search_examples",
     "inspect_example",
-    "import_example",
     "remove_model_input",
     "replace_model_input",
     "confirm_dataframe_mapping",

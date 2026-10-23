@@ -210,6 +210,28 @@ impl ModelImportRepo {
         .map_err(RepoError::Join)?
     }
 
+    pub async fn mark_case_source(
+        &self,
+        id: i32,
+        source_summary_json: String,
+        now_ms: i64,
+    ) -> RepoResult<()> {
+        let pool = self.pool.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            diesel::update(schema::model_imports::table.find(id))
+                .set((
+                    schema::model_imports::source_kind.eq("case"),
+                    schema::model_imports::source_summary_json.eq(source_summary_json),
+                    schema::model_imports::updated_at_ms.eq(now_ms),
+                ))
+                .execute(&mut conn)?;
+            Ok(())
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
     pub async fn replace_candidates(
         &self,
         import_id: i32,

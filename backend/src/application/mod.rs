@@ -5,6 +5,7 @@
 
 pub mod analysis;
 pub mod artifacts;
+pub mod case_import;
 pub mod chat;
 pub mod comparisons;
 pub mod datasets;
@@ -47,6 +48,7 @@ pub use artifacts::{
     ArtifactError, ArtifactMetadata, ArtifactRef, ArtifactService, GcReport, StorageLimits,
     StorageUsage, StorageUsageSummary,
 };
+pub use case_import::{CaseImportError, CaseImportService};
 pub use chat::ChatService;
 pub use comparisons::{ComparisonError, ComparisonService};
 pub use datasets::{DatasetError, DatasetService};
@@ -85,6 +87,7 @@ pub struct AppState {
     pub ingestion_service: IngestionService,
     pub model_import_service: ModelImportService,
     pub example_import_service: ExampleImportService,
+    pub case_import_service: CaseImportService,
     pub model_patch_service: ModelPatchService,
     pub dataset_service: DatasetService,
     pub simulation_service: SimulationService,
@@ -415,6 +418,11 @@ impl AppState {
             data_dir.clone(),
             archive_limits,
         );
+        let case_import_service = CaseImportService::new(
+            engine_snapshot.clone(),
+            model_import_service.clone(),
+            upload_single_file_limit_bytes,
+        );
         let example_import_service = ExampleImportService::new(
             engine_snapshot.clone(),
             artifact_service.clone(),
@@ -471,6 +479,7 @@ impl AppState {
             ingestion_service,
             model_import_service,
             example_import_service,
+            case_import_service,
             model_patch_service,
             dataset_service,
             simulation_service,
