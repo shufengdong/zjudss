@@ -25,7 +25,7 @@ async fn message(app: &TestApp, p: &CurrentUser, session: i32, text: &str, at: i
             &p.id,
             NewMessage {
                 session_id: session,
-                task_id: None,
+                run_id: None,
                 role: "user".into(),
                 kind: "text".into(),
                 content: text.into(),

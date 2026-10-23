@@ -98,7 +98,7 @@ async fn foreign_or_missing_cursor_requests_resync_without_leaking_messages() {
             &scope,
             NewMessage {
                 session_id: second_session.id,
-                task_id: None,
+                run_id: None,
                 role: "assistant".to_string(),
                 kind: "text".to_string(),
                 content: "foreign-secret".to_string(),

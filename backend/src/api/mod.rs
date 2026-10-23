@@ -8,6 +8,7 @@ mod events;
 mod examples;
 mod ingestions;
 mod model_imports;
+mod scripts;
 mod sessions;
 mod storage;
 mod tasks;
@@ -31,6 +32,7 @@ use crate::application::DatasetError;
 use crate::application::HistoryError;
 use crate::application::IngestionError;
 use crate::application::ModelImportError;
+use crate::application::ScriptError;
 use crate::application::VersionError;
 use crate::application::WorkspaceError;
 use crate::db::repositories::RepoError;
@@ -212,6 +214,29 @@ impl From<ModelImportError> for ApiError {
             },
             ModelImportError::Artifact(error) => error.into(),
             ModelImportError::Repository(error) => error.into(),
+        }
+    }
+}
+
+impl From<ScriptError> for ApiError {
+    fn from(error: ScriptError) -> Self {
+        match error {
+            ScriptError::NotFound => Self::not_found("资源不存在"),
+            ScriptError::Invalid(message) => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message,
+                code: "invalid_script",
+                details: None,
+            },
+            ScriptError::Artifact(error) => error.into(),
+            ScriptError::Adapter(error) => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: error.to_string(),
+                code: "script_validation_failed",
+                details: None,
+            },
+            ScriptError::Repository(error) => Self::internal(error.to_string()),
+            ScriptError::Io(error) => Self::internal(error.to_string()),
         }
     }
 }
@@ -459,6 +484,14 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
         ["POST"]
     );
     add_route!("/api/sessions/{id}/events", get(events::stream), ["GET"]);
+    add_route!(
+        "/api/sessions/{id}/scripts",
+        get(scripts::list)
+            .post(scripts::upload)
+            .layer(DefaultBodyLimit::disable()),
+        ["GET", "POST"]
+    );
+    add_route!("/api/scripts/{id}", get(scripts::detail), ["GET"]);
     add_route!("/api/ingestions/{id}", get(ingestions::get), ["GET"]);
     add_route!(
         "/api/sessions/{id}/workspace",

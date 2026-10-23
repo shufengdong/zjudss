@@ -36,6 +36,7 @@ fn services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
         principal,
         workspaces: app.state.workspace_service.clone(),
         model_patch: app.state.model_patch_service.clone(),
+        scripts: app.state.script_service.clone(),
         engine_snapshot: app.state.engine_snapshot.clone(),
         agent_knowledge: app.state.agent_knowledge.clone(),
         loaded_skills: Arc::new(Mutex::new(BTreeSet::new())),

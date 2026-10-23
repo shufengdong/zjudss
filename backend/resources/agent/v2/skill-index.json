@@ -33,7 +33,7 @@
       ],
       "requiredTools": [
         "inspect_workspace",
-        "run_study"
+        "create_script"
       ],
       "engineContractVersion": "dss-v2-b3fc74c0",
       "sources": [
@@ -41,7 +41,7 @@
         "docs/dsa_function_reference.md"
       ],
       "path": "skills/study-planning.md",
-      "sha256": "bbd011e882e478e778d1ab7e24241c5ff297f1cd265381ee8f2b579e9821b5a4"
+      "sha256": "cbe6fca2e96d1752fdd643bc0f7bd2d5da875da3942f10a5b38f2742c35a5d57"
     },
     {
       "id": "rss-generation",
@@ -62,7 +62,7 @@
         "docs/rsdss_function_reference.md"
       ],
       "path": "skills/rss-generation.md",
-      "sha256": "c13d247c74bacf7410a141c4d5ad996b108d177733c999ddf41cbf27330f4ee8"
+      "sha256": "0fddb9dac0f51c3518d5dbdd740303d861f045ac4da55cf31af5fe7c65f1f36c"
     },
     {
       "id": "result-analysis",

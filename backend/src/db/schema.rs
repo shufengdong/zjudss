@@ -443,7 +443,7 @@ diesel::table! {
     messages (id) {
         id -> Integer,
         session_id -> Integer,
-        task_id -> Nullable<Integer>,
+        run_id -> Nullable<Integer>,
         role -> Text,
         kind -> Text,
         content -> Text,

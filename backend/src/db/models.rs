@@ -729,7 +729,7 @@ pub struct NewTaskComparison {
 pub struct Message {
     pub id: i32,
     pub session_id: i32,
-    pub task_id: Option<i32>,
+    pub run_id: Option<i32>,
     pub role: String,
     pub kind: String,
     pub content: String,
@@ -741,7 +741,7 @@ pub struct Message {
 #[diesel(table_name = messages)]
 pub struct NewMessage {
     pub session_id: i32,
-    pub task_id: Option<i32>,
+    pub run_id: Option<i32>,
     pub role: String,
     pub kind: String,
     pub content: String,

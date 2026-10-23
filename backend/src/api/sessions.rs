@@ -111,7 +111,17 @@ pub async fn delete(
     principal: CurrentUser,
     Path(session_id): Path<i32>,
 ) -> Result<StatusCode, ApiError> {
+    let script_artifacts = state
+        .script_service
+        .session_artifact_ids(&principal, session_id)
+        .await?;
     state.session_repo.delete(&principal.id, session_id).await?;
+    for artifact_id in script_artifacts {
+        let _ = state
+            .artifact_service
+            .release(principal.storage_scope_id, artifact_id)
+            .await;
+    }
     state.events.unregister(session_id);
     Ok(StatusCode::NO_CONTENT)
 }
@@ -372,7 +382,7 @@ pub async fn post_message(
             &principal.id,
             NewMessage {
                 session_id,
-                task_id: None,
+                run_id: None,
                 role: "user".to_string(),
                 kind: "text".to_string(),
                 content: body.message.clone(),

@@ -15,7 +15,7 @@
   "docsTreeSha256": "e903660d22b5355c1a1091a4b274259a78f038a1cc9f9b004f136c19d9027556",
   "examplesSourceSha256": "5c9913e928cf4f59cc959e94da0bcaae33eb0e165e8e74a226e50892f8d949ba",
   "systemSha256": "2672655ce412b4c0ef2228816ffce1032df9f191aa3efc165d2173be0893ebee",
-  "skillIndexSha256": "f509672045347700612eb5260fe3da2b42a1450ca39461740b3575c7c351a246",
+  "skillIndexSha256": "5fe5a84a2fd8803a055f82efb2d9f1c690278dd516a8a359df54d64019432b6e",
   "allowedTools": [
     "inspect_workspace",
     "search_examples",
@@ -26,7 +26,7 @@
     "modify_model",
     "activate_model_version",
     "rollback_model_version",
-    "run_study",
+    "create_script",
     "list_result_datasets",
     "run_result_analysis",
     "create_dataset_view",

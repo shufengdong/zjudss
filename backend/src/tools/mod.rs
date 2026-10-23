@@ -9,6 +9,7 @@ pub mod activate_model_version;
 pub mod compare_simulations;
 pub mod confirm_dataframe_mapping;
 pub mod create_dataset_view;
+pub mod create_script;
 pub mod get_storage_usage;
 pub mod inspect_example;
 pub mod inspect_workspace;
@@ -21,7 +22,6 @@ pub mod read_engine_doc_section;
 pub mod remove_model_input;
 pub mod replace_model_input;
 pub mod run_result_analysis;
-pub mod run_study;
 pub mod search_chat_history;
 pub mod search_engine_docs;
 pub mod search_examples;
@@ -37,7 +37,7 @@ use crate::adapters::SimEngine;
 use crate::agent::knowledge::AgentKnowledge;
 use crate::application::{
     AnalysisService, ArtifactService, ComparisonService, DatasetService, EventWriter,
-    HistoryService, ModelPatchService, SimulationService, WorkspaceService,
+    HistoryService, ModelPatchService, ScriptService, SimulationService, WorkspaceService,
 };
 use crate::auth::{CurrentUser, UserId};
 use crate::db::repositories::TaskRepo;
@@ -56,6 +56,7 @@ pub struct ToolServices {
     pub principal: CurrentUser,
     pub workspaces: WorkspaceService,
     pub model_patch: ModelPatchService,
+    pub scripts: ScriptService,
     pub engine_snapshot: Arc<EngineResourceSnapshot>,
     pub agent_knowledge: Arc<AgentKnowledge>,
     pub loaded_skills: Arc<Mutex<BTreeSet<String>>>,
@@ -108,7 +109,7 @@ define_tool_registry!(
     modify_model::ModifyModelTool,
     activate_model_version::ActivateModelVersionTool,
     activate_model_version::RollbackModelVersionTool,
-    run_study::RunStudyTool,
+    create_script::CreateScriptTool,
     list_result_datasets::ListResultDatasetsTool,
     run_result_analysis::RunResultAnalysisTool,
     create_dataset_view::CreateDatasetViewTool,

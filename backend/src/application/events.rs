@@ -19,6 +19,7 @@ pub const MESSAGE_TYPES: &[&str] = &[
     "attachment",
     "model-status",
     "comparison",
+    "script",
 ];
 
 /// 毫秒时间戳 → ISO 8601 字符串（前端 `timestamp` 字段用）。
@@ -247,6 +248,12 @@ pub enum AppEvent {
         title: String,
         outputs: Vec<ResultOutputRef>,
     },
+    #[serde(rename_all = "camelCase")]
+    Script {
+        id: String,
+        timestamp: String,
+        script: serde_json::Value,
+    },
 }
 
 // ---- 落库 `payload_json` 的三种形状，供回放 `from_message` 重构 ----
@@ -306,6 +313,10 @@ struct ComparisonPayload {
     analysis_run_id: String,
     title: String,
     outputs: Vec<ResultOutputRef>,
+}
+#[derive(Serialize, Deserialize)]
+struct ScriptPayload {
+    script: serde_json::Value,
 }
 
 impl AppEvent {
@@ -392,6 +403,14 @@ impl AppEvent {
                 },
                 None => fallback_assistant(id, timestamp, &msg.content),
             },
+            ("tool", "script") => match parse_payload::<ScriptPayload>(msg) {
+                Some(payload) => AppEvent::Script {
+                    id,
+                    timestamp,
+                    script: payload.script,
+                },
+                None => fallback_assistant(id, timestamp, &msg.content),
+            },
             _ => fallback_assistant(id, timestamp, &msg.content),
         }
     }
@@ -406,6 +425,7 @@ impl AppEvent {
             | Self::Attachment { id, .. }
             | Self::ModelStatus { id, .. }
             | Self::Comparison { id, .. } => id,
+            Self::Script { id, .. } => id,
         };
         id.parse().ok()
     }
@@ -482,7 +502,7 @@ impl EventWriter {
                 &self.scope,
                 NewMessage {
                     session_id: self.session_id,
-                    task_id,
+                    run_id: task_id,
                     role: role.to_string(),
                     kind: kind.to_string(),
                     content,
@@ -499,6 +519,21 @@ impl EventWriter {
     pub async fn assistant(&self, content: &str) -> Result<AppEvent, RepoError> {
         self.emit("assistant", "text", content.to_string(), None, None)
             .await
+    }
+
+    pub async fn script(&self, script: serde_json::Value) -> Result<AppEvent, RepoError> {
+        let name = script
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("script.rss");
+        self.emit(
+            "tool",
+            "script",
+            format!("脚本：{name}"),
+            Some(serde_json::to_value(ScriptPayload { script }).unwrap_or_default()),
+            None,
+        )
+        .await
     }
 
     pub async fn tool_call(

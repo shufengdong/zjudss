@@ -44,6 +44,11 @@ impl From<crate::application::SimulationError> for DomainToolError {
         Self::new(value.code, value.to_string())
     }
 }
+impl From<crate::application::ScriptError> for DomainToolError {
+    fn from(value: crate::application::ScriptError) -> Self {
+        Self::new("script_error", value.to_string())
+    }
+}
 impl From<crate::application::AnalysisError> for DomainToolError {
     fn from(value: crate::application::AnalysisError) -> Self {
         Self::new(value.code, value.to_string())

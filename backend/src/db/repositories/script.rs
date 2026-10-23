@@ -16,11 +16,23 @@ impl ScriptRepo {
         Self { pool }
     }
 
-    pub async fn create(&self, record: NewScriptResource) -> RepoResult<ScriptResource> {
+    pub async fn create(
+        &self,
+        user_id: &UserId,
+        record: NewScriptResource,
+    ) -> RepoResult<ScriptResource> {
         let pool = self.pool.clone();
+        let user_id = user_id.0.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.transaction(|conn| {
+                schema::sessions::table
+                    .filter(schema::sessions::id.eq(record.session_id))
+                    .filter(schema::sessions::user_id.eq(user_id))
+                    .select(schema::sessions::id)
+                    .first::<i32>(conn)
+                    .optional()?
+                    .ok_or(RepoError::NotFound)?;
                 diesel::insert_into(schema::script_resources::table)
                     .values(&record)
                     .execute(conn)?;
@@ -78,5 +90,47 @@ impl ScriptRepo {
         })
         .await
         .map_err(RepoError::Join)?
+    }
+
+    pub async fn active_aliases(
+        &self,
+        user_id: &UserId,
+        session_id: i32,
+    ) -> RepoResult<Option<Vec<String>>> {
+        let pool = self.pool.clone();
+        let user_id = user_id.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            #[derive(diesel::QueryableByName)]
+            struct Alias { #[diesel(sql_type=diesel::sql_types::Text)] table_name: String }
+            #[derive(diesel::QueryableByName)]
+            struct Active { #[diesel(sql_type=diesel::sql_types::Nullable<diesel::sql_types::Integer>)] active_version_id: Option<i32> }
+            let active = diesel::sql_query("SELECT w.active_version_id FROM workspaces w JOIN sessions s ON s.id=w.session_id WHERE w.session_id=?1 AND s.user_id=?2")
+                .bind::<diesel::sql_types::Integer,_>(session_id)
+                .bind::<diesel::sql_types::Text,_>(user_id)
+                .get_result::<Active>(&mut conn)
+                .optional()?;
+            let Some(active) = active else {
+                let owns = schema::sessions::table.find(session_id).select(schema::sessions::id).first::<i32>(&mut conn).optional()?;
+                return owns.map(|_| None).ok_or(RepoError::NotFound);
+            };
+            let Some(version_id) = active.active_version_id else { return Ok(None); };
+            let aliases = diesel::sql_query("SELECT table_name FROM model_dataframes WHERE version_id=?1 ORDER BY table_name")
+                .bind::<diesel::sql_types::Integer,_>(version_id)
+                .load::<Alias>(&mut conn)?
+                .into_iter().map(|row| row.table_name).collect();
+            Ok(Some(aliases))
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
+    pub async fn artifact_ids(&self, user_id: &UserId, session_id: i32) -> RepoResult<Vec<i32>> {
+        Ok(self
+            .list(user_id, session_id)
+            .await?
+            .into_iter()
+            .map(|script| script.artifact_id)
+            .collect())
     }
 }
