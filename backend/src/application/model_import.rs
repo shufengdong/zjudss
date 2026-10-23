@@ -315,16 +315,13 @@ impl ModelImportService {
         if record.import.status != "accepted" {
             return Ok(view(record));
         }
-        self.repo
-            .set_status(
-                import_id,
-                "processing",
-                processing_stages().to_string(),
-                "{}".into(),
-                None,
-                now_ms(),
-            )
-            .await?;
+        if !self
+            .repo
+            .claim_processing(import_id, processing_stages().to_string(), now_ms())
+            .await?
+        {
+            return self.get(user, import_id).await;
+        }
         let all_tabular = record.candidates.iter().all(|candidate| {
             std::path::Path::new(&candidate.display_name)
                 .extension()
@@ -345,31 +342,31 @@ impl ModelImportService {
             // A failed import must not retain any source artifacts. The import row and
             // diagnostics remain queryable, but its candidate set is emptied before
             // the terminal status is published so quota/accounting stays atomic.
-            let scope = self.artifacts.resolve_scope(user.storage_scope_id).await?;
             let artifact_ids = self
                 .repo
-                .replace_candidates(import_id, Vec::new())
-                .await?
-                .into_iter()
-                .collect::<BTreeSet<_>>();
-            for artifact_id in artifact_ids {
-                let _ = self.artifacts.release(scope.id, artifact_id).await;
-            }
-            let _ = std::fs::remove_dir_all(
-                self.data_dir
-                    .join("model-import-work")
-                    .join(import_id.to_string()),
-            );
-            self.repo
-                .set_status(
-                    import_id,
-                    "failed",
-                    failed_stages().to_string(),
-                    "{}".into(),
-                    Some(("model_import_unsupported".into(), error.to_string())),
-                    now_ms(),
-                )
+                .replace_candidates_if_processing(import_id, Vec::new())
                 .await?;
+            if let Some(artifact_ids) = artifact_ids {
+                let scope = self.artifacts.resolve_scope(user.storage_scope_id).await?;
+                for artifact_id in artifact_ids.into_iter().collect::<BTreeSet<_>>() {
+                    let _ = self.artifacts.release(scope.id, artifact_id).await;
+                }
+                let _ = std::fs::remove_dir_all(
+                    self.data_dir
+                        .join("model-import-work")
+                        .join(import_id.to_string()),
+                );
+                self.repo
+                    .set_status_if_processing(
+                        import_id,
+                        "failed",
+                        failed_stages().to_string(),
+                        "{}".into(),
+                        Some(("model_import_unsupported".into(), error.to_string())),
+                        now_ms(),
+                    )
+                    .await?;
+            }
         }
         self.get(user, import_id).await
     }
@@ -487,10 +484,21 @@ impl ModelImportService {
                 .as_ref()
                 .is_some_and(|name| !names.insert(name.clone()))
         });
+        let normalized_artifacts = normalized
+            .iter()
+            .filter_map(|candidate| candidate.artifact_id)
+            .collect::<BTreeSet<_>>();
         let old = self
             .repo
-            .replace_candidates(record.import.id, normalized)
+            .replace_candidates_if_processing(record.import.id, normalized)
             .await?;
+        let Some(old) = old else {
+            for artifact_id in normalized_artifacts {
+                let _ = self.artifacts.release(scope.id, artifact_id).await;
+            }
+            let _ = std::fs::remove_dir_all(work);
+            return Ok(());
+        };
         for artifact_id in old {
             let _ = self.artifacts.release(scope.id, artifact_id).await;
         }
@@ -500,7 +508,7 @@ impl ModelImportService {
             "ready_to_apply"
         };
         self.repo
-            .set_status(
+            .set_status_if_processing(
                 record.import.id,
                 status,
                 ready_stages().to_string(),
@@ -587,7 +595,7 @@ impl ModelImportService {
             .map_err(|error| ModelImportError::Invalid(error.to_string()))?;
         if inspection.entry_candidates.len() != 1 {
             self.repo
-                .set_status(
+                .set_status_if_processing(
                     record.import.id,
                     "awaiting_resolution",
                     processing_stages().to_string(),
@@ -656,15 +664,26 @@ impl ModelImportService {
                 created_at_ms: now_ms(),
             });
         }
+        let candidate_artifacts = candidates
+            .iter()
+            .filter_map(|candidate| candidate.artifact_id)
+            .collect::<BTreeSet<_>>();
         let old = self
             .repo
-            .replace_candidates(record.import.id, candidates)
+            .replace_candidates_if_processing(record.import.id, candidates)
             .await?;
+        let Some(old) = old else {
+            for artifact_id in candidate_artifacts {
+                let _ = self.artifacts.release(scope.id, artifact_id).await;
+            }
+            let _ = std::fs::remove_dir_all(work);
+            return Ok(());
+        };
         for artifact_id in old {
             let _ = self.artifacts.release(scope.id, artifact_id).await;
         }
         self.repo
-            .set_status(
+            .set_status_if_processing(
                 record.import.id,
                 "ready_to_apply",
                 ready_stages().to_string(),
@@ -712,26 +731,15 @@ impl ModelImportService {
         user: &CurrentUser,
         import_id: i32,
     ) -> Result<(), ModelImportError> {
-        let record = self.repo.find(&user.id, import_id).await?;
-        if record.import.status == "applied" {
-            return Err(ModelImportError::Invalid("已应用的模型导入不能放弃".into()));
-        }
-        self.repo
-            .set_status(
-                import_id,
-                "discarded",
-                record.import.stages_json,
-                record.import.diagnostics_json,
-                None,
-                now_ms(),
-            )
-            .await?;
-        for artifact_id in record
-            .candidates
-            .into_iter()
-            .filter_map(|candidate| candidate.artifact_id)
-            .collect::<BTreeSet<_>>()
-        {
+        let artifacts = self
+            .repo
+            .discard(&user.id, import_id, now_ms())
+            .await
+            .map_err(|error| match error {
+                RepoError::InvalidState(message) => ModelImportError::Invalid(message),
+                other => ModelImportError::from(other),
+            })?;
+        for artifact_id in artifacts.into_iter().collect::<BTreeSet<_>>() {
             let _ = self
                 .artifacts
                 .release(user.storage_scope_id, artifact_id)

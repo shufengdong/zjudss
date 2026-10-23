@@ -180,7 +180,7 @@ impl ModelImportRepo {
         .map_err(RepoError::Join)?
     }
 
-    pub async fn set_status(
+    pub async fn set_status_if_processing(
         &self,
         id: i32,
         status: &str,
@@ -188,23 +188,57 @@ impl ModelImportRepo {
         diagnostics_json: String,
         error: Option<(String, String)>,
         now_ms: i64,
-    ) -> RepoResult<()> {
+    ) -> RepoResult<bool> {
         let pool = self.pool.clone();
         let status = status.to_string();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            diesel::update(schema::model_imports::table.find(id))
-                .set((
-                    schema::model_imports::status.eq(status),
-                    schema::model_imports::stages_json.eq(stages_json),
-                    schema::model_imports::diagnostics_json.eq(diagnostics_json),
-                    schema::model_imports::error_code
-                        .eq(error.as_ref().map(|(code, _)| code.clone())),
-                    schema::model_imports::error_message.eq(error.map(|(_, message)| message)),
-                    schema::model_imports::updated_at_ms.eq(now_ms),
-                ))
-                .execute(&mut conn)?;
-            Ok(())
+            diesel::update(
+                schema::model_imports::table
+                    .filter(schema::model_imports::id.eq(id))
+                    .filter(schema::model_imports::status.eq("processing")),
+            )
+            .set((
+                schema::model_imports::status.eq(status),
+                schema::model_imports::stages_json.eq(stages_json),
+                schema::model_imports::diagnostics_json.eq(diagnostics_json),
+                schema::model_imports::error_code.eq(error.as_ref().map(|(code, _)| code.clone())),
+                schema::model_imports::error_message.eq(error.map(|(_, message)| message)),
+                schema::model_imports::updated_at_ms.eq(now_ms),
+            ))
+            .execute(&mut conn)
+            .map(|updated| updated == 1)
+            .map_err(RepoError::from)
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
+    pub async fn claim_processing(
+        &self,
+        id: i32,
+        stages_json: String,
+        now_ms: i64,
+    ) -> RepoResult<bool> {
+        let pool = self.pool.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            diesel::update(
+                schema::model_imports::table
+                    .filter(schema::model_imports::id.eq(id))
+                    .filter(schema::model_imports::status.eq("accepted")),
+            )
+            .set((
+                schema::model_imports::status.eq("processing"),
+                schema::model_imports::stages_json.eq(stages_json),
+                schema::model_imports::diagnostics_json.eq("{}"),
+                schema::model_imports::error_code.eq(Option::<String>::None),
+                schema::model_imports::error_message.eq(Option::<String>::None),
+                schema::model_imports::updated_at_ms.eq(now_ms),
+            ))
+            .execute(&mut conn)
+            .map(|updated| updated == 1)
+            .map_err(RepoError::from)
         })
         .await
         .map_err(RepoError::Join)?
@@ -232,15 +266,24 @@ impl ModelImportRepo {
         .map_err(RepoError::Join)?
     }
 
-    pub async fn replace_candidates(
+    pub async fn replace_candidates_if_processing(
         &self,
         import_id: i32,
         candidates: Vec<NewModelImportCandidate>,
-    ) -> RepoResult<Vec<i32>> {
+    ) -> RepoResult<Option<Vec<i32>>> {
         let pool = self.pool.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            conn.transaction(|conn| {
+            conn.immediate_transaction(|conn| {
+                let status = schema::model_imports::table
+                    .find(import_id)
+                    .select(schema::model_imports::status)
+                    .first::<String>(conn)
+                    .optional()?
+                    .ok_or(RepoError::NotFound)?;
+                if status != "processing" {
+                    return Ok(None);
+                }
                 let old = schema::model_import_candidates::table
                     .filter(schema::model_import_candidates::import_id.eq(import_id))
                     .select(schema::model_import_candidates::artifact_id)
@@ -263,7 +306,54 @@ impl ModelImportRepo {
                 diesel::insert_into(schema::model_import_candidates::table)
                     .values(candidates)
                     .execute(conn)?;
-                Ok(old)
+                Ok(Some(old))
+            })
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
+    pub async fn discard(
+        &self,
+        user_id: &UserId,
+        import_id: i32,
+        now_ms: i64,
+    ) -> RepoResult<Vec<i32>> {
+        let pool = self.pool.clone();
+        let user_id = user_id.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            conn.immediate_transaction(|conn| {
+                let import = schema::model_imports::table
+                    .inner_join(
+                        schema::sessions::table
+                            .on(schema::sessions::id.eq(schema::model_imports::session_id)),
+                    )
+                    .filter(schema::model_imports::id.eq(import_id))
+                    .filter(schema::sessions::user_id.eq(user_id))
+                    .select(schema::model_imports::all_columns)
+                    .first::<ModelImport>(conn)
+                    .optional()?
+                    .ok_or(RepoError::NotFound)?;
+                if import.status == "applied" {
+                    return Err(RepoError::InvalidState("已应用的模型导入不能放弃".into()));
+                }
+                let artifacts = schema::model_import_candidates::table
+                    .filter(schema::model_import_candidates::import_id.eq(import_id))
+                    .select(schema::model_import_candidates::artifact_id)
+                    .load::<Option<i32>>(conn)?
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                diesel::update(schema::model_imports::table.find(import_id))
+                    .set((
+                        schema::model_imports::status.eq("discarded"),
+                        schema::model_imports::error_code.eq(Option::<String>::None),
+                        schema::model_imports::error_message.eq(Option::<String>::None),
+                        schema::model_imports::updated_at_ms.eq(now_ms),
+                    ))
+                    .execute(conn)?;
+                Ok(artifacts)
             })
         })
         .await

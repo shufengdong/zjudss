@@ -300,10 +300,27 @@ async fn imports_are_user_scoped_discardable_and_compare_empty_draft_identity() 
     )
     .unwrap();
     let stale = upload(&app, &alice, &session_id, "stale", "id\n2\n").await;
-    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    let stale_status = stale.status();
     let stale: serde_json::Value =
         serde_json::from_slice(&to_bytes(stale.into_body(), 1024 * 1024).await.unwrap()).unwrap();
+    assert_eq!(stale_status, StatusCode::CONFLICT, "{stale}");
     assert_eq!(stale["code"], "draft_revision_conflict");
+
+    let discarded = app
+        .router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/model-imports/{import_id}"))
+                .header("cookie", &alice)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let discarded: serde_json::Value =
+        serde_json::from_slice(&to_bytes(discarded.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert_eq!(discarded["modelImport"]["status"], "discarded");
 }
 
 #[tokio::test]
