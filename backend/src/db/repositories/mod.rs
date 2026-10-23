@@ -6,6 +6,7 @@ mod history;
 mod ingestion;
 mod message;
 mod model_import;
+mod result;
 mod run;
 mod script;
 mod session;
@@ -24,6 +25,7 @@ pub use history::{HistoryHit, HistoryRepo, SearchFilters};
 pub use ingestion::{IngestionItemDraft, IngestionRecord, IngestionRepo};
 pub use message::MessageRepo;
 pub use model_import::{ModelImportRecord, ModelImportRepo};
+pub use result::{DeleteResultError, DeletedResult, LineageRow, ResultRepo, ResultViewRow};
 pub use run::{
     CreateRun, CreatedRun, NewRunDataset, RunContext, RunDataset, RunModelFrame, RunRepo,
     RunRepoError,

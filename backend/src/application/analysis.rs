@@ -10,7 +10,7 @@ use crate::db::models::{
     NewDatasetView, NewResultAnalysisRun, NewResultDataset, ResultAnalysisInput, ResultAnalysisRun,
     ResultDataset,
 };
-use crate::db::repositories::{AnalysisRepo, DatasetRepo, MessageRepo};
+use crate::db::repositories::{AnalysisRepo, DatasetRepo, MessageRepo, ResultRepo};
 use crate::storage::{ParquetInspector, StageLimits};
 use serde_json::{Value, json};
 use std::{
@@ -75,6 +75,7 @@ impl std::error::Error for AnalysisError {}
 pub struct AnalysisService {
     repo: AnalysisRepo,
     datasets: DatasetRepo,
+    live_results: ResultRepo,
     artifacts: ArtifactService,
     messages: MessageRepo,
     events: EventBus,
@@ -87,6 +88,7 @@ impl AnalysisService {
     pub fn new(
         repo: AnalysisRepo,
         datasets: DatasetRepo,
+        live_results: ResultRepo,
         artifacts: ArtifactService,
         messages: MessageRepo,
         events: EventBus,
@@ -97,6 +99,7 @@ impl AnalysisService {
         Self {
             repo,
             datasets,
+            live_results,
             artifacts,
             messages,
             events,
@@ -107,6 +110,21 @@ impl AnalysisService {
     }
     pub async fn run(&self, r: AnalysisRequest) -> Result<AnalysisOutcome, AnalysisError> {
         validate_request(&r)?;
+        for input in &r.inputs {
+            let result = self
+                .live_results
+                .find_live(&r.principal.id, input.dataset_id)
+                .await
+                .map_err(|_| AnalysisError::new("analysis_input_not_found", "资源不存在"))?;
+            let session_id = self
+                .live_results
+                .session_id(&r.principal.id, result.id)
+                .await
+                .map_err(|_| AnalysisError::new("analysis_input_not_found", "资源不存在"))?;
+            if session_id != r.session_id {
+                return Err(AnalysisError::new("analysis_input_not_found", "资源不存在"));
+            }
+        }
         let scope = self
             .artifacts
             .resolve_scope(r.principal.storage_scope_id)

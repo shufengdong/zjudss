@@ -20,6 +20,7 @@ pub const MESSAGE_TYPES: &[&str] = &[
     "model-status",
     "comparison",
     "script",
+    "dataset-deleted",
 ];
 
 /// 毫秒时间戳 → ISO 8601 字符串（前端 `timestamp` 字段用）。
@@ -254,6 +255,13 @@ pub enum AppEvent {
         timestamp: String,
         script: serde_json::Value,
     },
+    #[serde(rename = "dataset-deleted", rename_all = "camelCase")]
+    DatasetDeleted {
+        id: String,
+        timestamp: String,
+        dataset_id: String,
+        tombstone: serde_json::Value,
+    },
 }
 
 // ---- 落库 `payload_json` 的三种形状，供回放 `from_message` 重构 ----
@@ -317,6 +325,12 @@ struct ComparisonPayload {
 #[derive(Serialize, Deserialize)]
 struct ScriptPayload {
     script: serde_json::Value,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DatasetDeletedPayload {
+    dataset_id: String,
+    tombstone: serde_json::Value,
 }
 
 impl AppEvent {
@@ -411,6 +425,15 @@ impl AppEvent {
                 },
                 None => fallback_assistant(id, timestamp, &msg.content),
             },
+            ("tool", "dataset-deleted") => match parse_payload::<DatasetDeletedPayload>(msg) {
+                Some(payload) => AppEvent::DatasetDeleted {
+                    id,
+                    timestamp,
+                    dataset_id: payload.dataset_id,
+                    tombstone: payload.tombstone,
+                },
+                None => fallback_assistant(id, timestamp, &msg.content),
+            },
             _ => fallback_assistant(id, timestamp, &msg.content),
         }
     }
@@ -425,7 +448,7 @@ impl AppEvent {
             | Self::Attachment { id, .. }
             | Self::ModelStatus { id, .. }
             | Self::Comparison { id, .. } => id,
-            Self::Script { id, .. } => id,
+            Self::Script { id, .. } | Self::DatasetDeleted { id, .. } => id,
         };
         id.parse().ok()
     }
@@ -531,6 +554,25 @@ impl EventWriter {
             "script",
             format!("脚本：{name}"),
             Some(serde_json::to_value(ScriptPayload { script }).unwrap_or_default()),
+            None,
+        )
+        .await
+    }
+
+    pub async fn dataset_deleted(
+        &self,
+        dataset_id: i32,
+        tombstone: serde_json::Value,
+    ) -> Result<AppEvent, RepoError> {
+        let payload = DatasetDeletedPayload {
+            dataset_id: dataset_id.to_string(),
+            tombstone,
+        };
+        self.emit(
+            "tool",
+            "dataset-deleted",
+            format!("结果数据集 {dataset_id} 已删除"),
+            Some(serde_json::to_value(payload).unwrap_or_default()),
             None,
         )
         .await

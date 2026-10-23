@@ -23,6 +23,13 @@ pub async fn metadata(
 ) -> Result<Json<crate::application::datasets::DatasetMetadata>, ApiError> {
     Ok(Json(s.dataset_service.metadata(&p, id).await?))
 }
+pub async fn delete(
+    State(s): State<AppState>,
+    p: CurrentUser,
+    Path(id): Path<i32>,
+) -> Result<Json<crate::application::datasets::DeletedDatasetDto>, ApiError> {
+    Ok(Json(s.dataset_service.delete(&p, id).await?))
+}
 pub async fn rows(
     State(s): State<AppState>,
     p: CurrentUser,

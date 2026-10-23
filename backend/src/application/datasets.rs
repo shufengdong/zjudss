@@ -12,8 +12,9 @@ use sha2::{Digest, Sha256};
 
 use crate::application::ArtifactService;
 use crate::auth::CurrentUser;
-use crate::db::models::{DatasetView, ResultDataset};
-use crate::db::repositories::{DatasetRepo, RepoError};
+use crate::db::repositories::{
+    DeleteResultError, LineageRow, RepoError, ResultRepo, ResultViewRow, RunDataset,
+};
 use crate::storage::ParquetInspector;
 
 #[derive(Debug)]
@@ -21,6 +22,7 @@ pub enum DatasetError {
     NotFound,
     InvalidCursor,
     InvalidPage(String),
+    Busy,
     Storage(String),
     Repository(RepoError),
 }
@@ -30,6 +32,7 @@ impl std::fmt::Display for DatasetError {
             Self::NotFound => write!(f, "资源不存在"),
             Self::InvalidCursor => write!(f, "分页 cursor 无效"),
             Self::InvalidPage(v) => write!(f, "分页参数无效: {v}"),
+            Self::Busy => write!(f, "结果正被运行中的分析使用"),
             Self::Storage(v) => write!(f, "数据集读取失败: {v}"),
             Self::Repository(v) => write!(f, "{v}"),
         }
@@ -58,13 +61,15 @@ pub struct DatasetColumn {
 #[serde(rename_all = "camelCase")]
 pub struct DatasetMetadata {
     pub id: String,
-    pub task_id: Option<String>,
+    pub run_id: Option<String>,
     pub analysis_run_id: Option<String>,
     pub name: String,
     pub row_count: i64,
     pub size_bytes: i64,
     pub columns: Vec<DatasetColumn>,
     pub views: Vec<DatasetViewDto>,
+    pub schema_hash: String,
+    pub lineage: Vec<DatasetLineageDto>,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,6 +79,18 @@ pub struct DatasetViewDto {
     pub kind: String,
     pub spec: Value,
     pub is_default: bool,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatasetLineageDto {
+    pub source_dataset_id: String,
+    pub name: String,
+    pub schema: Value,
+    pub schema_hash: String,
+    pub producer: Value,
+    pub deleted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tombstone: Option<Value>,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,22 +117,40 @@ pub struct DatasetViewData {
     pub rows: Vec<Vec<Value>>,
     pub diagnostics: BTreeMap<String, u64>,
 }
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeletedDatasetDto {
+    pub dataset_id: String,
+    pub tombstone: Value,
+}
 
 #[derive(Clone)]
 pub struct DatasetService {
-    repo: DatasetRepo,
+    repo: ResultRepo,
     artifacts: ArtifactService,
+    messages: crate::db::repositories::MessageRepo,
+    events: crate::application::EventBus,
 }
 impl DatasetService {
-    pub fn new(repo: DatasetRepo, artifacts: ArtifactService) -> Self {
-        Self { repo, artifacts }
+    pub fn new(
+        repo: ResultRepo,
+        artifacts: ArtifactService,
+        messages: crate::db::repositories::MessageRepo,
+        events: crate::application::EventBus,
+    ) -> Self {
+        Self {
+            repo,
+            artifacts,
+            messages,
+            events,
+        }
     }
     pub async fn list(
         &self,
         p: &CurrentUser,
-        task_id: i32,
+        run_id: i32,
     ) -> Result<Vec<DatasetMetadata>, DatasetError> {
-        let rows = self.repo.list_task(&p.id, task_id).await?;
+        let rows = self.repo.list_run(&p.id, run_id).await?;
         let mut out = Vec::new();
         for d in rows {
             out.push(self.metadata_from(p, d).await?);
@@ -139,13 +174,13 @@ impl DatasetService {
         p: &CurrentUser,
         id: i32,
     ) -> Result<DatasetMetadata, DatasetError> {
-        let d = self.repo.find(&p.id, id).await?;
+        let d = self.repo.find_live(&p.id, id).await?;
         self.metadata_from(p, d).await
     }
     async fn metadata_from(
         &self,
         p: &CurrentUser,
-        d: ResultDataset,
+        d: RunDataset,
     ) -> Result<DatasetMetadata, DatasetError> {
         let columns: Vec<DatasetColumn> = serde_json::from_str(&d.schema_json)
             .map_err(|e| DatasetError::Storage(e.to_string()))?;
@@ -156,18 +191,27 @@ impl DatasetService {
             .into_iter()
             .map(view_dto)
             .collect();
+        let lineage = self
+            .repo
+            .lineage(&p.id, d.id)
+            .await?
+            .into_iter()
+            .map(lineage_dto)
+            .collect();
         Ok(DatasetMetadata {
             id: d.id.to_string(),
-            task_id: d.task_id.map(|v| v.to_string()),
+            run_id: d.run_id.map(|v| v.to_string()),
             analysis_run_id: d.analysis_run_id.map(|v| v.to_string()),
             name: d.result_name,
             row_count: d.row_count,
             size_bytes: d.size_bytes,
             columns,
             views,
+            schema_hash: d.schema_hash,
+            lineage,
         })
     }
-    async fn path(&self, p: &CurrentUser, d: &ResultDataset) -> Result<PathBuf, DatasetError> {
+    async fn path(&self, p: &CurrentUser, d: &RunDataset) -> Result<PathBuf, DatasetError> {
         let scope = self
             .artifacts
             .resolve_scope(p.storage_scope_id)
@@ -175,7 +219,7 @@ impl DatasetService {
             .map_err(|e| DatasetError::Storage(e.to_string()))?;
         let a = self
             .artifacts
-            .find_owned(scope.id, d.artifact_id)
+            .find_owned(scope.id, d.artifact_id.ok_or(DatasetError::NotFound)?)
             .await
             .map_err(|_| DatasetError::NotFound)?;
         self.artifacts
@@ -191,7 +235,7 @@ impl DatasetService {
         cursor: Option<&str>,
         columns: &[String],
     ) -> Result<DatasetPage, DatasetError> {
-        let d = self.repo.find(&p.id, id).await?;
+        let d = self.repo.find_live(&p.id, id).await?;
         let limit = limit.unwrap_or(100);
         if !(1..=500).contains(&limit) {
             return Err(DatasetError::InvalidPage("limit 必须在 1..=500".into()));
@@ -249,7 +293,7 @@ impl DatasetService {
         p: &CurrentUser,
         id: i32,
     ) -> Result<DatasetDownload, DatasetError> {
-        let d = self.repo.find(&p.id, id).await?;
+        let d = self.repo.find_live(&p.id, id).await?;
         let path = self.path(p, &d).await?;
         let safe = d
             .result_name
@@ -266,6 +310,45 @@ impl DatasetService {
             path,
             file_name: format!("{}-{}.parquet", d.id, safe),
             media_type: "application/vnd.apache.parquet",
+        })
+    }
+    pub async fn delete(
+        &self,
+        p: &CurrentUser,
+        id: i32,
+    ) -> Result<DeletedDatasetDto, DatasetError> {
+        let deleted = self
+            .repo
+            .delete(&p.id, id, crate::application::now_ms())
+            .await
+            .map_err(|error| match error {
+                DeleteResultError::Busy => DatasetError::Busy,
+                DeleteResultError::Repository(RepoError::NotFound) => DatasetError::NotFound,
+                DeleteResultError::Repository(error) => DatasetError::Repository(error),
+            })?;
+        self.artifacts
+            .release(p.storage_scope_id, deleted.artifact_id)
+            .await
+            .map_err(|error| DatasetError::Storage(error.to_string()))?;
+        self.artifacts
+            .collect_unreferenced()
+            .await
+            .map_err(|error| DatasetError::Storage(error.to_string()))?;
+        let tombstone: Value = serde_json::from_str(&deleted.tombstone_json)
+            .map_err(|error| DatasetError::Storage(error.to_string()))?;
+        let writer = crate::application::EventWriter::new(
+            p.id.clone(),
+            deleted.session_id,
+            self.messages.clone(),
+            self.events.clone(),
+        );
+        writer
+            .dataset_deleted(id, tombstone.clone())
+            .await
+            .map_err(DatasetError::Repository)?;
+        Ok(DeletedDatasetDto {
+            dataset_id: deleted.dataset_id.to_string(),
+            tombstone,
         })
     }
     pub async fn view_data(
@@ -321,13 +404,26 @@ impl DatasetService {
         })
     }
 }
-fn view_dto(v: DatasetView) -> DatasetViewDto {
+fn view_dto(v: ResultViewRow) -> DatasetViewDto {
     DatasetViewDto {
         id: v.id.to_string(),
         name: v.name,
         kind: v.kind,
         spec: serde_json::from_str(&v.spec_json).unwrap_or(Value::Null),
         is_default: v.is_default,
+    }
+}
+fn lineage_dto(value: LineageRow) -> DatasetLineageDto {
+    DatasetLineageDto {
+        source_dataset_id: value.source_dataset_id.to_string(),
+        name: value.source_name,
+        schema: serde_json::from_str(&value.source_schema_json).unwrap_or(Value::Null),
+        schema_hash: value.source_schema_hash,
+        producer: serde_json::from_str(&value.source_producer_json).unwrap_or(Value::Null),
+        deleted: value.deleted,
+        tombstone: value
+            .tombstone_json
+            .and_then(|json| serde_json::from_str(&json).ok()),
     }
 }
 fn encode_cursor(id: i32, hash: &str, offset: usize) -> String {

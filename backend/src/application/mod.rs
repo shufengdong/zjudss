@@ -36,7 +36,7 @@ use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
     AnalysisRepo, ArtifactRepo, ComparisonRepo, DatasetRepo, HistoryRepo, IngestionRepo,
-    MessageRepo, ModelImportRepo, RunRepo, ScriptRepo, SessionRepo, SimulationRepo,
+    MessageRepo, ModelImportRepo, ResultRepo, RunRepo, ScriptRepo, SessionRepo, SimulationRepo,
     StorageScopeRepo, TaskRepo, VersionRepo, WorkspaceRepo,
 };
 use crate::engine_resources::{EngineKnowledge, EngineResourceSnapshot};
@@ -457,8 +457,12 @@ impl AppState {
         );
         let model_patch_service =
             ModelPatchService::new(workspace_service.clone(), artifact_service.clone());
-        let dataset_service =
-            DatasetService::new(DatasetRepo::new(pool.clone()), artifact_service.clone());
+        let dataset_service = DatasetService::new(
+            ResultRepo::new(pool.clone()),
+            artifact_service.clone(),
+            message_repo.clone(),
+            events.clone(),
+        );
         let agent_knowledge = Arc::new(
             AgentKnowledge::load_embedded("v2.0.1").expect("内置 agent knowledge 已在构建时校验"),
         );
@@ -475,6 +479,7 @@ impl AppState {
         let analysis_service = AnalysisService::new(
             AnalysisRepo::new(pool.clone()),
             DatasetRepo::new(pool.clone()),
+            ResultRepo::new(pool.clone()),
             artifact_service.clone(),
             message_repo.clone(),
             events.clone(),

@@ -403,6 +403,12 @@ impl From<DatasetError> for ApiError {
                 code: "invalid_dataset_page",
                 details: None,
             },
+            DatasetError::Busy => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "result_busy",
+                details: None,
+            },
             other => Self::internal(other.to_string()),
         }
     }
@@ -571,7 +577,11 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
     add_route!("/api/sessions/{id}/runs", get(runs::list), ["GET"]);
     add_route!("/api/runs/{id}", get(runs::get), ["GET"]);
     add_route!("/api/runs/{id}/datasets", get(runs::datasets), ["GET"]);
-    add_route!("/api/datasets/{id}", get(datasets::metadata), ["GET"]);
+    add_route!(
+        "/api/datasets/{id}",
+        get(datasets::metadata).delete(datasets::delete),
+        ["GET", "DELETE"]
+    );
     add_route!("/api/datasets/{id}/rows", get(datasets::rows), ["GET"]);
     add_route!(
         "/api/datasets/{id}/download",
