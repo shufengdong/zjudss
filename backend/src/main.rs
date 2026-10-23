@@ -1,7 +1,7 @@
 use backend::agent::knowledge::AgentKnowledge;
 use backend::agent::{DeepSeekAgentFactory, LlmConfig};
 use backend::application::{AppState, RunScheduler, StorageLimits};
-use backend::auth::AuthConfig;
+use backend::auth::{AuthService, INIT_USERS_CSV, seed_users};
 use backend::catalog::SchemaCatalog;
 use backend::config::RuntimeConfig;
 use backend::engine_resources::EngineResourceRegistry;
@@ -53,27 +53,44 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         snapshot_path.display()
     );
 
-    let pool = db::establish_pool(&runtime.database_url)?;
-    {
-        let mut conn = pool.get()?;
-        db::run_migrations(&mut conn)?;
-        db::recover_interrupted_runs(&mut conn, backend::application::now_ms())?;
-    }
-    eprintln!("[db] ready at {}", runtime.database_url);
-
-    let engine = adapters::engine_from_env()?;
-    eprintln!("[config] engine = tensoreval parquet v2");
-    let auth = AuthConfig::from_runtime(&runtime);
-    let scheduler = RunScheduler::new(
-        runtime.agent_max_concurrent_runs,
-        runtime.agent_max_owner_runs,
-        runtime.agent_queue_capacity,
-    );
     let storage_limits = StorageLimits {
         artifact_limit: i64::try_from(runtime.owner_artifact_limit)?,
         byte_limit: i64::try_from(runtime.owner_storage_limit_bytes)?,
         warning_ratio: runtime.storage_warning_ratio,
     };
+    let pool = db::establish_pool(&runtime.database_url)?;
+    {
+        let mut conn = pool.get()?;
+        db::run_migrations(&mut conn)?;
+        db::recover_interrupted_runs(&mut conn, backend::application::now_ms())?;
+        let seeded = seed_users(
+            &mut conn,
+            INIT_USERS_CSV,
+            backend::application::now_ms(),
+            storage_limits,
+        )?;
+        eprintln!(
+            "[auth] users = {}, seed = {}",
+            seeded.user_count,
+            &seeded.seed_sha256[..12]
+        );
+    }
+    eprintln!("[db] ready at {}", runtime.database_url);
+
+    let engine = adapters::engine_from_env()?;
+    eprintln!("[config] engine = tensoreval parquet v2");
+    let auth = AuthService::new(
+        pool.clone(),
+        runtime.session_ttl,
+        runtime.session_cookie_secure,
+    );
+    auth.cleanup_expired(backend::application::now_ms(), 10_000)
+        .map_err(|_| std::io::Error::other("无法清理过期认证会话"))?;
+    let scheduler = RunScheduler::new(
+        runtime.agent_max_concurrent_runs,
+        runtime.agent_max_owner_runs,
+        runtime.agent_queue_capacity,
+    );
     let state = AppState::new_with_resources_and_agent_factory(
         pool,
         engine,

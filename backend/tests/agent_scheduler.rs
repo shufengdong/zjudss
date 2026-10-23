@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use backend::application::{RunScheduler, SchedulerError};
-use backend::auth::{AccessScope, AuthConfig};
+use backend::auth::AccessScope;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
@@ -119,7 +119,12 @@ async fn response_json(response: axum::response::Response) -> Value {
 #[tokio::test]
 async fn queue_rejection_has_stable_error_and_does_not_write_message() {
     let scheduler = RunScheduler::new(1, 1, 1);
-    let app = TestApp::spawn_with_scheduler(AuthConfig::instance(), scheduler.clone()).await;
+    let app = TestApp::spawn_with_scheduler(
+        std::time::Duration::from_secs(30 * 24 * 60 * 60),
+        false,
+        scheduler.clone(),
+    )
+    .await;
 
     let create = app
         .router

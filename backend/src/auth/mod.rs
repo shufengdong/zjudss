@@ -1,14 +1,16 @@
 mod seed;
-mod trusted_proxy;
+mod session;
 
 pub use seed::{INIT_USERS_CSV, UserSeedError, UserSeedSummary, seed_users};
+pub use session::{AuthError, AuthService, CurrentUser, LoginSuccess, PublicUser, UserId};
 
-use axum::extract::{FromRef, FromRequestParts};
-use axum::http::request::Parts;
+use axum::extract::{FromRequestParts, Request, State};
+use axum::http::{HeaderValue, header, request::Parts};
+use axum::middleware::Next;
+use axum::response::Response;
 
 use crate::api::ApiError;
 use crate::application::AppState;
-use crate::config::{AuthMode, RuntimeConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AccessScope {
@@ -29,64 +31,35 @@ pub struct Principal {
     pub subject: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct AuthConfig {
-    mode: AuthMode,
-    proxy_token: Option<String>,
-}
-
-impl AuthConfig {
-    pub fn instance() -> Self {
-        Self {
-            mode: AuthMode::Instance,
-            proxy_token: None,
-        }
-    }
-
-    pub fn trusted_proxy(token: impl Into<String>) -> Self {
-        Self {
-            mode: AuthMode::TrustedProxy,
-            proxy_token: Some(token.into()),
-        }
-    }
-
-    pub fn from_runtime(config: &RuntimeConfig) -> Self {
-        Self {
-            mode: config.auth_mode,
-            proxy_token: config.auth_proxy_token.clone(),
-        }
-    }
-
-    fn authenticate(&self, parts: &Parts) -> Result<Principal, AuthError> {
-        match self.mode {
-            AuthMode::Instance => Ok(Principal::instance()),
-            AuthMode::TrustedProxy => trusted_proxy::authenticate(
-                &parts.headers,
-                self.proxy_token.as_deref().ok_or(AuthError::Unauthorized)?,
-            ),
-        }
-    }
-}
-
-impl Principal {
-    fn instance() -> Self {
+impl From<&CurrentUser> for Principal {
+    fn from(user: &CurrentUser) -> Self {
         Self {
             access: AccessScope {
-                kind: "instance".to_string(),
-                key: "instance".to_string(),
+                kind: "user".to_string(),
+                key: user.id.0.clone(),
             },
             storage: StorageScopeRef {
-                kind: "instance".to_string(),
-                key: "instance".to_string(),
+                kind: "user".to_string(),
+                key: user.id.0.clone(),
             },
-            subject: "instance".to_string(),
+            subject: user.id.0.clone(),
         }
     }
 }
 
-#[derive(Debug)]
-enum AuthError {
-    Unauthorized,
+impl<S> FromRequestParts<S> for CurrentUser
+where
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        parts
+            .extensions
+            .get::<CurrentUser>()
+            .cloned()
+            .ok_or_else(ApiError::authentication_required)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -94,17 +67,37 @@ pub struct CurrentPrincipal(pub Principal);
 
 impl<S> FromRequestParts<S> for CurrentPrincipal
 where
-    AppState: FromRef<S>,
     S: Send + Sync,
 {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let state = AppState::from_ref(state);
-        state
-            .auth
-            .authenticate(parts)
-            .map(CurrentPrincipal)
-            .map_err(|_| ApiError::unauthorized("认证失败"))
+        let user = CurrentUser::from_request_parts(parts, state).await?;
+        Ok(Self(Principal::from(&user)))
     }
+}
+
+pub async fn require_user(
+    State(state): State<AppState>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let authentication = state
+        .auth
+        .authenticate(request.headers())
+        .await
+        .map_err(|error| match error {
+            AuthError::AuthenticationRequired | AuthError::InvalidCredentials => {
+                ApiError::authentication_required()
+            }
+            AuthError::Database => ApiError::internal("认证服务暂不可用"),
+        })?;
+    request.extensions_mut().insert(authentication.user);
+    let mut response = next.run(request).await;
+    if let Some(cookie) = authentication.renewal_cookie {
+        let value = HeaderValue::from_str(&cookie)
+            .map_err(|_| ApiError::internal("认证 Cookie 无法编码"))?;
+        response.headers_mut().append(header::SET_COOKIE, value);
+    }
+    Ok(response)
 }

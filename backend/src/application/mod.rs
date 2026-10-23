@@ -26,7 +26,7 @@ use tokio::sync::Semaphore;
 use crate::adapters::{SimEngine, resolve_data_dir};
 use crate::agent::knowledge::AgentKnowledge;
 use crate::agent::{AgentFactory, DeepSeekAgentFactory, LlmConfig};
-use crate::auth::AuthConfig;
+use crate::auth::AuthService;
 use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
@@ -86,7 +86,7 @@ pub struct AppState {
     pub events: EventBus,
     pub engine: Arc<dyn SimEngine>,
     pub agent_factory: Arc<dyn AgentFactory>,
-    pub auth: AuthConfig,
+    pub auth: AuthService,
     pub scheduler: RunScheduler,
     pub semaphore: Arc<Semaphore>,
     /// 数据根目录（内核结果、上传附件落这里），由 `DATA_DIR` 环境变量或默认 `data` 决定。
@@ -105,12 +105,17 @@ impl AppState {
         engine: Arc<dyn SimEngine>,
         agent_factory: Arc<dyn AgentFactory>,
     ) -> Self {
+        let auth = AuthService::new(
+            pool.clone(),
+            std::time::Duration::from_secs(30 * 24 * 60 * 60),
+            false,
+        );
         Self::new_with_data_dir_and_agent_factory(
             pool,
             engine,
             agent_factory,
             resolve_data_dir(),
-            AuthConfig::instance(),
+            auth,
             RunScheduler::new(8, 2, 32),
             StorageLimits::default(),
         )
@@ -122,7 +127,7 @@ impl AppState {
         data_dir: PathBuf,
         agent_factory: Arc<dyn AgentFactory>,
         engine: Arc<dyn SimEngine>,
-        auth: AuthConfig,
+        auth: AuthService,
     ) -> Self {
         use sha2::{Digest, Sha256};
 
@@ -236,7 +241,12 @@ impl AppState {
         llm: LlmConfig,
         data_dir: PathBuf,
     ) -> Self {
-        Self::new_with_data_dir_and_auth(pool, engine, llm, data_dir, AuthConfig::instance())
+        let auth = AuthService::new(
+            pool.clone(),
+            std::time::Duration::from_secs(30 * 24 * 60 * 60),
+            false,
+        );
+        Self::new_with_data_dir_and_auth(pool, engine, llm, data_dir, auth)
     }
 
     pub fn new_with_data_dir_and_auth(
@@ -244,7 +254,7 @@ impl AppState {
         engine: Arc<dyn SimEngine>,
         llm: LlmConfig,
         data_dir: PathBuf,
-        auth: AuthConfig,
+        auth: AuthService,
     ) -> Self {
         Self::new_with_data_dir_auth_and_scheduler(
             pool,
@@ -261,7 +271,7 @@ impl AppState {
         engine: Arc<dyn SimEngine>,
         llm: LlmConfig,
         data_dir: PathBuf,
-        auth: AuthConfig,
+        auth: AuthService,
         scheduler: RunScheduler,
     ) -> Self {
         Self::new_with_storage_limits(
@@ -280,7 +290,7 @@ impl AppState {
         engine: Arc<dyn SimEngine>,
         llm: LlmConfig,
         data_dir: PathBuf,
-        auth: AuthConfig,
+        auth: AuthService,
         scheduler: RunScheduler,
         storage_limits: StorageLimits,
     ) -> Self {
@@ -323,7 +333,7 @@ impl AppState {
         engine: Arc<dyn SimEngine>,
         llm: LlmConfig,
         data_dir: PathBuf,
-        auth: AuthConfig,
+        auth: AuthService,
         scheduler: RunScheduler,
         storage_limits: StorageLimits,
         catalog: Arc<SchemaCatalog>,
@@ -354,7 +364,7 @@ impl AppState {
         engine: Arc<dyn SimEngine>,
         agent_factory: Arc<dyn AgentFactory>,
         data_dir: PathBuf,
-        auth: AuthConfig,
+        auth: AuthService,
         scheduler: RunScheduler,
         storage_limits: StorageLimits,
         catalog: Arc<SchemaCatalog>,
@@ -466,7 +476,7 @@ impl AppState {
         engine: Arc<dyn SimEngine>,
         agent_factory: Arc<dyn AgentFactory>,
         data_dir: PathBuf,
-        auth: AuthConfig,
+        auth: AuthService,
         scheduler: RunScheduler,
         storage_limits: StorageLimits,
     ) -> Self {

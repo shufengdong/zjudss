@@ -4,23 +4,17 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 const MIB: u64 = 1024 * 1024;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuthMode {
-    Instance,
-    TrustedProxy,
-}
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     pub database_url: String,
     pub data_dir: PathBuf,
     pub tensoreval_cwd: PathBuf,
-    pub auth_mode: AuthMode,
-    pub auth_proxy_token: Option<String>,
-    pub public_deployment: bool,
+    pub session_ttl: Duration,
+    pub session_cookie_secure: bool,
     pub agent_max_concurrent_runs: usize,
     pub agent_max_owner_runs: usize,
     pub agent_queue_capacity: usize,
@@ -104,40 +98,20 @@ impl RuntimeConfig {
             ));
         }
 
-        let auth_mode = match get("AUTH_MODE").unwrap_or("instance") {
-            "instance" => AuthMode::Instance,
-            "trusted_proxy" => AuthMode::TrustedProxy,
-            value => {
-                return Err(ConfigError::new(
-                    "config_invalid_value",
-                    format!("AUTH_MODE 不支持值 {value}"),
-                ));
-            }
-        };
-        let public_deployment = parse_bool(get("PUBLIC_DEPLOYMENT").unwrap_or("false"))?;
-        if public_deployment && auth_mode == AuthMode::Instance {
-            return Err(ConfigError::new(
-                "config_public_auth_required",
-                "PUBLIC_DEPLOYMENT=true 时必须使用 trusted_proxy",
-            ));
-        }
-        let auth_proxy_token = get("AUTH_PROXY_TOKEN").map(str::to_string);
-        if auth_mode == AuthMode::TrustedProxy
-            && auth_proxy_token.as_deref().is_none_or(str::is_empty)
-        {
-            return Err(ConfigError::new(
-                "config_auth_proxy_token_missing",
-                "trusted_proxy 模式必须配置 AUTH_PROXY_TOKEN",
-            ));
-        }
+        let session_ttl_days = positive_u64(&values, "SESSION_TTL_DAYS", 30)?;
+        let session_ttl = Duration::from_secs(
+            session_ttl_days
+                .checked_mul(24 * 60 * 60)
+                .ok_or_else(|| invalid_value("SESSION_TTL_DAYS"))?,
+        );
+        let session_cookie_secure = parse_bool(get("SESSION_COOKIE_SECURE").unwrap_or("false"))?;
 
         Ok(Self {
             database_url,
             data_dir,
             tensoreval_cwd,
-            auth_mode,
-            auth_proxy_token,
-            public_deployment,
+            session_ttl,
+            session_cookie_secure,
             agent_max_concurrent_runs: positive_usize(&values, "AGENT_MAX_CONCURRENT_RUNS", 8)?,
             agent_max_owner_runs: positive_usize(&values, "AGENT_MAX_OWNER_RUNS", 2)?,
             agent_queue_capacity: positive_usize(&values, "AGENT_QUEUE_CAPACITY", 32)?,

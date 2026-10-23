@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use backend::config::{AuthMode, RuntimeConfig};
+use backend::config::RuntimeConfig;
 use diesel::RunQueryDsl;
 use tower::ServiceExt;
 
@@ -23,7 +23,8 @@ fn config_defaults_are_safe() {
     assert_eq!(config.database_url, "sqlite://backend.db");
     assert_eq!(config.data_dir, root.path().join("data"));
     assert_eq!(config.tensoreval_cwd, engine_root);
-    assert_eq!(config.auth_mode, AuthMode::Instance);
+    assert_eq!(config.session_ttl, std::time::Duration::from_secs(30 * 24 * 60 * 60));
+    assert!(!config.session_cookie_secure);
     assert_eq!(config.agent_max_concurrent_runs, 8);
     assert_eq!(config.agent_max_owner_runs, 2);
     assert_eq!(config.agent_queue_capacity, 32);
@@ -81,19 +82,19 @@ fn config_rejects_zero_limits_and_unwritable_data_path() {
 }
 
 #[test]
-fn public_deployment_rejects_instance_auth() {
+fn session_configuration_rejects_zero_ttl_and_invalid_secure_flag() {
     let root = tempfile::tempdir().expect("create config root");
     let engine_root = root.path().join("engine");
     std::fs::create_dir_all(&engine_root).expect("create engine root");
     let values = BTreeMap::from([
-        ("PUBLIC_DEPLOYMENT".to_string(), "true".to_string()),
-        ("AUTH_MODE".to_string(), "instance".to_string()),
+        ("SESSION_TTL_DAYS".to_string(), "0".to_string()),
+        ("SESSION_COOKIE_SECURE".to_string(), "sometimes".to_string()),
     ]);
 
     let error = RuntimeConfig::from_values(root.path(), values, Some(engine_root))
-        .expect_err("public deployment must require trusted proxy auth");
+        .expect_err("zero session TTL must be rejected");
 
-    assert_eq!(error.code(), "config_public_auth_required");
+    assert_eq!(error.code(), "config_invalid_value");
 }
 
 #[tokio::test]

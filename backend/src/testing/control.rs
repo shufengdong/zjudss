@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::application::{AppState, ArtifactService, StorageLimits};
-use crate::auth::{AuthConfig, StorageScopeRef};
+use crate::auth::{AuthService, StorageScopeRef, seed_users};
 use crate::db::{self, DbPool};
 
 use super::{
@@ -305,15 +305,25 @@ pub async fn run_e2e_server(
         let mut connection = pool.get()?;
         db::run_migrations(&mut connection)?;
         db::recover_interrupted_runs(&mut connection, crate::application::now_ms())?;
+        seed_users(
+            &mut connection,
+            b"ID,NAME\nalice@example.com,Alice\nbob@example.com,Bob\n",
+            crate::application::now_ms(),
+            StorageLimits::default(),
+        )?;
     }
     let llm = Arc::new(ScriptedAgentFactory::default());
     let engine = Arc::new(ScenarioEngine::default());
     let state = AppState::new_for_e2e(
-        pool,
+        pool.clone(),
         data_dir,
         llm.clone(),
         engine.clone(),
-        AuthConfig::trusted_proxy(config.proxy_token),
+        AuthService::new(
+            pool,
+            std::time::Duration::from_secs(30 * 24 * 60 * 60),
+            false,
+        ),
     );
     let control = ControlState::new(config.control_token, llm, engine).with_app(&state);
     let router = crate::build_router(state).merge(control_router(control));

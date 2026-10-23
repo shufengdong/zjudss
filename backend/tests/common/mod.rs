@@ -7,7 +7,7 @@ use backend::adapters::{SimEngine, StubEngine};
 use backend::agent::knowledge::AgentKnowledge;
 use backend::agent::{AgentFactory, DeepSeekAgentFactory, LlmConfig};
 use backend::application::{AppState, RunScheduler};
-use backend::auth::AuthConfig;
+use backend::auth::AuthService;
 use backend::catalog::SchemaCatalog;
 use backend::config::RuntimeConfig;
 use backend::db::{self, DbPool};
@@ -20,6 +20,12 @@ pub struct TestApp {
     pub pool: DbPool,
     pub state: AppState,
     _root: TempDir,
+}
+
+#[derive(diesel::QueryableByName)]
+pub struct CountRow {
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub count: i64,
 }
 
 pub fn seed_test_users(pool: &DbPool, csv_bytes: &[u8]) -> backend::auth::UserSeedSummary {
@@ -35,16 +41,22 @@ pub fn seed_test_users(pool: &DbPool, csv_bytes: &[u8]) -> backend::auth::UserSe
 
 impl TestApp {
     pub async fn spawn() -> Self {
-        Self::spawn_with_auth(AuthConfig::instance()).await
+        Self::spawn_with_auth_settings(std::time::Duration::from_secs(30 * 24 * 60 * 60), false)
+            .await
     }
 
-    pub async fn spawn_with_auth(auth: AuthConfig) -> Self {
-        Self::spawn_with_scheduler(auth, RunScheduler::new(8, 2, 32)).await
+    pub async fn spawn_with_auth_settings(ttl: std::time::Duration, secure: bool) -> Self {
+        Self::spawn_with_scheduler(ttl, secure, RunScheduler::new(8, 2, 32)).await
     }
 
-    pub async fn spawn_with_scheduler(auth: AuthConfig, scheduler: RunScheduler) -> Self {
+    pub async fn spawn_with_scheduler(
+        ttl: std::time::Duration,
+        secure: bool,
+        scheduler: RunScheduler,
+    ) -> Self {
         Self::spawn_with_scheduler_and_agent_factory(
-            auth,
+            ttl,
+            secure,
             scheduler,
             std::sync::Arc::new(StubEngine),
             std::sync::Arc::new(DeepSeekAgentFactory::new(LlmConfig {
@@ -57,7 +69,8 @@ impl TestApp {
 
     pub async fn spawn_with_agent_factory(factory: std::sync::Arc<dyn AgentFactory>) -> Self {
         Self::spawn_with_scheduler_and_agent_factory(
-            AuthConfig::instance(),
+            std::time::Duration::from_secs(30 * 24 * 60 * 60),
+            false,
             RunScheduler::new(8, 2, 32),
             std::sync::Arc::new(StubEngine),
             factory,
@@ -67,7 +80,8 @@ impl TestApp {
 
     pub async fn spawn_with_engine(engine: std::sync::Arc<dyn SimEngine>) -> Self {
         Self::spawn_with_scheduler_and_agent_factory(
-            AuthConfig::instance(),
+            std::time::Duration::from_secs(30 * 24 * 60 * 60),
+            false,
             RunScheduler::new(8, 2, 32),
             engine,
             std::sync::Arc::new(DeepSeekAgentFactory::new(LlmConfig {
@@ -79,7 +93,8 @@ impl TestApp {
     }
 
     async fn spawn_with_scheduler_and_agent_factory(
-        auth: AuthConfig,
+        ttl: std::time::Duration,
+        secure: bool,
         scheduler: RunScheduler,
         engine: std::sync::Arc<dyn SimEngine>,
         agent_factory: std::sync::Arc<dyn AgentFactory>,
@@ -161,6 +176,8 @@ impl TestApp {
             let mut conn = pool.get().expect("checkout test database");
             db::run_migrations(&mut conn).expect("run test migrations");
         }
+        seed_test_users(&pool, b"ID,NAME\ninstance,Instance\nalice,Alice\nbob,Bob\n");
+        let auth = AuthService::new(pool.clone(), ttl, secure);
 
         let state = AppState::new_with_resources_and_agent_factory(
             pool.clone(),

@@ -15,6 +15,7 @@ arrow-array = "60.0.0"
 arrow-schema = "60.0.0"
 axum = { version = "0.8.9", features = ["multipart"] }
 chrono = "0.4"
+cookie = "0.18"
 calamine = "0.37.0"
 csv = "1.4.0"
 diesel = { version = "2.3", features = ["sqlite", "r2d2"] }

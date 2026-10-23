@@ -8,7 +8,7 @@ use backend::application::{
     ArtifactMetadata, DataframeBindingDraft, ModelVersionStatus, SourceKind, VersionDraft,
     VersionInputDraft, VersionOrigin, WorkspaceError, canonical_json,
 };
-use backend::auth::{AccessScope, AuthConfig, StorageScopeRef};
+use backend::auth::{AccessScope, StorageScopeRef};
 use backend::storage::StageLimits;
 use diesel::RunQueryDsl;
 use serde_json::json;
@@ -219,7 +219,7 @@ async fn ready_versions_follow_active_draft_activation_and_rollback_rules() {
 
 #[tokio::test]
 async fn workspace_read_endpoints_hide_foreign_sessions_and_versions() {
-    let app = TestApp::spawn_with_auth(AuthConfig::trusted_proxy(TOKEN)).await;
+    let app = TestApp::spawn().await;
     let alice = scope("alice@example.com");
     let session = app
         .state
@@ -287,7 +287,7 @@ async fn workspace_read_endpoints_hide_foreign_sessions_and_versions() {
 
 #[tokio::test]
 async fn version_inputs_require_owned_artifacts_and_are_returned_by_the_api() {
-    let app = TestApp::spawn_with_auth(AuthConfig::trusted_proxy(TOKEN)).await;
+    let app = TestApp::spawn().await;
     let alice = scope("alice@example.com");
     let bob_storage = app
         .state

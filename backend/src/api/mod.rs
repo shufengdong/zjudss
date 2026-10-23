@@ -15,6 +15,7 @@ mod workspaces;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
+use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 
@@ -57,11 +58,20 @@ impl ApiError {
         }
     }
 
-    pub(crate) fn unauthorized(message: impl Into<String>) -> Self {
+    pub(crate) fn authentication_required() -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
-            message: message.into(),
-            code: "unauthorized",
+            message: "请先登录".to_string(),
+            code: "authentication_required",
+            details: None,
+        }
+    }
+
+    pub(crate) fn invalid_credentials() -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            message: "用户 ID 或密码错误".to_string(),
+            code: "invalid_credentials",
             details: None,
         }
     }
@@ -271,17 +281,26 @@ pub struct RouteContract {
     pub path: &'static str,
 }
 
-fn build_router_and_manifest() -> (Router<AppState>, Vec<RouteContract>) {
-    let mut router = Router::new();
+fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<RouteContract>) {
+    let mut public = Router::new();
+    let mut protected = Router::new();
     let mut manifest = Vec::new();
     macro_rules! add_route {
         ($path:literal, $handler:expr, [$($method:literal),+ $(,)?]) => {{
-            router = router.route($path, $handler);
+            protected = protected.route($path, $handler);
+            $(manifest.push(RouteContract { method: $method, path: $path });)+
+        }};
+    }
+    macro_rules! add_public_route {
+        ($path:literal, $handler:expr, [$($method:literal),+ $(,)?]) => {{
+            public = public.route($path, $handler);
             $(manifest.push(RouteContract { method: $method, path: $path });)+
         }};
     }
 
-    add_route!("/health", get(health), ["GET"]);
+    add_public_route!("/health", get(health), ["GET"]);
+    add_public_route!("/api/auth/login", post(auth::login), ["POST"]);
+    add_public_route!("/api/auth/logout", post(auth::logout), ["POST"]);
     add_route!("/api/me", get(auth::me), ["GET"]);
     add_route!("/api/storage-usage", get(storage::usage), ["GET"]);
     add_route!("/api/examples", get(examples::list), ["GET"]);
@@ -345,13 +364,19 @@ fn build_router_and_manifest() -> (Router<AppState>, Vec<RouteContract>) {
         ["GET"]
     );
     add_route!("/api/task-comparisons/{id}", get(comparisons::get), ["GET"]);
-    (router, manifest)
+    (public, protected, manifest)
 }
 
-pub fn router() -> Router<AppState> {
-    build_router_and_manifest().0
+pub fn router(state: AppState) -> Router {
+    let (public, protected, _) = build_router_and_manifest();
+    public
+        .merge(protected.route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::auth::require_user,
+        )))
+        .with_state(state)
 }
 
 pub fn route_manifest() -> Vec<RouteContract> {
-    build_router_and_manifest().1
+    build_router_and_manifest().2
 }

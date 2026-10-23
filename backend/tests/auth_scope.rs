@@ -1,280 +1,255 @@
 mod common;
 
 use axum::body::{Body, to_bytes};
-use axum::http::{Request, StatusCode};
-use backend::auth::AuthConfig;
-use diesel::RunQueryDsl;
-use diesel::sql_types::{Integer, Text};
+use axum::http::{Request, StatusCode, header};
+use diesel::prelude::*;
+use diesel::sql_types::{BigInt, Text};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
 use common::TestApp;
 
-const TOKEN: &str = "test-proxy-token";
-
-#[derive(diesel::QueryableByName)]
-struct ColumnRow {
+#[derive(QueryableByName)]
+struct AuthRow {
     #[diesel(sql_type = Text)]
-    name: String,
+    token_hash: String,
+    #[diesel(sql_type = Text)]
+    user_id: String,
+    #[diesel(sql_type = BigInt)]
+    expires_at_ms: i64,
 }
 
-#[derive(diesel::QueryableByName)]
-struct IdRow {
-    #[diesel(sql_type = Integer)]
-    id: i32,
-}
-
-fn request(
-    method: &str,
-    uri: &str,
-    subject: &str,
-    body: Body,
-    content_type: Option<&str>,
-) -> Request<Body> {
+fn request(method: &str, uri: &str, cookie: Option<&str>, body: Value) -> Request<Body> {
     let mut builder = Request::builder()
         .method(method)
         .uri(uri)
-        .header("x-zjudss-subject", subject)
-        .header("x-zjudss-proxy-token", TOKEN);
-    if let Some(content_type) = content_type {
-        builder = builder.header("content-type", content_type);
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(cookie) = cookie {
+        builder = builder.header(header::COOKIE, cookie);
     }
-    builder.body(body).expect("build request")
+    builder
+        .body(if body.is_null() {
+            Body::empty()
+        } else {
+            Body::from(body.to_string())
+        })
+        .expect("build request")
 }
 
 async fn json_body(response: axum::response::Response) -> Value {
     let bytes = to_bytes(response.into_body(), 1024 * 1024)
         .await
-        .expect("read response body");
+        .expect("read body");
     serde_json::from_slice(&bytes).expect("parse response json")
 }
 
-async fn create_session(app: &TestApp, subject: &str, title: &str) -> i32 {
+async fn login(app: &TestApp, id: &str, password: &str) -> (String, Value, String) {
     let response = app
         .router
         .clone()
         .oneshot(request(
             "POST",
-            "/api/sessions",
-            subject,
-            Body::from(json!({"title": title}).to_string()),
-            Some("application/json"),
+            "/api/auth/login",
+            None,
+            json!({"id":id,"password":password}),
         ))
         .await
-        .expect("create session");
-    assert_eq!(response.status(), StatusCode::CREATED);
-    json_body(response).await["id"]
-        .as_str()
-        .expect("session id")
-        .parse()
-        .expect("numeric session id")
+        .expect("login response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let set_cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .expect("cookie")
+        .to_str()
+        .expect("cookie text")
+        .to_string();
+    let cookie = set_cookie
+        .split(';')
+        .next()
+        .expect("cookie pair")
+        .to_string();
+    let body = json_body(response).await;
+    (cookie, body, set_cookie)
 }
 
 #[tokio::test]
-async fn migration_requires_session_scope() {
+async fn login_sets_persistent_opaque_cookie_and_me_returns_user() {
     let app = TestApp::spawn().await;
-    let mut conn = app.pool.get().expect("checkout database");
-
-    let storage_table: Vec<IdRow> = diesel::sql_query(
-        "SELECT 1 AS id FROM sqlite_master WHERE type='table' AND name='storage_scopes'",
+    let (cookie, body, set_cookie) = login(&app, "alice", "alice").await;
+    assert_eq!(body, json!({"user":{"id":"alice","name":"Alice"}}));
+    for attribute in ["HttpOnly", "SameSite=Lax", "Path=/", "Max-Age=2592000"] {
+        assert!(set_cookie.contains(attribute), "missing {attribute}");
+    }
+    assert!(!set_cookie.contains("Secure"));
+    let raw_token = cookie.strip_prefix("zjudss_session=").expect("cookie name");
+    assert!(!body.to_string().contains(raw_token));
+    let expected_hash = format!("{:x}", Sha256::digest(raw_token.as_bytes()));
+    let mut conn = app.pool.get().expect("database");
+    let row = diesel::sql_query(
+        "SELECT token_hash,user_id,expires_at_ms FROM auth_sessions WHERE user_id='alice'",
     )
-    .load(&mut conn)
-    .expect("query storage_scopes table");
-    assert_eq!(storage_table.len(), 1);
-
-    let columns: Vec<ColumnRow> =
-        diesel::sql_query("SELECT name FROM pragma_table_info('sessions')")
-            .load(&mut conn)
-            .expect("query session columns");
-    let names: Vec<&str> = columns.iter().map(|row| row.name.as_str()).collect();
-    assert!(names.contains(&"access_scope_kind"));
-    assert!(names.contains(&"access_scope_key"));
-    assert!(names.contains(&"storage_scope_id"));
-
-    let insert = diesel::sql_query(
-        "INSERT INTO sessions(title, created_at_ms, updated_at_ms) VALUES ('unsafe', 1, 1)",
-    )
-    .execute(&mut conn);
-    assert!(insert.is_err(), "database must reject an unscoped session");
+    .get_result::<AuthRow>(&mut conn)
+    .expect("stored auth session");
+    assert_eq!(row.token_hash, expected_hash);
+    assert_ne!(row.token_hash, raw_token);
+    assert_eq!(row.user_id, "alice");
+    assert!(row.expires_at_ms > backend::application::now_ms());
+    drop(conn);
+    let response = app
+        .router
+        .clone()
+        .oneshot(request("GET", "/api/me", Some(&cookie), Value::Null))
+        .await
+        .expect("me response");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().get(header::SET_COOKIE).is_none());
+    assert_eq!(
+        json_body(response).await,
+        json!({"id":"alice","name":"Alice"})
+    );
 }
 
 #[tokio::test]
-async fn trusted_proxy_scopes_all_session_resources() {
-    let app = TestApp::spawn_with_auth(AuthConfig::trusted_proxy(TOKEN)).await;
-    let alice_session = create_session(&app, "alice@example.com", "Alice").await;
-    let bob_session = create_session(&app, "bob@example.com", "Bob").await;
-
-    let alice_list = app
-        .router
-        .clone()
-        .oneshot(request(
-            "GET",
-            "/api/sessions",
-            "alice@example.com",
-            Body::empty(),
-            None,
-        ))
-        .await
-        .expect("list alice sessions");
-    let alice_json = json_body(alice_list).await;
-    assert_eq!(
-        alice_json["sessions"].as_array().expect("sessions").len(),
-        1
-    );
-    assert_eq!(alice_json["sessions"][0]["id"], alice_session.to_string());
-
-    let bob_list = app
-        .router
-        .clone()
-        .oneshot(request(
-            "GET",
-            "/api/sessions",
-            "bob@example.com",
-            Body::empty(),
-            None,
-        ))
-        .await
-        .expect("list bob sessions");
-    let bob_json = json_body(bob_list).await;
-    assert_eq!(bob_json["sessions"].as_array().expect("sessions").len(), 1);
-    assert_eq!(bob_json["sessions"][0]["id"], bob_session.to_string());
-
-    let mut conn = app.pool.get().expect("checkout database");
-    diesel::sql_query("INSERT INTO artifacts(sha256,size_bytes,storage_path,format,created_at_ms) VALUES('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',0,'objects/bb/auth-script','rss',1)")
-    .execute(&mut conn).expect("insert script artifact");
-    let artifact: IdRow = diesel::sql_query("SELECT last_insert_rowid() AS id")
-        .get_result(&mut conn)
-        .unwrap();
-    diesel::sql_query(format!(
-        "INSERT INTO workspaces(session_id,created_at_ms,updated_at_ms) VALUES({alice_session},1,1)"
-    ))
-    .execute(&mut conn)
-    .expect("insert workspace");
-    let workspace: IdRow = diesel::sql_query("SELECT last_insert_rowid() AS id")
-        .get_result(&mut conn)
-        .unwrap();
-    diesel::sql_query(format!("INSERT INTO model_versions(workspace_id,status,source_kind,origin_kind,manifest_json,content_hash,created_at_ms) VALUES({},'ready','rss','generated','{{}}','auth-version',1)",workspace.id))
-    .execute(&mut conn).expect("insert model version");
-    let version: IdRow = diesel::sql_query("SELECT last_insert_rowid() AS id")
-        .get_result(&mut conn)
-        .unwrap();
-    diesel::sql_query(format!(
-        "INSERT INTO simulation_tasks(session_id,status,stage,study_type,model_version_id,study_spec_json,script_artifact_id,agent_bundle_version,agent_skill_refs_json,engine_contract_version,created_at_ms) \
-         VALUES ({alice_session},'succeeded',NULL,'power_flow',{},'{{}}',{},'v2.0.0','[]','test-contract',1)",version.id,artifact.id
-    ))
-    .execute(&mut conn)
-    .expect("insert alice task");
-    let task: IdRow = diesel::sql_query("SELECT last_insert_rowid() AS id")
-        .get_result(&mut conn)
-        .expect("read task id");
-    drop(conn);
-
-    let protected = [
-        (
-            "GET",
-            format!("/api/sessions/{alice_session}/messages"),
-            None,
-        ),
-        ("GET", format!("/api/sessions/{alice_session}/events"), None),
-        ("GET", format!("/api/tasks/{}", task.id), None),
-        (
-            "POST",
-            format!("/api/sessions/{alice_session}/attachments"),
-            Some("multipart/form-data; boundary=x"),
-        ),
-    ];
-    for (method, uri, content_type) in protected {
+async fn invalid_credentials_and_missing_auth_have_stable_distinct_errors() {
+    let app = TestApp::spawn().await;
+    let mut failures = Vec::new();
+    for (id, password) in [("alice", "wrong"), ("unknown", "unknown")] {
         let response = app
             .router
             .clone()
             .oneshot(request(
-                method,
-                &uri,
-                "bob@example.com",
-                Body::from("--x--\r\n"),
-                content_type,
+                "POST",
+                "/api/auth/login",
+                None,
+                json!({"id":id,"password":password}),
             ))
             .await
-            .expect("request protected resource");
-        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {uri}");
+            .expect("failed login");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        failures.push(json_body(response).await);
     }
-
-    let hidden = app
-        .router
-        .clone()
-        .oneshot(request(
-            "GET",
-            &format!("/api/sessions/{alice_session}/messages"),
-            "bob@example.com",
-            Body::empty(),
-            None,
-        ))
-        .await
-        .expect("read hidden resource");
-    let missing = app
-        .router
-        .clone()
-        .oneshot(request(
-            "GET",
-            "/api/sessions/2147483647/messages",
-            "bob@example.com",
-            Body::empty(),
-            None,
-        ))
-        .await
-        .expect("read missing resource");
-    assert_eq!(hidden.status(), missing.status());
-    assert_eq!(json_body(hidden).await, json_body(missing).await);
-}
-
-#[tokio::test]
-async fn trusted_proxy_rejects_missing_or_invalid_identity() {
-    let app = TestApp::spawn_with_auth(AuthConfig::trusted_proxy(TOKEN)).await;
-
-    for request in [
-        Request::builder()
-            .uri("/api/me")
-            .body(Body::empty())
-            .expect("missing headers request"),
-        Request::builder()
-            .uri("/api/me")
-            .header("x-zjudss-subject", "alice@example.com")
-            .header("x-zjudss-proxy-token", "wrong")
-            .body(Body::empty())
-            .expect("invalid token request"),
-    ] {
+    assert_eq!(failures[0], failures[1]);
+    assert_eq!(failures[0]["code"], "invalid_credentials");
+    for cookie in [None, Some("zjudss_session=unknown-token")] {
         let response = app
             .router
             .clone()
-            .oneshot(request)
+            .oneshot(request("GET", "/api/sessions", cookie, Value::Null))
             .await
-            .expect("auth response");
+            .expect("protected response");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(json_body(response).await["code"], "authentication_required");
     }
 }
 
 #[tokio::test]
-async fn me_returns_stable_scope_identity() {
-    let app = TestApp::spawn_with_auth(AuthConfig::trusted_proxy(TOKEN)).await;
-    let response = app
+async fn expiring_session_renews_and_expired_session_is_deleted() {
+    let app = TestApp::spawn().await;
+    let (cookie, _, _) = login(&app, "alice", "alice").await;
+    let raw = cookie.strip_prefix("zjudss_session=").unwrap();
+    let hash = format!("{:x}", Sha256::digest(raw.as_bytes()));
+    let fresh = app
+        .router
+        .clone()
+        .oneshot(request("GET", "/api/me", Some(&cookie), Value::Null))
+        .await
+        .expect("fresh response");
+    assert!(fresh.headers().get(header::SET_COOKIE).is_none());
+    let mut conn = app.pool.get().expect("database");
+    let near = backend::application::now_ms() + 86_400_000;
+    diesel::sql_query("UPDATE auth_sessions SET expires_at_ms=? WHERE token_hash=?")
+        .bind::<BigInt, _>(near)
+        .bind::<Text, _>(&hash)
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
+    let renewed = app
+        .router
+        .clone()
+        .oneshot(request("GET", "/api/me", Some(&cookie), Value::Null))
+        .await
+        .expect("renewal response");
+    assert_eq!(renewed.status(), StatusCode::OK);
+    assert!(
+        renewed.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=2592000")
+    );
+    let mut conn = app.pool.get().expect("database");
+    let row = diesel::sql_query(
+        "SELECT token_hash,user_id,expires_at_ms FROM auth_sessions WHERE token_hash=?",
+    )
+    .bind::<Text, _>(&hash)
+    .get_result::<AuthRow>(&mut conn)
+    .unwrap();
+    assert!(row.expires_at_ms > near);
+    diesel::sql_query("UPDATE auth_sessions SET expires_at_ms=0 WHERE token_hash=?")
+        .bind::<Text, _>(&hash)
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
+    let expired = app
+        .router
+        .clone()
+        .oneshot(request("GET", "/api/me", Some(&cookie), Value::Null))
+        .await
+        .expect("expired response");
+    assert_eq!(expired.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(json_body(expired).await["code"], "authentication_required");
+    let mut conn = app.pool.get().expect("database");
+    let count = diesel::sql_query("SELECT COUNT(*) AS count FROM auth_sessions WHERE token_hash=?")
+        .bind::<Text, _>(&hash)
+        .get_result::<common::CountRow>(&mut conn)
+        .unwrap();
+    assert_eq!(count.count, 0);
+}
+
+#[tokio::test]
+async fn logout_is_idempotent_and_revokes_only_current_browser() {
+    let app = TestApp::spawn().await;
+    let (first, _, _) = login(&app, "alice", "alice").await;
+    let (second, _, _) = login(&app, "alice", "alice").await;
+    let logout = app
         .router
         .clone()
         .oneshot(request(
-            "GET",
-            "/api/me",
-            "alice@example.com",
-            Body::empty(),
-            None,
+            "POST",
+            "/api/auth/logout",
+            Some(&first),
+            Value::Null,
         ))
         .await
-        .expect("me response");
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        json_body(response).await,
-        json!({
-            "subject": "alice@example.com",
-            "scopeKind": "owner",
-            "scopeKey": "owner:alice@example.com"
-        })
+        .expect("logout");
+    assert_eq!(logout.status(), StatusCode::NO_CONTENT);
+    assert!(
+        logout.headers()[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0")
     );
+    let first_me = app
+        .router
+        .clone()
+        .oneshot(request("GET", "/api/me", Some(&first), Value::Null))
+        .await
+        .unwrap();
+    let second_me = app
+        .router
+        .clone()
+        .oneshot(request("GET", "/api/me", Some(&second), Value::Null))
+        .await
+        .unwrap();
+    assert_eq!(first_me.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(second_me.status(), StatusCode::OK);
+    for cookie in [Some(first.as_str()), None] {
+        let response = app
+            .router
+            .clone()
+            .oneshot(request("POST", "/api/auth/logout", cookie, Value::Null))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
 }

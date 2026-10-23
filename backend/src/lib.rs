@@ -24,5 +24,5 @@ pub use contract_manifest::{ContractManifest, contract_manifest};
 
 /// 构建已经绑定全局状态的 HTTP Router。
 pub fn build_router(state: AppState) -> Router {
-    api::router().with_state(state)
+    api::router(state)
 }

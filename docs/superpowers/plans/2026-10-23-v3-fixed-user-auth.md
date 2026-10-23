@@ -111,13 +111,13 @@
 - Modify test support: `backend/tests/common/mod.rs`
 - Modify: `backend/.env.example`
 
-- [ ] Write failing HTTP behavior tests for login, `/api/me`, protected routes, renewal, expiry, and logout.
+- [x] Write failing HTTP behavior tests for login, `/api/me`, protected routes, renewal, expiry, and logout.
 
   Assert `invalid_credentials` is identical for unknown ID/wrong password; successful login returns `{user:{id,name}}` and `zjudss_session` with `HttpOnly; SameSite=Lax; Path=/; Max-Age=<TTL>`; raw token is absent from JSON/database; no/expired/unknown cookie returns `authentication_required`; renewal happens only after half-TTL and commits before setting a cookie; logout always returns 204 and expires the cookie; one browser logout does not revoke the user's other auth session.
 
-- [ ] Run `cd backend && cargo test --test auth_scope --features e2e-test` and confirm failure on the old proxy contract.
+- [x] Run `cd backend && cargo test --test auth_scope --features e2e-test` and confirm failure on the old proxy contract.
 
-- [ ] Implement these core types and services:
+- [x] Implement these core types and services:
 
   ```rust
   #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -143,9 +143,9 @@
 
   Generate at least 32 random bytes with OS randomness, store only SHA-256 hex, and use the `cookie` crate to parse/render attributes. Authentication performs one joined lookup of the auth session and user. Add a test-only clock/token source to avoid sleeps and deterministic-secrets leakage into production constructors.
 
-- [ ] Split the router into public and protected branches. Public: `GET /health`, `POST /api/auth/login`, `POST /api/auth/logout`. Apply `require_user` to every other route, including `/api/me` and SSE. Change `/api/me` to `{id,name}` and map auth failures to stable codes.
+- [x] Split the router into public and protected branches. Public: `GET /health`, `POST /api/auth/login`, `POST /api/auth/logout`. Apply `require_user` to every other route, including `/api/me` and SSE. Change `/api/me` to `{id,name}` and map auth failures to stable codes.
 
-- [ ] Replace auth configuration with:
+- [x] Replace auth configuration with:
 
   ```rust
   pub session_ttl: Duration,              // SESSION_TTL_DAYS, default 30
@@ -154,9 +154,9 @@
 
   Remove `AuthMode`, `AUTH_MODE`, `AUTH_PROXY_TOKEN`, and the public-deployment proxy guard. Call migrations, interrupted-run recovery, expired-auth cleanup, and `seed_users` before building state/binding the listener. Bind address remains a deployment setting handled in the later V3 deployment plan; this task must not reintroduce proxy identity.
 
-- [ ] Run `cd backend && cargo test --test auth_scope --test user_seed --features e2e-test` and confirm it passes.
+- [x] Run `cd backend && cargo test --test auth_scope --test user_seed --features e2e-test` and confirm it passes.
 
-- [ ] Commit: `git add backend/Cargo.toml backend/Cargo.lock backend/src/auth backend/src/api backend/src/application/mod.rs backend/src/config.rs backend/src/main.rs backend/src/bin/e2e-server.rs backend/tests backend/.env.example && git commit -m "feat: add persistent user login sessions"`.
+- [x] Commit: `git add backend/Cargo.toml backend/Cargo.lock backend/src/auth backend/src/api backend/src/application/mod.rs backend/src/config.rs backend/src/main.rs backend/src/bin/e2e-server.rs backend/tests backend/.env.example && git commit -m "feat: add persistent user login sessions"`.
 
 ### Task 3: Convert every domain repository and service to explicit user ownership
 
