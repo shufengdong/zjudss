@@ -203,13 +203,13 @@
 - Add test: `backend/tests/auth_sse.rs`
 - Modify: `backend/tests/sse_recovery.rs`
 
-- [ ] Add failing paused-time tests proving: connection authentication can renew once; heartbeats do not update `last_seen_at_ms/expires_at_ms`; expiry ends the stream; logout of the same auth session ends it immediately; logout of a different browser session for the same user does not end it; Last-Event-ID recovery remains unchanged while authenticated.
+- [x] Add failing paused-time tests proving: connection authentication can renew once; heartbeats do not update `last_seen_at_ms/expires_at_ms`; expiry ends the stream; logout of the same auth session ends it immediately; logout of a different browser session for the same user does not end it; Last-Event-ID recovery remains unchanged while authenticated.
 
-- [ ] Run `cd backend && cargo test --test auth_sse --test sse_recovery --features e2e-test` and confirm failure.
+- [x] Run `cd backend && cargo test --test auth_sse --test sse_recovery --features e2e-test` and confirm failure.
 
-- [ ] Add an `AuthSessionRevocations` broadcast keyed by `token_hash`. On logout, delete first and then broadcast. In the SSE loop, `select!` over domain events, heartbeat, and revocation; at each heartbeat perform a read-only `is_session_active(token_hash, now_ms)` check without renewal. End the stream quietly on revoke/expiry so the frontend can re-probe `/api/me`.
+- [x] Add an `AuthSessionRevocations` broadcast keyed by `token_hash`. On logout, delete first and then broadcast. In the SSE loop, `select!` over domain events, heartbeat, and revocation; at each heartbeat perform a read-only `is_session_active(token_hash, now_ms)` check without renewal. End the stream quietly on revoke/expiry so the frontend can re-probe `/api/me`.
 
-- [ ] Run the focused tests and then `cd backend && cargo test --features e2e-test`.
+- [x] Run the focused tests and then `cd backend && cargo test --features e2e-test`.
 
 - [ ] Commit: `git add backend/src/auth/session.rs backend/src/api/events.rs backend/src/application/events.rs backend/tests/auth_sse.rs backend/tests/sse_recovery.rs && git commit -m "feat: revoke authenticated event streams"`.
 

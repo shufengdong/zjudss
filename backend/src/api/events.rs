@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
-use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
+use axum::response::sse::{Event as SseEvent, Sse};
 use futures::{Stream, StreamExt};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
@@ -52,6 +52,7 @@ pub async fn stream(
 
     // 必须先订阅；补发查询期间提交的消息会保留在 rx 中，之后按消息 ID 去重。
     let rx = state.events.subscribe(session_id);
+    let revocations = state.auth.subscribe_revocations();
     let raw_cursor = headers
         .get("last-event-id")
         .and_then(|value| value.to_str().ok());
@@ -85,23 +86,66 @@ pub async fn stream(
 
     let last_seen = Arc::new(AtomicI32::new(last_id));
     let live_seen = last_seen.clone();
-    let live = BroadcastStream::new(rx).filter_map(move |item| {
-        let live_seen = live_seen.clone();
-        async move {
-            match item {
-                Ok(event) => {
-                    let id = event.message_id()?;
-                    if id <= live_seen.fetch_max(id, Ordering::SeqCst) {
-                        return None;
+    let auth = state.auth.clone();
+    let auth_session_hash = principal.auth_session_hash;
+    let heartbeat_interval = Duration::from_millis(250);
+    let heartbeat = tokio::time::interval_at(
+        tokio::time::Instant::now() + heartbeat_interval,
+        heartbeat_interval,
+    );
+    let live = futures::stream::unfold(
+        (
+            BroadcastStream::new(rx),
+            revocations,
+            heartbeat,
+            auth,
+            auth_session_hash,
+            live_seen,
+        ),
+        |(mut events, mut revocations, mut heartbeat, auth, auth_session_hash, live_seen)| async move {
+            loop {
+                tokio::select! {
+                    item = events.next() => match item {
+                        Some(Ok(event)) => {
+                            let Some(id) = event.message_id() else { continue };
+                            if id <= live_seen.fetch_max(id, Ordering::SeqCst) {
+                                continue;
+                            }
+                            let Some(frame) = message_frame(event) else { continue };
+                            return Some((
+                                Ok(frame),
+                                (events, revocations, heartbeat, auth, auth_session_hash, live_seen),
+                            ));
+                        }
+                        Some(Err(BroadcastStreamRecvError::Lagged(_))) => {
+                            return Some((
+                                Ok(resync_frame()),
+                                (events, revocations, heartbeat, auth, auth_session_hash, live_seen),
+                            ));
+                        }
+                        None => return None,
+                    },
+                    revoked = revocations.recv() => match revoked {
+                        Ok(hash) if hash == auth_session_hash => return None,
+                        Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => continue,
+                    },
+                    _ = heartbeat.tick() => {
+                        match auth.is_session_active(&auth_session_hash).await {
+                            Ok(true) => {
+                                let frame = SseEvent::default().comment("keep-alive");
+                                return Some((
+                                    Ok(frame),
+                                    (events, revocations, heartbeat, auth, auth_session_hash, live_seen),
+                                ));
+                            }
+                            Ok(false) | Err(_) => return None,
+                        }
                     }
-                    message_frame(event).map(Ok)
                 }
-                Err(BroadcastStreamRecvError::Lagged(_)) => Some(Ok(resync_frame())),
             }
-        }
-    });
+        },
+    );
     let stream: EventStream = Box::pin(futures::stream::iter(initial).chain(live));
-    // 代理可能等到首个 body chunk 才向浏览器提交响应头。较短的注释心跳使空会话也能
-    // 及时触发 EventSource.open，前端随后读取 REST 快照，同时不改变业务事件序列。
-    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_millis(250))))
+    Ok(Sse::new(stream))
 }
