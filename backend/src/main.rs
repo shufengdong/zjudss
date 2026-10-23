@@ -34,9 +34,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     let runtime = RuntimeConfig::from_env()?;
     let llm = LlmConfig::from_env();
+    let process_engine = adapters::ProcessEngine::from_env()?;
+    let binary_sha256 = process_engine.binary_sha256().to_string();
+    let resource_features = process_engine.capabilities().resource_features();
     let knowledge = AgentKnowledge::load_embedded(&runtime.agent_bundle_version)?;
     let engine_resources =
-        EngineResourceRegistry::load(&runtime.tensoreval_cwd, &std::collections::HashSet::new())?;
+        EngineResourceRegistry::load(&runtime.tensoreval_cwd, &resource_features)?;
     let (engine_resources, snapshot_path) =
         EngineResourceRegistry::publish(engine_resources, &runtime.data_dir)?;
     let catalog = std::sync::Arc::new(SchemaCatalog::from_snapshot(
@@ -49,11 +52,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         llm.provider, llm.model
     );
     eprintln!(
-        "[config] agent bundle = {}, engine resources = {} ({})",
+        "[config] agent bundle = {}, engine resources = {} ({}, examples {}/{})",
         knowledge.manifest.agent_bundle_version,
         engine_resources.id,
-        snapshot_path.display()
+        snapshot_path.display(),
+        engine_resources
+            .examples
+            .iter()
+            .filter(|example| example.importable)
+            .count(),
+        engine_resources.examples.len(),
     );
+    eprintln!("[config] tensoreval sha256 = {binary_sha256}");
 
     let storage_limits = StorageLimits {
         artifact_limit: i64::try_from(runtime.owner_artifact_limit)?,
@@ -79,7 +89,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     eprintln!("[db] ready at {}", runtime.database_url);
 
-    let engine = adapters::engine_from_env()?;
+    let engine: std::sync::Arc<dyn adapters::SimEngine> = std::sync::Arc::new(process_engine);
     eprintln!("[config] engine = tensoreval parquet v3");
     let auth = AuthService::new(
         pool.clone(),

@@ -1,6 +1,9 @@
+use std::collections::HashSet;
+use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::time::Duration;
 
 use arrow_array::{RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
@@ -10,7 +13,7 @@ use parquet::file::properties::WriterProperties;
 
 use serde::Serialize;
 
-use super::{AdapterError, ErrorCategory};
+use super::{AdapterError, ErrorCategory, STATIC_MODEL_TABLES};
 
 pub const ENGINE_CONTRACT_VERSION: &str = "tensoreval-parquet-v3";
 
@@ -54,14 +57,20 @@ impl EngineCapabilities {
             && (help.contains("NAME=FILE") || help.contains("<NAME=FILE>"));
         let named_parquet_inputs =
             declares_named_inputs && result_dir && output_format_parquet && parquet_smoke(binary);
+        let static_dss_import =
+            result_dir && output_format_parquet && model_import_smoke(binary, "import_dss");
+        let single_solve_import = result_dir
+            && output_format_parquet
+            && model_import_smoke(binary, "import_dss_execution");
+        let script_validation = script_validation_smoke();
         Ok(Self {
             contract_version: ENGINE_CONTRACT_VERSION.into(),
             result_dir,
             output_format_parquet,
             named_parquet_inputs,
-            static_dss_import: result_dir && output_format_parquet,
-            single_solve_import: result_dir && output_format_parquet,
-            script_validation: true,
+            static_dss_import,
+            single_solve_import,
+            script_validation,
         })
     }
 
@@ -99,11 +108,18 @@ impl EngineCapabilities {
 
     pub fn require_v3(&self) -> Result<(), AdapterError> {
         self.require_parquet_contract()?;
-        if !self.static_dss_import || !self.single_solve_import {
+        if !self.static_dss_import {
             return Err(AdapterError::new(
-                "engine_model_import_unsupported",
+                "engine_static_model_import_unsupported",
                 ErrorCategory::Internal,
-                "tensoreval 缺少 V3 模型 import profile",
+                "tensoreval 缺少静态 DSS import profile",
+            ));
+        }
+        if !self.single_solve_import {
+            return Err(AdapterError::new(
+                "engine_single_solve_import_unsupported",
+                ErrorCategory::Internal,
+                "tensoreval 缺少 single-Solve import profile",
             ));
         }
         if !self.script_validation {
@@ -114,6 +130,19 @@ impl EngineCapabilities {
             ));
         }
         Ok(())
+    }
+
+    pub fn resource_features(&self) -> HashSet<String> {
+        [
+            ("named_parquet_inputs", self.named_parquet_inputs),
+            ("static_dss_import", self.static_dss_import),
+            ("single_solve_import", self.single_solve_import),
+            ("script_validation", self.script_validation),
+        ]
+        .into_iter()
+        .filter(|(_, available)| *available)
+        .map(|(name, _)| name.to_string())
+        .collect()
     }
 }
 
@@ -164,4 +193,134 @@ fn parquet_smoke(binary: &Path) -> bool {
     .unwrap_or(false);
     let _ = std::fs::remove_dir_all(root);
     result
+}
+
+fn model_import_smoke(binary: &Path, function: &str) -> bool {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or_default();
+    let root = std::env::temp_dir().join(format!(
+        "zjudss-engine-import-probe-{}-{function}-{nonce}",
+        std::process::id()
+    ));
+    let result = (|| -> Result<bool, Box<dyn std::error::Error>> {
+        std::fs::create_dir_all(&root)?;
+        write_probe_parquet(&root.join("probe.parquet"))?;
+        let solve = if function == "import_dss_execution" {
+            "Solve\n"
+        } else {
+            ""
+        };
+        std::fs::write(
+            root.join("model.dss"),
+            format!("New Circuit.probe basekv=10\n{solve}"),
+        )?;
+        std::fs::write(
+            root.join("import.rss"),
+            format!(
+                "[{}] = {function}(\"model.dss\");\n",
+                STATIC_MODEL_TABLES.join(", ")
+            ),
+        )?;
+        let output_dir = root.join("out");
+        let output = Command::new(binary)
+            .current_dir(&root)
+            .args(["--df", "--result-dir"])
+            .arg(&output_dir)
+            .args(["--output-format", "parquet", "import.rss"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .output()?;
+        if !output.status.success() {
+            return Ok(false);
+        }
+        for name in STATIC_MODEL_TABLES {
+            let metadata = crate::storage::ParquetInspector::metadata(
+                &output_dir.join(format!("{name}.parquet")),
+            )?;
+            if !metadata.snappy {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    })()
+    .unwrap_or(false);
+    let _ = std::fs::remove_dir_all(root);
+    result
+}
+
+fn write_probe_parquet(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Utf8, false)]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(StringArray::from(vec!["probe"]))],
+    )?;
+    let properties = WriterProperties::builder()
+        .set_compression(Compression::SNAPPY)
+        .build();
+    let mut writer = ArrowWriter::try_new(std::fs::File::create(path)?, schema, Some(properties))?;
+    writer.write(&batch)?;
+    writer.close()?;
+    Ok(())
+}
+
+fn script_validation_smoke() -> bool {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or_default();
+    let root = std::env::temp_dir().join(format!(
+        "zjudss-script-validation-probe-{}-{nonce}",
+        std::process::id()
+    ));
+    let result = (|| -> Result<bool, AdapterError> {
+        std::fs::create_dir_all(&root).map_err(|error| {
+            AdapterError::new("engine_probe_failed", ErrorCategory::Io, error.to_string())
+        })?;
+        std::fs::write(root.join("probe.rss"), "result = select(col(id), bus);\n").map_err(
+            |error| AdapterError::new("engine_probe_failed", ErrorCategory::Io, error.to_string()),
+        )?;
+        Ok(
+            super::script::validate_script_source(&super::ScriptValidationSpec {
+                input_tree: root.clone(),
+                script_path: "probe.rss".into(),
+                timeout: Duration::from_secs(1),
+            })?
+            .valid,
+        )
+    })()
+    .unwrap_or(false);
+    let _ = std::fs::remove_dir_all(root);
+    result
+}
+
+pub(crate) fn binary_sha256(path: &Path) -> Result<String, AdapterError> {
+    use sha2::{Digest, Sha256};
+
+    let file = std::fs::File::open(path).map_err(|error| {
+        AdapterError::new(
+            "engine_binary_unreadable",
+            ErrorCategory::Io,
+            error.to_string(),
+        )
+    })?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer).map_err(|error| {
+            AdapterError::new(
+                "engine_binary_unreadable",
+                ErrorCategory::Io,
+                error.to_string(),
+            )
+        })?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }

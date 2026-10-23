@@ -18,6 +18,7 @@ pub use output::{OutputLimits, validate_outputs};
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
     pub bin: PathBuf,
+    pub binary_sha256: String,
     pub default_timeout: Duration,
     pub output_limits: OutputLimits,
     pub capabilities: EngineCapabilities,
@@ -25,10 +26,20 @@ pub struct EngineConfig {
 
 impl EngineConfig {
     pub fn probe(bin: PathBuf, default_timeout: Duration) -> Result<Self, AdapterError> {
+        let before = super::contract::binary_sha256(&bin)?;
         let capabilities = EngineCapabilities::probe(&bin)?;
         capabilities.require_v3()?;
+        let binary_sha256 = super::contract::binary_sha256(&bin)?;
+        if before != binary_sha256 {
+            return Err(AdapterError::new(
+                "engine_binary_changed",
+                ErrorCategory::Io,
+                "tensoreval 在启动探测期间发生变化，请重启服务",
+            ));
+        }
         Ok(Self {
             bin,
+            binary_sha256,
             default_timeout,
             output_limits: OutputLimits::default(),
             capabilities,
@@ -66,6 +77,26 @@ impl ProcessEngine {
         )?))
     }
 
+    pub fn capabilities(&self) -> &EngineCapabilities {
+        &self.config.capabilities
+    }
+
+    pub fn binary_sha256(&self) -> &str {
+        &self.config.binary_sha256
+    }
+
+    fn verify_binary(&self) -> Result<(), AdapterError> {
+        let current = super::contract::binary_sha256(&self.config.bin)?;
+        if current != self.config.binary_sha256 {
+            return Err(AdapterError::new(
+                "engine_binary_changed",
+                ErrorCategory::Io,
+                "tensoreval 已被替换，请重启服务后重试",
+            ));
+        }
+        Ok(())
+    }
+
     async fn execute(
         &self,
         spec: RunSpec,
@@ -91,6 +122,7 @@ impl ProcessEngine {
         } else {
             spec.timeout
         };
+        self.verify_binary()?;
         let mut command = Command::new(&built.program);
         command
             .args(&built.args)
@@ -129,6 +161,7 @@ impl SimEngine for ProcessEngine {
                 "模型相对路径不是 UTF-8",
             )
         })?;
+        self.verify_binary()?;
         let mut command = Command::new(&self.config.bin);
         command
             .args(["--dss-to-rss", "--check", "--study", "snapshot", model])

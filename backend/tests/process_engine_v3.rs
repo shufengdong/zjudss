@@ -9,12 +9,14 @@ use backend::adapters::{
     ENGINE_CONTRACT_VERSION, EngineCapabilities, EngineConfig, NamedInput, OutputLimits, RunMode,
     RunSpec, build_command, validate_outputs,
 };
-#[cfg(feature = "release-test")]
 use backend::adapters::{ProcessEngine, SimEngine};
 use backend::storage::ParquetInspector;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
+
+#[cfg(unix)]
+static ENGINE_PROBE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn write_parquet(path: &Path, rows: usize, compression: Compression) {
     let schema = Arc::new(Schema::new(vec![
@@ -73,6 +75,46 @@ fn spec(root: &Path, input_tree: &Path, mode: RunMode) -> RunSpec {
         result_dir: root.join(format!("result-{mode:?}")),
         timeout: Duration::from_secs(5),
     }
+}
+
+#[cfg(unix)]
+fn write_probe_engine(path: &Path, failing_profile: Option<&str>) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tables = backend::adapters::STATIC_MODEL_TABLES.join(" ");
+    let failing_profile = failing_profile.unwrap_or("none");
+    let source = format!(
+        r#"#!/bin/sh
+if [ "$1" = "--help" ]; then
+  echo 'Usage --result-dir --output-format parquet --input NAME=FILE'
+  exit 0
+fi
+result_dir=''
+script=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --result-dir) shift; result_dir="$1" ;;
+    --output-format|--input|--study) shift ;;
+    --df|--dss-to-rss|--check) ;;
+    *) script="$1" ;;
+  esac
+  shift
+done
+mkdir -p "$result_dir"
+if grep -q 'import_dss_execution' "$script"; then
+  [ '{failing_profile}' = 'single' ] && exit 7
+  for name in {tables}; do cp probe.parquet "$result_dir/$name.parquet"; done
+elif grep -q 'import_dss' "$script"; then
+  [ '{failing_profile}' = 'static' ] && exit 8
+  for name in {tables}; do cp probe.parquet "$result_dir/$name.parquet"; done
+else
+  [ '{failing_profile}' = 'named' ] && exit 9
+  cp probe.parquet "$result_dir/result.parquet"
+fi
+"#
+    );
+    std::fs::write(path, source).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
 #[test]
@@ -294,6 +336,7 @@ fn output_validation_rejects_format_names_corruption_duplicates_and_limits() {
 #[test]
 fn output_validation_rejects_symlinks_and_capability_probe_fails_closed() {
     use std::os::unix::fs::{PermissionsExt, symlink};
+    let _probe_guard = ENGINE_PROBE_TEST_LOCK.lock().unwrap();
     let root = tempfile::tempdir().unwrap();
     let outside = root.path().join("outside.parquet");
     write_parquet(&outside, 1, Compression::SNAPPY);
@@ -308,15 +351,18 @@ fn output_validation_rejects_symlinks_and_capability_probe_fails_closed() {
     );
 
     let good = root.path().join("good-engine");
-    std::fs::write(
-        &good,
-        "#!/bin/sh\nif [ \"$1\" = \"--help\" ]; then echo 'Usage --result-dir --output-format parquet --input NAME=FILE'; exit 0; fi\nmkdir -p \"$5\"\ncp probe.parquet \"$5/result.parquet\"\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&good, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_probe_engine(&good, None);
     let capabilities = EngineCapabilities::probe(&good).unwrap();
     assert_eq!(capabilities.contract_version, ENGINE_CONTRACT_VERSION);
+    assert!(capabilities.static_dss_import);
+    assert!(capabilities.single_solve_import);
+    assert!(capabilities.script_validation);
     capabilities.require_v3().unwrap();
+    assert!(
+        capabilities
+            .resource_features()
+            .contains("static_dss_import")
+    );
     let mismatched = EngineCapabilities {
         contract_version: "legacy".into(),
         result_dir: true,
@@ -340,6 +386,69 @@ fn output_validation_rejects_symlinks_and_capability_probe_fails_closed() {
     std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).unwrap();
     let error = EngineConfig::probe(old, Duration::from_secs(1)).unwrap_err();
     assert_eq!(error.code, "engine_parquet_output_unsupported");
+}
+
+#[cfg(unix)]
+#[test]
+fn capability_probe_exercises_each_model_import_profile() {
+    let _probe_guard = ENGINE_PROBE_TEST_LOCK.lock().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    for (profile, expected) in [
+        ("named", "engine_parquet_input_unsupported"),
+        ("static", "engine_static_model_import_unsupported"),
+        ("single", "engine_single_solve_import_unsupported"),
+    ] {
+        let binary = root.path().join(format!("engine-{profile}"));
+        write_probe_engine(&binary, Some(profile));
+        assert_eq!(
+            EngineConfig::probe(binary, Duration::from_secs(2))
+                .unwrap_err()
+                .code,
+            expected
+        );
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn process_engine_rejects_binary_replacement_before_every_spawn_path() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _probe_guard = ENGINE_PROBE_TEST_LOCK.lock().unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let binary = root.path().join("engine");
+    write_probe_engine(&binary, None);
+    let config = EngineConfig::probe(binary.clone(), Duration::from_secs(2)).unwrap();
+    assert_eq!(config.binary_sha256.len(), 64);
+    let engine = ProcessEngine::new(config);
+    assert_eq!(engine.binary_sha256().len(), 64);
+    assert!(engine.capabilities().static_dss_import);
+    drop(_probe_guard);
+
+    let marker = root.path().join("replacement-ran");
+    std::fs::write(
+        &binary,
+        format!("#!/bin/sh\ntouch '{}'\nexit 0\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let (task, input_tree) = tree();
+    let error = engine
+        .run_analysis(spec(task.path(), &input_tree, RunMode::Analysis))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "engine_binary_changed");
+    let error = engine
+        .inspect(backend::adapters::InspectSpec {
+            input_tree: input_tree.clone(),
+            model_path: "main.rss".into(),
+            timeout: Duration::from_secs(1),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "engine_binary_changed");
+    assert!(!marker.exists());
 }
 
 #[cfg(unix)]
@@ -381,8 +490,12 @@ fn release_script_fails_closed_with_stable_preflight_reasons() {
 #[cfg(feature = "release-test")]
 #[tokio::test]
 async fn real_tensoreval_smoke_writes_snappy_parquet() {
+    #[cfg(unix)]
+    let _probe_guard = ENGINE_PROBE_TEST_LOCK.lock().unwrap();
     let binary = PathBuf::from(std::env::var_os("TENSOREVAL_BIN").expect("set TENSOREVAL_BIN"));
     let engine = ProcessEngine::new(EngineConfig::probe(binary, Duration::from_secs(30)).unwrap());
+    #[cfg(unix)]
+    drop(_probe_guard);
     let (root, input_tree) = tree();
     let output = engine
         .run_analysis(spec(root.path(), &input_tree, RunMode::Analysis))
