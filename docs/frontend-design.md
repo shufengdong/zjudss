@@ -96,7 +96,8 @@ ID；刷新后从比较 API 恢复兼容性和差值 DataFrame。
 Vitest 覆盖 session keyed 状态、workspace null 快照、SSE 控制事件、schema 列序、null、合法重复行、
 六类图表和直方图边界。基础门禁运行 `npm test -- --run` 与 `npm run build`。
 
-完整前端验收由 Playwright 从浏览器访问 Vite 和真实 Axum e2e server，覆盖上传、自然语言工具调用、SSE、
-工作区、任务、表格、六类图表、比较、历史恢复、多人隔离及桌面/窄屏布局。测试不直接写 React state，也
-不以 mock HTTP 响应代替关键用户旅程。实现状态和 100% 功能覆盖口径见
+完整前端验收由 12 个 Playwright 文件中的 18 个浏览器用例从浏览器访问 Vite 和真实 Axum e2e server，
+覆盖上传、自然语言工具调用、SSE、工作区、任务、表格、六类图表、比较、历史恢复、多人隔离及
+桌面/窄屏布局。测试不直接写 React state，也不以 mock HTTP 响应代替关键用户旅程；测试控制 API 只用于
+编排 LLM/engine 场景、故障、并发 barrier 和容量边界。实现状态和 100% 功能覆盖口径见
 [integration-testing-design.md](integration-testing-design.md)。

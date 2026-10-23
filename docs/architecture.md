@@ -62,6 +62,10 @@ flowchart LR
 通过后把只读资源发布为 hash 标识的 snapshot。运行期按稳定文档 section/example ID 读取，不直接依赖
 变化中的源目录。导入案例会复制完整依赖到当前 storage scope；后续修改不会写回共享案例。
 
+开发环境可以用受控的 `eig-rs` 工作树作为 `TENSOREVAL_CWD`。候选发布必须把合同范围内的资源和
+跨目录案例依赖打成固定 artifact，并记录 binary SHA-256；服务不把任意相邻源码目录当成发布事实。
+manifest 中的 commit/dirty 信息用于审计来源，启动判定以 capability 和固定内容 hash 为准。
+
 ## 5. 消息与恢复
 
 用户 POST 消息后立即得到 202。持久事件先提交 SQLite，再发布 SSE；SSE 帧使用 message ID，支持

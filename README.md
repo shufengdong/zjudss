@@ -1,69 +1,103 @@
 # ZJU DSS
 
-配电网仿真智能体：前后端分离项目。后端 Rust + axum + rig，实现 LLM agent 并通过工具封装仿真内核能力；前端 React + TypeScript + Vite + Tailwind + ECharts，绘制仿真曲线。
+配电网仿真智能体 v2。用户可以上传单个 `.rss`、ZIP/目录形式的 `.rssbundle`，也可以分批上传
+CSV、Excel 或 Parquet DataFrame；随后通过自然语言完成模型确认、参数修改、潮流/短路等仿真、结果
+查询和修改前后对比。聊天、模型版本、仿真任务、结果数据集和分析血缘都持久化，可在刷新后恢复。
+
+后端使用 Rust、Axum、rig、Diesel/SQLite，通过受控工具调用 `tensoreval`；前端使用 React、
+TypeScript、Vite 和 ECharts。仿真及派生分析结果统一保存为 Snappy Parquet，数据库只保存元数据、
+血缘和 artifact 引用。
+
+## 已实现能力
+
+- 单 RSS、rssbundle、CSV、Excel、Parquet 和分批追加上传；DataFrame 类型按列名推断。
+- active/draft 模型工作区、不可变版本、错误文件重传、替换、移除、激活和回退。
+- 内置案例搜索与导入；案例导入后可继续用自然语言修改参数并重跑。
+- 22 个 Agent 工具，以及按需加载的领域技能和引擎文档检索。
+- 原生 Parquet 仿真结果、自然语言结果分析、分页表格、六类受控 ECharts 视图和任务比较。
+- 会话历史、全文搜索、可恢复 SSE、身份隔离、存储配额和并发调度。
+- 功能目录驱动的 Rust、Vitest、Playwright 和真实 DeepSeek/tensoreval 发布验收。
 
 ## 目录结构
 
-```
+```text
 zjudss/
-├── backend/               # Rust 后端（axum + rig + Diesel/SQLite）
-│   ├── Cargo.toml
-│   ├── migrations/        # Diesel 迁移（初始 6 表）
+├── backend/
+│   ├── migrations/        # 单一 v2 initial schema
+│   ├── resources/agent/   # 内置 prompt、skill 索引和资源合同
 │   └── src/
-│       ├── main.rs        # 入口：装配 AppState、迁移、路由
-│       ├── api/           # HTTP 层（axum handler / DTO / SSE）
-│       ├── application/   # 编排层（AppState / EventBus / ChatService）
-│       ├── agent/         # provider 选择 + agent 组装
-│       ├── tools/         # 有状态工具（inspect_model / run_simulation）
-│       ├── adapters/      # 仿真内核适配器层（内核唯一边界）
-│       └── db/            # 连接池 / schema / models / repository
-├── frontend/              # React + TypeScript 前端（Vite + Tailwind + ECharts）
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── index.html
-│   └── src/
-│       ├── main.tsx
-│       ├── App.tsx        # 状态与接线（会话 / 消息 / SSE 流式）
-│       ├── types/         # ★ 前后端契约的权威类型定义
-│       ├── api/           # 后端 REST + SSE 接入层
-│       ├── components/    # 布局 + 6 类消息卡片 + 图表
-│       └── mocks/         # 曲线 mock（会话 / 消息 mock 已弃用）
-├── docs/                  # 设计文档 + 开发状态速览（新开的 agent 先读）
-│   ├── development-status.md   # 开发状态与待办速览
-│   ├── architecture.md         # 后端架构
-│   ├── api-design.md           # 前后端契约
-│   ├── db-design.md            # 数据库设计
-│   └── frontend-design.md      # 前端功能设计（后端 agent 对接必读）
-├── AGENTS.md              # 项目指令（自动加载）
-└── README.md
+│       ├── api/           # REST/SSE handler 与 DTO
+│       ├── application/   # 会话、调度、工作区、分析等业务编排
+│       ├── agent/         # DeepSeek agent 与按需知识加载
+│       ├── tools/         # 22 个受控 Agent 工具
+│       ├── adapters/      # tensoreval 唯一调用边界
+│       └── db/            # SQLite repository
+├── frontend/              # React 工作台、历史、上传、表格和图表
+├── integration-tests/     # 功能目录、Playwright 和发布语义断言
+├── scripts/               # 覆盖率与真实依赖发布门禁
+├── docs/                  # 当前设计、部署、测试和状态文档
+└── AGENTS.md              # 仓库开发约束
 ```
 
 ## 启动
 
-### 后端
+后端生产路径不会回退到 stub。请先准备与固定资源合同匹配的 `tensoreval` 可执行文件和只读引擎资源
+目录，再填写配置：
 
 ```bash
 cd backend
-cargo run          # 监听 http://127.0.0.1:8080
+cp .env.example .env
+# 必填：DEEPSEEK_API_KEY、TENSOREVAL_BIN、TENSOREVAL_CWD
+cargo run --release
 ```
 
-可选环境变量（缺省即可跑通）：`DATABASE_URL`（默认 `sqlite://backend.db`）、`LLM_PROVIDER` /
-`LLM_MODEL`（默认 DeepSeek）、`TENSOREVAL_BIN`（真实引擎可执行文件路径，未设置时用 stub）、
-`TENSOREVAL_TIMEOUT_MS`（单次引擎调用超时）、`DATA_DIR`（数据/结果目录，默认 `data`）。
+`TENSOREVAL_CWD` 是发布 artifact 中经过校验的资源根目录，其中必须包含合同固定的文档、catalog、
+案例及其依赖。开发时可以指向 `eig-rs` 的受控工作树；合同范围内的内容 hash 必须与内置 manifest
+完全一致，否则启动 preflight 失败。当前相邻仓库不能自动视为发布资源。
 
-### 前端
+启动前端：
 
 ```bash
 cd frontend
-npm install
-npm run dev        # http://localhost:5173，/api 代理到后端 8080
-npm run build      # 构建 + TS 类型校验
+npm ci
+npm run dev       # http://localhost:5173，/api 代理到 127.0.0.1:8080
 ```
 
-## 文档
+公开多人部署必须使用 `AUTH_MODE=trusted_proxy`。完整变量、artifact 布局和发布门禁见
+[v2 部署与发布验收](docs/v2-deployment.md)。
 
-- **开发状态与待办速览**：`docs/development-status.md`
-- 后端架构：`docs/architecture.md`
-- 前后端契约：`docs/api-design.md`
-- 数据库设计：`docs/db-design.md`
-- 前端功能设计（后端 agent 对接必读）：`docs/frontend-design.md`
+## 验证
+
+```bash
+cd backend
+cargo fmt --all -- --check
+cargo test --features e2e-test
+
+cd ../frontend
+npm test -- --run
+npm run build
+npm run test:e2e
+
+cd ..
+./scripts/check-functional-coverage --require-pr
+git diff --check
+```
+
+普通 PR 使用 Scripted LLM 和 ScenarioEngine 走生产前后端代码路径；候选发布另以真实 DeepSeek 和固定
+hash 的 tensoreval artifact 验证外部依赖。测试分层、覆盖率定义和当前数量见
+[自动化集成测试设计](docs/integration-testing-design.md)。
+
+## 文档入口
+
+- [开发状态与关键决策](docs/development-status.md)：当前实现、硬边界和已验证结果。
+- [系统架构](docs/architecture.md)：分层、身份、调度、存储和引擎资源机制。
+- [HTTP/SSE 契约](docs/api-design.md)：前后端公共接口的权威说明。
+- [数据库设计](docs/db-design.md)：v2 schema、不可变记录和血缘。
+- [前端设计](docs/frontend-design.md)：自然语言交互、状态恢复和可视化。
+- [模型工作区设计](docs/model-workspace-design.md)：摄取、版本、分析、比较和历史。
+- [Agent Prompt 与领域技能](docs/agent-prompt-skills-design.md)：知识快照、技能门控和资源版本。
+- [部署与发布验收](docs/v2-deployment.md)：必需配置、资源 artifact 和发布门禁。
+- [自动化集成测试设计](docs/integration-testing-design.md)：功能目录和各测试层职责。
+
+`docs/superpowers/plans/` 保存已经执行的历史实施计划，不作为当前运行契约；发生差异时以上述当前文档
+和代码为准。

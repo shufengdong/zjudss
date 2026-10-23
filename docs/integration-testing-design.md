@@ -117,7 +117,7 @@ result-dir、损坏 Parquet、超限输出、目录穿越和符号链接等场�
 | 层级 | 运行时机 | 环境 | 作用 |
 |---|---|---|---|
 | L0 单元/合同 | 每次 PR | Rust + Vitest | 算法、repository、adapter 合同、组件和 reducer 快速回归 |
-| L1 确定性全链路 | 每次 PR | Playwright + Vite + Axum + SQLite/CAS + 双 stub | 覆盖全部用户功能和跨层合同 |
+| L1 确定性全链路 | 每次 PR | Playwright + Vite + Axum + SQLite/CAS + Scripted LLM + ScenarioEngine | 覆盖全部用户功能和跨层合同 |
 | L2 韧性/安全 | 每次 PR；耗时分片可 nightly 重跑 | 多浏览器 context、重启和故障注入 | 并发、隔离、恢复、配额和失败原子性 |
 | L3 真实依赖 | 候选发布 | DeepSeek + 当前合同的 release tensoreval | 验证 prompt/tool 选择和外部二进制实际兼容 |
 
@@ -295,7 +295,8 @@ CI 归档 JUnit、功能覆盖 JSON/HTML、Playwright trace 和真实引擎合�
 自动化集成测试子系统完成时必须同时满足：
 
 1. 功能目录覆盖本文全部顶层范围，并与路由、消息、工具、skill、格式和图表 manifest 双向一致；
-2. 八条关键浏览器旅程在 Chromium 稳定通过，关键响应式旅程另在窄屏 viewport 通过；
+2. 当前 12 个 Playwright 文件中的 18 个浏览器用例在 Chromium 稳定通过，关键响应式旅程另在窄屏
+   viewport 通过；新增功能时按功能目录扩展用例，不把文件数当作覆盖率；
 3. 两个 browser context 证明身份隔离，重启/断线/并发/配额/恶意文件场景全部自动化；
 4. L1 使用生产前后端代码路径，只有 LLM 与 engine adapter 实现被依赖注入替换；
 5. 发布任务真实调用 DeepSeek 和当前合同的 tensoreval，缺少依赖时明确失败；

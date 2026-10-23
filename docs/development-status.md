@@ -25,6 +25,13 @@
 | 前端工作台 | ✅ | scope 恢复、历史搜索、目录上传、案例、工作区、任务、表格、ECharts |
 | v2 schema | ✅ | 单一 initial migration，无原型结果表或兼容分支 |
 
+当前运行合同为 Agent bundle `v2.0.0` 和 engine contract `dss-v2-d2b6d88a`。生产启动会验证
+`TENSOREVAL_BIN` capability，以及 `TENSOREVAL_CWD` 的 docs/catalog/examples 内容 hash；任一不符
+都会在接流量前失败。manifest 中的来源提交和 `sourceDirty` 是生成合同的审计信息，运行时以固定内容
+hash 为准。相邻 `../eig-rs` 只用于开发期合同生成或核验，不是可随工作树
+变化的运行依赖。正式部署使用与 manifest 完全匹配的只读资源 artifact，启动后服务只读
+`${DATA_DIR}/system/engine-resources/<snapshot-id>` 中发布的 docs/catalog 索引。
+
 ## 不可违反的边界
 
 1. 所有 tensoreval/仿真内核调用只能通过 `backend/src/adapters/`。
@@ -67,7 +74,8 @@ v2 仅支持空库初始化。部署前删除旧开发 SQLite 和 DATA_DIR；不
 - 后端全量测试覆盖身份、调度、SSE、配额、六种上传来源、案例、版本工具、Parquet 合同、仿真失败
   原子性、结果分析、六类视图、比较、历史和完整 DataFrame e2e。
 - 前端测试覆盖消息归并、session state、workspace null、SSE、分页表格、null/重复行和六类图表。
-- Playwright 已覆盖浏览器 → Vite → Axum → SQLite/CAS 的 L1/L2 全链路、身份隔离、恢复、配额、恶意
+- 当前 Vitest 共 54 项；Playwright 共 18 个浏览器用例，覆盖浏览器 → Vite → Axum → SQLite/CAS 的
+  L1/L2 全链路、身份隔离、恢复、配额、恶意
   归档和响应式无障碍；PR workflow 执行 Rust、Vitest、构建、全部浏览器旅程和严格功能目录门禁。
 - 功能目录现有 154 项，逐项覆盖 24 个顶层范围和 112 个生产公共合同；`--require-pr` 报告为
   `288/288`、100%，且会拒绝缺项、重复/未知合同、错误 lane、`manual-only`、skip、不存在的测试声明，
@@ -79,5 +87,12 @@ v2 仅支持空库初始化。部署前删除旧开发 SQLite 和 DATA_DIR；不
   测试 ID、agent bundle hash、engine contract 和 binary hash；缺失或不匹配即失败。
 - Agent manifest 与运行时注册表已由双向枚举测试锁定为同一组 22 个工具，包含 `get_storage_usage` 和
   `list_result_datasets`。
+
+从主仓库运行后端测试时，`engine_resources` 中的外部工作树核验会在检测到相邻 `../eig-rs` 后将它与
+内置发布合同比较。该目录在合同范围内存在未固化修改或 hash 漂移时，相关测试会按设计失败；不要通过
+放宽校验来消除失败。确定性 CI 使用固定 fixture，候选发布使用固定 SHA-256 的引擎 artifact。
+
+当前生产 Agent provider 为 DeepSeek。`StubEngine`、Scripted LLM 和 ScenarioEngine 只用于测试依赖
+注入；生产入口不提供 v1 兼容分支、引擎 stub 回退或旧 CSV 结果读取。
 
 发布命令和配置见 `docs/v2-deployment.md`。

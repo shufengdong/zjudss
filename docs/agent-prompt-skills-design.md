@@ -62,6 +62,11 @@ Markdown。zjudss 不硬编码 `../eig-rs` 相对路径；统一从配置后的
 额外的未提交 bundle 不进入快照。开发工作区里的 eig-rs 可能含未提交修改，因此 manifest 同时记录
 HEAD、submodule commit、dirty 状态和逐类内容 hash，不能默认为当前工作树就是发布事实。
 
+`sourceDirty: true` 表示生成当前合同的受控来源快照包含两份已知文档修改，并且这些内容已由完整 tree
+hash 固定；它不表示可以接受任意 dirty 工作树。该字段用于来源审计，启动 preflight 实际校验合同范围
+内的 catalog、文档和案例内容 hash，而不读取 Git 工作树状态；相关内容发生变化就按资源漂移处理。
+若这些修改需要成为新的基线，应按第 11 节更新合同、bundle 和测试。
+
 ## 4. v2 资源布局
 
 ```text
@@ -208,8 +213,9 @@ artifact、输入 hash、输出 dataset 和这些版本共同构成可复现记�
 诊断历史结果；前端默认折叠在“运行信息”中。
 
 Agent bundle 与 engine contract 必须兼容：manifest 明确允许的 catalog schema 和 eig-rs commit。启动
-preflight 校验所有文件 hash、工具列表和合同关系；不匹配时禁止脚本生成，但仍允许读取历史会话、任务和
-结果。禁止静默回退到另一版 prompt 或 catalog。
+preflight 校验所有文件 hash、工具列表和合同关系；不匹配时进程启动失败且不接流量。数据库和已有
+artifact 保持不变，需恢复匹配的资源 artifact，或按第 11 节发布新合同后，才能重新启动服务读取历史。
+禁止静默回退到另一版 prompt 或 catalog。
 
 ## 11. 变更流程与测试
 

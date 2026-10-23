@@ -36,12 +36,13 @@
 内核。该预处理属于工作区服务；内核命令构造、执行和错误翻译仍只能位于
 `backend/src/adapters/`。
 
-服务部署不能在运行时依赖相邻的 `../eig-rs` 源码目录。实现时把与目标 `tensoreval` 版本对应的
-`dataframes.json`、`functions.json` 和必要的脚本模板复制到本仓库并随版本发布，同时记录 catalog
-版本、eig-rs superproject 与 sparrowzz submodule 来源提交哈希；同时把
-`rss_language_reference.md`、`rsdss_function_reference.md` 中允许 agent
-使用的 DataFrame 语法提炼进版本化 prompt。启动时校验适配器合同版本；不匹配时禁止自动生成脚本并
-报告配置错误。
+服务部署不能依赖一个可任意变化的相邻 `../eig-rs` 工作树。候选发布 artifact 同时提供与目标
+`tensoreval` 对应的只读资源根，包含合同固定的 catalog、文档、案例和案例依赖；manifest 记录 catalog
+版本、eig-rs superproject、sparrowzz submodule、来源状态和内容 hash。服务启动时从
+`TENSOREVAL_CWD` 校验并原子发布 `${DATA_DIR}/system/engine-resources/<snapshot-id>`，运行期间的
+docs/catalog 查询只读该快照。案例导入仍从已校验的资源根复制完整依赖闭包到用户 artifact。
+`rss_language_reference.md`、`rsdss_function_reference.md` 中允许 agent 使用的 DataFrame 语法提炼进
+版本化 skill；任一资源或合同不匹配时服务启动失败。
 
 Prompt 不打包成一份永久注入的长文。系统规则、按需领域技能、机器 catalog 和 Rust 工具合同分别管理；
 需要生成脚本的 agent run 必须先加载对应技能，任务与分析运行保存实际 bundle/contract 版本。完整规则
@@ -343,14 +344,13 @@ v2 使用以下 8 类消息：
 - 仿真：`prepare → inspect → sim → collect`；
 - 结果分析：`script → run → collect → present`。
 
-已实现 API：
+完整已实现端点以 [api-design.md](api-design.md) 为准。与模型工作区直接相关的读取和上传端点为：
 
 ```text
 GET  /api/sessions/{id}/workspace
 GET  /api/examples?query=...&studyType=...&cursor=...
 GET  /api/examples/{id}
 POST /api/sessions/{id}/attachments
-GET  /api/sessions?query=...&cursor=...
 GET  /api/sessions/{id}/messages?beforeId=...
 POST /api/sessions/{id}/messages
 GET  /api/sessions/{id}/events
@@ -363,7 +363,6 @@ GET  /api/tasks/{id}/datasets
 GET  /api/analysis-runs/{id}
 GET  /api/datasets/{id}
 GET  /api/datasets/{id}/rows
-GET  /api/datasets/{id}/views
 GET  /api/dataset-views/{id}/data   # 预算内完整投影；超限返回稳定错误
 GET  /api/datasets/{id}/download
 GET  /api/task-comparisons/{id}
@@ -419,7 +418,7 @@ example_source_changed      engine_feature_unavailable
 HTTP 错误体扩展为 `{ "error": "可读信息", "code": "稳定错误码", "details": {...} }`。
 `details` 只能包含经过筛选的字段、缺失项和冲突证据，不暴露服务器绝对路径或内核原始错误。
 
-## 11. 实施顺序与验收
+## 11. 已完成的实施顺序与验收基线
 
 1. 建立可测试的应用入口、身份 scope、运行队列和可恢复 SSE，以 v2 合同直接替换原型接口；
 2. 建立 `TENSOREVAL_CWD` 文档/案例快照、artifact/配额、工作区 active/draft、不可变版本和 catalog

@@ -1,42 +1,72 @@
 # AGENTS.md
 
-配电网仿真智能体项目：Rust 后端 + React 前端。后端用 rig 框架实现 LLM agent，通过工具（tool）封装仿真内核能力；前端用 React + TypeScript + ECharts 绘制曲线。
+配电网仿真智能体 v2：Rust/Axum/rig 后端 + React/TypeScript/ECharts 前端。Agent 通过 22 个受控工具
+管理模型工作区、调用仿真、分析 Parquet 结果并恢复历史；领域写操作以自然语言消息为主。
 
-## 构建 / 测试 / 运行
+## 开始工作前
+
+1. 先读 `docs/development-status.md`，确认当前实现、硬边界和验证状态。
+2. 接口改动读 `docs/api-design.md` 与 `frontend/src/types/`；数据库改动读 `docs/db-design.md`；前端行为
+   读 `docs/frontend-design.md`。
+3. 引擎资源、Prompt 或工具改动读 `docs/agent-prompt-skills-design.md`；发布和集成测试改动读
+   `docs/v2-deployment.md` 与 `docs/integration-testing-design.md`。
+4. 除非用户另行要求，直接在 `master` 修改，不自行创建 feature worktree。提交时保留并排除用户已有的
+   未提交或已暂存文件。
+
+## 构建、测试与运行
 
 ```bash
-# 后端（Rust）
+# 后端
 cd backend
-cargo build          # 构建
-cargo test           # 测试
-cargo run            # 运行
+cargo fmt --all -- --check
+cargo test --features e2e-test
+cargo run --release
 
-# 前端（React + TS + ECharts）
-cd frontend
-npm install
-npm run dev          # 开发服务器 http://localhost:5173，/api 代理到后端
-npm run build        # 构建
+# 前端（接上面的 backend 目录）
+cd ../frontend
+npm ci
+npm test -- --run
+npm run build
+npm run dev             # http://localhost:5173，/api 代理到后端
+npm run test:e2e
+
+# 仓库根目录
+cd ..
+./scripts/check-functional-coverage --require-pr
 ```
 
-## 项目结构
+生产启动必须配置 `TENSOREVAL_BIN`、`TENSOREVAL_CWD` 和 LLM secret；不会自动回退到测试 stub。具体配置
+见 `backend/.env.example`。候选发布的真实依赖门禁见 `docs/v2-deployment.md`。
 
-- `backend/`：Rust 后端，基于 rig 实现 agent 与工具（`inspect_model`、`run_simulation` 等），未来对外提供 HTTP 服务。
-- `frontend/`：React + TypeScript 前端，使用 ECharts 绘制曲线，通过 Vite 把 `/api` 代理到后端。
-- `backend/src/adapters/`：仿真内核适配器层，所有对内核 API 的调用都收敛在这里，是内核与外界的唯一边界。
+## 项目结构与权威来源
 
-## 文档与当前状态
+- `backend/src/api/`：REST/SSE 边界。
+- `backend/src/application/`：业务编排、调度、工作区、仿真和分析。
+- `backend/src/agent/`：DeepSeek agent、Prompt 和按需知识加载。
+- `backend/src/tools/`：Agent 工具，只接受稳定资源 ID 和受控参数。
+- `backend/src/adapters/`：所有 `tensoreval` 进程调用的唯一边界。
+- `backend/src/engine_resources/`：启动 preflight、引擎文档/catalog/案例快照。
+- `backend/migrations/00000000000000_initial/`：v2 空库初始化的权威 schema。
+- `backend/resources/agent/v2/manifest.json`：Agent bundle、engine contract、资源 hash 和允许工具的权威清单。
+- `frontend/src/types/`：前端使用的公共 DTO 类型；HTTP 语义以 `docs/api-design.md` 为准。
+- `integration-tests/catalog/features.yaml`：机器可读功能目录和测试追溯入口。
 
-- **新开的 agent 先读 `docs/development-status.md`**：已完成 / 待做 / 关键决策的速览，以及前后端字段命名对齐清单。
-- 设计文档：`docs/architecture.md`（分层与机制）、`docs/api-design.md`（前后端契约，前端开发 agent 的单点契约）、`docs/db-design.md`（数据库）、`docs/frontend-design.md`（前端功能设计，**后端 agent 对接必读**）。
-- **前后端契约**：字段命名以 `frontend/src/types/index.ts` 为权威，后端已对齐（见 api-design §8）；后端待办见 `docs/frontend-design.md` §4。
-
-## 仿真内核 API 调用形态
-
-- 仿真内核源码与 API 文档当前**尚未纳入本仓库**；调用契约以适配器层为准，随内核接入逐步固化。
-- 调用为**异步**：适配器方法返回 `async`，内部通过 `reqwest` 访问内核服务，由 `tokio` 驱动。
-- 返回结构化 JSON（`serde_json`）。工具输出约定：`inspect_model` 返回模型检查结果（当前硬编码 `"model ok"`），`run_simulation` 返回 `task_id`（字符串，当前硬编码）。
-- 错误码约定：适配器统一返回 `Result<T, AdapterError>`；`AdapterError` 携带内核错误码（字符串）与可读信息，禁止把内核原始错误直接抛给上层。
+`docs/superpowers/plans/` 是历史实施记录。不要用旧计划中的步骤或中间状态覆盖当前代码与当前设计文档。
 
 ## 硬约束
 
-- **仿真内核 API 的调用必须通过 `backend/src/adapters/` 适配器层封装，禁止在 agent 工具实现（tool）里直接调用原始内核 API。** 工具实现只能调用适配器暴露的接口；内核的地址、鉴权、错误码翻译都收敛在适配器内。
+1. **所有 tensoreval 调用必须通过 `backend/src/adapters/`。** tool、handler 和 application service 不得
+   直接拼命令或启动子进程。
+2. 生产 `ProcessEngine` 显式使用 `--result-dir ... --output-format parquet`；仿真和派生分析结果以
+   Snappy Parquet 为事实来源，不恢复 CSV 结果链路或固定 metrics。
+3. LLM 和前端只传稳定资源 ID 与受控 spec，不得接收服务器路径、命令、SQL 或任意 ECharts option。
+4. artifact、模型版本、任务脚本、结果数据集和分析记录发布后不可修改；更新通过新资源和血缘表达。
+5. 每个 repository 查询显式接收 access scope；跨 scope 与不存在资源统一返回 404。
+6. `TENSOREVAL_CWD` 必须匹配内置 engine resource contract。相邻 `../eig-rs` 只可作为开发期受控来源，
+   不能把任意当前工作树当成发布事实，也不能放宽资源 hash 校验来绕过失败。
+7. Agent Prompt 不常驻整套引擎文档。服务启动时预检并索引固定快照，agent 按需调用文档和 skill 工具；
+   生成脚本的 run 必须保存实际 bundle、skill refs 和 engine contract。
+8. 固定按钮只用于上传、会话、案例浏览、历史分页、结果读取和下载等高频无歧义动作。模型修改、激活、
+   仿真、分析和比较通过可见的自然语言消息进入 Agent 工具链。
+9. 新增或改变公共路由、消息类型、工具、skill、上传格式、视图或稳定错误码时，同步更新功能目录、
+   自动化行为测试和对应当前设计文档；注册表枚举测试不能替代行为覆盖。
