@@ -17,47 +17,46 @@ describe('release semantic assertions', () => {
       { id: 2, type: 'tool-call', callId: 'inspect', toolName: 'inspect_workspace', status: 'running' },
       { id: 3, type: 'tool-call', callId: 'inspect', toolName: 'inspect_workspace', status: 'success' },
       { id: 4, type: 'assistant' },
-    ], ['confirm_dataframe_mapping'])).toBe(false)
+    ], ['create_script'])).toBe(false)
     expect(agentTurnCompleted([
       { id: 1, type: 'assistant' },
       { id: 2, type: 'tool-call', callId: 'inspect', toolName: 'inspect_workspace', status: 'success' },
-      { id: 3, type: 'tool-call', callId: 'confirm', toolName: 'confirm_dataframe_mapping', status: 'success' },
+      { id: 3, type: 'tool-call', callId: 'create', toolName: 'create_script', status: 'success' },
       { id: 4, type: 'assistant' },
-    ], ['confirm_dataframe_mapping'])).toBe(true)
+    ], ['create_script'])).toBe(true)
   })
 
   test('accepts stable IDs and skills loaded before gated tools', () => {
     expect(() => expectToolTrace([
-      call('load_agent_skill', 'success', { skill_id: 'study-planning' }),
       call('load_agent_skill', 'success', { skill_id: 'rss-generation' }),
-      call('run_study', 'running', { modelVersionId: 7 }),
-      call('run_study', 'success', { modelVersionId: 7 }),
+      call('create_script', 'running', { name: '潮流分析' }),
+      call('create_script', 'success', { name: '潮流分析' }),
     ], {
-      requiredTools: ['run_study'],
-      gatedTools: { run_study: ['study-planning', 'rss-generation'] },
+      requiredTools: ['create_script'],
+      gatedTools: { create_script: ['rss-generation'] },
     })).not.toThrow()
   })
 
   test('rejects illegal tools, unstable IDs, failed tools, and missing skill ordering', () => {
     expect(() => expectToolTrace([call('shell', 'success')], { requiredTools: ['shell'] })).toThrow(/disallowed/)
     expect(() => expectToolTrace([call('inspect_example', 'success', { exampleId: '/tmp/case.rss' })], { requiredTools: ['inspect_example'] })).toThrow(/stable example ID/)
-    expect(() => expectToolTrace([call('run_study', 'failed', { modelVersionId: 1 })], { requiredTools: ['run_study'] })).toThrow(/did not succeed/)
+    expect(() => expectToolTrace([call('create_script', 'failed', { name: 'x' })], { requiredTools: ['create_script'] })).toThrow(/did not succeed/)
     expect(() => expectToolTrace([
-      call('run_study', 'running', { modelVersionId: 1 }),
-      call('load_agent_skill', 'success', { skill_id: 'study-planning' }),
-      call('run_study', 'success', { modelVersionId: 1 }),
-    ], { requiredTools: ['run_study'], gatedTools: { run_study: ['study-planning'] } })).toThrow(/not loaded before/)
+      call('create_script', 'running', { name: 'x' }),
+      call('load_agent_skill', 'success', { skill_id: 'rss-generation' }),
+      call('create_script', 'success', { name: 'x' }),
+    ], { requiredTools: ['create_script'], gatedTools: { create_script: ['rss-generation'] } })).toThrow(/not loaded before/)
   })
 
   test('requires a failed side effect to recover with the same tool', () => {
     expect(() => expectToolTrace([
-      call('run_result_analysis', 'running', { taskId: 1 }),
-      call('run_result_analysis', 'failed', { taskId: 1 }),
-      call('run_result_analysis', 'running', { taskId: 1 }),
-      call('run_result_analysis', 'success', { taskId: 1 }),
+      call('run_result_analysis', 'running', { datasetId: 1 }),
+      call('run_result_analysis', 'failed', { datasetId: 1 }),
+      call('run_result_analysis', 'running', { datasetId: 1 }),
+      call('run_result_analysis', 'success', { datasetId: 1 }),
     ], { requiredTools: ['run_result_analysis'] })).not.toThrow()
     expect(() => expectToolTrace([
-      call('run_result_analysis', 'failed', { taskId: 1 }),
+      call('run_result_analysis', 'failed', { datasetId: 1 }),
     ], { requiredTools: [] })).toThrow(/failed without recovery/)
   })
 
@@ -65,7 +64,7 @@ describe('release semantic assertions', () => {
     expect(() => expectToolTrace([
       call('read_engine_doc_section', 'failed'),
       call('search_engine_docs', 'success'),
-      call('run_result_analysis', 'success', { taskId: 1 }),
+      call('run_result_analysis', 'success', { datasetId: 1 }),
     ], {
       requiredTools: ['run_result_analysis'],
       allowedTools: ['read_engine_doc_section', 'search_engine_docs', 'run_result_analysis'],
@@ -82,12 +81,12 @@ describe('release semantic assertions', () => {
     })).toThrow(/unexpected successful tool search_examples/)
 
     expect(() => expectToolTrace([
-      call('run_study', 'success', { modelVersionId: 1 }),
-      call('run_study', 'success', { modelVersionId: 1 }),
+      call('create_script', 'success', { name: 'x' }),
+      call('create_script', 'success', { name: 'x' }),
     ], {
-      requiredTools: ['run_study'],
-      allowedTools: ['run_study'],
-    })).toThrow(/run_study succeeded 2 times/)
+      requiredTools: ['create_script'],
+      allowedTools: ['create_script'],
+    })).toThrow(/create_script succeeded 2 times/)
   })
 
   test('paginates the complete message history with nextBeforeId', async () => {

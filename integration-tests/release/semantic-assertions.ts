@@ -24,7 +24,7 @@ export interface ExpectedToolDependencies {
 export interface ExpectedDomainState {
   sessionId: string
   expectedVersions: number
-  taskStudyTypes: string[]
+  expectedRuns: number
   expectedDatasets: number
   expectedAnalysisRuns: number
   expectedComparisons: number
@@ -40,16 +40,14 @@ interface AgentTurnMessage {
 }
 
 const allowedTools = new Set([
-  'inspect_workspace', 'search_examples', 'inspect_example', 'import_example',
-  'remove_model_input', 'replace_model_input', 'confirm_dataframe_mapping', 'modify_model',
-  'activate_model_version', 'rollback_model_version', 'run_study', 'list_result_datasets',
+  'inspect_workspace', 'search_examples', 'inspect_example', 'modify_model', 'create_script',
+  'list_result_datasets',
   'run_result_analysis', 'create_dataset_view', 'compare_simulations',
   'list_simulation_history', 'search_chat_history', 'read_chat_context', 'get_storage_usage',
   'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section',
 ])
 const sideEffectTools = new Set([
-  'import_example', 'remove_model_input', 'replace_model_input', 'confirm_dataframe_mapping',
-  'modify_model', 'activate_model_version', 'rollback_model_version', 'run_study',
+  'modify_model', 'create_script',
   'run_result_analysis', 'create_dataset_view', 'compare_simulations',
 ])
 
@@ -157,23 +155,21 @@ export async function readAllMessages(api: SemanticApiContext, sessionId: string
 export async function expectDomainState(api: SemanticApiContext, expected: ExpectedDomainState) {
   const workspace = await json(api, `/api/sessions/${expected.sessionId}/workspace`)
   const versions = (await json(api, `/api/sessions/${expected.sessionId}/versions`)).versions as any[]
-  const tasks = await json(api, `/api/sessions/${expected.sessionId}/tasks`)
+  const runs = (await json(api, `/api/sessions/${expected.sessionId}/runs`)).runs as any[]
   const messages = await readAllMessages(api, expected.sessionId)
   invariant(versions.length === expected.expectedVersions, `expected exactly ${expected.expectedVersions} versions, got ${versions.length}`)
   if (expected.activeVersionId) {
-    invariant(workspace.active?.versionId === expected.activeVersionId, 'active version does not match the expected stable ID')
+    invariant(workspace.active?.id === expected.activeVersionId, 'active version does not match the expected stable ID')
   }
-  const succeededStudies = tasks.filter((task: any) => task.status === 'succeeded').map((task: any) => task.studyType).sort()
-  const expectedStudies = [...expected.taskStudyTypes].sort()
-  invariant(JSON.stringify(succeededStudies) === JSON.stringify(expectedStudies),
-    `expected exact studies ${expectedStudies.join(',')}, got ${succeededStudies.join(',')}`)
+  invariant(runs.length === expected.expectedRuns, `expected exactly ${expected.expectedRuns} runs, got ${runs.length}`)
   const analysisIds = [...new Set(messages.map((message) => message.analysisRunId).filter(Boolean))]
   const comparisonIds = [...new Set(messages.filter((message) => message.type === 'comparison').map((message) => message.comparisonId))]
   invariant(analysisIds.length === expected.expectedAnalysisRuns, `expected exactly ${expected.expectedAnalysisRuns} analysis runs`)
   invariant(comparisonIds.length === expected.expectedComparisons, `expected exactly ${expected.expectedComparisons} comparisons`)
   const datasets = []
-  for (const task of tasks.filter((task: any) => task.status === 'succeeded')) {
-    datasets.push(...await json(api, `/api/tasks/${task.id}/datasets`))
+  for (const run of runs.filter((run: any) => run.status === 'succeeded')) {
+    const response = await json(api, `/api/runs/${run.id}/datasets`)
+    datasets.push(...(response.datasets ?? response))
   }
   const analyses = []
   for (const id of analysisIds) analyses.push(await json(api, `/api/analysis-runs/${id}`))
@@ -181,17 +177,17 @@ export async function expectDomainState(api: SemanticApiContext, expected: Expec
   invariant(succeededAnalyses.length === expected.expectedAnalysisRuns,
     `expected exactly ${expected.expectedAnalysisRuns} succeeded analysis runs`)
   for (const id of comparisonIds) {
-    await json(api, `/api/task-comparisons/${id}`)
+    await json(api, `/api/run-comparisons/${id}`)
   }
   invariant(datasets.length === expected.expectedDatasets,
     `expected exactly ${expected.expectedDatasets} datasets, got ${datasets.length}`)
   return {
-    activeVersionId: workspace.active?.versionId ?? null,
+    activeVersionId: workspace.active?.id ?? null,
     versionCount: versions.length,
-    taskCount: tasks.length,
+    runCount: runs.length,
     datasetCount: datasets.length,
     analysisRunCount: succeededAnalyses.length,
     comparisonCount: comparisonIds.length,
-    studyTypes: tasks.map((task: any) => task.studyType),
+    runStatuses: runs.map((run: any) => run.status),
   }
 }

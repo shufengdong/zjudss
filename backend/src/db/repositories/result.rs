@@ -113,7 +113,7 @@ impl ResultRepo {
             if owned == 0 {
                 return Err(RepoError::NotFound);
             }
-            diesel::sql_query("SELECT * FROM result_datasets WHERE analysis_run_id=?1 AND deleted_at_ms IS NULL AND artifact_id IS NOT NULL ORDER BY id")
+            diesel::sql_query("SELECT d.* FROM result_datasets d WHERE d.analysis_run_id=?1 AND d.deleted_at_ms IS NULL AND d.artifact_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dataset_views v WHERE v.view_dataset_id=d.id) ORDER BY d.id")
                 .bind::<Integer, _>(analysis_id)
                 .load(&mut conn)
                 .map_err(RepoError::from)

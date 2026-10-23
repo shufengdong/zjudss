@@ -5,7 +5,8 @@ use std::io::Cursor;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use backend::application::{
-    CreateScriptRequest, PublishDraftRequest, ScriptSource, UploadBatch, UploadFile,
+    AnalysisInput, AnalysisRequest, CreateRunRequest, CreateScriptRequest, PublishDraftRequest,
+    ScriptSource, UploadBatch, UploadFile,
 };
 use backend::storage::StageLimits;
 use common::TestApp;
@@ -347,4 +348,173 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
         .await
         .unwrap_err();
     assert_eq!(new_analysis.code, "analysis_input_not_found");
+}
+
+#[tokio::test]
+async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outputs() {
+    let app = TestApp::spawn().await;
+    let (user, cookie, baseline_run_id, source_id) = create_completed_run(&app).await;
+    let baseline = app
+        .state
+        .run_service
+        .find(&user, baseline_run_id)
+        .await
+        .unwrap();
+
+    let analysis = app
+        .state
+        .analysis_service
+        .run(AnalysisRequest {
+            principal: user.clone(),
+            session_id: baseline.session_id,
+            request_message_id: None,
+            intent: json!({"goal":"derive a stable result"}),
+            script: "result = source".into(),
+            inputs: vec![AnalysisInput {
+                dataset_id: source_id,
+                alias: "source".into(),
+            }],
+            expected_outputs: vec!["result".into()],
+            initial_views: Default::default(),
+            skill_refs: vec![json!({"id":"result-analysis","version":"3"})],
+        })
+        .await
+        .unwrap();
+    assert_eq!(analysis.run.status, "succeeded");
+    let derived = app
+        .state
+        .dataset_service
+        .metadata(&user, analysis.datasets[0].id)
+        .await
+        .unwrap();
+    assert_eq!(derived.lineage[0].source_dataset_id, source_id.to_string());
+    assert!(!derived.lineage[0].deleted);
+
+    let view = app
+        .state
+        .analysis_service
+        .create_view(
+            &user,
+            source_id,
+            "source line".into(),
+            json!({"kind":"line","x":"id","y":["value"]}),
+        )
+        .await
+        .unwrap();
+    assert_ne!(view.source_dataset_id, view.view_dataset_id);
+    assert_eq!(
+        request(
+            &app,
+            &cookie,
+            "DELETE",
+            format!("/api/datasets/{source_id}")
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let view_data = app
+        .state
+        .dataset_service
+        .view_data(&user, view.id)
+        .await
+        .unwrap();
+    assert_eq!(view_data.columns, ["id", "value"]);
+    let derived_after_delete = app
+        .state
+        .dataset_service
+        .metadata(&user, analysis.datasets[0].id)
+        .await
+        .unwrap();
+    assert!(derived_after_delete.lineage[0].deleted);
+    assert!(derived_after_delete.lineage[0].tombstone.is_some());
+
+    let candidate = app
+        .state
+        .run_service
+        .create(
+            &user,
+            baseline.script_resource_id,
+            CreateRunRequest {
+                model_version_id: baseline.model_version_id.to_string(),
+                client_run_id: "comparison-candidate".into(),
+            },
+        )
+        .await
+        .unwrap()
+        .run;
+    let candidate_dataset_id = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let datasets = app
+                .state
+                .run_service
+                .datasets(&user, candidate.id)
+                .await
+                .unwrap();
+            if let Some(dataset) = datasets.first() {
+                break dataset.id;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_ne!(candidate_dataset_id, source_id);
+
+    // The deleted baseline cannot be compared; a fresh baseline proves that
+    // comparison snapshots reference two immutable runs and publish analysis data.
+    let fresh_baseline = app
+        .state
+        .run_service
+        .create(
+            &user,
+            baseline.script_resource_id,
+            CreateRunRequest {
+                model_version_id: baseline.model_version_id.to_string(),
+                client_run_id: "comparison-baseline".into(),
+            },
+        )
+        .await
+        .unwrap()
+        .run;
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if !app
+                .state
+                .run_service
+                .datasets(&user, fresh_baseline.id)
+                .await
+                .unwrap()
+                .is_empty()
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let comparison = app
+        .state
+        .comparison_service
+        .compare(
+            &user,
+            baseline.session_id,
+            fresh_baseline.id,
+            candidate.id,
+            None,
+            vec![json!({"id":"comparison","version":"3"})],
+        )
+        .await
+        .unwrap();
+    let (stored, compatibility, outputs) = app
+        .state
+        .comparison_service
+        .find(&user, comparison.id)
+        .await
+        .unwrap();
+    assert_eq!(stored.baseline_run_id, fresh_baseline.id);
+    assert_eq!(stored.candidate_run_id, candidate.id);
+    assert_eq!(compatibility["resultName"], "result");
+    assert_eq!(outputs.len(), 1);
 }

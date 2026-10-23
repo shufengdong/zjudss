@@ -53,7 +53,7 @@ impl ProcessEngine {
                 AdapterError::new(
                     "engine_binary_required",
                     ErrorCategory::Io,
-                    "必须设置 TENSOREVAL_BIN；v2 不回退 stub",
+                    "必须设置 TENSOREVAL_BIN；生产模式不回退 stub",
                 )
             })?;
         let timeout = std::env::var("TENSOREVAL_TIMEOUT_MS")

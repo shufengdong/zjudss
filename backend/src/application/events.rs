@@ -480,15 +480,15 @@ impl EventWriter {
         }
     }
 
-    /// 通用写入：落库 → 重构事件 → 发布。`task_id` 用于把 progress/result 关联到
-    /// `simulation_tasks.id`（落 `messages.task_id`）。
+    /// 通用写入：落库 → 重构事件 → 发布。`run_id` 用于把 progress/result 关联到
+    /// `simulation_runs.id`（落 `messages.run_id`）。
     pub async fn emit(
         &self,
         role: &str,
         kind: &str,
         content: String,
         payload: Option<serde_json::Value>,
-        task_id: Option<i32>,
+        run_id: Option<i32>,
     ) -> Result<AppEvent, RepoError> {
         #[cfg(feature = "e2e-test")]
         if crate::testing::FaultInjector.take(crate::testing::FaultPoint::EventCommit) {
@@ -502,7 +502,7 @@ impl EventWriter {
                 &self.scope,
                 NewMessage {
                     session_id: self.session_id,
-                    run_id: task_id,
+                    run_id,
                     role: role.to_string(),
                     kind: kind.to_string(),
                     content,
@@ -536,7 +536,6 @@ impl EventWriter {
         .await
     }
 
-
     pub async fn tool_call(
         &self,
         call_id: &str,
@@ -569,7 +568,7 @@ impl EventWriter {
         operation: OperationRef,
         stages: Vec<Stage>,
     ) -> Result<AppEvent, RepoError> {
-        let task_id = match operation.kind {
+        let run_id = match operation.kind {
             OperationKind::Run => operation.id.parse().ok(),
             OperationKind::Ingestion | OperationKind::Analysis => None,
         };
@@ -582,7 +581,7 @@ impl EventWriter {
             "progress",
             format!("进度：{}", operation.id),
             Some(serde_json::to_value(payload).unwrap_or_default()),
-            task_id,
+            run_id,
         )
         .await
     }
@@ -727,7 +726,7 @@ impl EventBus {
 mod tests {
     use super::*;
 
-    /// 锁住 8 类 v2 消息及关键 camelCase 字段，与前端权威类型一致。
+    /// 锁住消息类型及关键 camelCase 字段，与前端权威类型一致。
     #[test]
     fn wire_format_matches_frontend_types() {
         let tool_call = AppEvent::ToolCall {
@@ -813,8 +812,8 @@ mod tests {
             id: "6".into(),
             timestamp: "t".into(),
             comparison_id: "comparison-1".into(),
-            baseline_task_id: "1".into(),
-            candidate_task_id: "2".into(),
+            baseline_run_id: "1".into(),
+            candidate_run_id: "2".into(),
             analysis_run_id: "3".into(),
             title: "比较".into(),
             outputs: vec![],

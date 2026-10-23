@@ -14,7 +14,7 @@ pub use knowledge::{DocSearchHit, DocSection, EngineKnowledge};
 use snapshot::EmbeddedExampleSources;
 pub use snapshot::{EngineResourceSnapshot, ResourceContract, SourceFileSpec};
 
-const EXAMPLE_SOURCES: &str = include_str!("../../resources/agent/v2/examples-source.json");
+const EXAMPLE_SOURCES: &str = include_str!("../../resources/agent/v3/examples-source.json");
 const DOC_PATHS: [&str; 11] = [
     "docs/README.md",
     "docs/agent_quickstart.md",
@@ -64,7 +64,7 @@ pub struct EngineResourceRegistry;
 
 impl EngineResourceRegistry {
     pub fn embedded_contract() -> Result<ResourceContract, EngineResourceError> {
-        let knowledge = AgentKnowledge::load_embedded("v2.0.1").map_err(|error| {
+        let knowledge = AgentKnowledge::load_embedded("v3.0.0").map_err(|error| {
             EngineResourceError::new("agent_knowledge_invalid", error.to_string())
         })?;
         let examples: EmbeddedExampleSources =

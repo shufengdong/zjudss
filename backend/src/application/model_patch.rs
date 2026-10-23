@@ -1,28 +1,22 @@
-use std::collections::BTreeMap;
-use std::io::Cursor;
-use std::sync::Arc;
+use std::{collections::BTreeMap, io::Cursor, sync::Arc};
 
 use arrow_array::{
     Array, ArrayRef, BooleanArray, Float64Array, Int64Array, RecordBatch, StringArray,
 };
 use arrow_schema::DataType;
-use parquet::arrow::ArrowWriter;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::{ArrowWriter, arrow_reader::ParquetRecordBatchReaderBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::application::{
-    ArtifactError, ArtifactMetadata, ArtifactService, DataframeBindingDraft, SourceKind,
-    VersionDraft, VersionInputDraft, VersionOrigin, WorkspaceError, WorkspaceService,
-};
+use crate::application::{ArtifactMetadata, ArtifactService, now_ms};
 use crate::auth::CurrentUser;
-use crate::db::models::{DataframeBinding, ModelVersion, VersionArtifact};
-use crate::storage::StageLimits;
+use crate::db::models::DraftRef;
+use crate::db::repositories::{VersionRepo, VersionRepoError};
+use crate::storage::{ParquetInspector, StageLimits};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelPatch {
-    pub table_kind: String,
     pub row_key: BTreeMap<String, Value>,
     pub changes: BTreeMap<String, ModelChange>,
 }
@@ -39,9 +33,8 @@ pub struct ModelMutationError {
     code: &'static str,
     message: String,
 }
-
 impl ModelMutationError {
-    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
+    fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -51,7 +44,6 @@ impl ModelMutationError {
         self.code
     }
 }
-
 impl std::fmt::Display for ModelMutationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}: {}", self.code, self.message)
@@ -59,451 +51,146 @@ impl std::fmt::Display for ModelMutationError {
 }
 impl std::error::Error for ModelMutationError {}
 
-impl From<WorkspaceError> for ModelMutationError {
-    fn from(value: WorkspaceError) -> Self {
-        let code = if matches!(value, WorkspaceError::VersionConflict) {
-            "version_conflict"
-        } else {
-            "workspace_error"
-        };
-        Self::new(code, value.to_string())
-    }
-}
-impl From<ArtifactError> for ModelMutationError {
-    fn from(value: ArtifactError) -> Self {
-        Self::new("artifact_error", value.to_string())
-    }
-}
-
 #[derive(Clone)]
 pub struct ModelPatchService {
-    workspaces: WorkspaceService,
+    versions: VersionRepo,
     artifacts: ArtifactService,
 }
 
 impl ModelPatchService {
-    pub fn new(workspaces: WorkspaceService, artifacts: ArtifactService) -> Self {
+    pub fn new(versions: VersionRepo, artifacts: ArtifactService) -> Self {
         Self {
-            workspaces,
+            versions,
             artifacts,
         }
-    }
-
-    pub async fn confirm_mapping(
-        &self,
-        principal: &CurrentUser,
-        session_id: i32,
-        input_id: i32,
-        table_kind: String,
-        expected_base: Option<i32>,
-    ) -> Result<ModelVersion, ModelMutationError> {
-        let (record, base, mut inputs, manifest) =
-            self.base(principal, session_id, expected_base).await?;
-        let target = inputs
-            .iter_mut()
-            .find(|input| input.input.id == input_id)
-            .ok_or_else(|| ModelMutationError::new("input_not_found", "inputId 不属于当前基线"))?;
-        let binding = target.binding.as_mut().ok_or_else(|| {
-            ModelMutationError::new("mapping_not_applicable", "该输入不是 DataFrame")
-        })?;
-        let evidence: Value = serde_json::from_str(&binding.evidence_json).unwrap_or_default();
-        let is_candidate = evidence
-            .get("candidates")
-            .and_then(Value::as_array)
-            .is_some_and(|candidates| {
-                candidates.iter().any(|candidate| {
-                    candidate.get("tableKind").and_then(Value::as_str) == Some(table_kind.as_str())
-                })
-            });
-        if !is_candidate && binding.table_kind.as_deref() != Some(table_kind.as_str()) {
-            return Err(ModelMutationError::new(
-                "mapping_invalid",
-                "tableKind 不在当前推断候选中",
-            ));
-        }
-        binding.table_kind = Some(table_kind);
-        binding.resolution = "user_confirmed".into();
-        self.publish(
-            principal,
-            record.workspace.id,
-            Some(base.id),
-            &base,
-            manifest,
-            inputs,
-            None,
-        )
-        .await
-    }
-
-    pub async fn remove_input(
-        &self,
-        principal: &CurrentUser,
-        session_id: i32,
-        input_id: i32,
-        expected_base: Option<i32>,
-    ) -> Result<ModelVersion, ModelMutationError> {
-        let (record, base, mut inputs, manifest) =
-            self.base(principal, session_id, expected_base).await?;
-        let before = inputs.len();
-        inputs.retain(|input| input.input.id != input_id);
-        if inputs.len() == before {
-            return Err(ModelMutationError::new(
-                "input_not_found",
-                "inputId 不属于当前基线",
-            ));
-        }
-        if inputs.is_empty() {
-            return Err(ModelMutationError::new(
-                "model_empty",
-                "不能移除最后一个模型输入",
-            ));
-        }
-        self.publish(
-            principal,
-            record.workspace.id,
-            Some(base.id),
-            &base,
-            manifest,
-            inputs,
-            None,
-        )
-        .await
-    }
-
-    pub async fn replace_input(
-        &self,
-        principal: &CurrentUser,
-        session_id: i32,
-        target_input_id: i32,
-        replacement_input_id: i32,
-        expected_base: Option<i32>,
-    ) -> Result<ModelVersion, ModelMutationError> {
-        if target_input_id == replacement_input_id {
-            return Err(ModelMutationError::new(
-                "replacement_invalid",
-                "目标与替换 inputId 不能相同",
-            ));
-        }
-        let (record, base, mut inputs, manifest) =
-            self.base(principal, session_id, expected_base).await?;
-        let replacement = inputs
-            .iter()
-            .find(|input| input.input.id == replacement_input_id)
-            .cloned()
-            .ok_or_else(|| {
-                ModelMutationError::new("input_not_found", "replacementInputId 不属于当前基线")
-            })?;
-        let target_index = inputs
-            .iter()
-            .position(|input| input.input.id == target_input_id)
-            .ok_or_else(|| {
-                ModelMutationError::new("input_not_found", "targetInputId 不属于当前基线")
-            })?;
-        inputs[target_index] = replacement;
-        inputs.remove(
-            inputs
-                .iter()
-                .position(|input| input.input.id == replacement_input_id)
-                .expect("replacement remains"),
-        );
-        self.publish(
-            principal,
-            record.workspace.id,
-            Some(base.id),
-            &base,
-            manifest,
-            inputs,
-            None,
-        )
-        .await
     }
 
     pub async fn modify(
         &self,
         principal: &CurrentUser,
         session_id: i32,
-        input_id: i32,
+        table_name: String,
         patch: ModelPatch,
-        expected_base: Option<i32>,
-    ) -> Result<ModelVersion, ModelMutationError> {
+        expected: Option<DraftRef>,
+    ) -> Result<DraftRef, ModelMutationError> {
         if patch.row_key.is_empty() || patch.changes.is_empty() {
             return Err(ModelMutationError::new(
                 "invalid_model_patch",
                 "rowKey 和 changes 不能为空",
             ));
         }
-        let (record, base, mut inputs, manifest) =
-            self.base(principal, session_id, expected_base).await?;
-        let target_index = inputs
-            .iter()
-            .position(|input| input.input.id == input_id)
-            .ok_or_else(|| ModelMutationError::new("input_not_found", "inputId 不属于当前基线"))?;
-        let target = &inputs[target_index];
         validate_units(&patch)?;
+        let workspace = self
+            .versions
+            .workspace(&principal.id, session_id, now_ms())
+            .await
+            .map_err(map_version)?;
+        let artifact_id = match &workspace.draft {
+            Some(draft) => draft
+                .dataframes
+                .iter()
+                .find(|frame| frame.table_name == table_name)
+                .map(|frame| frame.artifact_id),
+            None => workspace
+                .active
+                .as_ref()
+                .and_then(|version| {
+                    version
+                        .dataframes
+                        .iter()
+                        .find(|frame| frame.table_name == table_name)
+                })
+                .map(|frame| frame.artifact_id),
+        }
+        .ok_or_else(|| ModelMutationError::new("table_not_found", "DataFrame 不存在"))?;
         let scope = self
             .artifacts
             .resolve_scope(principal.storage_scope_id)
-            .await?;
+            .await
+            .map_err(|error| ModelMutationError::new("artifact_error", error.to_string()))?;
         let artifact = self
             .artifacts
-            .find_owned(scope.id, target.input.artifact_id)
-            .await?;
+            .find_owned(scope.id, artifact_id)
+            .await
+            .map_err(|error| ModelMutationError::new("artifact_error", error.to_string()))?;
         let source = self
             .artifacts
             .store()
             .resolve(&artifact.storage_path)
-            .map_err(|e| ModelMutationError::new("artifact_error", e.to_string()))?;
-        let (bytes, output_format, media_type) = match artifact.format.as_str() {
-            "csv" | "parquet" => {
-                let binding = target.binding.as_ref().ok_or_else(|| {
-                    ModelMutationError::new("invalid_model_patch", "该 DataFrame 输入没有类型映射")
-                })?;
-                if binding.table_kind.as_deref() != Some(patch.table_kind.as_str()) {
-                    return Err(ModelMutationError::new(
-                        "invalid_model_patch",
-                        "tableKind 与已确认映射不一致",
-                    ));
-                }
-                let bytes = if artifact.format == "csv" {
-                    patch_csv(&source, &patch)?
-                } else {
-                    patch_parquet(&source, &patch)?
-                };
-                (bytes, "parquet", Some("application/vnd.apache.parquet"))
-            }
-            "rss" if patch.table_kind == "rss_parameter" => (
-                patch_assignment_text(&source, &patch, "rss_parameter")?,
-                "rss",
-                Some("text/plain"),
-            ),
-            "dss" if patch.table_kind == "dss_property" => (
-                patch_assignment_text(&source, &patch, "dss_property")?,
-                "dss",
-                Some("text/plain"),
-            ),
-            _ => {
-                return Err(ModelMutationError::new(
-                    "invalid_model_patch",
-                    "当前输入类型不支持确定性结构化修改",
-                ));
-            }
-        };
+            .map_err(|error| ModelMutationError::new("artifact_error", error.to_string()))?;
+        let bytes = patch_parquet(&source, &patch)?;
         let staged = self
             .artifacts
             .store()
             .stage(Cursor::new(bytes), StageLimits::default())
-            .map_err(|e| ModelMutationError::new("artifact_error", e.to_string()))?;
+            .map_err(|error| ModelMutationError::new("artifact_error", error.to_string()))?;
         let committed = self
             .artifacts
             .commit(
                 scope.id,
                 staged,
                 ArtifactMetadata {
-                    format: output_format.into(),
-                    media_type: media_type.map(str::to_string),
+                    format: "parquet".into(),
+                    media_type: Some("application/vnd.apache.parquet".into()),
                 },
             )
-            .await?;
-        inputs[target_index].input.artifact_id = committed.id;
-        inputs[target_index].sha256 = committed.sha256.clone();
-        inputs[target_index].input.display_name =
-            format!("patched-input-{input_id}.{output_format}");
-        if output_format == "parquet" {
-            inputs[target_index].input.relative_path =
-                Some(format!("generated/input-{input_id}.parquet"));
-        }
-        let patch_value = serde_json::to_value(&patch).expect("patch serializable");
-        match self
-            .publish(
-                principal,
-                record.workspace.id,
-                Some(base.id),
-                &base,
-                manifest,
-                inputs,
-                Some(patch_value),
-            )
             .await
-        {
-            Ok(version) => Ok(version),
+            .map_err(|error| ModelMutationError::new("artifact_error", error.to_string()))?;
+        let committed_path = self
+            .artifacts
+            .store()
+            .resolve(&committed.relative_path)
+            .map_err(|error| ModelMutationError::new("artifact_error", error.to_string()))?;
+        let metadata = ParquetInspector::metadata(&committed_path)
+            .map_err(|error| ModelMutationError::new("invalid_model_patch", error.to_string()))?;
+        let (schema_json, _) = crate::application::datasets::schema_json_and_hash(&metadata);
+        let result = self
+            .versions
+            .replace_draft_dataframe(
+                &principal.id,
+                session_id,
+                expected,
+                table_name,
+                committed.id,
+                schema_json,
+                metadata.row_count as i64,
+                committed.sha256.clone(),
+                now_ms(),
+            )
+            .await;
+        match result {
+            Ok((draft, replaced)) => {
+                if let Some(replaced) = replaced {
+                    self.artifacts.release(scope.id, replaced).await.ok();
+                }
+                Ok(draft)
+            }
             Err(error) => {
-                let _ = self.artifacts.release(scope.id, committed.id).await;
-                Err(error)
+                self.artifacts.release(scope.id, committed.id).await.ok();
+                Err(map_version(error))
             }
         }
     }
-
-    async fn base(
-        &self,
-        principal: &CurrentUser,
-        session_id: i32,
-        expected_base: Option<i32>,
-    ) -> Result<
-        (
-            crate::db::repositories::WorkspaceRecord,
-            ModelVersion,
-            Vec<InputState>,
-            Value,
-        ),
-        ModelMutationError,
-    > {
-        let record = self.workspaces.get(&principal.id, session_id).await?;
-        let current = record
-            .workspace
-            .draft_version_id
-            .or(record.workspace.active_version_id);
-        if current.is_some() && expected_base.is_none() {
-            return Err(ModelMutationError::new(
-                "expected_version_required",
-                "expectedDraftVersionId 必填",
-            ));
-        }
-        if current != expected_base {
-            return Err(ModelMutationError::new(
-                "version_conflict",
-                "模型版本基线已变化",
-            ));
-        }
-        let base_id = current
-            .ok_or_else(|| ModelMutationError::new("workspace_empty", "工作区尚无模型版本"))?;
-        let base = self.workspaces.find_version(&principal.id, base_id).await?;
-        let manifest: Value = serde_json::from_str(&base.manifest_json)
-            .map_err(|_| ModelMutationError::new("invalid_manifest", "版本 manifest 无效"))?;
-        let mut states = Vec::new();
-        let scope = self
-            .artifacts
-            .resolve_scope(principal.storage_scope_id)
-            .await?;
-        for (input, binding) in self.workspaces.inputs(&principal.id, base.id).await? {
-            let artifact = self
-                .artifacts
-                .find_owned(scope.id, input.artifact_id)
-                .await?;
-            let source_sha = match input.source_artifact_id {
-                Some(id) => Some(self.artifacts.find_owned(scope.id, id).await?.sha256),
-                None => None,
-            };
-            states.push(InputState {
-                input,
-                binding,
-                sha256: artifact.sha256,
-                source_sha256: source_sha,
-            });
-        }
-        Ok((record, base, states, clean_manifest(manifest)))
-    }
-
-    async fn publish(
-        &self,
-        principal: &CurrentUser,
-        workspace_id: i32,
-        expected: Option<i32>,
-        base: &ModelVersion,
-        manifest: Value,
-        inputs: Vec<InputState>,
-        patch: Option<Value>,
-    ) -> Result<ModelVersion, ModelMutationError> {
-        let all_mappings_resolved = base.source_kind == "dataframes"
-            && inputs.iter().all(|input| {
-                input.binding.as_ref().is_some_and(|binding| {
-                    matches!(binding.resolution.as_str(), "inferred" | "user_confirmed")
-                })
-            });
-        let status = if base.status == "ready" || all_mappings_resolved {
-            crate::application::ModelVersionStatus::Ready
-        } else {
-            crate::application::ModelVersionStatus::Collecting
-        };
-        let mut manifest = manifest;
-        if matches!(status, crate::application::ModelVersionStatus::Ready)
-            && let Some(object) = manifest.as_object_mut()
-        {
-            object.insert("ambiguities".into(), serde_json::json!([]));
-        }
-        self.workspaces
-            .publish_version(
-                &principal.id,
-                workspace_id,
-                expected,
-                VersionDraft {
-                    status,
-                    source_kind: source_kind(&base.source_kind)?,
-                    origin: VersionOrigin::Generated,
-                    manifest,
-                    patch,
-                    inputs: inputs.into_iter().map(InputState::draft).collect(),
-                },
-            )
-            .await
-            .map_err(Into::into)
-    }
 }
 
-#[derive(Clone)]
-struct InputState {
-    input: VersionArtifact,
-    binding: Option<DataframeBinding>,
-    sha256: String,
-    source_sha256: Option<String>,
-}
-
-impl InputState {
-    fn draft(self) -> VersionInputDraft {
-        VersionInputDraft {
-            artifact_id: self.input.artifact_id,
-            sha256: self.sha256,
-            role: self.input.role,
-            relative_path: self.input.relative_path,
-            display_name: self.input.display_name,
-            source_artifact_id: self.input.source_artifact_id,
-            source_artifact_sha256: self.source_sha256,
-            sheet_name: self.input.sheet_name,
-            binding: self.binding.map(|binding| DataframeBindingDraft {
-                table_kind: binding.table_kind,
-                confidence: binding.confidence,
-                resolution: binding.resolution,
-                columns: serde_json::from_str(&binding.columns_json).unwrap_or_else(|_| json!([])),
-                evidence: serde_json::from_str(&binding.evidence_json)
-                    .unwrap_or_else(|_| json!({})),
-            }),
+fn map_version(error: VersionRepoError) -> ModelMutationError {
+    match error {
+        VersionRepoError::DraftConflict => {
+            ModelMutationError::new("draft_revision_conflict", "草稿已变化，请重新读取工作区")
         }
-    }
-}
-
-fn clean_manifest(mut manifest: Value) -> Value {
-    if let Some(object) = manifest.as_object_mut() {
-        for key in ["inputs", "origin", "originKind", "patch"] {
-            object.remove(key);
+        VersionRepoError::Repository(crate::db::repositories::RepoError::NotFound) => {
+            ModelMutationError::new("not_found", "资源不存在")
         }
-    }
-    manifest
-}
-
-fn source_kind(value: &str) -> Result<SourceKind, ModelMutationError> {
-    match value {
-        "rss" => Ok(SourceKind::Rss),
-        "rssbundle" => Ok(SourceKind::Rssbundle),
-        "dataframes" => Ok(SourceKind::Dataframes),
-        "mixed" => Ok(SourceKind::Mixed),
-        _ => Err(ModelMutationError::new(
-            "invalid_manifest",
-            "未知 sourceKind",
-        )),
+        other => ModelMutationError::new("workspace_error", format!("{other:?}")),
     }
 }
 
 fn validate_units(patch: &ModelPatch) -> Result<(), ModelMutationError> {
     for (column, change) in &patch.changes {
-        let expected = expected_dimension(column);
-        let actual = unit_dimension(&change.unit);
-        let text_patch = matches!(patch.table_kind.as_str(), "rss_parameter" | "dss_property");
-        if actual.is_none()
-            || (!text_patch && expected.is_none())
-            || expected.is_some_and(|value| Some(value) != actual)
-        {
+        if unit_dimension(&change.unit).is_none() {
             return Err(ModelMutationError::new(
                 "unit_incompatible",
-                format!("{column} 的单位 {} 不兼容", change.unit),
+                format!("{column} 的单位 {} 不受支持", change.unit),
             ));
         }
         if change.from.is_number() != change.to.is_number()
@@ -517,27 +204,6 @@ fn validate_units(patch: &ModelPatch) -> Result<(), ModelMutationError> {
         }
     }
     Ok(())
-}
-
-fn expected_dimension(column: &str) -> Option<&'static str> {
-    let name = column.to_ascii_lowercase();
-    if matches!(name.as_str(), "p" | "p_kw" | "kw" | "active_power") {
-        Some("power")
-    } else if matches!(name.as_str(), "q" | "q_kvar" | "kvar" | "reactive_power") {
-        Some("reactive_power")
-    } else if name.contains("voltage") || matches!(name.as_str(), "v" | "v_mag") {
-        Some("voltage")
-    } else if name.contains("current") || matches!(name.as_str(), "i" | "i_mag") {
-        Some("current")
-    } else if matches!(name.as_str(), "r" | "x" | "resistance" | "reactance") {
-        Some("resistance")
-    } else if name.contains("angle") {
-        Some("angle")
-    } else if name.contains("time") || name.contains("step") || name.contains("duration") {
-        Some("time")
-    } else {
-        None
-    }
 }
 
 fn unit_dimension(unit: &str) -> Option<&'static str> {
@@ -554,232 +220,22 @@ fn unit_dimension(unit: &str) -> Option<&'static str> {
     }
 }
 
-fn patch_csv(path: &std::path::Path, patch: &ModelPatch) -> Result<Vec<u8>, ModelMutationError> {
-    let mut reader = csv::Reader::from_path(path)
-        .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?;
-    let headers = reader
-        .headers()
-        .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?
-        .clone();
-    let mut rows: Vec<Vec<String>> = reader
-        .records()
-        .map(|row| row.map(|r| r.iter().map(str::to_string).collect()))
-        .collect::<Result<_, _>>()
-        .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?;
-    let matches: Vec<_> = rows
-        .iter()
-        .enumerate()
-        .filter(|(_, row)| row_matches(&headers, row, &patch.row_key))
-        .map(|(i, _)| i)
-        .collect();
-    if matches.len() != 1 {
-        return Err(ModelMutationError::new(
-            "row_not_unique",
-            format!("rowKey 匹配 {} 行", matches.len()),
-        ));
-    }
-    let row = &mut rows[matches[0]];
-    for (column, change) in &patch.changes {
-        let index = headers
-            .iter()
-            .position(|name| name == column)
-            .ok_or_else(|| {
-                ModelMutationError::new("invalid_model_patch", format!("列不存在: {column}"))
-            })?;
-        if !text_equals(&row[index], &change.from) {
-            return Err(ModelMutationError::new(
-                "old_value_mismatch",
-                format!("{column} 的旧值不符"),
-            ));
-        }
-        row[index] = scalar_text(&change.to)?;
-    }
-    string_rows_to_parquet(headers.iter().map(str::to_string).collect(), rows)
-}
-
-fn row_matches(headers: &csv::StringRecord, row: &[String], key: &BTreeMap<String, Value>) -> bool {
-    key.iter().all(|(name, value)| {
-        headers
-            .iter()
-            .position(|header| header == name)
-            .is_some_and(|i| text_equals(&row[i], value))
-    })
-}
-
-fn text_equals(actual: &str, expected: &Value) -> bool {
-    match expected {
-        Value::String(value) => actual == value,
-        Value::Number(value) => actual.parse::<f64>().ok() == value.as_f64(),
-        Value::Bool(value) => actual.parse::<bool>().ok() == Some(*value),
-        _ => false,
-    }
-}
-fn scalar_text(value: &Value) -> Result<String, ModelMutationError> {
-    match value {
-        Value::String(v) => Ok(v.clone()),
-        Value::Number(v) => Ok(v.to_string()),
-        Value::Bool(v) => Ok(v.to_string()),
-        _ => Err(ModelMutationError::new(
-            "invalid_model_patch",
-            "只支持标量值",
-        )),
-    }
-}
-
-fn patch_assignment_text(
-    path: &std::path::Path,
-    patch: &ModelPatch,
-    kind: &str,
-) -> Result<Vec<u8>, ModelMutationError> {
-    if patch.row_key.len() != 1 || patch.changes.len() != 1 {
-        return Err(ModelMutationError::new(
-            "invalid_model_patch",
-            "文本补丁必须唯一指定对象和属性",
-        ));
-    }
-    let selector = if kind == "rss_parameter" {
-        "name"
-    } else {
-        "object"
-    };
-    let target = patch
-        .row_key
-        .get(selector)
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            ModelMutationError::new(
-                "invalid_model_patch",
-                format!("{kind} 需要字符串 {selector}"),
-            )
-        })?;
-    let (property, change) = patch.changes.iter().next().unwrap();
-    if kind == "rss_parameter" && property != "value" {
-        return Err(ModelMutationError::new(
-            "invalid_model_patch",
-            "RSS 参数补丁只允许 changes.value",
-        ));
-    }
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?;
-    let mut matches = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        let trimmed = line.trim();
-        let matched = if kind == "rss_parameter" {
-            trimmed
-                .split_once('=')
-                .is_some_and(|(name, _)| name.trim() == target)
-        } else {
-            let mut words = trimmed.split_whitespace();
-            words.next().is_some_and(|word| {
-                word.eq_ignore_ascii_case("new") || word.eq_ignore_ascii_case("edit")
-            }) && words
-                .next()
-                .is_some_and(|object| object.eq_ignore_ascii_case(target))
-                && trimmed.split_whitespace().any(|word| {
-                    word.split_once('=')
-                        .is_some_and(|(name, _)| name.eq_ignore_ascii_case(property))
-                })
-        };
-        if matched {
-            matches.push(index);
-        }
-    }
-    if matches.len() != 1 {
-        return Err(ModelMutationError::new(
-            "row_not_unique",
-            format!("文本选择器匹配 {} 行", matches.len()),
-        ));
-    }
-    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    let line = &lines[matches[0]];
-    if kind == "rss_parameter" {
-        let (left, right) = line.split_once('=').unwrap();
-        let current = right.trim().trim_end_matches(';').trim();
-        if !text_equals(current.trim_matches('"'), &change.from) {
-            return Err(ModelMutationError::new(
-                "old_value_mismatch",
-                format!("{target} 的旧值不符"),
-            ));
-        }
-        lines[matches[0]] = format!("{}= {};", left, scalar_text(&change.to)?);
-    } else {
-        let mut changed = false;
-        let mut words = Vec::new();
-        for word in line.split_whitespace() {
-            if let Some((name, value)) = word.split_once('=') {
-                if name.eq_ignore_ascii_case(property) {
-                    if !text_equals(value.trim_end_matches(';').trim_matches('"'), &change.from) {
-                        return Err(ModelMutationError::new(
-                            "old_value_mismatch",
-                            format!("{property} 的旧值不符"),
-                        ));
-                    }
-                    words.push(format!("{name}={}", scalar_text(&change.to)?));
-                    changed = true;
-                    continue;
-                }
-            }
-            words.push(word.to_string());
-        }
-        if !changed {
-            return Err(ModelMutationError::new("invalid_model_patch", "属性不存在"));
-        }
-        lines[matches[0]] = words.join(" ");
-    }
-    let mut result = lines.join("\n");
-    if text.ends_with('\n') {
-        result.push('\n');
-    }
-    Ok(result.into_bytes())
-}
-
-fn string_rows_to_parquet(
-    headers: Vec<String>,
-    rows: Vec<Vec<String>>,
-) -> Result<Vec<u8>, ModelMutationError> {
-    let schema = Arc::new(arrow_schema::Schema::new(
-        headers
-            .iter()
-            .map(|name| arrow_schema::Field::new(name, DataType::Utf8, true))
-            .collect::<Vec<_>>(),
-    ));
-    let arrays: Vec<ArrayRef> = (0..headers.len())
-        .map(|column| {
-            Arc::new(StringArray::from(
-                rows.iter()
-                    .map(|row| row[column].as_str())
-                    .collect::<Vec<_>>(),
-            )) as ArrayRef
-        })
-        .collect();
-    let batch = RecordBatch::try_new(schema.clone(), arrays)
-        .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?;
-    let mut output = Vec::new();
-    let mut writer = ArrowWriter::try_new(&mut output, schema, None)
-        .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?;
-    writer
-        .write(&batch)
-        .and_then(|_| writer.close().map(|_| ()))
-        .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?;
-    Ok(output)
-}
-
 fn patch_parquet(
     path: &std::path::Path,
     patch: &ModelPatch,
 ) -> Result<Vec<u8>, ModelMutationError> {
     let file = std::fs::File::open(path)
-        .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?;
+        .map_err(|error| ModelMutationError::new("invalid_model_patch", error.to_string()))?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)
-        .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?;
+        .map_err(|error| ModelMutationError::new("invalid_model_patch", error.to_string()))?;
     let schema = builder.schema().clone();
     let batches: Vec<RecordBatch> = builder
         .build()
-        .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?
+        .map_err(|error| ModelMutationError::new("invalid_model_patch", error.to_string()))?
         .collect::<Result<_, _>>()
-        .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?;
+        .map_err(|error| ModelMutationError::new("invalid_model_patch", error.to_string()))?;
     let mut found = Vec::new();
-    for (bi, batch) in batches.iter().enumerate() {
+    for (batch_index, batch) in batches.iter().enumerate() {
         for row in 0..batch.num_rows() {
             if patch.row_key.iter().all(|(name, expected)| {
                 schema
@@ -788,7 +244,7 @@ fn patch_parquet(
                     .and_then(|column| scalar_at(batch.column(column), row))
                     .is_some_and(|actual| actual == *expected)
             }) {
-                found.push((bi, row));
+                found.push((batch_index, row));
             }
         }
     }
@@ -800,8 +256,8 @@ fn patch_parquet(
     }
     let (target_batch, target_row) = found[0];
     let mut output_batches = Vec::new();
-    for (bi, batch) in batches.into_iter().enumerate() {
-        if bi != target_batch {
+    for (batch_index, batch) in batches.into_iter().enumerate() {
+        if batch_index != target_batch {
             output_batches.push(batch);
             continue;
         }
@@ -822,21 +278,25 @@ fn patch_parquet(
             columns[index] = replace_scalar(&columns[index], target_row, &change.to)?;
         }
         output_batches.push(
-            RecordBatch::try_new(schema.clone(), columns)
-                .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?,
+            RecordBatch::try_new(schema.clone(), columns).map_err(|error| {
+                ModelMutationError::new("invalid_model_patch", error.to_string())
+            })?,
         );
     }
     let mut output = Vec::new();
-    let mut writer = ArrowWriter::try_new(&mut output, schema, None)
-        .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?;
+    let properties = parquet::file::properties::WriterProperties::builder()
+        .set_compression(parquet::basic::Compression::SNAPPY)
+        .build();
+    let mut writer = ArrowWriter::try_new(&mut output, schema, Some(properties))
+        .map_err(|error| ModelMutationError::new("invalid_model_patch", error.to_string()))?;
     for batch in output_batches {
         writer
             .write(&batch)
-            .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?;
+            .map_err(|error| ModelMutationError::new("invalid_model_patch", error.to_string()))?;
     }
     writer
         .close()
-        .map_err(|e| ModelMutationError::new("invalid_model_patch", e.to_string()))?;
+        .map_err(|error| ModelMutationError::new("invalid_model_patch", error.to_string()))?;
     Ok(output)
 }
 
@@ -874,16 +334,16 @@ fn replace_scalar(
                 .as_any()
                 .downcast_ref::<StringArray>()
                 .ok_or_else(invalid)?;
-            let new = scalar_text(value)?;
+            let new = value.as_str().ok_or_else(invalid)?;
             Ok(Arc::new(StringArray::from(
                 (0..old.len())
-                    .map(|i| {
-                        if i == row {
-                            Some(new.as_str())
-                        } else if old.is_null(i) {
+                    .map(|index| {
+                        if index == row {
+                            Some(new)
+                        } else if old.is_null(index) {
                             None
                         } else {
-                            Some(old.value(i))
+                            Some(old.value(index))
                         }
                     })
                     .collect::<Vec<_>>(),
@@ -897,13 +357,13 @@ fn replace_scalar(
             let new = value.as_i64().ok_or_else(invalid)?;
             Ok(Arc::new(Int64Array::from(
                 (0..old.len())
-                    .map(|i| {
-                        if i == row {
+                    .map(|index| {
+                        if index == row {
                             Some(new)
-                        } else if old.is_null(i) {
+                        } else if old.is_null(index) {
                             None
                         } else {
-                            Some(old.value(i))
+                            Some(old.value(index))
                         }
                     })
                     .collect::<Vec<_>>(),
@@ -917,13 +377,13 @@ fn replace_scalar(
             let new = value.as_f64().ok_or_else(invalid)?;
             Ok(Arc::new(Float64Array::from(
                 (0..old.len())
-                    .map(|i| {
-                        if i == row {
+                    .map(|index| {
+                        if index == row {
                             Some(new)
-                        } else if old.is_null(i) {
+                        } else if old.is_null(index) {
                             None
                         } else {
-                            Some(old.value(i))
+                            Some(old.value(index))
                         }
                     })
                     .collect::<Vec<_>>(),
@@ -937,13 +397,13 @@ fn replace_scalar(
             let new = value.as_bool().ok_or_else(invalid)?;
             Ok(Arc::new(BooleanArray::from(
                 (0..old.len())
-                    .map(|i| {
-                        if i == row {
+                    .map(|index| {
+                        if index == row {
                             Some(new)
-                        } else if old.is_null(i) {
+                        } else if old.is_null(index) {
                             None
                         } else {
-                            Some(old.value(i))
+                            Some(old.value(index))
                         }
                     })
                     .collect::<Vec<_>>(),

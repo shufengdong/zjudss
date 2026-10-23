@@ -27,7 +27,7 @@ impl Tool for ListSimulationHistoryTool {
     type Output = Value;
     type Error = DomainToolError;
     fn description(&self) -> String {
-        "列出当前或指定已授权会话最近的仿真任务，供“上次”“修改前”等指代消歧。".into()
+        "列出当前或指定已授权会话最近的仿真运行，供“上次”“修改前”等指代消歧。".into()
     }
     fn parameters(&self) -> Value {
         object_schema(
@@ -41,14 +41,14 @@ impl Tool for ListSimulationHistoryTool {
     async fn call(&self, _: &mut ToolContext, a: Args) -> Result<Value, Self::Error> {
         let rows = self
             .services
-            .history
-            .list_simulations(
+            .runs
+            .list(
                 &self.services.principal,
                 a.session_id.unwrap_or(self.services.session_id),
                 a.limit.unwrap_or(10),
             )
             .await
-            .map_err(|e| DomainToolError::new(e.code, e.to_string()))?;
-        Ok(Value::Array(rows.into_iter().map(|t|json!({"taskId":t.id.to_string(),"status":t.status,"studyType":t.study_type,"modelVersionId":t.model_version_id.to_string(),"createdAt":crate::application::ms_to_iso(t.created_at_ms)})).collect()))
+            .map_err(|e| DomainToolError::new("run_error", e.to_string()))?;
+        Ok(Value::Array(rows.into_iter().map(|run|json!({"runId":run.id.to_string(),"status":run.status,"modelVersionId":run.model_version_id.to_string(),"scriptResourceId":run.script_resource_id.to_string(),"createdAt":crate::application::ms_to_iso(run.created_at_ms)})).collect()))
     }
 }

@@ -10,13 +10,13 @@ fn production_router_and_manifest_share_one_declaration() {
         .map(|route| (route.method, route.path))
         .collect::<HashSet<_>>();
 
-    assert_eq!(routes.len(), 29);
-    assert_eq!(unique.len(), 29);
+    assert_eq!(routes.len(), 41);
+    assert_eq!(unique.len(), 41);
     assert!(unique.contains(&("GET", "/health")));
     assert!(unique.contains(&("POST", "/api/auth/login")));
     assert!(unique.contains(&("POST", "/api/auth/logout")));
-    assert!(unique.contains(&("POST", "/api/sessions/{id}/attachments")));
-    assert!(unique.contains(&("GET", "/api/task-comparisons/{id}")));
+    assert!(unique.contains(&("POST", "/api/sessions/{id}/model-imports")));
+    assert!(unique.contains(&("GET", "/api/run-comparisons/{id}")));
 
     let _ = build_router;
 }
@@ -36,9 +36,10 @@ fn contract_manifest_contains_all_public_enums() {
             "attachment",
             "model-status",
             "comparison",
+            "script",
         ]
     );
-    assert_eq!(manifest.tool_names.len(), 22);
+    assert_eq!(manifest.tool_names.len(), 16);
     assert_eq!(
         manifest.skill_ids,
         [
@@ -53,12 +54,14 @@ fn contract_manifest_contains_all_public_enums() {
     assert_eq!(
         manifest.upload_sources,
         [
-            "single_rss",
-            "zip_rssbundle",
-            "directory_rssbundle",
+            "dss",
+            "dssbundle",
+            "rssbundle",
+            "zip",
             "csv",
-            "parquet",
             "excel",
+            "parquet",
+            "rss_script",
         ]
     );
     assert_eq!(
@@ -72,7 +75,11 @@ fn contract_manifest_contains_all_public_enums() {
             .stable_error_codes
             .contains(&"authentication_required")
     );
-    assert!(manifest.stable_error_codes.contains(&"version_conflict"));
+    assert!(
+        manifest
+            .stable_error_codes
+            .contains(&"active_model_changed")
+    );
     assert!(
         manifest
             .stable_error_codes

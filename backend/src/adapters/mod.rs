@@ -167,7 +167,7 @@ impl RunSpec {
                 return Err(AdapterError::new(
                     "input_format_invalid",
                     ErrorCategory::Model,
-                    "v2 named input 必须是 Parquet",
+                    "命名输入必须是 Parquet",
                 ));
             }
         }

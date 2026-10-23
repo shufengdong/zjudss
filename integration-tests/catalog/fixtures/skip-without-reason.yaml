@@ -1,5 +1,5 @@
 - id: SKIP-001
-  source: docs/integration-testing-design.md#1-目标和覆盖口径
+  source: docs/integration-testing-design.md#coverage-matrix
   title: unexplained skip is forbidden
   skip: true
   layers: [backend]

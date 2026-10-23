@@ -1,106 +1,45 @@
-# 开发状态与设计速览
+# V3 开发状态
 
-> 新开的 agent 先读本文。详细机制见 `architecture.md`、`api-design.md`、`db-design.md`、
-> `frontend-design.md`、`model-workspace-design.md`、`agent-prompt-skills-design.md` 和
-> `v3-deployment.md`。自动化全链路验收见 `integration-testing-design.md`。
+## Current release
 
-## 当前结论
+第三版已直接替换前两个未上线版本。当前产品合同是 DataFrame 模型、独立 RSS 脚本、用户显式运行和可删除的
+单个结果；数据库只支持空库初始化，不存在旧协议兼容层。
 
-第三版直接替换前两个未上线版本。固定用户认证已经实现；DataFrame 模型、易变脚本和仿真结果的新资源
-合同正在按已批准计划实施。当前已完成的基础能力如下：
-
-| 模块 | 状态 | 说明 |
+| Area | Status | Evidence |
 |---|---|---|
-| 身份与隔离 | ✅ | 固定用户、HttpOnly 登录 Cookie、user repository、跨用户统一 404、SSE 撤销 |
-| Agent 调度 | ✅ | 实例 8、用户 2、session 1、等待 32；agent 按消息短生命周期创建 |
-| 消息与恢复 | ✅ | 八类消息、持久事件、Last-Event-ID、resync、最近页/older/around |
-| Artifact/配额 | ✅ | SHA-256 CAS、原子配额、20,000/20 GiB、80% 告警、GC |
-| 模型工作区 | ✅ | active/draft、不可变版本、替换/移除/确认/激活/回退 |
-| 多格式摄取 | ✅ | 单 RSS、ZIP/目录 rssbundle、CSV/Excel/Parquet、分批追加、表头推断 |
-| 引擎资源 | ✅ | TENSOREVAL_CWD 文档/catalog/案例 hash snapshot、内置案例导入 |
-| Agent prompt/skills | ✅ | v2 bundle、按需知识、skill-gated 工具、run 固化技能引用 |
-| 仿真 | ✅ | 任务私有输入树、适配器边界、Parquet input/result-dir/output-format |
-| 结果分析 | ✅ | RSS 脚本、受控 alias、派生 Parquet、血缘、六类视图 |
-| 任务比较 | ✅ | 结果名/稳定键/dtype/单位兼容性和差值 DataFrame |
-| 历史检索 | ✅ | FTS5 trigram、短查询有界 LIKE、任务/时间过滤、agent 历史工具 |
-| 前端工作台 | ✅ | 登录状态机、用户菜单、按用户恢复、历史搜索、目录上传、案例、工作区、任务、表格、ECharts |
-| V3 schema | 进行中 | 单一 initial migration；认证已切换，模型/脚本/结果资源重构待完成 |
+| 固定用户与隔离 | complete | Argon2id、HttpOnly Cookie、跨用户 404、SSE 撤销 |
+| 模型导入 | complete | DSS/bundle/ZIP/CSV/Excel/Parquet、异步状态、确认/放弃、失败释放 |
+| 草稿与版本 | complete | expected revision、整表覆盖、显式发布/激活、影响预览删除 |
+| 案例库 | complete | 固定按钮进入普通导入，确认后只修改 draft |
+| 脚本 | complete | 上传/Agent 创建、静态校验、预览/全文/复制、无编辑删除 |
+| 运行 | complete | 仅按钮创建、active race、冻结快照、私有输入树、多 Parquet 结果 |
+| 结果与派生 | complete | 单结果删除、分析、物化视图、比较、tombstone 血缘 |
+| 前端 | complete | 三列/窄屏、运行记录、数据表/图表、登录用户菜单 |
+| Agent V3 | complete | 16 工具、6 skills、按需引擎知识、无运行/发布/删除权 |
+| 发布门禁 | complete | deterministic Rust/Vitest/build/Playwright/coverage；真实依赖另行执行 |
 
-当前运行合同为 Agent bundle `v2.0.1` 和 engine contract `dss-v2-b3fc74c0`，固定到
-eig-rs `9a01af9a60bcbb3b2814f08dc269456ac1399280` 记录的 sparrowzz
-`b3fc74c0ff1fd25deb4448edd3a9c0e8644bb3c1`。生产启动会验证
-`TENSOREVAL_BIN` capability，以及 `TENSOREVAL_CWD` 的 docs/catalog/examples 内容 hash；任一不符
-都会在接流量前失败。manifest 中的来源提交和 `sourceDirty` 是生成合同的审计信息，运行时以固定内容
-hash 为准。相邻 `../eig-rs` 只用于开发期合同生成或核验，不是可随工作树
-变化的运行依赖。正式部署使用与 manifest 完全匹配的只读资源 artifact，启动后服务只读
-`${DATA_DIR}/system/engine-resources/<snapshot-id>` 中发布的 docs/catalog 索引。
+## Runtime contracts
 
-## 不可违反的边界
+- Agent bundle：`v3.0.0`，目录 `backend/resources/agent/v3`。
+- Engine contract：`tensoreval-parquet-v3`；资源 snapshot 由内置 contract 的 docs/catalog/examples hash 固定。
+- 公共合同：41 条路由、9 类消息、16 个工具、6 个 skills、8 个上传来源、6 类视图。
+- 模型表：adapter 固定输出 21 张规范 DataFrame，包含合法的零行表。
 
-1. 所有 tensoreval/仿真内核调用只能通过 `backend/src/adapters/`。
-2. LLM 和前端只传稳定资源 ID 与受控 spec，不能传服务器路径、命令、SQL 或 ECharts option。
-3. 模型版本、artifact、结果数据集和分析脚本发布后不可修改；变化产生新版本/资源。
-4. 所有资源读取先校验 `UserId`；跨用户与不存在资源都返回 404。
-5. 固定用户来自内置 CSV，初始密码与 ID 相同；公网 HTTPS 必须设置 `SESSION_COOKIE_SECURE=true`。
-6. 仿真和分析结果统一为 Snappy Parquet；数据库只存 schema、行数、血缘和 artifact 引用。
-7. 领域写操作以自然语言为主；固定控件只用于上传、历史、案例浏览、结果读取和下载。
+## Hard boundaries
 
-## 运行时链路
+所有 tensoreval 调用必须经过 adapter；所有 repository 查询带 `UserId`；所有结果使用 Snappy Parquet；浏览器与
+LLM 不接触物理路径。脚本创建不运行，模型修改不发布，案例应用不发布，单条聊天消息不可删除，只能删除整个
+会话。运行记录本身不可删除；历史版本删除和单结果删除使用各自明确规则。
 
-`User → Session → Artifact → Ingestion → ModelVersion → SimulationTask → ResultDataset`
+## Reset and operation
 
-上传可以分多批进行。DataFrame 类型根据列名推断，文件名和 sheet 名只作展示；模糊、未知、dtype 冲突
-或同类型重复时保持 collecting，等待用户在对话中确认。错传文件重新上传使用新 batch/file ID，再由
-自然语言说明替换或移除，不覆盖历史版本。
+`init_users.csv` 是编译输入，密码初始等于 ID。CSV 字节变化后启动会返回
+`user_seed_mismatch_reset_required`；必须同时重置 SQLite 与 DATA_DIR。公网可访问配置见
+`docs/v3-deployment.md`，当前用户密码策略是已接受的试用风险。
 
-任务绑定 model version、study type/spec、实际 RSS、agent bundle/skill refs 和 engine contract。
-`tensoreval` 由适配器显式传 `--result-dir ... --output-format parquet`。用户查询结果时，agent
-读取 dataset schema；需要计算则生成 RSS，读取既有 Parquet 并产出派生 DataFrame。
+## Verification
 
-## 前后端契约
-
-`frontend/src/types/index.ts` 汇总 session/message/workspace/task/dataset 类型。ID 出网为字符串，
-时间戳为 ISO 8601。后端 REST/SSE 直接输出 camelCase。
-
-前端按 session 键控消息，先接 SSE 再读取快照。localStorage 键
-`zjudss:last-session:<userId>` 只保存导航偏好。DataFrame 大表数据保留在结果 hook 中，不写入聊天
-全局 state。已有视图由本地六类 builder 编译，禁止执行 formatter。
-
-## Schema 与数据
-
-V3 仅支持空库初始化。部署前删除旧开发 SQLite 和 DATA_DIR；不做回填或双读。唯一 migration 为
-`backend/migrations/00000000000000_initial`。成功结果只进入 `result_datasets`，没有
-`task_files/task_results/curve_data/params_json`。
-
-启动从编译内置的 `init_users.csv` 原子初始化固定用户并保存种子 SHA-256；CSV 字节变化后必须重置
-数据库与 DATA_DIR。候选发布证据只记录种子 SHA-256 和用户数量，不记录用户 ID。
-
-## 验证状态
-
-- 后端全量测试覆盖身份、调度、SSE、配额、六种上传来源、案例、版本工具、Parquet 合同、仿真失败
-  原子性、结果分析、六类视图、比较、历史和完整 DataFrame e2e。
-- 前端测试覆盖消息归并、session state、workspace null、SSE、分页表格、null/重复行和六类图表。
-- 当前 Vitest 共 54 项；Playwright 共 18 个浏览器用例，覆盖浏览器 → Vite → Axum → SQLite/CAS 的
-  L1/L2 全链路、身份隔离、恢复、配额、恶意
-  归档和响应式无障碍；PR workflow 执行 Rust、Vitest、构建、全部浏览器旅程和严格功能目录门禁。
-- 功能目录现有 154 项，逐项覆盖 24 个顶层范围和 112 个生产公共合同；`--require-pr` 报告为
-  `288/288`、100%，且会拒绝缺项、重复/未知合同、错误 lane、`manual-only`、skip、不存在的测试声明，
-  以及用路由/工具/枚举清单测试冒充合同行为覆盖。27 个公开路由还必须由目录关联的已通过 Playwright
-  用例产生实际成功响应证据；任意无关测试映射不能通过门禁。
-- 2026-10-23 已用真实 DeepSeek 和上一合同 `dss-v2-d2b6d88a` 的 release tensoreval 完成 DataFrame 潮流、
-  RSS 短路、结果分析、案例导入、参数修改、重跑和比较：8 个模型版本、3 个任务、3 个结果数据集、
-  2 次分析和 1 次比较。候选发布 workflow 要求受保护环境 secret、固定 engine artifact SHA-256，报告记录
-  测试 ID、agent bundle hash、engine contract 和 binary hash；缺失或不匹配即失败。新合同
-  `dss-v2-b3fc74c0` 必须重新通过同一发布门禁后才能替代这份历史证据。
-- Agent manifest 与运行时注册表已由双向枚举测试锁定为同一组 22 个工具，包含 `get_storage_usage` 和
-  `list_result_datasets`。
-
-当前资源快照包含 11 份引擎文档、2 份 catalog、16 个根 RSS 和 81 个 rssbundle，共 97 个内置案例。
-从主仓库运行后端测试时，`engine_resources` 中的外部工作树核验会在检测到相邻 `../eig-rs` 后将它与
-内置发布合同比较。该目录在合同范围内存在未固化修改或 hash 漂移时，相关测试会按设计失败；不要通过
-放宽校验来消除失败。确定性 CI 使用固定 fixture，候选发布使用固定 SHA-256 的引擎 artifact。
-
-当前生产 Agent provider 为 DeepSeek。`StubEngine`、Scripted LLM 和 ScenarioEngine 只用于测试依赖
-注入；生产入口不提供 v1 兼容分支、引擎 stub 回退或旧 CSV 结果读取。
-
-发布命令和配置见 `docs/v3-deployment.md`。
+后端全量测试覆盖 schema、adapter、导入、版本、脚本、运行、删除、派生、比较、认证、恢复和配额。前端
+Vitest 覆盖公共类型、state、workspace、脚本卡、运行与数据工作台。Playwright 覆盖真实浏览器到
+Vite/Axum/SQLite/CAS 的身份、导入、案例、显式运行、派生血缘、删除、恢复、恶意 ZIP、配额和无障碍。
+最终命令与真实 DeepSeek/tensoreval 候选门禁见部署文档。

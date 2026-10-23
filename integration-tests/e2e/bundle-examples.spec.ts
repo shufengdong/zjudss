@@ -5,43 +5,68 @@ import { createSessionFromPage } from './helpers/journeys'
 
 const fixtures = resolve(process.cwd(), '../integration-tests/fixtures/uploads')
 async function workspace(api:APIRequestContext,id:string){return (await (await api.get(`/api/sessions/${id}/workspace`)).json()) as any}
-const current=(value:any)=>value.draft??value.active
 async function upload(page:Page,path:string,directory=false){
-  const response=page.waitForResponse(r=>r.url().includes('/attachments')&&r.request().method()==='POST')
+  const response=page.waitForResponse(r=>r.url().includes('/model-imports')&&r.request().method()==='POST')
   await page.locator('input[type=file]').nth(directory?1:0).setInputFiles(path)
   expect((await response).status()).toBe(202)
+  await expect(page.getByRole('button',{name:'确认合并'})).toBeVisible()
+  await page.getByRole('button',{name:'确认合并'}).click()
 }
 
 test('directory and ZIP bundles publish equivalent immutable model content',async({appPage})=>{
   const{page,api}=await appPage({subject:'bundles@example.com',tenant:'grid-b'})
   const direct=await createSessionFromPage(page,'目录 bundle')
   await upload(page,resolve(fixtures,'bundle/demo.rssbundle'),true)
-  await expect.poll(async()=>current(await workspace(api,direct))?.status).toBe('ready')
-  const directHash=current(await workspace(api,direct)).contentHash
+  await expect.poll(async()=>(await workspace(api,direct)).draft?.tables?.length).toBe(21)
+  await page.getByRole('button',{name:'生成版本'}).click()
+  const directHash=(await workspace(api,direct)).active.contentHash
   const zipped=await createSessionFromPage(page,'ZIP bundle')
   await upload(page,resolve(fixtures,'bundle/demo.zip'))
-  await expect.poll(async()=>current(await workspace(api,zipped))?.status).toBe('ready')
-  const zippedVersion=current(await workspace(api,zipped))
+  await expect.poll(async()=>(await workspace(api,zipped)).draft?.tables?.length).toBe(21)
+  await page.getByRole('button',{name:'生成版本'}).click()
+  const zippedVersion=(await workspace(api,zipped)).active
   expect(zippedVersion.contentHash).toBe(directHash)
 })
 
-test('example search and natural-language import copy a snapshot-pinned editable model',async({appPage,control})=>{
+test('single-Solve bundles become drafts while repeated Solve and specialist lifecycles fail without mutation',async({appPage})=>{
+  const{page,api}=await appPage({subject:'bundles@example.com',tenant:'grid-b'})
+  const session=await createSessionFromPage(page,'生命周期分类')
+  await upload(page,resolve(fixtures,'bundle/single-solve.rssbundle'),true)
+  const accepted=await workspace(api,session)
+  expect(accepted.draft.tables).toHaveLength(21)
+  const identity={id:accepted.draft.id,revision:accepted.draft.revision,tables:accepted.draft.tables.map((table:any)=>table.contentHash)}
+
+  for(const name of ['unsupported-multi-solve.rssbundle','unsupported-specialist.rssbundle']){
+    const responsePromise=page.waitForResponse(response=>response.url().includes('/model-imports')&&response.request().method()==='POST')
+    await page.locator('input[type=file]').nth(1).setInputFiles(resolve(fixtures,`bundle/${name}`))
+    const response=await responsePromise
+    expect(response.status()).toBe(202)
+    const importId=(await response.json()).modelImport.id
+    await expect.poll(async()=>(await (await api.get(`/api/model-imports/${importId}`)).json()).modelImport.status).toBe('failed')
+    const failed=(await (await api.get(`/api/model-imports/${importId}`)).json()).modelImport
+    expect(failed.errorCode).toBe('model_import_unsupported')
+    const current=await workspace(api,session)
+    expect({id:current.draft.id,revision:current.draft.revision,tables:current.draft.tables.map((table:any)=>table.contentHash)}).toEqual(identity)
+    await page.getByRole('button',{name:'抛弃'}).click()
+    await expect.poll(async()=>(await (await api.get(`/api/model-imports/${importId}`)).json()).modelImport.status).toBe('discarded')
+  }
+})
+
+test('case application uses the fixed action and creates only a mutable draft',async({appPage})=>{
   const{page,api}=await appPage({subject:'examples@example.com',tenant:'grid-b'})
   const session=await createSessionFromPage(page,'案例导入')
   await page.getByRole('button',{name:'案例库'}).click()
   await page.getByRole('textbox',{name:'搜索内置案例'}).fill('E2E')
   await expect(page.getByText('E2E demo',{exact:true})).toBeVisible()
   await page.getByRole('button',{name:'查看案例“E2E demo”详情'}).click()
-  await expect(page.getByLabel('案例详情“E2E demo”')).toContainText('examples/e2e-demo.rss')
+  await expect(page.getByLabel('案例详情“E2E demo”')).toContainText('examples/e2e-demo.dss')
   await expect(page.getByLabel('案例详情“E2E demo”')).toContainText('快照树哈希：')
   await page.getByRole('button',{name:'返回案例列表'}).click()
-  await control.enqueueLlm({id:'import-example-ui',expectedPrompt:'请导入内置案例',turns:[
-    {kind:'tool_call',call_id:'import-example',name:'import_example',args:{exampleId:'e2e-demo',engineResourceSnapshot:'e2e-snapshot',expectedDraftVersionId:null}},
-    {kind:'text',text:'案例副本已导入，可以修改参数'},
-  ]})
   await page.getByRole('button',{name:'使用案例“E2E demo”'}).click()
-  await expect(page.getByText('案例副本已导入，可以修改参数',{exact:true})).toBeVisible()
-  const draft=current(await workspace(api,session))
-  expect(draft.origin.exampleId).toBe('e2e-demo');expect(draft.origin.engineResourceSnapshot).toBe('e2e-snapshot')
-  expect(draft.status).toBe('ready')
+  await expect(page.getByRole('button',{name:'确认合并'})).toBeVisible()
+  await page.getByRole('button',{name:'确认合并'}).click()
+  const state=await workspace(api,session)
+  expect(state.draft.tables).toHaveLength(21)
+  expect(state.active).toBeNull()
+  expect((await (await api.get(`/api/sessions/${session}/runs`)).json()).runs).toHaveLength(0)
 })

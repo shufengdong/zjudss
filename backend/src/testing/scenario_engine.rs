@@ -12,9 +12,10 @@ use parquet::file::properties::WriterProperties;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
+use crate::adapters::StubEngine;
 use crate::adapters::{
-    AdapterError, EngineRunOutput, ErrorCategory, InspectOutcome, InspectSpec, OutputLimits,
-    RunMode, RunSpec, SimEngine, validate_outputs,
+    AdapterError, EngineRunOutput, ErrorCategory, ImportSpec, ImportedModel, InspectOutcome,
+    InspectSpec, OutputLimits, RunMode, RunSpec, SimEngine, validate_outputs,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -300,6 +301,10 @@ impl SimEngine for ScenarioEngine {
             return Err(failure("run_mode_invalid", "analysis 入口模式错误"));
         }
         self.run_scenario(spec).await
+    }
+
+    async fn import_model(&self, spec: ImportSpec) -> Result<ImportedModel, AdapterError> {
+        StubEngine.import_model(spec).await
     }
 }
 

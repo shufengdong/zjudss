@@ -10,18 +10,14 @@ pub mod chat;
 pub mod comparisons;
 pub mod datasets;
 mod events;
-pub mod example_import;
 pub mod history;
-pub mod ingestion;
 pub mod model_import;
 pub mod model_patch;
 pub mod runs;
 pub mod scheduler;
 pub mod scripts;
-pub mod simulations;
 pub mod versions;
 pub mod visualization;
-pub mod workspace;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -35,9 +31,8 @@ use crate::auth::AuthService;
 use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
-    AnalysisRepo, ArtifactRepo, ComparisonRepo, DatasetRepo, HistoryRepo, IngestionRepo,
-    MessageRepo, ModelImportRepo, ResultRepo, RunRepo, ScriptRepo, SessionRepo, SimulationRepo,
-    StorageScopeRepo, TaskRepo, VersionRepo, WorkspaceRepo,
+    AnalysisRepo, ArtifactRepo, ComparisonRepo, HistoryRepo, MessageRepo, ModelImportRepo,
+    ResultRepo, RunRepo, ScriptRepo, SessionRepo, StorageScopeRepo, VersionRepo,
 };
 use crate::engine_resources::{EngineKnowledge, EngineResourceSnapshot};
 use crate::ingestion::ArchiveLimits;
@@ -60,25 +55,23 @@ pub use events::{
     RecognizedTable, ResultColumn, ResultOutputRef, Stage, StageStatus, ToolStatus, UploadStatus,
     VisualizationKind, ms_to_iso, now_ms,
 };
-pub use example_import::{ExampleImportError, ExampleImportService};
 pub use history::{HistoryError, HistoryService};
-pub use ingestion::{AcceptedBatch, IngestionError, IngestionService, UploadBatch, UploadFile};
-pub use model_import::{ModelImportError, ModelImportService, ModelImportView};
+pub use model_import::{
+    ModelImportError, ModelImportService, ModelImportView, UploadBatch, UploadFile,
+};
 pub use model_patch::{ModelChange, ModelMutationError, ModelPatch, ModelPatchService};
 pub use runs::{CreateRunRequest, RunError, RunService, RunSubmission};
 pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
 pub use scripts::{
     CreateScriptRequest, ScriptDetail, ScriptError, ScriptService, ScriptSource, ScriptSummary,
 };
-pub use simulations::{RunStudyRequest, SimulationError, SimulationOutcome, SimulationService};
 pub use versions::{
     ActivateVersionRequest, PublishDraftRequest, PublishedVersion, VersionDeletionPreview,
     VersionError, VersionService,
 };
-pub use workspace::{
-    DataframeBindingDraft, SourceKind, VersionDraft, VersionInputDraft, VersionOrigin,
-    WorkspaceError, WorkspaceService, canonical_json,
-};
+pub fn canonical_json(value: &serde_json::Value) -> String {
+    serde_json::to_string(value).expect("JSON value is serializable")
+}
 
 /// 全局共享状态（axum `State`）。
 #[derive(Clone)]
@@ -86,19 +79,14 @@ pub struct AppState {
     pub pool: DbPool,
     pub session_repo: SessionRepo,
     pub message_repo: MessageRepo,
-    pub task_repo: TaskRepo,
     pub artifact_service: ArtifactService,
-    pub workspace_service: WorkspaceService,
     pub version_service: VersionService,
-    pub ingestion_service: IngestionService,
     pub model_import_service: ModelImportService,
     pub script_service: ScriptService,
     pub run_service: RunService,
-    pub example_import_service: ExampleImportService,
     pub case_import_service: CaseImportService,
     pub model_patch_service: ModelPatchService,
     pub dataset_service: DatasetService,
-    pub simulation_service: SimulationService,
     pub analysis_service: AnalysisService,
     pub comparison_service: ComparisonService,
     pub history_service: HistoryService,
@@ -158,11 +146,11 @@ impl AppState {
             .parent()
             .unwrap_or(&data_dir)
             .join("engine-fixture");
-        let relative = "sparrowzz/dss/examples/e2e-demo.rss";
+        let relative = "sparrowzz/dss/examples/e2e-demo.dss";
         let source = engine_root.join(relative);
         std::fs::create_dir_all(source.parent().expect("example parent"))
             .expect("create e2e example directory");
-        let source_bytes = b"result = 1\n";
+        let source_bytes = b"new circuit.e2e basekv=10\n";
         std::fs::write(&source, source_bytes).expect("write e2e example");
         // macOS 的临时目录常以 /var 暴露、canonicalize 后变为 /private/var；
         // 快照根必须规范化，否则案例导入的越界检查会误判合法 fixture。
@@ -214,8 +202,8 @@ impl AppState {
             examples: vec![EngineExample {
                 id: "e2e-demo".into(),
                 title: "E2E demo".into(),
-                source_kind: "rss".into(),
-                entry_path: "examples/e2e-demo.rss".into(),
+                source_kind: "dss".into(),
+                entry_path: "examples/e2e-demo.dss".into(),
                 study_type: "power_flow".into(),
                 solver: None,
                 required_features: vec![],
@@ -388,7 +376,7 @@ impl AppState {
         auth: AuthService,
         scheduler: RunScheduler,
         storage_limits: StorageLimits,
-        catalog: Arc<SchemaCatalog>,
+        _catalog: Arc<SchemaCatalog>,
         engine_snapshot: Arc<EngineResourceSnapshot>,
         upload_single_file_limit_bytes: u64,
         upload_batch_limit_bytes: u64,
@@ -396,29 +384,14 @@ impl AppState {
     ) -> Self {
         let session_repo = SessionRepo::new(pool.clone());
         let message_repo = MessageRepo::new(pool.clone());
-        let task_repo = TaskRepo::new(pool.clone());
         let events = EventBus::new();
         let artifact_service = ArtifactService::new(
             ArtifactStore::new(data_dir.clone()).expect("DATA_DIR 已在配置阶段验证为可写"),
             ArtifactRepo::new(pool.clone()),
             StorageScopeRepo::new(pool.clone(), storage_limits),
         );
-        let workspace_service = WorkspaceService::new(
-            WorkspaceRepo::new(pool.clone()),
-            message_repo.clone(),
-            events.clone(),
-        );
         let version_service =
             VersionService::new(VersionRepo::new(pool.clone()), artifact_service.clone());
-        let ingestion_service = IngestionService::new(
-            IngestionRepo::new(pool.clone()),
-            artifact_service.clone(),
-            workspace_service.clone(),
-            catalog,
-            message_repo.clone(),
-            events.clone(),
-            archive_limits,
-        );
         let model_import_service = ModelImportService::new(
             ModelImportRepo::new(pool.clone()),
             artifact_service.clone(),
@@ -449,14 +422,8 @@ impl AppState {
             model_import_service.clone(),
             upload_single_file_limit_bytes,
         );
-        let example_import_service = ExampleImportService::new(
-            engine_snapshot.clone(),
-            artifact_service.clone(),
-            workspace_service.clone(),
-            upload_single_file_limit_bytes,
-        );
         let model_patch_service =
-            ModelPatchService::new(workspace_service.clone(), artifact_service.clone());
+            ModelPatchService::new(VersionRepo::new(pool.clone()), artifact_service.clone());
         let dataset_service = DatasetService::new(
             ResultRepo::new(pool.clone()),
             artifact_service.clone(),
@@ -464,21 +431,10 @@ impl AppState {
             events.clone(),
         );
         let agent_knowledge = Arc::new(
-            AgentKnowledge::load_embedded("v2.0.1").expect("内置 agent knowledge 已在构建时校验"),
-        );
-        let simulation_service = SimulationService::new(
-            SimulationRepo::new(pool.clone()),
-            workspace_service.clone(),
-            artifact_service.clone(),
-            message_repo.clone(),
-            events.clone(),
-            engine.clone(),
-            agent_knowledge.clone(),
-            data_dir.clone(),
+            AgentKnowledge::load_embedded("v3.0.0").expect("内置 agent knowledge 已在构建时校验"),
         );
         let analysis_service = AnalysisService::new(
             AnalysisRepo::new(pool.clone()),
-            DatasetRepo::new(pool.clone()),
             ResultRepo::new(pool.clone()),
             artifact_service.clone(),
             message_repo.clone(),
@@ -489,33 +445,25 @@ impl AppState {
         );
         let comparison_service = ComparisonService::new(
             ComparisonRepo::new(pool.clone()),
-            SimulationRepo::new(pool.clone()),
-            DatasetRepo::new(pool.clone()),
+            RunRepo::new(pool.clone()),
+            ResultRepo::new(pool.clone()),
             analysis_service.clone(),
             message_repo.clone(),
             events.clone(),
         );
-        let history_service = HistoryService::new(
-            HistoryRepo::new(pool.clone()),
-            SimulationRepo::new(pool.clone()),
-        );
+        let history_service = HistoryService::new(HistoryRepo::new(pool.clone()));
         Self {
             pool,
             session_repo,
             message_repo,
-            task_repo,
             artifact_service,
-            workspace_service,
             version_service,
-            ingestion_service,
             model_import_service,
             script_service,
             run_service,
-            example_import_service,
             case_import_service,
             model_patch_service,
             dataset_service,
-            simulation_service,
             analysis_service,
             comparison_service,
             history_service,

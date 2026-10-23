@@ -36,11 +36,11 @@ fn skill(id: &str, path: &str, tool: &str, content: &str) -> Value {
 
 #[test]
 fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
-    let knowledge = AgentKnowledge::load_embedded("v2.0.1").expect("embedded knowledge");
-    assert_eq!(knowledge.manifest.agent_bundle_version, "v2.0.1");
+    let knowledge = AgentKnowledge::load_embedded("v3.0.0").expect("embedded knowledge");
+    assert_eq!(knowledge.manifest.agent_bundle_version, "v3.0.0");
     assert_eq!(
         knowledge.manifest.engine_contract_version,
-        "dss-v2-b3fc74c0"
+        "tensoreval-parquet-v3"
     );
     assert_eq!(
         knowledge.manifest.eig_rs_commit,

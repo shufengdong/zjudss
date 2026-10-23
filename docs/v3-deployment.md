@@ -1,67 +1,29 @@
-# V3 部署与发布验收
+# V3 部署与发布
 
-## 1. 数据重置与固定用户
+## Empty database cutover
 
-V3 不兼容前两个未上线版本的数据库或 DATA_DIR。首次启动前停止旧进程，备份后删除旧 SQLite 文件和
-旧 DATA_DIR，再从空目录启动；仓库只有一份 `00000000000000_initial` migration，不执行回填或双读。
+V3 不读取前两个未上线版本。部署前停止旧进程，备份后删除旧 SQLite 与 DATA_DIR，从空目录执行唯一 initial
+migration。`backend/resources/init_users.csv` 必须为 `ID,NAME`；初始密码等于 ID。种子 SHA-256 变化会让已有库
+启动失败，此时必须再次同时重置数据库和 DATA_DIR。
 
-后端将 `backend/resources/init_users.csv` 作为编译输入。空库启动时完整校验 `ID,NAME` 表头与每行
-内容，再在一个事务中创建固定用户和各自 storage scope。初始密码与 ID 相同，数据库只保存带独立随机
-salt 的 Argon2id 散列。这个密码约定便于未上线阶段试用，但任何知道 ID 的人都能登录，**不适合作为
-安全身份方案**；当前第三版已明确接受这项风险，正式安全化前不得据此宣称账号安全。
+## Required configuration
 
-数据库在 `system_metadata.init_users_sha256` 保存种子字节 SHA-256。相同字节可幂等重启；CSV 改动而
-数据库已有用户时，启动以 `user_seed_mismatch_reset_required` 失败。此时必须停止服务并同时重置数据库
-和 DATA_DIR，不能在旧业务数据上替换用户集合。候选发布证据记录该 SHA-256 和用户数量，但绝不列出 ID。
+生产必须配置 `DATABASE_URL`、持久化 `DATA_DIR`、`TENSOREVAL_BIN`、`TENSOREVAL_CWD` 和 DeepSeek secret。
+binary 必须支持命名 Parquet input、`--result-dir`、`--output-format parquet`、两种模型 import profile 与脚本
+校验；资源目录必须匹配内置 docs/catalog/examples contract。生产没有 stub 回退。
 
-## 2. 必需依赖
-
-- SQLite 必须包含 FTS5 trigram。
-- `TENSOREVAL_CWD` 指向只读引擎资源根。候选发布必须使用与内置 manifest 内容 hash 完全匹配的 artifact。
-- `TENSOREVAL_BIN` 对应同一 engine contract，支持 Parquet input、`--result-dir` 和
-  `--output-format parquet`。
-- DATA_DIR、SQLite 文件及其父目录位于持久卷。
-- LLM provider 密钥通过 secret 注入，不写入镜像或仓库。
-
-启动 preflight 会校验 capability、docs/catalog/examples snapshot、agent bundle hash 和兼容关系；任一
-失败时不接流量。
-
-## 3. 登录与公网配置
-
-`POST /api/auth/login` 使用固定用户 ID 和密码，成功后设置服务端可撤销的不透明
-`zjudss_session` Cookie。默认有效期 30 天，可用 `SESSION_TTL_DAYS` 调整；一个用户可在多个浏览器
-分别登录，退出只撤销当前浏览器的会话。
-
-公网必须由 HTTPS 反向代理提供 TLS，并设置：
+公网由 HTTPS 反向代理提供 TLS，转发 `/api` 和 SSE，并设置：
 
 ```dotenv
 SESSION_COOKIE_SECURE=true
 ```
 
-否则浏览器可能经明文连接发送登录 Cookie。Cookie 已固定为 HttpOnly、SameSite=Lax、Path=/；代理不得
-记录 Cookie 或登录请求体。V3 不再接受 trusted-proxy 身份头，也没有 instance 模式。
+Cookie 固定 HttpOnly、SameSite=Lax、Path=/。当前相同 ID/密码约定仅用于已批准的第三版试用，不应宣称安全。
 
-## 4. 默认容量
-
-| 项目 | 默认值 |
-|---|---:|
-| 实例活动 agent run | 8 |
-| 每用户活动 run | 2 |
-| 等待队列 | 32 |
-| 同 session 活动 run | 1 |
-| tensoreval 子进程 | 4 |
-| 单文件/单批上传 | 50 MiB / 500 MiB |
-| artifact 数/逻辑容量 | 20,000 / 20 GiB（每用户） |
-| 告警 | 80% |
-| 表格页 | 默认 100，最大 500 |
-| 图表点/series/category/heatmap cell | 50,000 / 100 / 5,000 / 100,000 |
-
-## 5. 启动与维护
+## Build and start
 
 ```bash
 cd backend
-cp .env.example .env
-# 填写真实路径和 secret；公网额外设置 SESSION_COOKIE_SECURE=true
 cargo run --release
 ```
 
@@ -69,18 +31,20 @@ cargo run --release
 cd frontend
 npm ci
 npm run build
+# 由静态服务托管 dist，并把 /api 代理到后端
 ```
 
-反向代理把 `/api` 和 SSE 转发到后端；SSE 禁用响应缓冲并设置足够长的读取超时。聊天索引可离线执行
-`cargo run --release -- rebuild-search-index` 重建；该命令不启动 LLM 或 tensoreval。
+默认限制：Agent 实例/用户/session 为 8/2/1，等待 32，引擎进程 4；单文件/批次 50/500 MiB；每用户
+20,000 artifacts / 20 GiB，80% 告警；数据页最大 500。
 
-## 6. 发布门禁
+## Deterministic gate
 
 ```bash
 cd backend
 cargo fmt --all -- --check
 cargo test --features e2e-test
 cd ../frontend
+npm ci
 npm test -- --run
 npm run build
 npm run test:e2e
@@ -89,22 +53,24 @@ cd ..
 git diff --check
 ```
 
-除完整自动门禁外，候选发布还检查 `GET /health`、登录、`GET /api/me`、退出、SSE 撤销、跨用户 404、
-上传、一次真实 Parquet 仿真以及结果分页/下载。发布报告必须保存测试 ID、种子 SHA-256、agent bundle、
-engine contract 和 binary SHA-256，不保存固定用户 ID、密码、Cookie 或完整请求体。
+## Candidate real-dependency gate
 
-候选发布使用受保护的 `candidate-release` 环境，必须提供 `DEEPSEEK_API_KEY`，并下载经
-`TENSOREVAL_SHA256` 精确校验的 `tensoreval-release` artifact。artifact 顶层布局为：
+受保护环境提供 `DEEPSEEK_API_KEY`、`TENSOREVAL_SHA256` 和固定 engine artifact。artifact 顶层为
+`tensoreval` 与 `cwd/`。workflow 校验 SHA-256 后设置 `TENSOREVAL_BIN/TENSOREVAL_CWD` 并运行：
 
-```text
-tensoreval
-cwd/
-└── sparrowzz/dss/
+```bash
+./scripts/test-release-integration
+./scripts/check-functional-coverage --require-release
 ```
 
-`cwd/` 必须包含固定案例显式引用的全部跨目录依赖。后端启动 preflight 会再次校验 catalog、文档、
-案例及依赖；缺少 binary、资源目录、secret、合同 hash 或任一语义断言时发布失败，不能静默跳过。
+真实旅程从固定用户登录开始，导入直接 DataFrame、确认草稿、显式生成版本、让 Agent 创建脚本、确认没有自动
+运行、点击运行两次、执行结果分析和运行比较，再删除一个来源结果并验证运行及物化派生仍可读取。引擎门禁
+另外真实执行两种 import profile、命名 input、多个 Snappy Parquet 输出和失败诊断。报告保存测试 ID、Agent
+bundle hash、用户 seed hash/数量、engine contract/checks 和 binary hash，不保存用户 ID、密码、Cookie、secret
+或物理路径。
 
-若报告 `engine_resource_hash_mismatch`、`example_source_changed` 或 `engine_contract_mismatch`，应恢复
-与当前 bundle 匹配的完整资源 artifact；计划内升级必须同步更新 manifest、bundle 和测试。不得放宽
-校验、替换单个文件或回退到其他 catalog。
+## Failure handling
+
+`engine_resource_hash_mismatch`、`engine_contract_mismatch` 或 snapshot mismatch 必须通过恢复匹配 artifact，或正式
+更新 contract/bundle/tests 解决。禁止放宽 hash、从相邻工作树取发布事实或退回 CSV/stub。运行中断会在重启后
+收敛失败；已发布模型、脚本、结果和分析不回滚。

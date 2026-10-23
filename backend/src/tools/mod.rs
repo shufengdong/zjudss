@@ -5,9 +5,7 @@
 //! `adapters::SimEngine` 调用内核，AGENTS.md 硬约束（内核地址/鉴权/错误码收敛在适配器内）
 //! 由此落实。
 
-pub mod activate_model_version;
 pub mod compare_simulations;
-pub mod confirm_dataframe_mapping;
 pub mod create_dataset_view;
 pub mod create_script;
 pub mod get_storage_usage;
@@ -19,8 +17,6 @@ pub mod load_agent_skill;
 pub mod modify_model;
 pub mod read_chat_context;
 pub mod read_engine_doc_section;
-pub mod remove_model_input;
-pub mod replace_model_input;
 pub mod run_result_analysis;
 pub mod search_chat_history;
 pub mod search_engine_docs;
@@ -37,10 +33,9 @@ use crate::adapters::SimEngine;
 use crate::agent::knowledge::AgentKnowledge;
 use crate::application::{
     AnalysisService, ArtifactService, ComparisonService, DatasetService, EventWriter,
-    HistoryService, ModelPatchService, ScriptService, SimulationService, WorkspaceService,
+    HistoryService, ModelPatchService, RunService, ScriptService, VersionService,
 };
 use crate::auth::{CurrentUser, UserId};
-use crate::db::repositories::TaskRepo;
 use crate::engine_resources::EngineResourceSnapshot;
 
 /// 工具共享服务：引擎适配器 + 绑定到当前 session 的写入器 / 任务仓储 / 限流信号量。
@@ -50,17 +45,16 @@ pub struct ToolServices {
     pub writer: EventWriter,
     pub session_id: i32,
     pub request_message_id: i32,
-    pub task_repo: TaskRepo,
     pub semaphore: Arc<Semaphore>,
     pub scope: UserId,
     pub principal: CurrentUser,
-    pub workspaces: WorkspaceService,
     pub model_patch: ModelPatchService,
     pub scripts: ScriptService,
+    pub versions: VersionService,
+    pub runs: RunService,
     pub engine_snapshot: Arc<EngineResourceSnapshot>,
     pub agent_knowledge: Arc<AgentKnowledge>,
     pub loaded_skills: Arc<Mutex<BTreeSet<String>>>,
-    pub simulations: SimulationService,
     pub datasets: DatasetService,
     pub analysis: AnalysisService,
     pub comparisons: ComparisonService,
@@ -103,12 +97,7 @@ define_tool_registry!(
     inspect_workspace::InspectWorkspaceTool,
     search_examples::SearchExamplesTool,
     inspect_example::InspectExampleTool,
-    remove_model_input::RemoveModelInputTool,
-    replace_model_input::ReplaceModelInputTool,
-    confirm_dataframe_mapping::ConfirmDataframeMappingTool,
     modify_model::ModifyModelTool,
-    activate_model_version::ActivateModelVersionTool,
-    activate_model_version::RollbackModelVersionTool,
     create_script::CreateScriptTool,
     list_result_datasets::ListResultDatasetsTool,
     run_result_analysis::RunResultAnalysisTool,

@@ -6,7 +6,6 @@ mod comparisons;
 mod datasets;
 mod events;
 mod examples;
-mod ingestions;
 mod model_imports;
 mod runs;
 mod scripts;
@@ -30,12 +29,10 @@ use crate::application::CaseImportError;
 use crate::application::ComparisonError;
 use crate::application::DatasetError;
 use crate::application::HistoryError;
-use crate::application::IngestionError;
 use crate::application::ModelImportError;
 use crate::application::RunError;
 use crate::application::ScriptError;
 use crate::application::VersionError;
-use crate::application::WorkspaceError;
 use crate::db::repositories::RepoError;
 
 /// 统一 API 错误：把仓储/适配器错误映射为 HTTP 响应。
@@ -152,41 +149,6 @@ impl From<ArtifactError> for ApiError {
                 details: None,
             },
             other => Self::internal(other.to_string()),
-        }
-    }
-}
-
-impl From<IngestionError> for ApiError {
-    fn from(error: IngestionError) -> Self {
-        match error {
-            IngestionError::NotFound => Self::not_found("资源不存在"),
-            IngestionError::IdempotencyConflict => Self {
-                status: StatusCode::CONFLICT,
-                message: "clientBatchId 已用于不同内容".to_string(),
-                code: "idempotency_conflict",
-                details: None,
-            },
-            IngestionError::InvalidUpload(message) => Self {
-                status: StatusCode::UNPROCESSABLE_ENTITY,
-                message,
-                code: "invalid_upload",
-                details: None,
-            },
-            IngestionError::UploadTooLarge(message) => Self {
-                status: StatusCode::PAYLOAD_TOO_LARGE,
-                message,
-                code: "upload_too_large",
-                details: None,
-            },
-            IngestionError::Format(error) => Self {
-                status: StatusCode::UNPROCESSABLE_ENTITY,
-                message: error.to_string(),
-                code: "invalid_model_archive",
-                details: Some(serde_json::json!({ "reason": error.code() })),
-            },
-            IngestionError::Artifact(error) => error.into(),
-            IngestionError::Workspace(error) => error.into(),
-            IngestionError::Repository(error) => error.into(),
         }
     }
 }
@@ -308,27 +270,6 @@ impl From<CaseImportError> for ApiError {
             },
             CaseImportError::ModelImport(error) => error.into(),
             CaseImportError::Io(error) => Self::internal(error.to_string()),
-        }
-    }
-}
-
-impl From<WorkspaceError> for ApiError {
-    fn from(error: WorkspaceError) -> Self {
-        match error {
-            WorkspaceError::NotFound => Self::not_found("资源不存在"),
-            WorkspaceError::VersionConflict => Self {
-                status: StatusCode::CONFLICT,
-                message: "模型版本基线已变化，请重新读取工作区".to_string(),
-                code: "version_conflict",
-                details: None,
-            },
-            WorkspaceError::InvalidManifest | WorkspaceError::InvalidState(_) => Self {
-                status: StatusCode::UNPROCESSABLE_ENTITY,
-                message: error.to_string(),
-                code: "invalid_model_version",
-                details: None,
-            },
-            WorkspaceError::Repository(other) => Self::internal(other.to_string()),
         }
     }
 }
@@ -519,11 +460,6 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
         ["GET", "POST"]
     );
     add_route!(
-        "/api/sessions/{id}/attachments",
-        post(sessions::upload_attachment).layer(DefaultBodyLimit::disable()),
-        ["POST"]
-    );
-    add_route!(
         "/api/sessions/{id}/model-imports",
         post(model_imports::create).layer(DefaultBodyLimit::disable()),
         ["POST"]
@@ -547,7 +483,6 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
         ["GET", "POST"]
     );
     add_route!("/api/scripts/{id}", get(scripts::detail), ["GET"]);
-    add_route!("/api/ingestions/{id}", get(ingestions::get), ["GET"]);
     add_route!(
         "/api/sessions/{id}/workspace",
         get(workspaces::workspace),

@@ -1,2887 +1,503 @@
 - id: BOOT-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 安全启动配置和空库 migration
-  layers:
-    - backend
-  lanes:
-    - pr
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: V3 starts from one empty-database schema and exposes health
+  layers: [database, api]
+  lanes: [pr]
   tests:
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: session CRUD renders optimistic user, tool-call, and assistant messages
     - runner: rust
-      file: backend/tests/app_bootstrap.rs
-      name: config_defaults_are_safe
-  assertions:
-    - 生产默认限制与设计一致
-  fixtures: []
-- id: AUTH-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 固定用户登录与受保护路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
+      file: backend/tests/v3_schema.rs
+      name: v3_replaces_v2_lifecycle_tables
     - runner: rust
       file: backend/tests/auth_scope.rs
       name: invalid_credentials_and_missing_auth_have_stable_distinct_errors
-  assertions:
-    - 未知 ID 与错误密码统一为 invalid_credentials，缺少登录为 authentication_required
-  fixtures:
-    - integration-tests/fixtures/init_users.csv
-- id: AUTH-SEED-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 内置 CSV 原子初始化固定用户
-  layers:
-    - backend
-  lanes:
-    - pr
+    - runner: rust
+      file: backend/tests/model_imports.rs
+      name: upload_is_accepted_idempotent_and_persists_resolution_state
+    - runner: rust
+      file: backend/tests/simulation_runs.rs
+      name: only_explicit_click_route_creates_idempotent_frozen_runs_and_results
+    - runner: rust
+      file: backend/tests/version_deletion.rs
+      name: deletion_requires_preview_rejects_active_and_detects_changed_impact
+    - runner: rust
+      file: backend/tests/result_deletion.rs
+      name: busy_results_are_protected_and_materialized_descendants_keep_tombstone_lineage
+    - runner: rust
+      file: backend/tests/result_deletion.rs
+      name: analysis_views_and_run_comparisons_use_snapshots_and_materialized_outputs
+  assertions: [health is reachable, V3 constraints and stable failures are exercised]
+  fixtures: [empty temporary database]
+  contracts:
+    - "route:GET /health"
+    - "error:invalid_credentials"
+    - "error:authentication_required"
+    - "error:internal_error"
+    - "error:not_found"
+    - "error:agent_queue_full"
+    - "error:storage_quota_exceeded"
+    - "error:upload_too_large"
+    - "error:idempotency_conflict"
+    - "error:draft_revision_conflict"
+    - "error:model_import_unsupported"
+    - "error:model_import_resolution_required"
+    - "error:invalid_script"
+    - "error:script_validation_failed"
+    - "error:active_model_changed"
+    - "error:script_static_invalid"
+    - "error:script_model_incompatible"
+    - "error:run_queue_full"
+    - "error:invalid_run"
+    - "error:engine_resource_snapshot_mismatch"
+    - "error:case_not_modelizable"
+    - "error:invalid_model_version"
+    - "error:draft_discard_confirmation_required"
+    - "error:active_version_cannot_be_deleted"
+    - "error:version_has_active_consumers"
+    - "error:deletion_impact_changed"
+    - "error:invalid_deletion_impact_token"
+    - "error:invalid_dataset_page"
+    - "error:result_busy"
+    - "error:history_error"
+    - "error:history_page_invalid"
+    - "error:history_query_invalid"
+    - "error:history_search_unavailable"
+    - "error:analysis_alias_invalid"
+    - "error:analysis_create_failed"
+    - "error:analysis_engine_failed"
+    - "error:analysis_event_failed"
+    - "error:analysis_input_not_found"
+    - "error:analysis_inputs_invalid"
+    - "error:analysis_not_found"
+    - "error:analysis_output_commit_failed"
+    - "error:analysis_output_invalid"
+    - "error:analysis_output_mismatch"
+    - "error:analysis_outputs_required"
+    - "error:analysis_publish_failed"
+    - "error:analysis_script_commit_failed"
+    - "error:analysis_script_missing"
+    - "error:analysis_script_unsafe"
+    - "error:analysis_staging_failed"
+    - "error:analysis_update_failed"
+    - "error:dataset_not_found"
+    - "error:dataset_schema_invalid"
+    - "error:dataset_view_read_failed"
+    - "error:storage_unavailable"
+    - "error:view_create_failed"
+    - "error:view_materialization_failed"
+    - "error:visualization_column_missing"
+    - "error:visualization_dtype_invalid"
+    - "error:visualization_kind_invalid"
+    - "error:visualization_spec_invalid"
+    - "error:visualization_too_large"
+    - "error:visualization_unsafe"
+    - "error:comparison_event_failed"
+    - "error:invalid_model_patch"
+    - "error:comparison_incompatible"
+    - "error:comparison_publish_failed"
+    - "error:artifact_error"
+    - "error:old_value_mismatch"
+    - "error:row_not_unique"
+    - "error:table_not_found"
+    - "error:unit_incompatible"
+    - "error:workspace_error"
+
+- id: AUTH-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Fixed users authenticate by cookie and log out explicitly
+  layers: [api, browser]
+  lanes: [pr]
   tests:
-    - runner: rust
-      file: backend/tests/user_seed.rs
-      name: embedded_csv_seeds_all_users_with_argon2id_hashes_and_scopes
-    - runner: rust
-      file: backend/tests/user_seed.rs
-      name: identical_seed_is_idempotent_and_changed_seed_requires_reset
-  assertions:
-    - 密码以独立 salt 的 Argon2id 保存，相同 seed 幂等，字节变化要求重置且失败不产生部分用户
-  fixtures:
-    - integration-tests/fixtures/init_users.csv
-- id: AUTH-SESSION-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 不透明持久登录、续期和到期
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/auth_scope.rs
-      name: login_sets_persistent_opaque_cookie_and_me_returns_user
-    - runner: rust
-      file: backend/tests/auth_scope.rs
-      name: expiring_session_renews_and_expired_session_is_deleted
     - runner: playwright
       file: integration-tests/e2e/auth-isolation.spec.ts
       name: login persists across refresh and logout removes stale user state
-  assertions:
-    - 浏览器只获得 HttpOnly Cookie，数据库只保存 token hash，刷新保持登录且后半有效期才续期
-  fixtures:
-    - integration-tests/fixtures/init_users.csv
-- id: AUTH-LOGOUT-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 登出只撤销当前浏览器
-  layers:
-    - api
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/auth_scope.rs
-      name: logout_is_idempotent_and_revokes_only_current_browser
-    - runner: playwright
-      file: integration-tests/e2e/auth-isolation.spec.ts
-      name: login persists across refresh and logout removes stale user state
-  assertions:
-    - 登出幂等、返回过期 Cookie，返回历史页不能恢复业务状态且其他浏览器会话保持有效
-  fixtures:
-    - integration-tests/fixtures/init_users.csv
-- id: AUTH-SSE-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 登录到期和登出立即终止对应 SSE
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/auth_sse.rs
-      name: heartbeat_is_read_only_after_connection_renewal
-    - runner: rust
-      file: backend/tests/auth_sse.rs
-      name: expiry_ends_an_open_stream
-    - runner: rust
-      file: backend/tests/auth_sse.rs
-      name: logout_ends_only_the_matching_browser_stream
-  assertions:
-    - SSE 心跳不续期，到期或当前 token 登出立即结束，其他浏览器 token 不受影响
-  fixtures: []
-- id: AUTH-ISOLATION-SESSION-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 会话、消息和历史跨用户统一隐藏
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/auth_scope.rs
-      name: repository_boundary_and_http_resources_are_scoped_by_user_id
-    - runner: playwright
-      file: integration-tests/e2e/auth-isolation.spec.ts
-      name: two users cannot enumerate or guess each other session, message, SSE, task, or dataset resources
-  assertions:
-    - 会话、消息、SSE 和历史搜索只读取当前用户，直接猜测 ID 与不存在资源同为 404
-  fixtures:
-    - integration-tests/fixtures/init_users.csv
-- id: AUTH-ISOLATION-MODEL-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 摄取、工作区和模型版本跨用户统一隐藏
-  layers:
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/auth_scope.rs
-      name: repository_boundary_and_http_resources_are_scoped_by_user_id
-  assertions:
-    - 摄取、工作区和版本查询经所属 business session 校验 user_id
-  fixtures:
-    - integration-tests/fixtures/init_users.csv
-- id: AUTH-ISOLATION-RUN-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 仿真任务、结果与下载跨用户统一隐藏
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/auth_scope.rs
-      name: repository_boundary_and_http_resources_are_scoped_by_user_id
-    - runner: playwright
-      file: integration-tests/e2e/auth-isolation.spec.ts
-      name: two users cannot enumerate or guess each other session, message, SSE, task, or dataset resources
-  assertions:
-    - task、dataset metadata、rows 和 download 全部经 session.user_id 校验
-  fixtures:
-    - integration-tests/fixtures/init_users.csv
-- id: AUTH-ISOLATION-ANALYSIS-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 分析、比较与存储用量跨用户统一隐藏
-  layers:
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/auth_scope.rs
-      name: repository_boundary_and_http_resources_are_scoped_by_user_id
-  assertions:
-    - analysis、comparison 与 storage usage 只通过当前用户和其可信 storage_scope_id 访问
-  fixtures:
-    - integration-tests/fixtures/init_users.csv
-- id: INPUT-DF-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: DataFrame 多格式摄取
-  layers:
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/dataframe_ingestion.rs
-      name: excel_nonempty_sheets_are_normalized_to_traceable_parquet_artifacts
-  assertions:
-    - Excel 非空 sheet 归一化为可追溯 Parquet
-  fixtures: []
-- id: WORKSPACE-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: active draft 激活和回退
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_versions.rs
-      name: ready_versions_follow_active_draft_activation_and_rollback_rules
-  assertions:
-    - 版本不可变且工作区指针按规则移动
-  fixtures: []
-- id: TASK-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 可复现仿真任务
-  layers:
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/v2_simulation.rs
-      name: ready_version_persists_reproducible_task_and_generic_parquet_dataset
-  assertions:
-    - 任务固化模型版本脚本技能和引擎合同
-  fixtures: []
-- id: DATASET-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 通用 Parquet 数据集分页
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/process_engine_v2.rs
-      name: parquet_metadata_page_and_projection_preserve_schema_order_and_rows
-  assertions:
-    - 分页和投影保持 schema 列序与合法重复行
-  fixtures: []
-- id: VIEW-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 六类可视化规格
-  layers:
-    - backend
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/result_analysis.rs
-      name: six_visualizations_validate_and_unsafe_or_oversized_specs_fail_closed
-    - runner: vitest
-      file: frontend/src/components/datasets/charts.test.ts
-      name: builds ${kind} without executable formatter
-  assertions:
-    - 六类视图由受控 spec 编译且危险或超限输入失败关闭
-  fixtures: []
-- id: COMPARE-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 兼容任务产生差值 DataFrame
-  layers:
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/task_comparison.rs
-      name: compatible_tasks_create_traceable_analysis_and_difference_dataset
-  assertions:
-    - 兼容比较保留分析血缘并生成差值数据集
-  fixtures: []
-- id: HISTORY-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 历史消息窗口和搜索降级
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: history_tools_search_list_and_read_only_the_bound_scope
-  assertions:
-    - FTS 故障不影响普通历史读取
-  fixtures: []
-- id: AGENT-TOOL-001
-  source: docs/integration-testing-design.md#52-全部-agent-工具和-skill
-  title: Agent manifest 与运行时工具双向一致
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
-  assertions:
-    - manifest 和运行时注册表包含同一组 22 个工具
-  fixtures: []
-- id: STORAGE-TOOL-001
-  source: docs/integration-testing-design.md#52-全部-agent-工具和-skill
-  title: Agent 只能读取当前存储 scope 用量
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: get_storage_usage_returns_current_scope_only
-  assertions:
-    - 存储用量工具不合并其他 owner 的 artifact 和字节
-  fixtures: []
-- id: CONTRACT-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 生产路由与后端公共枚举可执行合同
-  layers:
-    - api
-    - agent
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: contract_manifest_contains_all_public_enums
-  assertions:
-    - 27 个生产路由无重复且所有后端公共枚举可机器读取
-  fixtures: []
-- id: CONTRACT-002
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 前端消息与图表类型公共合同
-  layers:
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: vitest
-      file: frontend/src/types/contracts.test.ts
-      name: exports all message types from the union source
-    - runner: vitest
-      file: frontend/src/types/contracts.test.ts
-      name: exports all visualization kinds from the union source
-  assertions:
-    - 前端 union 类型由运行时常量直接推导
-  fixtures: []
-- id: AGENT-FACTORY-001
-  source: docs/integration-testing-design.md#52-全部-agent-工具和-skill
-  title: 每条用户消息构建独立 Agent
-  layers:
-    - agent
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/agent_factory.rs
-      name: chat_builds_one_agent_per_user_message
-  assertions:
-    - 每条用户消息分别获得完整工具集和当前引擎及技能提示词
-  fixtures: []
-- id: AGENT-FACTORY-002
-  source: docs/integration-testing-design.md#52-全部-agent-工具和-skill
-  title: 未知 LLM provider 失败关闭
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/agent_factory.rs
-      name: deepseek_factory_rejects_unknown_provider
-  assertions:
-    - 未知 provider 返回稳定错误且不发起外部请求
-  fixtures: []
-- id: SCRIPTED-LLM-001
-  source: docs/integration-testing-design.md#32-scripted-llm
-  title: Scripted LLM 经 Rig 全路径执行工具和故障
-  layers:
-    - agent
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/scripted_agent.rs
-      name: scripted_tool_call_runs_registered_tool_and_persists_events
-    - runner: rust
-      file: backend/tests/scripted_agent.rs
-      name: unknown_tool_and_malformed_args_end_with_readable_error
-    - runner: rust
-      file: backend/tests/scripted_agent.rs
-      name: missing_skill_is_a_failed_tool_result
-    - runner: rust
-      file: backend/tests/scripted_agent.rs
-      name: provider_error_releases_scheduler_permit
-    - runner: rust
-      file: backend/tests/scripted_agent.rs
-      name: barrier_holds_and_releases_agent_run_without_sleep
-  assertions:
-    - 脚本响应经过真实 Rig 工具分派和消息持久化且错误释放调度许可
-  fixtures: []
-- id: SCENARIO-ENGINE-001
-  source: docs/integration-testing-design.md#33-scenarioengine
-  title: ScenarioEngine 生成真实 Parquet 并注入全部输出故障
-  layers:
-    - adapter
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/scenario_engine.rs
-      name: success_scenarios_write_snappy_parquet_matching_fixture_manifests
-    - runner: rust
-      file: backend/tests/scenario_engine.rs
-      name: failure_scenarios_are_rejected_by_the_adapter_contract
-    - runner: rust
-      file: backend/tests/scenario_engine.rs
-      name: timeout_barrier_releases_without_sleep
-    - runner: rust
-      file: backend/tests/scenario_engine.rs
-      name: simulation_and_analysis_fail_without_partial_publication_and_clean_staging
-  assertions:
-    - 真实 Snappy Parquet 与固定 hash 一致且所有故障无半发布并清理 staging
-  fixtures:
-    - integration-tests/fixtures/results/single/manifest.json
-    - integration-tests/fixtures/results/multi/manifest.json
-- id: E2E-SERVER-001
-  source: docs/integration-testing-design.md#31-e2e-server
-  title: 隔离的端到端服务与安全控制面
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/e2e_server.rs
-      name: e2e_server_uses_temp_db_and_data_dir
-    - runner: rust
-      file: backend/tests/e2e_server.rs
-      name: control_routes_require_token
-    - runner: rust
-      file: backend/tests/e2e_server.rs
-      name: control_routes_enqueue_scenarios_and_release_known_barriers
-    - runner: rust
-      file: backend/tests/e2e_server.rs
-      name: control_routes_are_absent_from_production_router
-    - runner: rust
-      file: backend/tests/e2e_server.rs
-      name: server_rejects_non_loopback_bind
-  assertions:
-    - e2e 服务只监听 loopback 并以 token 保护控制面且生产路由不暴露测试端点
-  fixtures: []
-- id: SESSION-E2E-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 浏览器会话历史与持久恢复旅程
-  layers:
-    - frontend
-    - api
-    - backend
-    - agent
-  lanes:
-    - pr
+  assertions: [login persists, logout clears browser state, current user is returned]
+  fixtures: [fixed user seed]
+  contracts:
+    - "route:POST /api/auth/login"
+    - "route:POST /api/auth/logout"
+    - "route:GET /api/me"
+
+- id: SESSION-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Sessions support list create rename and whole-session deletion
+  layers: [api, browser]
+  lanes: [pr]
   tests:
     - runner: playwright
       file: integration-tests/e2e/session-recovery.spec.ts
-      name: session CRUD renders optimistic user
-      tool-call: null
-      and assistant messages: null
-    - runner: playwright
-      file: integration-tests/e2e/session-recovery.spec.ts
-      name: older history
-      refresh: null
-      restart: null
-      and invalid localStorage recover committed state: null
-  assertions:
-    - 自然语言消息替换乐观记录且会话 CRUD、历史搜索、50 条分页、刷新和服务重启均恢复已提交状态
-  fixtures: []
-- id: SSE-E2E-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 浏览器断线后的 SSE 补发与重同步
-  layers:
-    - frontend
-    - api
-    - backend
-  lanes:
-    - pr
+      name: session CRUD renders optimistic user, tool-call, and assistant messages
+  assertions: [session CRUD is durable, only whole sessions are deleted]
+  fixtures: [fixed user seed]
+  contracts:
+    - "route:GET /api/sessions"
+    - "route:POST /api/sessions"
+    - "route:PATCH /api/sessions/{id}"
+    - "route:DELETE /api/sessions/{id}"
+
+- id: MESSAGE-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Immutable typed messages render and recover from snapshots
+  layers: [api, application, browser]
+  lanes: [pr]
   tests:
     - runner: playwright
       file: integration-tests/e2e/session-recovery.spec.ts
-      name: SSE cursor replays committed messages
-      requests resync: null
-      and does not duplicate DOM rows: null
-  assertions:
-    - 有效 Last-Event-ID 补发断线消息而旧游标要求 resync 且 DOM 中同一业务消息只出现一次
-  fixtures: []
-- id: AUTH-E2E-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: Cookie 登录与两用户全资源隔离
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
+      name: session CRUD renders optimistic user, tool-call, and assistant messages
+  assertions: [messages append only, every public message type has a renderer]
+  fixtures: [scripted agent]
+  contracts:
+    - "route:GET /api/sessions/{id}/messages"
+    - "route:POST /api/sessions/{id}/messages"
+    - "message:user"
+    - "message:assistant"
+    - "message:tool-call"
+    - "message:progress"
+    - "message:result"
+    - "message:attachment"
+    - "message:model-status"
+    - "message:comparison"
+    - "message:script"
+
+- id: SSE-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Session event streams replay and remain user scoped
+  layers: [api, browser]
+  lanes: [pr]
   tests:
     - runner: playwright
       file: integration-tests/e2e/auth-isolation.spec.ts
-      name: two users cannot enumerate or guess each other session, message, SSE, task, or dataset resources
-    - runner: playwright
-      file: integration-tests/e2e/auth-isolation.spec.ts
-      name: cookie login rejects missing and incorrect credentials
-    - runner: playwright
-      file: integration-tests/e2e/auth-isolation.spec.ts
-      name: database reset invalidates an existing browser cookie
-  assertions:
-    - 两个浏览器上下文的会话、消息、SSE、任务、数据集、下载和历史搜索互不可见，重置数据库使旧 Cookie 失效
-  fixtures:
-    - integration-tests/fixtures/init_users.csv
-- id: INPUT-DF-002
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 浏览器多格式 DataFrame 摄取与表头推断旅程
-  layers:
-    - frontend
-    - api
-    - backend
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/dataframe-workspace.spec.ts
-      name: headers drive CSV Excel and Parquet inference while ambiguous and invalid tables stay collecting
-    - runner: playwright
-      file: integration-tests/e2e/dataframe-workspace.spec.ts
-      name: supplemental batches create immutable children and natural language confirms and activates mappings
-  assertions:
-    - CSV、Excel 和 Parquet 按列名及 dtype 展示推断证据，分批补传、歧义确认和激活均形成可追溯版本
-  fixtures:
-    - integration-tests/fixtures/uploads/manifest.json
-    - integration-tests/fixtures/uploads/dataframes/multi.xlsx
-    - integration-tests/fixtures/uploads/dataframes/load.parquet
-- id: WORKSPACE-E2E-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: RSS 重传和不可变版本自然语言旅程
-  layers:
-    - frontend
-    - api
-    - backend
-    - agent
-    - adapter
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/rss-replacement.spec.ts
-      name: re-uploaded RSS creates immutable replacements and version pointers remain reversible
-  assertions:
-    - 重传先追加新输入，再由自然语言移除、替换、修改、激活和回退，既有任务继续绑定原模型版本
-  fixtures:
-    - integration-tests/fixtures/uploads/rss/broken.rss
-    - integration-tests/fixtures/uploads/rss/replacement.rss
-    - integration-tests/fixtures/uploads/rss/modified.rss
-- id: INPUT-BUNDLE-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 目录和 ZIP bundle 内容等价
-  layers:
-    - frontend
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/bundle-examples.spec.ts
-      name: directory and ZIP bundles publish equivalent immutable model content
-  assertions:
-    - 同一 rssbundle 的目录上传与 ZIP 上传生成相同规范内容哈希
-  fixtures:
-    - integration-tests/fixtures/uploads/bundle/demo.rssbundle/manifest.json
-    - integration-tests/fixtures/uploads/bundle/demo.zip
-- id: EXAMPLE-E2E-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 内置案例搜索详情和自然语言导入
-  layers:
-    - frontend
-    - api
-    - backend
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/bundle-examples.spec.ts
-      name: example search and natural-language import copy a snapshot-pinned editable model
-  assertions:
-    - 案例副本固定 engine snapshot 和来源 tree hash，并作为可编辑模型版本进入工作区
-  fixtures: []
-- id: ARCHIVE-E2E-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 恶意 ZIP 整批拒绝且不泄漏工作区状态
-  layers:
-    - frontend
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/malicious-bundle.spec.ts
-      name: path traversal absolute duplicate symlink and compression-bomb ZIPs fail atomically
-  assertions:
-    - 路径穿越、绝对路径、重复路径、符号链接和压缩炸弹均失败且不留下 draft 或 artifact 配额
-  fixtures:
-    - integration-tests/fixtures/uploads/malicious/traversal.zip
-    - integration-tests/fixtures/uploads/malicious/absolute.zip
-    - integration-tests/fixtures/uploads/malicious/duplicate.zip
-    - integration-tests/fixtures/uploads/malicious/symlink.zip
-    - integration-tests/fixtures/uploads/malicious/bomb.zip
-- id: TASK-E2E-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 五类仿真任务状态与可复现结果旅程
-  layers:
-    - frontend
-    - api
-    - backend
-    - agent
-    - adapter
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/simulation-results.spec.ts
-      name: natural language runs all study families and exposes reproducible multi-result Parquet data
+      name: two users cannot enumerate or guess each other session, message, SSE, run, or dataset resources
     - runner: rust
-      file: backend/tests/scenario_engine.rs
-      name: simulation_and_analysis_fail_without_partial_publication_and_clean_staging
-  assertions:
-    - 自然语言覆盖潮流、短路、QSTS、谐波和开放分析，任务固化版本、脚本、技能、内核合同并正确收敛成功或失败
-  fixtures:
-    - integration-tests/fixtures/results/multi/manifest.json
-- id: DATASET-E2E-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 通用结果表格分页投影下载与请求竞态
-  layers:
-    - frontend
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/simulation-results.spec.ts
-      name: natural language runs all study families and exposes reproducible multi-result Parquet data
-    - runner: vitest
-      file: frontend/src/hooks/useDataset.test.ts
-      name: ignores dataset A responses that arrive after switching to B
-    - runner: vitest
-      file: frontend/src/hooks/useDataset.test.ts
-      name: keeps loaded rows after loadMore failure and allows retry
-    - runner: vitest
-      file: frontend/src/hooks/useDataset.test.ts
-      name: reloads the projection and keeps it for later pages
-    - runner: vitest
-      file: frontend/src/components/datasets/DatasetTable.test.tsx
-      name: uses schema order and renders null explicitly
-    - runner: vitest
-      file: frontend/src/components/datasets/DatasetTable.test.tsx
-      name: keeps legitimate duplicate rows across cursor pages
-    - runner: vitest
-      file: frontend/src/components/datasets/DatasetTable.test.tsx
-      name: renders only projected columns in their requested order
-  assertions:
-    - 结果元数据保留 schema、单位和行数，游标分页保留重复行，null 明确显示，列选择投影和 Parquet 下载可用，迟到响应及重试不破坏当前数据
-  fixtures: []
-- id: ANALYSIS-E2E-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 自然语言结果分析与派生数据血缘
-  layers:
-    - frontend
-    - api
-    - backend
-    - agent
-    - adapter
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/analysis-views.spec.ts
-      name: result analysis creates traceable Parquet and all six controlled ECharts views survive reload
-    - runner: rust
-      file: backend/tests/result_analysis.rs
-      name: script_validation_rejects_remote_paths_and_missing_outputs_before_run
-  assertions:
-    - Agent 读取结果 schema、加载分析技能并产生绑定输入和脚本的派生 Parquet，非法脚本与字段只使当前分析失败
-  fixtures: []
-- id: VIEW-E2E-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 六类 ECharts 视图渲染验证和刷新恢复
-  layers:
-    - frontend
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/analysis-views.spec.ts
-      name: result analysis creates traceable Parquet and all six controlled ECharts views survive reload
-    - runner: rust
-      file: backend/tests/result_analysis.rs
-      name: six_visualizations_validate_and_unsafe_or_oversized_specs_fail_closed
-    - runner: vitest
-      file: frontend/src/components/datasets/charts.test.ts
-      name: retains histogram bin edges
-    - runner: vitest
-      file: frontend/src/hooks/useDatasetView.test.ts
-      name: ignores a stale view response after selecting another view
-  assertions:
-    - 折线、柱状、散点、热力、箱线和直方图均由受控规格渲染，保留单位及区间边界，非法字段和规模返回稳定错误且刷新可恢复
-  fixtures: []
-- id: COMPARE-E2E-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 仿真比较兼容规则与差值数据恢复
-  layers:
-    - frontend
-    - api
-    - backend
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/comparison.spec.ts
-      name: compatible tasks create a recoverable difference dataset while name and unit mismatches fail closed
-    - runner: rust
-      file: backend/tests/task_comparison.rs
-      name: compatible_tasks_create_traceable_analysis_and_difference_dataset
-    - runner: rust
-      file: backend/tests/task_comparison.rs
-      name: same_task_foreign_session_and_missing_stable_key_fail_without_comparison
-    - runner: rust
-      file: backend/tests/task_comparison.rs
-      name: qsts_requires_a_time_key_and_numeric_dtypes_and_units_must_match
-  assertions:
-    - 结果名、稳定键、dtype、单位及 QSTS 时间键全部通过兼容性检查，可比任务产生有血缘差值 DataFrame 并可按 comparison ID 刷新恢复
-  fixtures: []
-- id: SCHED-L2-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: Agent 与引擎并发和等待队列边界
-  layers:
-    - api
-    - backend
-    - agent
-    - adapter
-  lanes:
-    - pr
+      file: backend/tests/sse_recovery.rs
+      name: reconnect_replays_then_switches_to_live_without_duplicates
+  assertions: [SSE returns committed events, foreign resources are hidden]
+  fixtures: [two fixed users]
+  contracts:
+    - "route:GET /api/sessions/{id}/events"
+
+- id: SCHED-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Agent scheduling is bounded and releases permits
+  layers: [application]
+  lanes: [pr]
   tests:
     - runner: rust
       file: backend/tests/agent_scheduler.rs
       name: enforces_global_owner_and_session_limits
-    - runner: rust
-      file: backend/tests/agent_scheduler.rs
-      name: rejects_the_thirty_third_waiting_run
-    - runner: rust
-      file: backend/tests/agent_scheduler.rs
-      name: queue_rejection_has_stable_error_and_does_not_write_message
-    - runner: rust
-      file: backend/tests/quota_concurrency.rs
-      name: production_limits_include_four_engine_slots_and_twenty_gib_storage
-  assertions:
-    - 同会话串行、owner 2、实例 8、队列 32 和引擎 4 路边界确定，溢出返回 429 且不写用户消息
-  fixtures: []
-- id: STORAGE-L2-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 并发去重、告警和硬配额原子性
-  layers:
-    - frontend
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/quota_concurrency.rs
-      name: concurrent_same_hash_commits_charge_once_and_preserve_refs_at_quota
-    - runner: playwright
-      file: integration-tests/e2e/storage-quota.spec.ts
-      name: warning and hard quota are visible while rejected ingestion leaves usage and workspace intact
-  assertions:
-    - 同 scope 同 SHA 并发只计一个 artifact 且引用准确，80% 告警可见，硬限只拒绝新 artifact 并保持工作区指针
-  fixtures: []
-- id: FAILURE-L2-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 外部依赖和事件提交故障原子性
-  layers:
-    - api
-    - backend
-    - agent
-    - adapter
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/failure_atomicity.rs
-      name: injected_event_commit_failure_publishes_nothing_and_keeps_history_readable
-    - runner: rust
-      file: backend/tests/failure_atomicity.rs
-      name: provider_errors_release_the_permit_without_exposing_internal_details
-    - runner: rust
-      file: backend/tests/scenario_engine.rs
-      name: failure_scenarios_are_rejected_by_the_adapter_contract
-    - runner: rust
-      file: backend/tests/scenario_engine.rs
-      name: simulation_and_analysis_fail_without_partial_publication_and_clean_staging
-    - runner: rust
-      file: backend/tests/scripted_agent.rs
-      name: barrier_holds_and_releases_agent_run_without_sleep
-  assertions:
-    - LLM、内核、Parquet 和 SQLite 事件失败均释放许可、隐藏内部错误、清理 staging 且不发布半成品，既有历史仍可读
-  fixtures: []
-- id: RECOVERY-L2-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 服务重启恢复和 FTS 局部降级
-  layers:
-    - frontend
-    - api
-    - backend
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/resilience.spec.ts
-      name: committed sessions results and views survive restart while running work converges and FTS fails locally
-    - runner: rust
-      file: backend/tests/history_search.rs
-      name: task_filters_work_and_missing_fts_does_not_break_plain_history_reads
-  assertions:
-    - 同一数据根重启恢复会话、版本、任务、结果和视图，遗留运行态收敛为 service_restarted，FTS 损坏只影响搜索
-  fixtures: []
-- id: UI-E2E-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 桌面三栏和窄屏双抽屉可访问工作台
-  layers:
-    - frontend
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/responsive-accessibility.spec.ts
-      name: desktop three-column workspace completes upload chat task and result flows with accessible controls
-    - runner: playwright
-      file: integration-tests/e2e/responsive-accessibility.spec.ts
-      name: narrow drawers remain keyboard reachable without horizontal overflow
-  assertions:
-    - 桌面和窄屏均完成上传、对话、工作区、任务和结果查看，无 serious 或 critical axe 违规、横向溢出或隐藏焦点
-  fixtures: []
-- id: ENGINE-RELEASE-001
-  source: docs/integration-testing-design.md#8-测试数据和真实依赖验收
-  title: 真实 tensoreval 合同、全部案例和代表 study 发布验收
-  layers:
-    - adapter
-    - backend
-  lanes:
-    - release
-  tests:
-    - runner: rust
-      file: backend/tests/process_engine_v2.rs
-      name: release_script_fails_closed_with_stable_preflight_reasons
-    - runner: rust
-      file: backend/tests/process_engine_v2.rs
-      name: real_tensoreval_smoke_writes_snappy_parquet
-    - runner: release
-      file: scripts/test-release-engine
-      name: real_engine_imports_all_examples_and_runs_representative_studies
-  assertions:
-    - 发布命令要求显式真实依赖并稳定拒绝缺失或不兼容环境
-    - 97 个固定案例的依赖哈希均正确且可导入临时 scope
-    - 命名 Parquet、expr_df、多结果、Snappy、失败诊断和五类代表 study 均通过真实引擎
-  fixtures: []
-- id: REAL-RELEASE-001
-  source: docs/integration-testing-design.md#8-测试数据和真实依赖验收
-  title: 真实 DeepSeek 与 tensoreval 候选发布语义旅程
-  layers:
-    - frontend
-    - api
-    - backend
-    - agent
-    - adapter
-  lanes:
-    - release
-  tests:
-    - runner: vitest
-      file: frontend/src/release/semantic-assertions.test.ts
-      name: accepts stable IDs and skills loaded before gated tools
-    - runner: release
-      file: scripts/test-release-integration
-      name: real DeepSeek and tensoreval complete the semantic release journey
-  assertions:
-    - 缺少 secret、binary、资源目录或合同 hash 不匹配时失败且日志去敏
-    - 浏览器以自然语言完成 DataFrame 潮流、RSS 短路、派生分析、参数修改、重跑和比较
-    - 仅明确 provider 暂时错误最多重试两次且每次工具 trace 均归档
-  fixtures: []
-- id: ROUTE-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /health 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/session-recovery.spec.ts
-      name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions:
-    - route:GET /health 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /health
-- id: ROUTE-002
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/me 受保护路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/session-recovery.spec.ts
-      name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions:
-    - route:GET /api/me 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/me
-- id: ROUTE-028
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: POST /api/auth/login 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/auth-isolation.spec.ts
-      name: login persists across refresh and logout removes stale user state
-  assertions:
-    - route:POST /api/auth/login 由真实浏览器登录行为执行并验证结果
-  fixtures:
-    - integration-tests/fixtures/init_users.csv
-  contracts:
-    - route:POST /api/auth/login
-- id: ROUTE-029
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: POST /api/auth/logout 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/auth-isolation.spec.ts
-      name: login persists across refresh and logout removes stale user state
-  assertions:
-    - route:POST /api/auth/logout 由真实浏览器退出行为执行并验证结果
-  fixtures:
-    - integration-tests/fixtures/init_users.csv
-  contracts:
-    - route:POST /api/auth/logout
-- id: ROUTE-003
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/storage-usage 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/storage-quota.spec.ts
-      name: warning and hard quota are visible while rejected ingestion leaves usage and workspace intact
-  assertions:
-    - route:GET /api/storage-usage 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/storage-usage
-- id: ROUTE-004
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/examples 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
+  assertions: [global user and session limits are enforced]
+  fixtures: [barrier agent]
+
+- id: UPLOAD-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: V3 upload classification separates model sources from RSS scripts
+  layers: [api, adapter]
+  lanes: [pr]
   tests:
     - runner: playwright
       file: integration-tests/e2e/bundle-examples.spec.ts
-      name: example search and natural-language import copy a snapshot-pinned editable model
-  assertions:
-    - route:GET /api/examples 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
+      name: directory and ZIP bundles publish equivalent immutable model content
+    - runner: rust
+      file: backend/tests/scripts.rs
+      name: script_routes_accept_only_single_rss_and_have_no_edit_or_delete
+  assertions: [all advertised source kinds have behavior coverage]
+  fixtures: [DSS bundle, ZIP bundle, RSS script]
   contracts:
-    - route:GET /api/examples
-- id: ROUTE-005
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/examples/{id} 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
+    - "upload:dss"
+    - "upload:dssbundle"
+    - "upload:rssbundle"
+    - "upload:zip"
+    - "upload:csv"
+    - "upload:excel"
+    - "upload:parquet"
+    - "upload:rss_script"
+
+- id: MODEL-IMPORT-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Model imports create resolvable DataFrame drafts and can be discarded
+  layers: [api, application, adapter, browser]
+  lanes: [pr]
   tests:
     - runner: playwright
-      file: integration-tests/e2e/bundle-examples.spec.ts
-      name: example search and natural-language import copy a snapshot-pinned editable model
-  assertions:
-    - route:GET /api/examples/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/examples/{id}
-- id: ROUTE-006
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/sessions 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/session-recovery.spec.ts
-      name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions:
-    - route:GET /api/sessions 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/sessions
-- id: ROUTE-007
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: POST /api/sessions 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/session-recovery.spec.ts
-      name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions:
-    - route:POST /api/sessions 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:POST /api/sessions
-- id: ROUTE-008
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/history/search 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/session-recovery.spec.ts
-      name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions:
-    - route:GET /api/history/search 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/history/search
-- id: ROUTE-009
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: PATCH /api/sessions/{id} 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/session-recovery.spec.ts
-      name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions:
-    - route:PATCH /api/sessions/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:PATCH /api/sessions/{id}
-- id: ROUTE-010
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: DELETE /api/sessions/{id} 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/session-recovery.spec.ts
-      name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions:
-    - route:DELETE /api/sessions/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:DELETE /api/sessions/{id}
-- id: ROUTE-011
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/sessions/{id}/messages 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/session-recovery.spec.ts
-      name: older history, refresh, restart, and invalid localStorage recover committed state
-  assertions:
-    - route:GET /api/sessions/{id}/messages 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/sessions/{id}/messages
-- id: ROUTE-012
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: POST /api/sessions/{id}/messages 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/session-recovery.spec.ts
-      name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions:
-    - route:POST /api/sessions/{id}/messages 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:POST /api/sessions/{id}/messages
-- id: ROUTE-013
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: POST /api/sessions/{id}/attachments 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/dataframe-workspace.spec.ts
-      name: headers drive CSV Excel and Parquet inference while ambiguous and invalid tables stay collecting
-  assertions:
-    - route:POST /api/sessions/{id}/attachments 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:POST /api/sessions/{id}/attachments
-- id: ROUTE-014
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/sessions/{id}/events 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/session-recovery.spec.ts
-      name: SSE cursor replays committed messages, requests resync, and does not duplicate DOM rows
-  assertions:
-    - route:GET /api/sessions/{id}/events 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/sessions/{id}/events
-- id: ROUTE-015
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/ingestions/{id} 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
+      file: integration-tests/e2e/auth-isolation.spec.ts
+      name: two users cannot enumerate or guess each other session, message, SSE, run, or dataset resources
     - runner: playwright
       file: integration-tests/e2e/malicious-bundle.spec.ts
       name: path traversal absolute duplicate symlink and compression-bomb ZIPs fail atomically
-  assertions:
-    - route:GET /api/ingestions/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
+    - runner: playwright
+      file: integration-tests/e2e/bundle-examples.spec.ts
+      name: single-Solve bundles become drafts while repeated Solve and specialist lifecycles fail without mutation
+  assertions: [imports persist candidates, supported lifecycles become drafts, unsupported lifecycles do not mutate, discard releases resources]
+  fixtures: [DSS source, single-Solve bundle, unsupported lifecycle bundles, malicious archives]
   contracts:
-    - route:GET /api/ingestions/{id}
-- id: ROUTE-016
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/sessions/{id}/workspace 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
+    - "route:POST /api/sessions/{id}/model-imports"
+    - "route:GET /api/model-imports/{id}"
+    - "route:DELETE /api/model-imports/{id}"
+    - "route:POST /api/model-imports/{id}/resolve"
+
+- id: WORKSPACE-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Workspace exposes active version plus mutable draft
+  layers: [api, application, agent]
+  lanes: [pr]
   tests:
     - runner: playwright
-      file: integration-tests/e2e/dataframe-workspace.spec.ts
-      name: headers drive CSV Excel and Parquet inference while ambiguous and invalid tables stay collecting
-  assertions:
-    - route:GET /api/sessions/{id}/workspace 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/sessions/{id}/workspace
-- id: ROUTE-017
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/sessions/{id}/versions 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/rss-replacement.spec.ts
-      name: re-uploaded RSS creates immutable replacements and version pointers remain reversible
-  assertions:
-    - route:GET /api/sessions/{id}/versions 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/sessions/{id}/versions
-- id: ROUTE-018
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/versions/{id} 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/rss-replacement.spec.ts
-      name: re-uploaded RSS creates immutable replacements and version pointers remain reversible
-  assertions:
-    - route:GET /api/versions/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/versions/{id}
-- id: ROUTE-019
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/tasks/{id} 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/rss-replacement.spec.ts
-      name: re-uploaded RSS creates immutable replacements and version pointers remain reversible
-  assertions:
-    - route:GET /api/tasks/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/tasks/{id}
-- id: ROUTE-020
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/sessions/{id}/tasks 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/simulation-results.spec.ts
-      name: natural language runs all study families and exposes reproducible multi-result Parquet data
-  assertions:
-    - route:GET /api/sessions/{id}/tasks 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/sessions/{id}/tasks
-- id: ROUTE-021
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/tasks/{id}/datasets 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/simulation-results.spec.ts
-      name: natural language runs all study families and exposes reproducible multi-result Parquet data
-  assertions:
-    - route:GET /api/tasks/{id}/datasets 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/tasks/{id}/datasets
-- id: ROUTE-022
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/datasets/{id} 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/simulation-results.spec.ts
-      name: natural language runs all study families and exposes reproducible multi-result Parquet data
-  assertions:
-    - route:GET /api/datasets/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/datasets/{id}
-- id: ROUTE-023
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/datasets/{id}/rows 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/simulation-results.spec.ts
-      name: natural language runs all study families and exposes reproducible multi-result Parquet data
-  assertions:
-    - route:GET /api/datasets/{id}/rows 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/datasets/{id}/rows
-- id: ROUTE-024
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/datasets/{id}/download 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/simulation-results.spec.ts
-      name: natural language runs all study families and exposes reproducible multi-result Parquet data
-  assertions:
-    - route:GET /api/datasets/{id}/download 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/datasets/{id}/download
-- id: ROUTE-025
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/analysis-runs/{id} 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/analysis-views.spec.ts
-      name: result analysis creates traceable Parquet and all six controlled ECharts views survive reload
-  assertions:
-    - route:GET /api/analysis-runs/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/analysis-runs/{id}
-- id: ROUTE-026
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/dataset-views/{id}/data 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/analysis-views.spec.ts
-      name: result analysis creates traceable Parquet and all six controlled ECharts views survive reload
-  assertions:
-    - route:GET /api/dataset-views/{id}/data 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/dataset-views/{id}/data
-- id: ROUTE-027
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/task-comparisons/{id} 公开路由
-  layers:
-    - api
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/comparison.spec.ts
-      name: compatible tasks create a recoverable difference dataset while name and unit mismatches fail closed
-  assertions:
-    - route:GET /api/task-comparisons/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - route:GET /api/task-comparisons/{id}
-- id: MESSAGE-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: user 消息合同
-  layers:
-    - api
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/session-recovery.spec.ts
-      name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions:
-    - message:user 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - message:user
-- id: MESSAGE-002
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: assistant 消息合同
-  layers:
-    - api
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/session-recovery.spec.ts
-      name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions:
-    - message:assistant 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - message:assistant
-- id: MESSAGE-003
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: tool-call 消息合同
-  layers:
-    - api
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/session-recovery.spec.ts
-      name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions:
-    - message:tool-call 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - message:tool-call
-- id: MESSAGE-004
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: progress 消息合同
-  layers:
-    - api
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/simulation-results.spec.ts
-      name: natural language runs all study families and exposes reproducible multi-result Parquet data
-  assertions:
-    - message:progress 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - message:progress
-- id: MESSAGE-005
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: result 消息合同
-  layers:
-    - api
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/simulation-results.spec.ts
-      name: natural language runs all study families and exposes reproducible multi-result Parquet data
-  assertions:
-    - message:result 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - message:result
-- id: MESSAGE-006
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: attachment 消息合同
-  layers:
-    - api
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/dataframe-workspace.spec.ts
-      name: headers drive CSV Excel and Parquet inference while ambiguous and invalid tables stay collecting
-  assertions:
-    - message:attachment 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - message:attachment
-- id: MESSAGE-007
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: model-status 消息合同
-  layers:
-    - api
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/dataframe-workspace.spec.ts
-      name: supplemental batches create immutable children and natural language confirms and activates mappings
-  assertions:
-    - message:model-status 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - message:model-status
-- id: MESSAGE-008
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: comparison 消息合同
-  layers:
-    - api
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: playwright
-      file: integration-tests/e2e/comparison.spec.ts
-      name: compatible tasks create a recoverable difference dataset while name and unit mismatches fail closed
-  assertions:
-    - message:comparison 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - message:comparison
-- id: TOOL-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: inspect_workspace Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
+      file: integration-tests/e2e/auth-isolation.spec.ts
+      name: two users cannot enumerate or guess each other session, message, SSE, run, or dataset resources
     - runner: rust
       file: backend/tests/workspace_tools.rs
-      name: inspect_workspace_exposes_stable_input_display_names_to_the_agent
-  assertions:
-    - tool:inspect_workspace 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
+      name: a_new_draft_copies_the_active_version_and_replaces_only_selected_tables
+  assertions: [workspace is scoped, modifications replace complete selected tables]
+  fixtures: [published model]
   contracts:
-    - tool:inspect_workspace
-- id: TOOL-002
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: search_examples Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
+    - "route:GET /api/sessions/{id}/workspace"
+    - "tool:inspect_workspace"
+    - "tool:modify_model"
+
+- id: VERSION-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Version publication activation and impact-checked deletion are explicit
+  layers: [api, application, browser]
+  lanes: [pr]
+  tests:
+    - runner: playwright
+      file: integration-tests/e2e/v3-workflows.spec.ts
+      name: CSV imports merge by whole table, stale runs are rejected, and history activation/deletion is explicit
+  assertions: [publish requires confirmation, activation is explicit, deletion uses fresh impact token]
+  fixtures: [two model versions]
+  contracts:
+    - "route:GET /api/sessions/{id}/versions"
+    - "route:POST /api/sessions/{id}/versions"
+    - "route:GET /api/versions/{id}"
+    - "route:DELETE /api/versions/{id}"
+    - "route:POST /api/versions/{id}/activate"
+    - "route:POST /api/versions/{id}/deletion-preview"
+
+- id: EXAMPLE-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Applying a case imports it as a mutable draft
+  layers: [api, application, agent, browser]
+  lanes: [pr]
+  tests:
+    - runner: playwright
+      file: integration-tests/e2e/bundle-examples.spec.ts
+      name: case application uses the fixed action and creates only a mutable draft
+  assertions: [catalog and detail are readable, apply does not publish or run]
+  fixtures: [modelizable example]
+  contracts:
+    - "route:GET /api/examples"
+    - "route:GET /api/examples/{id}"
+    - "route:POST /api/sessions/{id}/draft/example"
+    - "tool:search_examples"
+    - "tool:inspect_example"
+
+- id: AGENT-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: V3 agent loads pinned skills before gated tools
+  layers: [agent]
+  lanes: [pr, release]
   tests:
     - runner: rust
       file: backend/tests/scripted_agent.rs
       name: scripted_tool_call_runs_registered_tool_and_persists_events
-  assertions:
-    - tool:search_examples 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
+    - runner: release
+      file: scripts/test-release-integration
+      name: real DeepSeek and tensoreval complete the semantic release journey
+  assertions: [tool calls are controlled and persisted, skills are loaded on demand]
+  fixtures: [embedded V3 agent bundle]
   contracts:
-    - tool:search_examples
-- id: TOOL-003
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: inspect_example Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: prompt_skill_document_and_example_tools_are_id_bounded
-  assertions:
-    - tool:inspect_example 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - tool:inspect_example
-- id: TOOL-004
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: import_example Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
+    - "tool:load_agent_skill"
+    - "skill:comparison"
+    - "skill:model-intake"
+    - "skill:result-analysis"
+    - "skill:rss-generation"
+    - "skill:study-planning"
+    - "skill:troubleshooting"
+
+- id: SCRIPT-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Immutable scripts are lazy-readable copyable and never auto-run
+  layers: [api, application, browser]
+  lanes: [pr]
   tests:
     - runner: playwright
-      file: integration-tests/e2e/bundle-examples.spec.ts
-      name: example search and natural-language import copy a snapshot-pinned editable model
-  assertions:
-    - tool:import_example 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
+      file: integration-tests/e2e/v3-workflows.spec.ts
+      name: CSV imports merge by whole table, stale runs are rejected, and history activation/deletion is explicit
+    - runner: playwright
+      file: integration-tests/e2e/v3-workflows.spec.ts
+      name: model import stays a draft until publish and a script runs only after its explicit button
+  assertions: [scripts list independently, full text loads on demand, Agent creation does not run]
+  fixtures: [long RSS script]
   contracts:
-    - tool:import_example
-- id: TOOL-005
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: remove_model_input Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: mapping_replace_remove_and_concurrency_create_only_child_versions
-  assertions:
-    - tool:remove_model_input 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - tool:remove_model_input
-- id: TOOL-006
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: replace_model_input Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: mapping_replace_remove_and_concurrency_create_only_child_versions
-  assertions:
-    - tool:replace_model_input 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - tool:replace_model_input
-- id: TOOL-007
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: confirm_dataframe_mapping Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
+    - "route:GET /api/sessions/{id}/scripts"
+    - "route:POST /api/sessions/{id}/scripts"
+    - "route:GET /api/scripts/{id}"
+    - "tool:create_script"
+
+- id: RUN-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Only the script run button creates a frozen run
+  layers: [api, application, adapter, browser]
+  lanes: [pr]
   tests:
     - runner: playwright
-      file: integration-tests/e2e/dataframe-workspace.spec.ts
-      name: supplemental batches create immutable children and natural language confirms and activates mappings
-  assertions:
-    - tool:confirm_dataframe_mapping 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
+      file: integration-tests/e2e/v3-workflows.spec.ts
+      name: one result can be deleted without deleting its run or sibling result
+  assertions: [run binds script and active version, run and result lists remain readable]
+  fixtures: [published model, valid RSS script]
   contracts:
-    - tool:confirm_dataframe_mapping
-- id: TOOL-008
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: modify_model Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: structured_patch_fails_closed_then_writes_a_new_parquet_child
-  assertions:
-    - tool:modify_model 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - tool:modify_model
-- id: TOOL-009
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: activate_model_version Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: checked_activation_and_rollback_only_move_workspace_pointers
-  assertions:
-    - tool:activate_model_version 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - tool:activate_model_version
-- id: TOOL-010
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: rollback_model_version Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: checked_activation_and_rollback_only_move_workspace_pointers
-  assertions:
-    - tool:rollback_model_version 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - tool:rollback_model_version
-- id: TOOL-011
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: run_study Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
+    - "route:POST /api/scripts/{id}/runs"
+    - "route:GET /api/sessions/{id}/runs"
+    - "route:GET /api/runs/{id}"
+    - "route:GET /api/runs/{id}/datasets"
+    - "tool:list_simulation_history"
+
+- id: DATASET-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Result datasets page download and delete independently
+  layers: [api, storage, browser]
+  lanes: [pr]
   tests:
     - runner: playwright
-      file: integration-tests/e2e/simulation-results.spec.ts
-      name: natural language runs all study families and exposes reproducible multi-result Parquet data
-  assertions:
-    - tool:run_study 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
+      file: integration-tests/e2e/v3-workflows.spec.ts
+      name: one result can be deleted without deleting its run or sibling result
+  assertions: [metadata rows and download are readable, deleting one result keeps siblings and run]
+  fixtures: [multi-result run]
   contracts:
-    - tool:run_study
-- id: TOOL-012
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: list_result_datasets Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
+    - "route:GET /api/datasets/{id}"
+    - "route:DELETE /api/datasets/{id}"
+    - "route:GET /api/datasets/{id}/rows"
+    - "route:GET /api/datasets/{id}/download"
+    - "tool:list_result_datasets"
+
+- id: ANALYSIS-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Analysis consumes dataset snapshots and publishes immutable outputs
+  layers: [api, application, adapter]
+  lanes: [pr]
   tests:
     - runner: playwright
-      file: integration-tests/e2e/analysis-views.spec.ts
-      name: result analysis creates traceable Parquet and all six controlled ECharts views survive reload
-  assertions:
-    - tool:list_result_datasets 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
+      file: integration-tests/e2e/v3-workflows.spec.ts
+      name: analysis, materialized views, and comparisons survive source-result deletion with tombstone lineage
+  assertions: [analysis is readable after source deletion, lineage retains tombstones]
+  fixtures: [completed run, scripted analysis]
   contracts:
-    - tool:list_result_datasets
-- id: TOOL-013
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: run_result_analysis Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
+    - "route:GET /api/analysis-runs/{id}"
+    - "tool:run_result_analysis"
+
+- id: VIEW-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Dataset views accept only controlled specs and materialize data
+  layers: [api, application, browser]
+  lanes: [pr]
   tests:
     - runner: playwright
-      file: integration-tests/e2e/analysis-views.spec.ts
-      name: result analysis creates traceable Parquet and all six controlled ECharts views survive reload
-  assertions:
-    - tool:run_result_analysis 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
+      file: integration-tests/e2e/v3-workflows.spec.ts
+      name: analysis, materialized views, and comparisons survive source-result deletion with tombstone lineage
+  assertions: [materialized view survives source deletion, all controlled kinds are public]
+  fixtures: [materialized dataset view]
   contracts:
-    - tool:run_result_analysis
-- id: TOOL-014
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: create_dataset_view Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
+    - "route:GET /api/dataset-views/{id}/data"
+    - "tool:create_dataset_view"
+    - "view:line"
+    - "view:bar"
+    - "view:scatter"
+    - "view:heatmap"
+    - "view:boxplot"
+    - "view:histogram"
+
+- id: COMPARE-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Compatible run snapshots produce a durable comparison
+  layers: [api, application, agent, browser]
+  lanes: [pr]
   tests:
     - runner: playwright
-      file: integration-tests/e2e/analysis-views.spec.ts
-      name: result analysis creates traceable Parquet and all six controlled ECharts views survive reload
-  assertions:
-    - tool:create_dataset_view 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
+      file: integration-tests/e2e/v3-workflows.spec.ts
+      name: analysis, materialized views, and comparisons survive source-result deletion with tombstone lineage
+  assertions: [comparison remains readable after source deletion]
+  fixtures: [two compatible runs]
   contracts:
-    - tool:create_dataset_view
-- id: TOOL-015
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: compare_simulations Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
+    - "route:GET /api/run-comparisons/{id}"
+    - "tool:compare_simulations"
+
+- id: HISTORY-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: History search and context reads are bounded and scoped
+  layers: [api, repository, agent]
+  lanes: [pr]
   tests:
-    - runner: playwright
-      file: integration-tests/e2e/comparison.spec.ts
-      name: compatible tasks create a recoverable difference dataset while name and unit mismatches fail closed
-  assertions:
-    - tool:compare_simulations 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - tool:compare_simulations
-- id: TOOL-016
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: list_simulation_history Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/history_search.rs
-      name: task_filters_work_and_missing_fts_does_not_break_plain_history_reads
-  assertions:
-    - tool:list_simulation_history 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - tool:list_simulation_history
-- id: TOOL-017
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: search_chat_history Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: history_tools_search_list_and_read_only_the_bound_scope
-  assertions:
-    - tool:search_chat_history 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - tool:search_chat_history
-- id: TOOL-018
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: read_chat_context Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: history_tools_search_list_and_read_only_the_bound_scope
-  assertions:
-    - tool:read_chat_context 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - tool:read_chat_context
-- id: TOOL-019
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: get_storage_usage Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: get_storage_usage_returns_current_scope_only
-  assertions:
-    - tool:get_storage_usage 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - tool:get_storage_usage
-- id: TOOL-020
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: load_agent_skill Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: every_embedded_skill_loads_by_stable_id_and_rejects_unknown
-  assertions:
-    - tool:load_agent_skill 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - tool:load_agent_skill
-- id: TOOL-021
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: search_engine_docs Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: prompt_skill_document_and_example_tools_are_id_bounded
-  assertions:
-    - tool:search_engine_docs 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - tool:search_engine_docs
-- id: TOOL-022
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: read_engine_doc_section Agent 工具
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: prompt_skill_document_and_example_tools_are_id_bounded
-  assertions:
-    - tool:read_engine_doc_section 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - tool:read_engine_doc_section
-- id: SKILL-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: comparison Agent skill
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: every_embedded_skill_loads_by_stable_id_and_rejects_unknown
-  assertions:
-    - skill:comparison 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - skill:comparison
-- id: SKILL-002
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: model-intake Agent skill
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: every_embedded_skill_loads_by_stable_id_and_rejects_unknown
-  assertions:
-    - skill:model-intake 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - skill:model-intake
-- id: SKILL-003
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: result-analysis Agent skill
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: every_embedded_skill_loads_by_stable_id_and_rejects_unknown
-  assertions:
-    - skill:result-analysis 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - skill:result-analysis
-- id: SKILL-004
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: rss-generation Agent skill
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: every_embedded_skill_loads_by_stable_id_and_rejects_unknown
-  assertions:
-    - skill:rss-generation 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - skill:rss-generation
-- id: SKILL-005
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: study-planning Agent skill
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: every_embedded_skill_loads_by_stable_id_and_rejects_unknown
-  assertions:
-    - skill:study-planning 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - skill:study-planning
-- id: SKILL-006
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: troubleshooting Agent skill
-  layers:
-    - agent
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: every_embedded_skill_loads_by_stable_id_and_rejects_unknown
-  assertions:
-    - skill:troubleshooting 由对应行为测试执行并验证结果，不以注册表枚举代替
-  fixtures: []
-  contracts:
-    - skill:troubleshooting
-- id: UPLOAD-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: single_rss 上传来源
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/bundle_ingestion.rs
-      name: uploaded_single_rss_with_missing_dependency_publishes_collecting_version
-  assertions:
-    - single_rss 经公开上传路径进入不可变模型版本
-  fixtures: []
-  contracts:
-    - upload:single_rss
-- id: UPLOAD-002
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: zip_rssbundle 上传来源
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/bundle_ingestion.rs
-      name: zip_and_directory_upload_publish_equal_canonical_content
-  assertions:
-    - zip_rssbundle 经公开上传路径进入不可变模型版本
-  fixtures: []
-  contracts:
-    - upload:zip_rssbundle
-- id: UPLOAD-003
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: directory_rssbundle 上传来源
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/bundle_ingestion.rs
-      name: zip_and_directory_upload_publish_equal_canonical_content
-  assertions:
-    - directory_rssbundle 经公开上传路径进入不可变模型版本
-  fixtures: []
-  contracts:
-    - upload:directory_rssbundle
-- id: UPLOAD-004
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: csv 上传来源
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/catalog_inference.rs
-      name: csv_and_excel_inspection_reads_headers_samples_and_skips_empty_sheets
-  assertions:
-    - csv 经公开上传路径进入不可变模型版本
-  fixtures: []
-  contracts:
-    - upload:csv
-- id: UPLOAD-005
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: parquet 上传来源
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/catalog_inference.rs
-      name: parquet_inspection_reads_schema_from_footer_without_scanning_rows
-  assertions:
-    - parquet 经公开上传路径进入不可变模型版本
-  fixtures: []
-  contracts:
-    - upload:parquet
-- id: UPLOAD-006
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: excel 上传来源
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/dataframe_ingestion.rs
-      name: excel_nonempty_sheets_are_normalized_to_traceable_parquet_artifacts
-  assertions:
-    - excel 经公开上传路径进入不可变模型版本
-  fixtures: []
-  contracts:
-    - upload:excel
-- id: VISUALIZATION-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: line 可视化
-  layers:
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: vitest
-      file: frontend/src/components/datasets/charts.test.ts
-      name: builds ${kind} without executable formatter
-  assertions:
-    - line 由受控规格编译且不执行任意 formatter
-  fixtures: []
-  contracts:
-    - view:line
-- id: VISUALIZATION-002
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: bar 可视化
-  layers:
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: vitest
-      file: frontend/src/components/datasets/charts.test.ts
-      name: builds ${kind} without executable formatter
-  assertions:
-    - bar 由受控规格编译且不执行任意 formatter
-  fixtures: []
-  contracts:
-    - view:bar
-- id: VISUALIZATION-003
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: scatter 可视化
-  layers:
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: vitest
-      file: frontend/src/components/datasets/charts.test.ts
-      name: builds ${kind} without executable formatter
-  assertions:
-    - scatter 由受控规格编译且不执行任意 formatter
-  fixtures: []
-  contracts:
-    - view:scatter
-- id: VISUALIZATION-004
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: heatmap 可视化
-  layers:
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: vitest
-      file: frontend/src/components/datasets/charts.test.ts
-      name: builds ${kind} without executable formatter
-  assertions:
-    - heatmap 由受控规格编译且不执行任意 formatter
-  fixtures: []
-  contracts:
-    - view:heatmap
-- id: VISUALIZATION-005
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: boxplot 可视化
-  layers:
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: vitest
-      file: frontend/src/components/datasets/charts.test.ts
-      name: builds ${kind} without executable formatter
-  assertions:
-    - boxplot 由受控规格编译且不执行任意 formatter
-  fixtures: []
-  contracts:
-    - view:boxplot
-- id: VISUALIZATION-006
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: histogram 可视化
-  layers:
-    - frontend
-  lanes:
-    - pr
-  tests:
-    - runner: vitest
-      file: frontend/src/components/datasets/charts.test.ts
-      name: builds ${kind} without executable formatter
-  assertions:
-    - histogram 由受控规格编译且不执行任意 formatter
-  fixtures: []
-  contracts:
-    - view:histogram
-- id: ERROR-038
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: authentication_required 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/auth_scope.rs
-      name: invalid_credentials_and_missing_auth_have_stable_distinct_errors
     - runner: playwright
       file: integration-tests/e2e/auth-isolation.spec.ts
-      name: cookie login rejects missing and incorrect credentials
-  assertions:
-    - 缺少、未知或过期 Cookie 统一返回 authentication_required
-  fixtures:
-    - integration-tests/fixtures/init_users.csv
-  contracts:
-    - error:authentication_required
-- id: ERROR-039
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: invalid_credentials 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/auth_scope.rs
-      name: invalid_credentials_and_missing_auth_have_stable_distinct_errors
-    - runner: playwright
-      file: integration-tests/e2e/auth-isolation.spec.ts
-      name: cookie login rejects missing and incorrect credentials
-  assertions:
-    - 未知用户与错误密码使用相同的 invalid_credentials 响应
-  fixtures:
-    - integration-tests/fixtures/init_users.csv
-  contracts:
-    - error:invalid_credentials
-- id: ERROR-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: archive_invalid 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/bundle_ingestion.rs
-      name: archive_rejects_escape_symlink_duplicate_and_limits_without_partial_tree
-  assertions:
-    - archive_invalid 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:archive_invalid
-- id: ERROR-002
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: archive_unsafe_path 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/bundle_ingestion.rs
-      name: archive_rejects_escape_symlink_duplicate_and_limits_without_partial_tree
-  assertions:
-    - archive_unsafe_path 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:archive_unsafe_path
-- id: ERROR-003
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: artifact_too_large 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/artifact_store.rs
-      name: staging_enforces_stream_limit_and_cleans_partial_file
-  assertions:
-    - artifact_too_large 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:artifact_too_large
-- id: ERROR-004
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: unsupported_file_type 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/dataframe_ingestion.rs
-      name: partial_failure_publishes_collecting_draft_and_persists_recoverable_state
-  assertions:
-    - unsupported_file_type 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:unsupported_file_type
-- id: ERROR-005
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: idempotency_conflict 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/dataframe_ingestion.rs
-      name: batch_is_idempotent_by_file_id_and_hash_and_allows_duplicate_names
-  assertions:
-    - idempotency_conflict 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:idempotency_conflict
-- id: ERROR-006
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: dataframe_schema_unknown 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/catalog_inference.rs
-      name: unknown_similar_and_duplicate_tables_remain_pending
-  assertions:
-    - dataframe_schema_unknown 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:dataframe_schema_unknown
-- id: ERROR-007
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: dataframe_schema_ambiguous 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/catalog_inference.rs
-      name: unknown_similar_and_duplicate_tables_remain_pending
-  assertions:
-    - dataframe_schema_ambiguous 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:dataframe_schema_ambiguous
-- id: ERROR-008
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: duplicate_table_requires_confirmation 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/catalog_inference.rs
-      name: unknown_similar_and_duplicate_tables_remain_pending
-  assertions:
-    - duplicate_table_requires_confirmation 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:duplicate_table_requires_confirmation
-- id: ERROR-009
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: missing_dependency 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/bundle_ingestion.rs
-      name: rss_missing_dependency_is_a_collecting_diagnostic_and_manifest_hash_errors_are_structured
-  assertions:
-    - missing_dependency 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:missing_dependency
-- id: ERROR-010
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: missing_required_table 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/catalog_inference.rs
-      name: inference_uses_normalized_headers_and_reports_dtype_conflicts
-  assertions:
-    - missing_required_table 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:missing_required_table
-- id: ERROR-011
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: model_input_not_found 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: mapping_replace_remove_and_concurrency_create_only_child_versions
-  assertions:
-    - model_input_not_found 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:model_input_not_found
-- id: ERROR-012
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: version_conflict 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: mapping_replace_remove_and_concurrency_create_only_child_versions
-  assertions:
-    - version_conflict 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:version_conflict
-- id: ERROR-013
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: invalid_model_patch 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/workspace_tools.rs
-      name: structured_patch_fails_closed_then_writes_a_new_parquet_child
-  assertions:
-    - invalid_model_patch 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:invalid_model_patch
-- id: ERROR-014
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: unsupported_study 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/scenario_engine.rs
-      name: failure_scenarios_are_rejected_by_the_adapter_contract
-  assertions:
-    - unsupported_study 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:unsupported_study
-- id: ERROR-015
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: model_validation_failed 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/scenario_engine.rs
-      name: failure_scenarios_are_rejected_by_the_adapter_contract
-  assertions:
-    - model_validation_failed 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:model_validation_failed
-- id: ERROR-016
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: solver_failed 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/scenario_engine.rs
-      name: simulation_and_analysis_fail_without_partial_publication_and_clean_staging
-  assertions:
-    - solver_failed 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:solver_failed
-- id: ERROR-017
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: not_converged 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/scenario_engine.rs
-      name: failure_scenarios_are_rejected_by_the_adapter_contract
-  assertions:
-    - not_converged 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:not_converged
-- id: ERROR-018
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: comparison_incompatible 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/task_comparison.rs
-      name: same_task_foreign_session_and_missing_stable_key_fail_without_comparison
-  assertions:
-    - comparison_incompatible 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:comparison_incompatible
-- id: ERROR-019
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: result_dataset_not_found 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/v2_simulation.rs
-      name: task_dataset_rows_and_download_hide_foreign_scope_and_use_parquet_headers
-  assertions:
-    - result_dataset_not_found 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:result_dataset_not_found
-- id: ERROR-020
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: result_schema_mismatch 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/process_engine_v2.rs
-      name: output_validation_rejects_format_names_corruption_duplicates_and_limits
-  assertions:
-    - result_schema_mismatch 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:result_schema_mismatch
-- id: ERROR-021
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: analysis_script_rejected 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/result_analysis.rs
-      name: script_validation_rejects_remote_paths_and_missing_outputs_before_run
-  assertions:
-    - analysis_script_rejected 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:analysis_script_rejected
-- id: ERROR-022
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: analysis_output_limit_exceeded 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/result_analysis.rs
-      name: six_visualizations_validate_and_unsafe_or_oversized_specs_fail_closed
-  assertions:
-    - analysis_output_limit_exceeded 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:analysis_output_limit_exceeded
-- id: ERROR-023
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: dataset_view_not_found 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/result_analysis.rs
-      name: analysis_persists_lineage_script_outputs_views_and_result_message
-  assertions:
-    - dataset_view_not_found 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:dataset_view_not_found
-- id: ERROR-024
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: invalid_visualization_spec 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/result_analysis.rs
-      name: six_visualizations_validate_and_unsafe_or_oversized_specs_fail_closed
-  assertions:
-    - invalid_visualization_spec 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:invalid_visualization_spec
-- id: ERROR-025
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: visualization_data_too_large 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/result_analysis.rs
-      name: six_visualizations_validate_and_unsafe_or_oversized_specs_fail_closed
-  assertions:
-    - visualization_data_too_large 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:visualization_data_too_large
-- id: ERROR-026
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: agent_queue_full 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/agent_scheduler.rs
-      name: queue_rejection_has_stable_error_and_does_not_write_message
-  assertions:
-    - agent_queue_full 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:agent_queue_full
-- id: ERROR-027
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: invalid_cursor 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/history_search.rs
-      name: messages_support_latest_before_and_around_windows_with_hard_limits
-  assertions:
-    - invalid_cursor 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:invalid_cursor
-- id: ERROR-028
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: invalid_pagination 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/history_search.rs
-      name: messages_support_latest_before_and_around_windows_with_hard_limits
-  assertions:
-    - invalid_pagination 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:invalid_pagination
-- id: ERROR-029
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: history_query_too_long 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
+      name: two users cannot enumerate or guess each other session, message, SSE, run, or dataset resources
     - runner: rust
       file: backend/tests/history_search.rs
       name: chinese_substring_short_query_filters_delete_and_scope_are_bounded
-  assertions:
-    - history_query_too_long 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
+  assertions: [search returns only owned committed content, context pagination is bounded]
+  fixtures: [Chinese message history]
   contracts:
-    - error:history_query_too_long
-- id: ERROR-030
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: history_search_unavailable 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/history_search.rs
-      name: task_filters_work_and_missing_fts_does_not_break_plain_history_reads
-  assertions:
-    - history_search_unavailable 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:history_search_unavailable
-- id: ERROR-031
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: storage_quota_exceeded 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/artifact_store.rs
-      name: quota_failures_roll_back_and_concurrent_commits_cannot_oversubscribe
-  assertions:
-    - storage_quota_exceeded 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:storage_quota_exceeded
-- id: ERROR-032
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: engine_resource_unavailable 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/engine_resources.rs
-      name: rejects_missing_hash_mismatch_and_path_escape
-  assertions:
-    - engine_resource_unavailable 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:engine_resource_unavailable
-- id: ERROR-033
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: engine_contract_mismatch 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/agent_knowledge.rs
-      name: preflight_rejects_bundle_and_engine_contract_mismatch
-  assertions:
-    - engine_contract_mismatch 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:engine_contract_mismatch
-- id: ERROR-034
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: example_not_found 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/example_import.rs
-      name: snapshot_source_scope_and_quota_failures_publish_no_partial_version
-  assertions:
-    - example_not_found 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:example_not_found
-- id: ERROR-035
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: example_not_importable 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/engine_resources.rs
-      name: bundle_hash_dependency_and_required_feature_control_importability
-  assertions:
-    - example_not_importable 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:example_not_importable
-- id: ERROR-036
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: example_source_changed 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/example_import.rs
-      name: changed_snapshot_source_is_rejected_before_version_publication
-  assertions:
-    - example_source_changed 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:example_source_changed
-- id: ERROR-037
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: engine_feature_unavailable 稳定错误
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/process_engine_v2.rs
-      name: output_validation_rejects_symlinks_and_capability_probe_fails_closed
-  assertions:
-    - engine_feature_unavailable 在对应失败边界保持稳定且不发布部分状态
-  fixtures: []
-  contracts:
-    - error:engine_feature_unavailable
-- id: INPUT-RSS-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: RSS 重传替换保留历史版本
-  layers:
-    - api
-    - backend
-  lanes:
-    - pr
+    - "route:GET /api/history/search"
+    - "tool:search_chat_history"
+    - "tool:read_chat_context"
+
+- id: STORAGE-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Storage usage and quota are resolved from authenticated user
+  layers: [api, storage, agent]
+  lanes: [pr]
   tests:
     - runner: playwright
-      file: integration-tests/e2e/rss-replacement.spec.ts
-      name: re-uploaded RSS creates immutable replacements and version pointers remain reversible
-  assertions:
-    - 传错或修改后的 RSS 可重传为新版本，旧版本仍可回退
-  fixtures: []
-- id: INFERENCE-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 表头推断完整边界
-  layers:
-    - backend
-  lanes:
-    - pr
-  tests:
-    - runner: rust
-      file: backend/tests/catalog_inference.rs
-      name: inference_uses_normalized_headers_and_reports_dtype_conflicts
-    - runner: rust
-      file: backend/tests/catalog_inference.rs
-      name: unknown_similar_and_duplicate_tables_remain_pending
-  assertions:
-    - 高置信、未知、歧义、缺列、dtype 冲突和同类型重复均有确定状态
-  fixtures: []
-- id: STUDY-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: 全部 study 家族和开放 study
-  layers:
-    - agent
-    - backend
-  lanes:
-    - pr
+      file: integration-tests/e2e/storage-quota.spec.ts
+      name: warning and hard quota are visible while a rejected model import leaves usage and workspace intact
+  assertions: [quota warning is visible, rejected writes are atomic]
+  fixtures: [small hard quota]
+  contracts:
+    - "route:GET /api/storage-usage"
+    - "tool:get_storage_usage"
+
+- id: UI-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Desktop and narrow layouts expose accessible controls
+  layers: [browser]
+  lanes: [pr]
   tests:
     - runner: playwright
-      file: integration-tests/e2e/simulation-results.spec.ts
-      name: natural language runs all study families and exposes reproducible multi-result Parquet data
-  assertions:
-    - 自然语言可启动潮流、短路、QSTS、谐波和开放 study 并固化运行合同
-  fixtures: []
-- id: LEGACY-001
-  source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: v1 原型结构和运行时回退不存在
-  layers:
-    - backend
-  lanes:
-    - pr
+      file: integration-tests/e2e/responsive-accessibility.spec.ts
+      name: narrow drawers remain keyboard reachable without horizontal overflow
+  assertions: [drawers are keyboard reachable, page has no horizontal overflow]
+  fixtures: [narrow viewport]
+
+- id: RECOVERY-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Restart and SSE recovery converge to committed state
+  layers: [api, application, browser]
+  lanes: [pr]
+  tests:
+    - runner: playwright
+      file: integration-tests/e2e/resilience.spec.ts
+      name: committed sessions, results, and views survive restart while a running script converges and FTS fails locally
+  assertions: [committed resources survive restart, local search failure does not corrupt other reads]
+  fixtures: [restartable E2E server]
+
+- id: ENGINE-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Engine calls use pinned resources and adapter-only process boundaries
+  layers: [adapter, agent]
+  lanes: [pr, release]
   tests:
     - runner: rust
-      file: backend/tests/e2e_v2.rs
-      name: release_uses_one_v2_migration_without_v1_result_tables
+      file: backend/tests/process_engine_v3.rs
+      name: four_commands_use_private_cwd_parquet_results_and_safe_named_inputs
     - runner: rust
-      file: backend/tests/e2e_v2.rs
-      name: clean_schema_has_no_legacy_tables
-  assertions:
-    - 干净数据库只使用 v2 migration，固定 metrics curves report 与 CSV 结果表不存在
-  fixtures: []
+      file: backend/tests/engine_resources.rs
+      name: loads_searchable_stable_snapshot_and_publishes_it_atomically
+    - runner: release
+      file: scripts/test-release-engine
+      name: real_engine_imports_all_examples_and_runs_representative_studies
+  assertions: [process commands are controlled, engine docs use pinned snapshots]
+  fixtures: [fake process engine, embedded engine contract]
+  contracts:
+    - "tool:search_engine_docs"
+    - "tool:read_engine_doc_section"

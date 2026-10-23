@@ -1,23 +1,20 @@
-//! 会话与消息 handler：CRUD + 触发一次对话（后台 agent run，经 SSE 推送）+ 附件上传。
+//! 会话与消息 handler：CRUD + 触发一次对话（后台 agent run，经 SSE 推送）。
 
 use axum::Json;
-use axum::extract::{Multipart, Path, Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::application::{
-    AppEvent, AppState, EventWriter, UploadBatch, UploadFile, ms_to_iso, now_ms,
-};
+use crate::application::{AppEvent, AppState, EventWriter, ms_to_iso, now_ms};
 use crate::auth::CurrentUser;
 use crate::db::models::{Message, NewMessage};
-use crate::storage::StageLimits;
 
 use super::ApiError;
 
 // ---- 会话 ----
 
-/// 任务状态（`simulation_tasks.status`）→ 会话状态（前端 `SessionStatus`）。
+/// 最近一次运行状态 → 会话状态（前端 `SessionStatus`）。
 fn derive_status(latest: Option<&str>) -> &'static str {
     match latest {
         Some("succeeded") => "completed",
@@ -69,7 +66,7 @@ pub async fn create(
         Json(json!({
             "id": session.id.to_string(),
             "title": session.title,
-            // 新会话无任务，直接 completed。
+            // 新会话尚无运行，直接 completed。
             "status": "completed",
             "updatedAt": ms_to_iso(session.updated_at_ms),
         })),
@@ -123,168 +120,6 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ---- 附件上传 ----
-
-/// `POST /api/sessions/{id}/attachments`：v2 多文件流式上传。
-pub async fn upload_attachment(
-    State(state): State<AppState>,
-    principal: CurrentUser,
-    Path(session_id): Path<i32>,
-    mut multipart: Multipart,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
-    state
-        .session_repo
-        .find(&principal.id, session_id)
-        .await?
-        .ok_or_else(|| ApiError::not_found("会话不存在"))?;
-
-    let mut client_batch_id = None;
-    let mut relative_paths = std::collections::HashMap::<String, String>::new();
-    let mut files = Vec::new();
-    let mut batch_bytes = 0_u64;
-    while let Some(mut field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| ApiError::internal(format!("读取上传字段失败: {e}")))?
-    {
-        let name = field.name().unwrap_or_default().to_string();
-        if name == "clientBatchId" {
-            client_batch_id = Some(
-                field
-                    .text()
-                    .await
-                    .map_err(|e| ApiError::internal(format!("读取 clientBatchId 失败: {e}")))?,
-            );
-        } else if name == "relativePaths" {
-            let text = field
-                .text()
-                .await
-                .map_err(|e| ApiError::internal(format!("读取 relativePaths 失败: {e}")))?;
-            relative_paths = serde_json::from_str(&text).map_err(|_| {
-                crate::application::IngestionError::InvalidUpload(
-                    "relativePaths 必须是 clientFileId 到相对路径的 JSON 对象".into(),
-                )
-            })?;
-        } else if let Some(client_file_id) = name.strip_prefix("file.") {
-            if client_file_id.is_empty() {
-                return Err(crate::application::IngestionError::InvalidUpload(
-                    "file 字段缺少 clientFileId".into(),
-                )
-                .into());
-            }
-            let file_name = field
-                .file_name()
-                .map(|n| n.replace(['/', '\\'], "_"))
-                .unwrap_or_else(|| "upload".to_string());
-            let media_type = field.content_type().map(str::to_string);
-            let mut writer = state
-                .artifact_service
-                .store()
-                .begin_stage(StageLimits {
-                    max_bytes: state.upload_single_file_limit_bytes,
-                })
-                .map_err(crate::application::ArtifactError::from)?;
-            while let Some(chunk) = field
-                .chunk()
-                .await
-                .map_err(|e| ApiError::internal(format!("读取上传内容失败: {e}")))?
-            {
-                batch_bytes = batch_bytes.checked_add(chunk.len() as u64).ok_or_else(|| {
-                    crate::application::IngestionError::InvalidUpload("上传批次大小溢出".into())
-                })?;
-                if batch_bytes > state.upload_batch_limit_bytes {
-                    return Err(crate::application::IngestionError::UploadTooLarge(format!(
-                        "上传批次超过 {} 字节限制",
-                        state.upload_batch_limit_bytes
-                    ))
-                    .into());
-                }
-                writer
-                    .write_chunk(&chunk)
-                    .map_err(crate::application::ArtifactError::from)?;
-            }
-            files.push(UploadFile {
-                client_file_id: client_file_id.to_string(),
-                file_name,
-                relative_path: None,
-                media_type,
-                staged: writer
-                    .finish()
-                    .map_err(crate::application::ArtifactError::from)?,
-            });
-        } else if name == "file" {
-            return Err(crate::application::IngestionError::InvalidUpload(
-                "v2 不接受旧 file 字段，请使用 file.<clientFileId>".into(),
-            )
-            .into());
-        }
-    }
-    for file in &mut files {
-        if let Some(path) = relative_paths.remove(&file.client_file_id) {
-            let candidate = std::path::Path::new(&path);
-            if candidate.is_absolute()
-                || candidate
-                    .components()
-                    .any(|part| !matches!(part, std::path::Component::Normal(_)))
-            {
-                return Err(crate::application::IngestionError::InvalidUpload(
-                    "relativePaths 必须是规范相对路径".into(),
-                )
-                .into());
-            }
-            file.relative_path = Some(path);
-        }
-    }
-    if !relative_paths.is_empty() {
-        return Err(crate::application::IngestionError::InvalidUpload(
-            "relativePaths 包含未知 clientFileId".into(),
-        )
-        .into());
-    }
-    let accepted = state
-        .ingestion_service
-        .accept_batch(
-            &principal,
-            session_id,
-            UploadBatch {
-                client_batch_id: client_batch_id.ok_or_else(|| {
-                    crate::application::IngestionError::InvalidUpload("缺少 clientBatchId".into())
-                })?,
-                files,
-            },
-        )
-        .await?;
-    let ingestion_id: i32 = accepted
-        .id
-        .parse()
-        .map_err(|_| ApiError::internal("ingestion ID 无效"))?;
-    let service = state.ingestion_service.clone();
-    tokio::spawn(async move {
-        service.process(principal, ingestion_id).await;
-    });
-    let accepted_items: Vec<_> = accepted
-        .items
-        .iter()
-        .filter(|item| item.role == "uploaded")
-        .map(|item| {
-            json!({
-                "clientFileId": item.client_file_id,
-                "artifactId": item.artifact_id,
-                "fileName": item.file_name,
-                "deduplicated": false,
-            })
-        })
-        .collect();
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(json!({
-            "ok": true,
-            "ingestionId": accepted.id,
-            "accepted": accepted_items,
-        })),
-    ))
-}
-
 // ---- 消息 ----
 
 pub async fn messages(
@@ -322,7 +157,7 @@ pub struct MessagePageQuery {
 #[serde(rename_all = "camelCase")]
 pub struct HistorySearchQuery {
     query: String,
-    study_type: Option<String>,
+    script_name: Option<String>,
     status: Option<String>,
     from_ms: Option<i64>,
     to_ms: Option<i64>,
@@ -339,7 +174,7 @@ pub async fn search_history(
             &principal,
             q.query,
             crate::db::repositories::SearchFilters {
-                study_type: q.study_type,
+                script_name: q.script_name,
                 status: q.status,
                 from_ms: q.from_ms,
                 to_ms: q.to_ms,
@@ -457,9 +292,9 @@ fn json_from_message(m: &Message) -> Value {
 mod tests {
     use super::derive_status;
 
-    /// 任务状态 → 会话状态映射，锁定前端 `SessionStatus` 三态。
+    /// 运行状态 → 会话状态映射，锁定前端 `SessionStatus` 三态。
     #[test]
-    fn derive_status_maps_task_status() {
+    fn derive_status_maps_run_status() {
         assert_eq!(derive_status(Some("succeeded")), "completed");
         assert_eq!(derive_status(Some("pending")), "running");
         assert_eq!(derive_status(Some("running")), "running");

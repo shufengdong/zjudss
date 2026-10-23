@@ -14,7 +14,7 @@ use std::sync::Arc;
 #[serde(rename_all = "camelCase")]
 pub struct Args {
     pub query: String,
-    pub study_type: Option<String>,
+    pub script_name: Option<String>,
     pub status: Option<String>,
     pub from_ms: Option<i64>,
     pub to_ms: Option<i64>,
@@ -33,11 +33,11 @@ impl Tool for SearchChatHistoryTool {
     type Output = Value;
     type Error = DomainToolError;
     fn description(&self) -> String {
-        "在当前用户历史会话中搜索中文关键词、标题、附件和任务摘要，最多返回 5 个稳定 session ID 候选。".into()
+        "在当前用户历史会话中搜索中文关键词、标题、导入、脚本和运行摘要，最多返回 5 个稳定 session ID 候选。".into()
     }
     fn parameters(&self) -> Value {
         object_schema(
-            json!({"query":{"type":"string"},"studyType":{"type":["string","null"]},"status":{"type":["string","null"]},"fromMs":{"type":["integer","null"]},"toMs":{"type":["integer","null"]}}),
+            json!({"query":{"type":"string"},"scriptName":{"type":["string","null"]},"status":{"type":["string","null"]},"fromMs":{"type":["integer","null"]},"toMs":{"type":["integer","null"]}}),
             &["query"],
         )
     }
@@ -52,7 +52,7 @@ impl Tool for SearchChatHistoryTool {
                 &self.services.principal,
                 a.query,
                 SearchFilters {
-                    study_type: a.study_type,
+                    script_name: a.script_name,
                     status: a.status,
                     from_ms: a.from_ms,
                     to_ms: a.to_ms,

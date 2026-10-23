@@ -1,8 +1,8 @@
 use crate::{
     auth::CurrentUser,
     db::{
-        models::{Message, SimulationTask},
-        repositories::{HistoryHit, HistoryRepo, RepoError, SearchFilters, SimulationRepo},
+        models::Message,
+        repositories::{HistoryHit, HistoryRepo, RepoError, SearchFilters},
     },
 };
 #[derive(Debug)]
@@ -27,11 +27,10 @@ impl std::error::Error for HistoryError {}
 #[derive(Clone)]
 pub struct HistoryService {
     repo: HistoryRepo,
-    tasks: SimulationRepo,
 }
 impl HistoryService {
-    pub fn new(repo: HistoryRepo, tasks: SimulationRepo) -> Self {
-        Self { repo, tasks }
+    pub fn new(repo: HistoryRepo) -> Self {
+        Self { repo }
     }
     pub async fn search_sessions(
         &self,
@@ -76,17 +75,6 @@ impl HistoryService {
     ) -> Result<Vec<Message>, HistoryError> {
         self.list_messages(p, session, None, Some(around), radius.clamp(2, 50))
             .await
-    }
-    pub async fn list_simulations(
-        &self,
-        p: &CurrentUser,
-        session: i32,
-        limit: i64,
-    ) -> Result<Vec<SimulationTask>, HistoryError> {
-        self.tasks
-            .list_session(&p.id, session, limit)
-            .await
-            .map_err(map)
     }
     pub async fn rebuild_index(&self) -> Result<(), HistoryError> {
         self.repo.rebuild().await.map_err(map)

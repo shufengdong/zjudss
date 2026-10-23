@@ -1,5 +1,5 @@
 {
-  "bundleVersion": "v2.0.1",
+  "bundleVersion": "v3.0.0",
   "skills": [
     {
       "id": "model-intake",
@@ -13,13 +13,13 @@
       "requiredTools": [
         "inspect_workspace"
       ],
-      "engineContractVersion": "dss-v2-b3fc74c0",
+      "engineContractVersion": "tensoreval-parquet-v3",
       "sources": [
         "docs/dataframe_schema_reference.md",
         "docs/dss_to_rss.md"
       ],
       "path": "skills/model-intake.md",
-      "sha256": "99c5a8ef4cd112ec735b46df840c61047d2d1dddfa21c3c30fb8b47f1438fd54"
+      "sha256": "57352e51821073c80a10cedd4840d03addc10dd529c6a6a94ef80581bb8edcbf"
     },
     {
       "id": "study-planning",
@@ -35,7 +35,7 @@
         "inspect_workspace",
         "create_script"
       ],
-      "engineContractVersion": "dss-v2-b3fc74c0",
+      "engineContractVersion": "tensoreval-parquet-v3",
       "sources": [
         "docs/agent_quickstart.md",
         "docs/dsa_function_reference.md"
@@ -55,7 +55,7 @@
         "search_engine_docs",
         "read_engine_doc_section"
       ],
-      "engineContractVersion": "dss-v2-b3fc74c0",
+      "engineContractVersion": "tensoreval-parquet-v3",
       "sources": [
         "docs/catalog/functions.json",
         "docs/rss_language_reference.md",
@@ -77,7 +77,7 @@
         "run_result_analysis",
         "create_dataset_view"
       ],
-      "engineContractVersion": "dss-v2-b3fc74c0",
+      "engineContractVersion": "tensoreval-parquet-v3",
       "sources": [
         "docs/catalog/dataframes.json",
         "docs/rsdss_function_reference.md"
@@ -88,7 +88,7 @@
     {
       "id": "comparison",
       "version": "1.0.0",
-      "description": "按稳定键和单位比较两个仿真任务",
+      "description": "按稳定键和单位比较两个仿真运行",
       "triggers": [
         "compare",
         "before-after"
@@ -96,13 +96,13 @@
       "requiredTools": [
         "compare_simulations"
       ],
-      "engineContractVersion": "dss-v2-b3fc74c0",
+      "engineContractVersion": "tensoreval-parquet-v3",
       "sources": [
         "docs/catalog/dataframes.json",
         "docs/validation_and_troubleshooting.md"
       ],
       "path": "skills/comparison.md",
-      "sha256": "0498f083e07a15c321c8dc137a6ed0ec783e7d42607090e18ba50f0e86b8ed11"
+      "sha256": "2d135d581bb6c40f34a884fde44e0442859bdebac0796531b7f860793e3b276a"
     },
     {
       "id": "troubleshooting",
@@ -116,13 +116,13 @@
         "search_engine_docs",
         "read_engine_doc_section"
       ],
-      "engineContractVersion": "dss-v2-b3fc74c0",
+      "engineContractVersion": "tensoreval-parquet-v3",
       "sources": [
         "docs/validation_and_troubleshooting.md",
         "docs/opendss_compatibility_matrix.md"
       ],
       "path": "skills/troubleshooting.md",
-      "sha256": "a6b6acfe9bc37ac025af0e00a993d48e37d989959042933697ce188c1e3e719a"
+      "sha256": "73b7d2e021203b6bd1b17dd140beb99017d5d4c3ee5c454e42ceff3314164496"
     }
   ]
 }

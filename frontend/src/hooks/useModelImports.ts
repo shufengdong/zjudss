@@ -4,7 +4,7 @@ import type { ModelImport, WorkspaceDraft } from '../types'
 
 export interface UploadEntry{id:string;name:string;relativePath?:string;status:'queued'|'uploading'|'accepted'|'failed';error?:string}
 const stableId=()=>crypto.randomUUID?.()??`${Date.now()}-${Math.random()}`
-const modelExtensions=new Set(['dss','dssbundle','rssbundle','csv','xlsx','xls','parquet'])
+const modelExtensions=new Set(['dss','dssbundle','rssbundle','zip','csv','xlsx','xls','parquet'])
 const extension=(name:string)=>name.toLowerCase().split('.').pop()??''
 
 export function classifyUploads(files:File[]){
@@ -20,6 +20,7 @@ export function useModelImports(sessionId:string|null,draft:WorkspaceDraft|null|
   const[imports,setImports]=useState<ModelImport[]>([])
   const timers=useRef<number[]>([])
   useEffect(()=>()=>timers.current.forEach(window.clearTimeout),[])
+  useEffect(()=>{setQueue([]);setImports([])},[sessionId])
   const watch=useCallback((id:string)=>{const poll=async()=>{try{const value=await getModelImport(id);setImports(items=>[value,...items.filter(item=>item.id!==id)])
       if(['accepted','processing'].includes(value.status)){timers.current.push(window.setTimeout(()=>void poll(),250))}
       else onChanged()

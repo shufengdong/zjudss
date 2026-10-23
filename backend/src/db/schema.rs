@@ -102,7 +102,6 @@ diesel::table! {
         id -> Integer,
         session_id -> Integer,
         active_version_id -> Nullable<Integer>,
-        draft_version_id -> Nullable<Integer>,
         created_at_ms -> BigInt,
         updated_at_ms -> BigInt,
     }
@@ -278,98 +277,12 @@ diesel::table! {
     model_versions (id) {
         id -> Integer,
         workspace_id -> Integer,
-        parent_version_id -> Nullable<Integer>,
-        status -> Text,
-        source_kind -> Text,
-        origin_kind -> Text,
-        manifest_json -> Text,
-        patch_json -> Nullable<Text>,
         content_hash -> Text,
-        created_at_ms -> BigInt,
-    }
-}
-
-diesel::table! {
-    version_artifacts (id) {
-        id -> Integer,
-        version_id -> Integer,
-        artifact_id -> Integer,
-        role -> Text,
-        relative_path -> Nullable<Text>,
-        display_name -> Text,
-        source_artifact_id -> Nullable<Integer>,
-        sheet_name -> Nullable<Text>,
-    }
-}
-
-diesel::table! {
-    dataframe_bindings (id) {
-        id -> Integer,
-        version_artifact_id -> Integer,
-        table_kind -> Nullable<Text>,
-        confidence -> Nullable<Double>,
-        resolution -> Text,
-        columns_json -> Text,
-        evidence_json -> Text,
-    }
-}
-
-diesel::table! {
-    ingestions (id) {
-        id -> Integer,
-        workspace_id -> Integer,
-        client_batch_id -> Text,
-        origin_kind -> Text,
-        source_ref_json -> Nullable<Text>,
-        base_version_id -> Nullable<Integer>,
-        published_version_id -> Nullable<Integer>,
-        status -> Text,
-        stages_json -> Text,
-        error_code -> Nullable<Text>,
-        error_message -> Nullable<Text>,
-        created_at_ms -> BigInt,
-        updated_at_ms -> BigInt,
-    }
-}
-
-diesel::table! {
-    ingestion_artifacts (id) {
-        id -> Integer,
-        ingestion_id -> Integer,
-        client_file_id -> Text,
-        artifact_id -> Integer,
-        file_name -> Text,
-        relative_path -> Nullable<Text>,
-        media_type -> Nullable<Text>,
-        role -> Text,
-        source_artifact_id -> Nullable<Integer>,
-        sheet_name -> Nullable<Text>,
-        status -> Text,
-        error_code -> Nullable<Text>,
-        error_message -> Nullable<Text>,
-        created_at_ms -> BigInt,
-        updated_at_ms -> BigInt,
-    }
-}
-
-diesel::table! {
-    simulation_tasks (id) {
-        id -> Integer,
-        session_id -> Integer,
-        status -> Text,
-        stage -> Nullable<Text>,
-        study_type -> Text,
-        model_version_id -> Integer,
-        study_spec_json -> Text,
-        script_artifact_id -> Integer,
-        agent_bundle_version -> Text,
-        agent_skill_refs_json -> Text,
+        source_summary_json -> Text,
         engine_contract_version -> Text,
-        exit_code -> Nullable<Integer>,
-        error_json -> Nullable<Text>,
         created_at_ms -> BigInt,
-        started_at_ms -> Nullable<BigInt>,
-        finished_at_ms -> Nullable<BigInt>,
+        deleted_at_ms -> Nullable<BigInt>,
+        tombstone_json -> Nullable<Text>,
     }
 }
 
@@ -398,28 +311,35 @@ diesel::table! {
         dataset_id -> Integer,
         alias -> Text,
         ordinal -> Integer,
+        source_name -> Text,
+        source_schema_json -> Text,
+        source_schema_hash -> Text,
+        source_producer_json -> Text,
     }
 }
 
 diesel::table! {
     result_datasets (id) {
         id -> Integer,
-        task_id -> Nullable<Integer>,
+        run_id -> Nullable<Integer>,
         analysis_run_id -> Nullable<Integer>,
-        artifact_id -> Integer,
+        artifact_id -> Nullable<Integer>,
         result_name -> Text,
         schema_json -> Text,
         schema_hash -> Text,
         row_count -> BigInt,
         size_bytes -> BigInt,
         created_at_ms -> BigInt,
+        deleted_at_ms -> Nullable<BigInt>,
+        tombstone_json -> Nullable<Text>,
     }
 }
 
 diesel::table! {
     dataset_views (id) {
         id -> Integer,
-        dataset_id -> Integer,
+        source_dataset_id -> Integer,
+        view_dataset_id -> Integer,
         name -> Text,
         kind -> Text,
         spec_json -> Text,
@@ -428,11 +348,13 @@ diesel::table! {
     }
 }
 diesel::table! {
-    task_comparisons (id) {
+    run_comparisons (id) {
         id -> Integer,
         session_id -> Integer,
-        baseline_task_id -> Integer,
-        candidate_task_id -> Integer,
+        baseline_run_id -> Integer,
+        candidate_run_id -> Integer,
+        baseline_snapshot_json -> Text,
+        candidate_snapshot_json -> Text,
         compatibility_json -> Text,
         analysis_run_id -> Integer,
         created_at_ms -> BigInt,
@@ -457,17 +379,11 @@ diesel::joinable!(users -> storage_scopes (storage_scope_id));
 diesel::joinable!(auth_sessions -> users (user_id));
 diesel::joinable!(workspaces -> sessions (session_id));
 diesel::joinable!(model_versions -> workspaces (workspace_id));
-diesel::joinable!(version_artifacts -> model_versions (version_id));
-diesel::joinable!(dataframe_bindings -> version_artifacts (version_artifact_id));
-diesel::joinable!(ingestions -> workspaces (workspace_id));
-diesel::joinable!(ingestion_artifacts -> ingestions (ingestion_id));
 diesel::joinable!(storage_scope_artifacts -> artifacts (artifact_id));
 diesel::joinable!(storage_scope_artifacts -> storage_scopes (storage_scope_id));
 diesel::joinable!(result_analysis_runs -> sessions (session_id));
 diesel::joinable!(result_analysis_inputs -> result_analysis_runs (analysis_run_id));
-diesel::joinable!(result_datasets -> artifacts (artifact_id));
-diesel::joinable!(dataset_views -> result_datasets (dataset_id));
-diesel::joinable!(task_comparisons -> sessions (session_id));
+diesel::joinable!(run_comparisons -> sessions (session_id));
 diesel::joinable!(chat_search_documents -> sessions (session_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
@@ -492,16 +408,11 @@ diesel::allow_tables_to_appear_in_same_query!(
     dataset_lineage_snapshots,
     version_deletion_previews,
     model_versions,
-    version_artifacts,
-    dataframe_bindings,
-    ingestions,
-    ingestion_artifacts,
-    simulation_tasks,
     messages,
     result_analysis_runs,
     result_analysis_inputs,
     result_datasets,
     dataset_views,
-    task_comparisons,
+    run_comparisons,
     chat_search_documents,
 );

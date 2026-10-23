@@ -14,7 +14,21 @@ use crate::ingestion::{
 };
 use crate::storage::{ParquetInspector, StageLimits};
 
-use super::{ArtifactError, ArtifactMetadata, ArtifactService, UploadBatch, now_ms};
+use super::{ArtifactError, ArtifactMetadata, ArtifactService, now_ms};
+use crate::storage::StagedArtifact;
+
+pub struct UploadFile {
+    pub client_file_id: String,
+    pub file_name: String,
+    pub relative_path: Option<String>,
+    pub media_type: Option<String>,
+    pub staged: StagedArtifact,
+}
+
+pub struct UploadBatch {
+    pub client_batch_id: String,
+    pub files: Vec<UploadFile>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -157,7 +171,7 @@ impl ModelImportService {
         let scope = self.artifacts.resolve_scope(user.storage_scope_id).await?;
         let mut committed = Vec::new();
         for file in batch.files {
-            let super::UploadFile {
+            let UploadFile {
                 client_file_id,
                 file_name,
                 relative_path,
@@ -328,6 +342,24 @@ impl ModelImportService {
             self.process_dss(user, &record).await
         };
         if let Err(error) = result {
+            // A failed import must not retain any source artifacts. The import row and
+            // diagnostics remain queryable, but its candidate set is emptied before
+            // the terminal status is published so quota/accounting stays atomic.
+            let scope = self.artifacts.resolve_scope(user.storage_scope_id).await?;
+            let artifact_ids = self
+                .repo
+                .replace_candidates(import_id, Vec::new())
+                .await?
+                .into_iter()
+                .collect::<BTreeSet<_>>();
+            for artifact_id in artifact_ids {
+                let _ = self.artifacts.release(scope.id, artifact_id).await;
+            }
+            let _ = std::fs::remove_dir_all(
+                self.data_dir
+                    .join("model-import-work")
+                    .join(import_id.to_string()),
+            );
             self.repo
                 .set_status(
                     import_id,

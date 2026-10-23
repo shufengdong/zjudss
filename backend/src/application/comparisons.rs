@@ -1,17 +1,21 @@
+use std::collections::HashMap;
+
+use serde_json::{Value, json};
+
 use crate::application::{
     AnalysisInput, AnalysisRequest, AnalysisService, EventBus, EventWriter, ResultColumn,
     ResultOutputRef, now_ms,
 };
 use crate::auth::CurrentUser;
-use crate::db::models::{NewTaskComparison, ResultDataset, TaskComparison};
-use crate::db::repositories::{ComparisonRepo, DatasetRepo, MessageRepo, SimulationRepo};
-use serde_json::{Value, json};
-use std::collections::HashMap;
+use crate::db::models::{NewRunComparison, RunComparison};
+use crate::db::repositories::{ComparisonRepo, MessageRepo, ResultRepo, RunDataset, RunRepo};
+
 #[derive(Debug)]
 pub struct ComparisonError {
     pub code: &'static str,
     pub message: String,
 }
+
 impl ComparisonError {
     fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
@@ -26,278 +30,298 @@ impl std::fmt::Display for ComparisonError {
     }
 }
 impl std::error::Error for ComparisonError {}
+
 #[derive(Clone)]
 pub struct ComparisonService {
     repo: ComparisonRepo,
-    tasks: SimulationRepo,
-    datasets: DatasetRepo,
+    runs: RunRepo,
+    datasets: ResultRepo,
     analysis: AnalysisService,
     messages: MessageRepo,
     events: EventBus,
 }
+
 impl ComparisonService {
     pub fn new(
         repo: ComparisonRepo,
-        tasks: SimulationRepo,
-        datasets: DatasetRepo,
+        runs: RunRepo,
+        datasets: ResultRepo,
         analysis: AnalysisService,
         messages: MessageRepo,
         events: EventBus,
     ) -> Self {
         Self {
             repo,
-            tasks,
+            runs,
             datasets,
             analysis,
             messages,
             events,
         }
     }
+
     pub async fn compare(
         &self,
-        p: &CurrentUser,
+        principal: &CurrentUser,
         session_id: i32,
-        baseline_task_id: i32,
-        candidate_task_id: i32,
+        baseline_run_id: i32,
+        candidate_run_id: i32,
         request_message_id: Option<i32>,
         skill_refs: Vec<Value>,
-    ) -> Result<TaskComparison, ComparisonError> {
-        if baseline_task_id == candidate_task_id {
+    ) -> Result<RunComparison, ComparisonError> {
+        if baseline_run_id == candidate_run_id {
             return Err(ComparisonError::new(
                 "comparison_incompatible",
-                "不能比较同一个任务",
+                "不能比较同一次运行",
             ));
         }
         let baseline = self
-            .tasks
-            .find(&p.id, baseline_task_id)
+            .runs
+            .find(&principal.id, baseline_run_id)
             .await
             .map_err(|_| ComparisonError::new("not_found", "资源不存在"))?;
         let candidate = self
-            .tasks
-            .find(&p.id, candidate_task_id)
+            .runs
+            .find(&principal.id, candidate_run_id)
             .await
             .map_err(|_| ComparisonError::new("not_found", "资源不存在"))?;
-        if baseline.session_id != session_id || candidate.session_id != session_id {
+        if baseline.session_id != session_id
+            || candidate.session_id != session_id
+            || baseline.status != "succeeded"
+            || candidate.status != "succeeded"
+        {
             return Err(ComparisonError::new("not_found", "资源不存在"));
         }
         let left = self
             .datasets
-            .list_task(&p.id, baseline_task_id)
+            .list_run(&principal.id, baseline_run_id)
             .await
             .map_err(|_| ComparisonError::new("not_found", "资源不存在"))?;
         let right = self
             .datasets
-            .list_task(&p.id, candidate_task_id)
+            .list_run(&principal.id, candidate_run_id)
             .await
             .map_err(|_| ComparisonError::new("not_found", "资源不存在"))?;
-        let (left, right, compatibility) = compatible_pair(&baseline.study_type, left, right)?;
-        let analysis=self.analysis.run(AnalysisRequest{principal:p.clone(),session_id,request_message_id,intent:json!({"kind":"task_comparison","baselineTaskId":baseline_task_id.to_string(),"candidateTaskId":candidate_task_id.to_string(),"compatibility":compatibility}),script:comparison_script(&compatibility),inputs:vec![AnalysisInput{dataset_id:left.id,alias:"baseline".into()},AnalysisInput{dataset_id:right.id,alias:"candidate".into()}],expected_outputs:vec!["result".into()],initial_views:HashMap::new(),skill_refs}).await.map_err(|e|ComparisonError::new(e.code,e.to_string()))?;
+        let (left, right, compatibility) = compatible_pair(left, right)?;
+        let analysis = self.analysis.run(AnalysisRequest {
+            principal: principal.clone(),
+            session_id,
+            request_message_id,
+            intent: json!({"kind":"run_comparison","baselineRunId":baseline_run_id.to_string(),"candidateRunId":candidate_run_id.to_string(),"compatibility":compatibility}),
+            script: comparison_script(&compatibility),
+            inputs: vec![
+                AnalysisInput { dataset_id: left.id, alias: "baseline".into() },
+                AnalysisInput { dataset_id: right.id, alias: "candidate".into() },
+            ],
+            expected_outputs: vec!["result".into()],
+            initial_views: HashMap::new(),
+            skill_refs,
+        }).await.map_err(|error| ComparisonError::new(error.code, error.to_string()))?;
         let comparison = self
             .repo
             .create(
-                &p.id,
-                NewTaskComparison {
+                &principal.id,
+                NewRunComparison {
                     session_id,
-                    baseline_task_id,
-                    candidate_task_id,
+                    baseline_run_id,
+                    candidate_run_id,
+                    baseline_snapshot_json: run_snapshot(&baseline),
+                    candidate_snapshot_json: run_snapshot(&candidate),
                     compatibility_json: crate::application::canonical_json(&compatibility),
                     analysis_run_id: analysis.run.id,
                     created_at_ms: now_ms(),
                 },
             )
             .await
-            .map_err(|e| ComparisonError::new("comparison_publish_failed", e.to_string()))?;
-        let outputs = analysis.datasets.iter().map(result_ref).collect();
+            .map_err(|error| {
+                ComparisonError::new("comparison_publish_failed", error.to_string())
+            })?;
         EventWriter::new(
-            p.id.clone(),
+            principal.id.clone(),
             session_id,
             self.messages.clone(),
             self.events.clone(),
         )
         .comparison(
             comparison.id,
-            baseline_task_id,
-            candidate_task_id,
+            baseline_run_id,
+            candidate_run_id,
             analysis.run.id,
-            "仿真结果对比",
-            outputs,
+            "运行结果对比",
+            analysis.datasets.iter().map(result_ref).collect(),
         )
         .await
-        .map_err(|e| ComparisonError::new("comparison_event_failed", e.to_string()))?;
+        .map_err(|error| ComparisonError::new("comparison_event_failed", error.to_string()))?;
         Ok(comparison)
     }
+
     pub async fn find(
         &self,
-        p: &CurrentUser,
+        principal: &CurrentUser,
         id: i32,
-    ) -> Result<(TaskComparison, Value, Vec<ResultDataset>), ComparisonError> {
-        let c = self
+    ) -> Result<(RunComparison, Value, Vec<RunDataset>), ComparisonError> {
+        let comparison = self
             .repo
-            .find(&p.id, id)
+            .find(&principal.id, id)
             .await
             .map_err(|_| ComparisonError::new("not_found", "资源不存在"))?;
         let (_, datasets) = self
             .analysis
-            .find(p, c.analysis_run_id)
+            .find(principal, comparison.analysis_run_id)
             .await
             .map_err(|_| ComparisonError::new("not_found", "资源不存在"))?;
-        let compatibility = serde_json::from_str(&c.compatibility_json).unwrap_or(Value::Null);
-        Ok((c, compatibility, datasets))
+        let compatibility =
+            serde_json::from_str(&comparison.compatibility_json).unwrap_or(Value::Null);
+        Ok((comparison, compatibility, datasets))
     }
 }
+
+fn run_snapshot(run: &crate::db::models::SimulationRun) -> String {
+    json!({
+        "runId": run.id.to_string(),
+        "modelVersionId": run.model_version_id.to_string(),
+        "modelContentHash": run.model_content_hash,
+        "scriptResourceId": run.script_resource_id.to_string(),
+        "scriptContentHash": run.script_content_hash,
+        "engineContractVersion": run.engine_contract_version,
+    })
+    .to_string()
+}
+
 fn compatible_pair(
-    study: &str,
-    left: Vec<ResultDataset>,
-    right: Vec<ResultDataset>,
-) -> Result<(ResultDataset, ResultDataset, Value), ComparisonError> {
+    left: Vec<RunDataset>,
+    right: Vec<RunDataset>,
+) -> Result<(RunDataset, RunDataset, Value), ComparisonError> {
     let by_name = right
         .into_iter()
-        .map(|d| (d.result_name.clone(), d))
+        .map(|dataset| (dataset.result_name.clone(), dataset))
         .collect::<HashMap<_, _>>();
-    for l in left {
-        if let Some(r) = by_name.get(&l.result_name) {
-            let lc: Vec<crate::application::datasets::DatasetColumn> =
-                serde_json::from_str(&l.schema_json).unwrap_or_default();
-            let rc: Vec<crate::application::datasets::DatasetColumn> =
-                serde_json::from_str(&r.schema_json).unwrap_or_default();
-            let rm = rc
-                .iter()
-                .map(|c| (c.name.as_str(), c))
-                .collect::<HashMap<_, _>>();
-            let mut keys = lc
-                .iter()
-                .filter(|c| {
-                    let n = c.name.to_ascii_lowercase();
-                    (n == "id"
-                        || n == "key"
-                        || n.ends_with("_id")
-                        || n == "name"
-                        || n == "bus"
-                        || n == "kind"
-                        || n == "time"
-                        || n == "time_s")
-                        && rss_identifier(&c.name)
-                        && rm.get(c.name.as_str()).is_some_and(|v| v.dtype == c.dtype)
-                })
-                .map(|c| c.name.clone())
-                .collect::<Vec<_>>();
-            if study.to_ascii_lowercase().contains("qsts")
-                && !keys.iter().any(|k| k == "time" || k == "time_s")
+    for baseline in left {
+        let Some(candidate) = by_name.get(&baseline.result_name) else {
+            continue;
+        };
+        let baseline_columns: Vec<crate::application::datasets::DatasetColumn> =
+            serde_json::from_str(&baseline.schema_json).unwrap_or_default();
+        let candidate_columns: Vec<crate::application::datasets::DatasetColumn> =
+            serde_json::from_str(&candidate.schema_json).unwrap_or_default();
+        let candidate_by_name = candidate_columns
+            .iter()
+            .map(|column| (column.name.as_str(), column))
+            .collect::<HashMap<_, _>>();
+        let mut keys = baseline_columns
+            .iter()
+            .filter(|column| {
+                let name = column.name.to_ascii_lowercase();
+                (name == "id"
+                    || name == "key"
+                    || name.ends_with("_id")
+                    || name == "name"
+                    || name == "bus"
+                    || name == "kind"
+                    || name == "time"
+                    || name == "time_s")
+                    && rss_identifier(&column.name)
+                    && candidate_by_name
+                        .get(column.name.as_str())
+                        .is_some_and(|other| other.dtype == column.dtype)
+            })
+            .map(|column| column.name.clone())
+            .collect::<Vec<_>>();
+        if keys.is_empty() {
+            continue;
+        }
+        keys.sort();
+        let mut values = Vec::new();
+        for column in &baseline_columns {
+            if keys.contains(&column.name)
+                || !numeric(&column.dtype)
+                || !rss_identifier(&column.name)
             {
                 continue;
             }
-            if keys.is_empty() {
-                continue;
-            }
-            keys.sort();
-            let mut values = Vec::new();
-            let mut unit_error = false;
-            for c in &lc {
-                if keys.contains(&c.name) || !numeric(&c.dtype) || !rss_identifier(&c.name) {
-                    continue;
-                }
-                if let Some(other) = rm.get(c.name.as_str()) {
-                    if other.dtype == c.dtype {
-                        if other.unit != c.unit {
-                            unit_error = true;
-                            break;
-                        }
-                        values.push(json!({"column":c.name,"dtype":c.dtype,"unit":c.unit}));
+            if let Some(other) = candidate_by_name.get(column.name.as_str()) {
+                if other.dtype == column.dtype {
+                    if other.unit != column.unit {
+                        return Err(ComparisonError::new(
+                            "comparison_incompatible",
+                            "同名数值列单位不兼容",
+                        ));
                     }
+                    values.push(
+                        json!({"column":column.name,"dtype":column.dtype,"unit":column.unit}),
+                    );
                 }
             }
-            if unit_error {
-                return Err(ComparisonError::new(
-                    "comparison_incompatible",
-                    "同名数值列单位不兼容",
-                ));
-            }
-            if values.is_empty() {
-                continue;
-            }
-            let compatibility = json!({"baselineDatasetId":l.id.to_string(),"candidateDatasetId":r.id.to_string(),"resultName":l.result_name,"stableKeys":keys,"values":values,"baselineSchema":lc,"candidateSchema":rc,"dimensions":{"baselineRows":l.row_count,"candidateRows":r.row_count}});
-            return Ok((l, r.clone(), compatibility));
         }
+        if values.is_empty() {
+            continue;
+        }
+        let compatibility = json!({
+            "baselineDatasetId": baseline.id.to_string(),
+            "candidateDatasetId": candidate.id.to_string(),
+            "resultName": baseline.result_name,
+            "stableKeys": keys,
+            "values": values,
+            "baselineSchema": baseline_columns,
+            "candidateSchema": candidate_columns,
+            "dimensions": {"baselineRows":baseline.row_count,"candidateRows":candidate.row_count},
+        });
+        return Ok((baseline, candidate.clone(), compatibility));
     }
     Err(ComparisonError::new(
         "comparison_incompatible",
         "找不到具有稳定键、兼容数值列和单位的数据集",
     ))
 }
-fn numeric(v: &str) -> bool {
+
+fn numeric(value: &str) -> bool {
     ["Int", "UInt", "Float", "Decimal"]
         .iter()
-        .any(|p| v.starts_with(p))
-        || v == "int64"
-        || v == "float64"
+        .any(|prefix| value.starts_with(prefix))
+        || value == "int64"
+        || value == "float64"
 }
 
 fn rss_identifier(value: &str) -> bool {
     let mut chars = value.chars();
     chars
         .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
+        && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
-fn comparison_script(c: &Value) -> String {
-    let keys = c
-        .get("stableKeys")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect::<Vec<_>>();
-    let values = c
+fn comparison_script(compatibility: &Value) -> String {
+    let keys = serde_json::to_string(compatibility.get("stableKeys").unwrap_or(&json!([])))
+        .unwrap_or_else(|_| "[]".into());
+    let values = compatibility
         .get("values")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(|value| value.get("column").and_then(Value::as_str))
         .collect::<Vec<_>>();
-    let key_array = serde_json::to_string(&keys).unwrap_or_else(|_| "[]".into());
-    let mut script =
-        format!("joined = join(baseline, candidate, {key_array}, {key_array}, inner);\n");
-    for (index, column) in values.iter().enumerate() {
-        let metric = serde_json::to_string(column).unwrap();
-        let keys = keys
-            .iter()
-            .map(|key| format!("    col({key}),\n"))
-            .collect::<String>();
-        script.push_str(&format!(
-            "metric_{index} = select(\n{keys}    alias({metric}, metric),\n    alias(col({column}), baseline_value),\n    alias(col({column}_right), candidate_value),\n    alias(abs(col({column}_right) - col({column})), absolute),\n    alias((col({column}_right) - col({column})) / col({column}), relative),\n    joined\n);\n"
-        ));
-    }
-    if values.len() == 1 {
-        script.push_str("result = select(all(), metric_0);\n");
-    } else {
-        let frames = (0..values.len())
-            .map(|index| format!("metric_{index}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        script.push_str(&format!("result = concat(\"vertical\", {frames});\n"));
-    }
-    script
+    let values = serde_json::to_string(&values).unwrap_or_else(|_| "[]".into());
+    format!("result = compare_frames(baseline, candidate, keys={keys}, values={values})\n")
 }
-fn result_ref(d: &ResultDataset) -> ResultOutputRef {
+
+fn result_ref(dataset: &RunDataset) -> ResultOutputRef {
     let columns: Vec<crate::application::datasets::DatasetColumn> =
-        serde_json::from_str(&d.schema_json).unwrap_or_default();
+        serde_json::from_str(&dataset.schema_json).unwrap_or_default();
     ResultOutputRef {
-        dataset_id: d.id.to_string(),
-        name: d.result_name.clone(),
-        row_count: d.row_count,
+        dataset_id: dataset.id.to_string(),
+        name: dataset.result_name.clone(),
+        row_count: dataset.row_count,
         columns: columns
             .into_iter()
-            .map(|c| ResultColumn {
-                name: c.name,
-                dtype: c.dtype,
-                nullable: c.nullable,
-                unit: c.unit,
+            .map(|column| ResultColumn {
+                name: column.name,
+                dtype: column.dtype,
+                nullable: column.nullable,
+                unit: column.unit,
             })
             .collect(),
         preview_rows: None,
-        preview_truncated: d.row_count > 0,
+        preview_truncated: dataset.row_count > 0,
         default_view_id: None,
         views: vec![],
     }

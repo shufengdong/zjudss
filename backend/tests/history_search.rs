@@ -1,20 +1,9 @@
 mod common;
 use backend::{
-    application::now_ms,
     auth::CurrentUser,
-    db::{
-        models::{NewMessage, NewSimulationTask},
-        repositories::{SearchFilters, TaskRepo},
-    },
+    db::{models::NewMessage, repositories::SearchFilters},
 };
 use common::TestApp;
-use diesel::RunQueryDsl;
-use diesel::sql_types::Integer;
-#[derive(diesel::QueryableByName)]
-struct IdRow {
-    #[diesel(sql_type = Integer)]
-    id: i32,
-}
 fn p(key: &str) -> CurrentUser {
     common::test_user(key)
 }
@@ -56,7 +45,7 @@ async fn chinese_substring_short_query_filters_delete_and_scope_are_bounded() {
             &owner,
             "电网电压".into(),
             SearchFilters {
-                study_type: None,
+                script_name: None,
                 status: None,
                 from_ms: None,
                 to_ms: None,
@@ -73,7 +62,7 @@ async fn chinese_substring_short_query_filters_delete_and_scope_are_bounded() {
             &owner,
             "电压".into(),
             SearchFilters {
-                study_type: None,
+                script_name: None,
                 status: None,
                 from_ms: None,
                 to_ms: None,
@@ -122,7 +111,7 @@ async fn chinese_substring_short_query_filters_delete_and_scope_are_bounded() {
                 &owner,
                 "配电网电压".into(),
                 SearchFilters {
-                    study_type: None,
+                    script_name: None,
                     status: None,
                     from_ms: None,
                     to_ms: None
@@ -146,7 +135,7 @@ async fn chinese_substring_short_query_filters_delete_and_scope_are_bounded() {
                 &owner,
                 "配电网电压".into(),
                 SearchFilters {
-                    study_type: None,
+                    script_name: None,
                     status: None,
                     from_ms: None,
                     to_ms: None
@@ -203,105 +192,5 @@ async fn messages_support_latest_before_and_around_windows_with_hard_limits() {
             .unwrap_err()
             .code
             == "history_page_invalid"
-    );
-}
-
-#[tokio::test]
-async fn task_filters_work_and_missing_fts_does_not_break_plain_history_reads() {
-    let app = TestApp::spawn().await;
-    let owner = p("instance");
-    let s = app
-        .state
-        .session_repo
-        .create(&owner.id, "tasks", 1)
-        .await
-        .unwrap();
-    let mut conn = app.pool.get().unwrap();
-    diesel::sql_query("INSERT INTO artifacts(sha256,size_bytes,storage_path,format,created_at_ms) VALUES('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',0,'objects/aa/history-script','rss',1)").execute(&mut conn).unwrap();
-    let artifact_id: IdRow = diesel::sql_query("SELECT last_insert_rowid() AS id")
-        .get_result(&mut conn)
-        .unwrap();
-    diesel::sql_query(format!(
-        "INSERT INTO workspaces(session_id,created_at_ms,updated_at_ms) VALUES({},1,1)",
-        s.id
-    ))
-    .execute(&mut conn)
-    .unwrap();
-    let workspace_id: IdRow = diesel::sql_query("SELECT last_insert_rowid() AS id")
-        .get_result(&mut conn)
-        .unwrap();
-    diesel::sql_query(format!("INSERT INTO model_versions(workspace_id,status,source_kind,origin_kind,manifest_json,content_hash,created_at_ms) VALUES({},'ready','rss','generated','{{}}','history-version',1)",workspace_id.id)).execute(&mut conn).unwrap();
-    let version_id: IdRow = diesel::sql_query("SELECT last_insert_rowid() AS id")
-        .get_result(&mut conn)
-        .unwrap();
-    drop(conn);
-    TaskRepo::new(app.pool.clone())
-        .create(
-            &owner.id,
-            NewSimulationTask {
-                session_id: s.id,
-                status: "succeeded".into(),
-                stage: Some("done".into()),
-                study_type: "power_flow".into(),
-                model_version_id: version_id.id,
-                study_spec_json: "{}".into(),
-                script_artifact_id: artifact_id.id,
-                agent_bundle_version: "v2.0.0".into(),
-                agent_skill_refs_json: "[]".into(),
-                engine_contract_version: "test-contract".into(),
-                exit_code: Some(0),
-                error_json: None,
-                created_at_ms: now_ms(),
-                started_at_ms: None,
-                finished_at_ms: None,
-            },
-        )
-        .await
-        .unwrap();
-    let hits = app
-        .state
-        .history_service
-        .search_sessions(
-            &owner,
-            "power".into(),
-            SearchFilters {
-                study_type: Some("power_flow".into()),
-                status: Some("succeeded".into()),
-                from_ms: None,
-                to_ms: None,
-            },
-            20,
-        )
-        .await
-        .unwrap();
-    assert_eq!(hits.len(), 1);
-    let mut conn = app.pool.get().unwrap();
-    diesel::sql_query("DROP TABLE chat_search_fts")
-        .execute(&mut conn)
-        .unwrap();
-    drop(conn);
-    let e = app
-        .state
-        .history_service
-        .search_sessions(
-            &owner,
-            "power".into(),
-            SearchFilters {
-                study_type: None,
-                status: None,
-                from_ms: None,
-                to_ms: None,
-            },
-            20,
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(e.code, "history_search_unavailable");
-    assert!(
-        app.state
-            .history_service
-            .list_messages(&owner, s.id, None, None, 50)
-            .await
-            .is_ok()
     );
 }

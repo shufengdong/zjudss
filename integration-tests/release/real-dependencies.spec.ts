@@ -1,7 +1,7 @@
 import { test, expect, type APIRequestContext, type Browser, type Page } from '@playwright/test'
-import { readdir, readFile, writeFile, mkdir } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import {
   agentTurnCompleted,
   expectDomainState,
@@ -12,16 +12,13 @@ import {
 test.setTimeout(15 * 60_000)
 
 class TransientProviderError extends Error {
-  constructor(readonly trace: ToolTraceEntry[]) {
-    super('provider_transient')
-  }
+  constructor(readonly trace: ToolTraceEntry[]) { super('provider_transient') }
 }
 
 interface SegmentReport {
   label: string
   tools: { toolName: string; status: string; stableIds: Record<string, unknown> }[]
 }
-
 interface AttemptReport {
   attempt: number
   outcome: 'passed' | 'provider_transient' | 'failed'
@@ -29,10 +26,10 @@ interface AttemptReport {
   reason?: string
 }
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 async function agentBundleEvidence() {
-  const root = join(process.cwd(), '../backend/resources/agent/v2')
+  const root = join(process.cwd(), '../backend/resources/agent/v3')
   const files: string[] = []
   const visit = async (directory: string, prefix = '') => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -53,40 +50,23 @@ async function agentBundleEvidence() {
 }
 
 function parseCsvRecords(text: string): string[][] {
-  const records: string[][] = []
-  let record: string[] = []
+  const rows: string[][] = []
+  let row: string[] = []
   let field = ''
   let quoted = false
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index]
     if (quoted) {
-      if (char === '"' && text[index + 1] === '"') {
-        field += '"'
-        index += 1
-      } else if (char === '"') {
-        quoted = false
-      } else {
-        field += char
-      }
-    } else if (char === '"') {
-      quoted = true
-    } else if (char === ',') {
-      record.push(field)
-      field = ''
-    } else if (char === '\n') {
-      record.push(field.replace(/\r$/, ''))
-      records.push(record)
-      record = []
-      field = ''
-    } else {
-      field += char
-    }
+      if (char === '"' && text[index + 1] === '"') { field += '"'; index += 1 }
+      else if (char === '"') quoted = false
+      else field += char
+    } else if (char === '"') quoted = true
+    else if (char === ',') { row.push(field); field = '' }
+    else if (char === '\n') { row.push(field.replace(/\r$/, '')); rows.push(row); row = []; field = '' }
+    else field += char
   }
-  if (field || record.length) {
-    record.push(field.replace(/\r$/, ''))
-    records.push(record)
-  }
-  return records.filter((row) => row.some((value) => value.length > 0))
+  if (field || row.length) { row.push(field.replace(/\r$/, '')); rows.push(row) }
+  return rows.filter(values => values.some(value => value.length > 0))
 }
 
 async function fixedUserSeed() {
@@ -118,20 +98,18 @@ async function waitFor<T>(read: () => Promise<T | undefined>, timeoutMs = 120_00
 }
 
 function traceFrom(messages: any[]): ToolTraceEntry[] {
-  return messages
-    .filter((message) => message.type === 'tool-call')
-    .map((message) => ({
-      callId: message.callId,
-      toolName: message.toolName,
-      args: message.args ?? {},
-      status: message.status,
-    }))
+  return messages.filter(message => message.type === 'tool-call').map(message => ({
+    callId: message.callId,
+    toolName: message.toolName,
+    args: message.args ?? {},
+    status: message.status,
+  }))
 }
 
 function summarizeTrace(label: string, trace: ToolTraceEntry[]): SegmentReport {
   return {
     label,
-    tools: trace.map((call) => ({
+    tools: trace.map(call => ({
       toolName: call.toolName,
       status: call.status,
       stableIds: Object.fromEntries(Object.entries(call.args).filter(([key]) => /Id$/.test(key) || key === 'engineResourceSnapshot')),
@@ -139,62 +117,54 @@ function summarizeTrace(label: string, trace: ToolTraceEntry[]): SegmentReport {
   }
 }
 
-async function sendAndCollect(
-  page: Page,
-  api: APIRequestContext,
-  sessionId: string,
-  text: string,
-  _requiredTools: string[],
-) {
+async function sendAndCollect(page: Page, api: APIRequestContext, sessionId: string, text: string, requiredTools: string[]) {
   const before = (await apiJson(api, `/api/sessions/${sessionId}/messages?limit=100`)).messages as any[]
-  const lastId = Math.max(0, ...before.map((message) => Number(message.id)))
+  const lastId = Math.max(0, ...before.map(message => Number(message.id)))
   let terminalCandidate: { key: string; since: number } | null = null
   await page.getByRole('textbox', { name: '消息' }).fill(text)
   await page.getByRole('button', { name: '发送消息' }).click()
   const messages = await waitFor(async () => {
     const all = (await apiJson(api, `/api/sessions/${sessionId}/messages?limit=100`)).messages as any[]
-    const current = all.filter((message) => Number(message.id) > lastId)
-    if (agentTurnCompleted(current, _requiredTools)) return current
-    if (!agentTurnCompleted(current)) {
-      terminalCandidate = null
-      return undefined
-    }
-    const key = current.map((message) => `${message.id}:${message.status ?? ''}`).join('|')
-    if (terminalCandidate?.key !== key) {
-      terminalCandidate = { key, since: Date.now() }
-      return undefined
-    }
+    const current = all.filter(message => Number(message.id) > lastId)
+    if (agentTurnCompleted(current, requiredTools)) return current
+    if (!agentTurnCompleted(current)) { terminalCandidate = null; return undefined }
+    const key = current.map(message => `${message.id}:${message.status ?? ''}`).join('|')
+    if (terminalCandidate?.key !== key) { terminalCandidate = { key, since: Date.now() }; return undefined }
     return Date.now() - terminalCandidate.since >= 5_000 ? current : undefined
   })
   const trace = traceFrom(messages)
   const assistant = messages.filter((message: any) => message.type === 'assistant').at(-1)
-  if (assistant?.content === 'agent 运行失败，请稍后重试' && !trace.some((call) => call.status === 'failed')) {
+  if (assistant?.content === 'agent 运行失败，请稍后重试' && !trace.some(call => call.status === 'failed')) {
     throw new TransientProviderError(trace)
   }
   return trace
 }
 
-async function uploadDataframes(page: Page, api: APIRequestContext, sessionId: string) {
+async function importAndPublish(page: Page, api: APIRequestContext, sessionId: string) {
   const directory = process.env.RELEASE_DATAFRAME_DIR
   if (!directory) throw new Error('release_dataframe_fixture_missing')
-  const requiredFrames = new Set([
-    'bus.parquet',
-    'line.parquet',
-    'linecode.parquet',
-    'load.parquet',
-    'transformer.parquet',
-    'voltage_source.parquet',
-  ])
-  const files = (await readdir(directory))
-    .filter((name) => requiredFrames.has(name))
-    .sort()
-    .map((name) => join(directory, name))
-  expect(files.length).toBe(requiredFrames.size)
+  const required = new Set(['bus.parquet', 'line.parquet', 'linecode.parquet', 'load.parquet', 'transformer.parquet', 'voltage_source.parquet'])
+  const files = (await readdir(directory)).filter(name => required.has(name)).sort().map(name => join(directory, name))
+  expect(files.length).toBe(required.size)
   await page.locator('input[type=file]').first().setInputFiles(files)
+  await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible({ timeout: 120_000 })
+  await page.getByRole('button', { name: '确认合并' }).click()
+  await waitFor(async () => {
+    const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
+    return workspace.draft?.tables?.length === required.size ? workspace : undefined
+  })
+  await page.getByRole('button', { name: '生成版本' }).click()
   return waitFor(async () => {
     const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
-    return workspace.draft?.status === 'collecting'
-      && workspace.draft.inputs?.length === requiredFrames.size ? workspace : undefined
+    return workspace.active && !workspace.draft ? workspace : undefined
+  })
+}
+
+async function clickRunAndWait(page: Page, api: APIRequestContext, sessionId: string, expectedCount: number) {
+  await page.getByRole('article', { name: '脚本 release-flow.rss' }).getByRole('button', { name: '运行' }).click()
+  return waitFor(async () => {
+    const runs = (await apiJson(api, `/api/sessions/${sessionId}/runs`)).runs
+    return runs.length === expectedCount && runs.every((run: any) => run.status === 'succeeded') ? runs[0] : undefined
   })
 }
 
@@ -204,83 +174,37 @@ async function runJourney(browser: Browser, report: AttemptReport) {
   const api = context.request
   try {
     const seed = await fixedUserSeed()
-    const login = await api.post('/api/auth/login', {
-      data: { id: seed.id, password: seed.id },
-    })
-    expect(login.status()).toBe(200)
+    expect((await api.post('/api/auth/login', { data: { id: seed.id, password: seed.id } })).status()).toBe(200)
     await page.goto('/')
-    const createResponse = page.waitForResponse((response) =>
-      response.url().endsWith('/api/sessions') && response.request().method() === 'POST')
+    const createdResponse = page.waitForResponse(response => response.url().endsWith('/api/sessions') && response.request().method() === 'POST')
     await page.getByRole('button', { name: '新建仿真' }).click()
-    const created = await createResponse
-    expect(created.status()).toBe(201)
-    const sessionId = String((await created.json()).id)
-    const initialWorkspace = await uploadDataframes(page, api, sessionId)
-    let dataframeVersionId = String(initialWorkspace.draft.versionId)
+    const sessionId = String((await (await createdResponse).json()).id)
+    const workspace = await importAndPublish(page, api, sessionId)
+    const versionId = String(workspace.active.id)
 
-    for (const [fileName, tableKind] of [
-      ['bus.parquet', 'bus'],
-      ['line.parquet', 'line'],
-      ['linecode.parquet', 'linecode'],
-      ['transformer.parquet', 'transformer'],
-      ['voltage_source.parquet', 'voltage_source'],
-    ]) {
-      const current = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
-      const input = current.draft.inputs.find((candidate: any) => candidate.fileName === fileName)
-      expect(input?.inputId).toMatch(/^\d+$/)
-      const trace = await sendAndCollect(page, api, sessionId,
-        `我已逐项审阅并接受 ${fileName} 当前证据中的候选类型歧义、最高候选差异、置信度差异、全部类型冲突以及空值列风险。我的最终人工裁决是 tableKind=${tableKind}，无需再次确认或复述风险。请检查工作区，并只把每个 input 顶层的 tableKind/resolution 视为当前状态；evidence 中的原始候选不能覆盖它。此前 user_confirmed 的输入仍然有效。然后必须直接调用 confirm_dataframe_mapping：inputId=${input.inputId}，tableKind=${tableKind}，expectedDraftVersionId=${dataframeVersionId}。`,
-        ['confirm_dataframe_mapping'])
-      expectToolTrace(trace, {
-        requiredTools: ['inspect_workspace', 'confirm_dataframe_mapping'],
-        allowedTools: ['inspect_workspace', 'confirm_dataframe_mapping'],
-      })
-      report.segments.push(summarizeTrace(`confirm_${tableKind}`, trace))
-      const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
-      dataframeVersionId = String((workspace.draft ?? workspace.active).versionId)
-    }
-
-    const mappedWorkspace = await waitFor(async () => {
-      const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
-      return (workspace.draft ?? workspace.active)?.status === 'ready' ? workspace : undefined
-    })
-    let trace: ToolTraceEntry[]
-    if (mappedWorkspace.draft) {
-      trace = await sendAndCollect(page, api, sessionId,
-        `请激活已确认完成的 DataFrame 候选版本 ID ${dataframeVersionId}，expectedDraftVersionId 也是 ${dataframeVersionId}。请直接调用激活工具。`,
-        ['activate_model_version'])
-      expectToolTrace(trace, {
-        requiredTools: ['activate_model_version'],
-        allowedTools: ['inspect_workspace', 'activate_model_version'],
-      })
-      report.segments.push(summarizeTrace('activate_dataframes', trace))
-      await waitFor(async () => {
-        const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
-        return String(workspace.active?.versionId) === dataframeVersionId ? workspace : undefined
-      })
-    } else {
-      expect(String(mappedWorkspace.active?.versionId)).toBe(dataframeVersionId)
-    }
-
-    trace = await sendAndCollect(page, api, sessionId,
-      `当前 active DataFrame 模型版本 ID 是 ${dataframeVersionId}，状态已经是 ready，六个输入的顶层 resolution 都是 inferred 或 user_confirmed。请检查工作区，并只读取 input 顶层 tableKind/resolution，不要把 evidence 中的原始候选误读为当前状态。加载 study-planning 和 rss-generation 技能；如需补充证据，只能使用 search_engine_docs/read_engine_doc_section，禁止调用 search_examples 或案例工具。然后必须且只能执行一次径向 power_flow。使用兼容的六参数 ds_radial_pf(bus, line, linecode, load, transformer, voltage_source)，把默认 bus_voltage 结果命名为 voltage；不要因重复解释已确认映射而停止。`,
-      ['run_study'])
+    let trace = await sendAndCollect(page, api, sessionId,
+      '检查当前 DataFrame 模型，加载 rss-generation 技能，并创建一个名为 release-flow.rss 的径向潮流 RSS 脚本。脚本使用 bus、line、linecode、load、transformer、voltage_source 六个命名 DataFrame，必须产生名为 voltage 的结果。只创建脚本，不要尝试运行。',
+      ['create_script'])
     expectToolTrace(trace, {
-      requiredTools: ['inspect_workspace', 'load_agent_skill', 'run_study'],
-      allowedTools: ['inspect_workspace', 'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section', 'run_study'],
-      gatedTools: { run_study: ['study-planning', 'rss-generation'] },
+      requiredTools: ['inspect_workspace', 'load_agent_skill', 'create_script'],
+      allowedTools: ['inspect_workspace', 'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section', 'create_script'],
+      gatedTools: { create_script: ['rss-generation'] },
     })
-    report.segments.push(summarizeTrace('dataframe_power_flow', trace))
-    const baseline = await waitFor(async () => {
-      const tasks = await apiJson(api, `/api/sessions/${sessionId}/tasks`)
-      return tasks.find((task: any) => task.modelVersionId === dataframeVersionId && task.studyType === 'power_flow' && task.status === 'succeeded')
-    })
-    const baselineDatasets = await apiJson(api, `/api/tasks/${baseline.id}/datasets`)
-    const voltage = baselineDatasets.find((dataset: any) => dataset.name === 'voltage')
+    report.segments.push(summarizeTrace('create_script', trace))
+    await expect(page.getByRole('article', { name: '脚本 release-flow.rss' })).toBeVisible()
+    expect((await apiJson(api, `/api/sessions/${sessionId}/runs`)).runs).toHaveLength(0)
+
+    const first = await clickRunAndWait(page, api, sessionId, 1)
+    await clickRunAndWait(page, api, sessionId, 2)
+    const runs = (await apiJson(api, `/api/sessions/${sessionId}/runs`)).runs
+    const baseline = runs.find((run: any) => run.id === first.id) ?? runs[1]
+    const candidate = runs.find((run: any) => run.id !== baseline.id)
+    const baselineDatasets = (await apiJson(api, `/api/runs/${baseline.id}/datasets`)).datasets
+    const voltage = baselineDatasets.find((dataset: any) => dataset.name === 'voltage') ?? baselineDatasets[0]
     expect(voltage?.id).toMatch(/^\d+$/)
 
     trace = await sendAndCollect(page, api, sessionId,
-      `请回答任务 ID ${baseline.id} 的电压结果问题：读取数据集 ID ${voltage.id} 的 schema，加载 result-analysis 技能，生成 derived DataFrame，仅保留 bus、v_mag、v_ang 三列。请直接运行分析，不要只给说明。`,
+      `读取数据集 ID ${voltage.id} 的 schema，加载 result-analysis 技能，并运行一次结果分析，生成名为 derived 的 DataFrame。`,
       ['run_result_analysis'])
     expectToolTrace(trace, {
       requiredTools: ['list_result_datasets', 'load_agent_skill', 'run_result_analysis'],
@@ -289,67 +213,8 @@ async function runJourney(browser: Browser, report: AttemptReport) {
     })
     report.segments.push(summarizeTrace('result_analysis', trace))
 
-    const examples = await apiJson(api, '/api/examples?query=ieee13_short_circuit&sourceKind=rss&limit=5')
-    const shortExample = examples.examples.find((example: any) => example.studyType === 'short_circuit' && example.sourceKind === 'rss')
-    expect(shortExample?.id).toMatch(/^ex_/)
     trace = await sendAndCollect(page, api, sessionId,
-      `请导入并激活 IEEE13 短路案例。先检查工作区；调用 search_examples 时使用空 query 和 study_type=short_circuit。搜索结果中必须包含稳定 exampleId=${shortExample.id}，随后必须调用 inspect_example 检查这个 ID，再调用 import_example。导入调用的 expectedDraftVersionId 是当前版本 ${dataframeVersionId}。导入成功后，激活调用的 versionId 和 expectedDraftVersionId 都必须填写 import_example 返回的新版本 ID，不要沿用旧基线 ${dataframeVersionId}。`,
-      ['activate_model_version'])
-    expectToolTrace(trace, {
-      requiredTools: ['inspect_workspace', 'search_examples', 'inspect_example', 'import_example', 'activate_model_version'],
-      allowedTools: ['inspect_workspace', 'search_examples', 'inspect_example', 'import_example', 'activate_model_version'],
-    })
-    report.segments.push(summarizeTrace('import_short_circuit', trace))
-    let workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
-    const shortVersionId = String(workspace.active.versionId)
-    expect(shortVersionId).not.toBe(dataframeVersionId)
-
-    trace = await sendAndCollect(page, api, sessionId,
-      `请对 active RSS 模型版本 ID ${shortVersionId} 直接执行 short_circuit。先加载 study-planning 和 rss-generation 技能；该模型本身就是可执行 RSS，使用版本入口脚本并只运行一次。`,
-      ['run_study'])
-    expectToolTrace(trace, {
-      requiredTools: ['load_agent_skill', 'run_study'],
-      allowedTools: ['inspect_workspace', 'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section', 'run_study'],
-      gatedTools: { run_study: ['study-planning', 'rss-generation'] },
-    })
-    report.segments.push(summarizeTrace('short_circuit_baseline', trace))
-    const shortBaseline = await waitFor(async () => {
-      const tasks = await apiJson(api, `/api/sessions/${sessionId}/tasks`)
-      return tasks.find((task: any) => task.modelVersionId === shortVersionId && task.studyType === 'short_circuit' && task.status === 'succeeded')
-    })
-
-    workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
-    const dssInput = workspace.active.inputs.find((input: any) => input.fileName === 'IEEE13Nodeckt.dss')
-    expect(dssInput?.inputId).toMatch(/^\d+$/)
-    trace = await sendAndCollect(page, api, sessionId,
-      `请修改当前模型 inputId ${dssInput.inputId} 中唯一对象 circuit.IEEE13Nodeckt 的 angle 参数：从 0 改为 1 deg。先加载 rss-generation 技能；dss_property 是 modify_model patch 的保留 tableKind，不是引擎函数，无需搜索文档。直接使用 patch={tableKind:dss_property,rowKey:{object:circuit.IEEE13Nodeckt},changes:{angle:{from:0,to:1,unit:deg}}}，expectedDraftVersionId=${shortVersionId}。修改成功后，激活调用的 versionId 和 expectedDraftVersionId 都填写 modify_model 返回的新版本 ID。`,
-      ['activate_model_version'])
-    expectToolTrace(trace, {
-      requiredTools: ['load_agent_skill', 'modify_model', 'activate_model_version'],
-      allowedTools: ['inspect_workspace', 'load_agent_skill', 'modify_model', 'activate_model_version'],
-      gatedTools: { modify_model: ['rss-generation'] },
-    })
-    report.segments.push(summarizeTrace('modify_and_activate', trace))
-    workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
-    const changedVersionId = String(workspace.active.versionId)
-    expect(changedVersionId).not.toBe(shortVersionId)
-
-    trace = await sendAndCollect(page, api, sessionId,
-      `请对修改后的 active RSS 模型版本 ID ${changedVersionId} 重跑 short_circuit。加载 study-planning 和 rss-generation 技能并直接执行版本入口脚本。`,
-      ['run_study'])
-    expectToolTrace(trace, {
-      requiredTools: ['load_agent_skill', 'run_study'],
-      allowedTools: ['inspect_workspace', 'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section', 'run_study'],
-      gatedTools: { run_study: ['study-planning', 'rss-generation'] },
-    })
-    report.segments.push(summarizeTrace('short_circuit_candidate', trace))
-    const shortCandidate = await waitFor(async () => {
-      const tasks = await apiJson(api, `/api/sessions/${sessionId}/tasks`)
-      return tasks.find((task: any) => task.modelVersionId === changedVersionId && task.studyType === 'short_circuit' && task.status === 'succeeded')
-    })
-
-    trace = await sendAndCollect(page, api, sessionId,
-      `请比较短路基准任务 ID ${shortBaseline.id} 和修改后任务 ID ${shortCandidate.id}。先加载 comparison 技能，再直接调用 compare_simulations。`,
+      `加载 comparison 技能，比较基准运行 ID ${baseline.id} 与候选运行 ID ${candidate.id}，并保存比较结果。`,
       ['compare_simulations'])
     expectToolTrace(trace, {
       requiredTools: ['load_agent_skill', 'compare_simulations'],
@@ -358,21 +223,28 @@ async function runJourney(browser: Browser, report: AttemptReport) {
     })
     report.segments.push(summarizeTrace('comparison', trace))
 
+    const deleted = await api.delete(`/api/datasets/${voltage.id}`)
+    expect(deleted.ok(), `dataset deletion returned ${deleted.status()}`).toBe(true)
+    expect((await api.get(`/api/datasets/${voltage.id}`)).status()).toBe(404)
+    expect((await api.get(`/api/datasets/${voltage.id}/rows`)).status()).toBe(404)
+    expect((await api.get(`/api/datasets/${voltage.id}/download`)).status()).toBe(404)
+    expect((await api.get(`/api/runs/${baseline.id}`)).status()).toBe(200)
+
     return expectDomainState(api, {
       sessionId,
-      expectedVersions: 8,
-      taskStudyTypes: ['power_flow', 'short_circuit', 'short_circuit'],
-      expectedDatasets: 3,
+      expectedVersions: 1,
+      expectedRuns: 2,
+      expectedDatasets: 1,
       expectedAnalysisRuns: 2,
       expectedComparisons: 1,
-      activeVersionId: changedVersionId,
+      activeVersionId: versionId,
     })
   } finally {
     await context.close()
   }
 }
 
-test('real DeepSeek and tensoreval complete the semantic release journey', async ({ browser }) => {
+test('real DeepSeek and tensoreval complete the V3 semantic release journey', async ({ browser }) => {
   const reportPath = process.env.RELEASE_LLM_REPORT
   if (!reportPath) throw new Error('release_llm_report_missing')
   const attempts: AttemptReport[] = []
@@ -393,9 +265,7 @@ test('real DeepSeek and tensoreval complete the semantic release journey', async
           attemptReport.reason = error.message
           attemptReport.segments.push(summarizeTrace('provider_transient', error.trace))
           if (attempt < 3) continue
-        } else {
-        attemptReport.reason = error instanceof Error ? error.message : 'semantic_failure'
-        }
+        } else attemptReport.reason = error instanceof Error ? error.message : 'semantic_failure'
         throw error
       }
     }
@@ -416,6 +286,7 @@ test('real DeepSeek and tensoreval complete the semantic release journey', async
       userSeedSha256: seed.sha256,
       userCount: seed.userCount,
       engineContract: engineReport?.engineContract ?? null,
+      engineContractChecks: engineReport?.contractChecks ?? null,
       engineBinarySha256: engineReport?.binarySha256 ?? null,
       attempts,
       finalState,

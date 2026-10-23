@@ -1,114 +1,45 @@
-# 配电网仿真智能体 V3 数据库设计
+# V3 数据库设计
 
-> 状态：已实现。权威 SQL 为
-> `backend/migrations/00000000000000_initial/up.sql`。V3 仅支持空库初始化。
+## Scope
 
-## 1. 约定
+SQLite 只支持从空库执行 `backend/migrations/00000000000000_initial`。模型和结果正文保存在按用户 storage
+scope 引用的内容寻址 artifact；数据库保存所有权、状态、hash、schema、快照和血缘。
 
-- SQLite 启用外键；主键用 `INTEGER PRIMARY KEY AUTOINCREMENT`。
-- 时间为 Unix 毫秒 `INTEGER`，出网转换为 ISO 8601；文件大小和行数使用 64 位整数。
-- JSON 保存在 TEXT，写入前使用 canonical JSON；应用层校验其 schema。
-- 每个 repository 查询显式接收 `UserId`；子资源通过 `sessions.user_id` join 校验归属。
-- blob 路径是 DATA_DIR 内的相对路径，客户端和 LLM 永远看不到服务器路径。
+## Entity groups
 
-## 2. 表关系
+- 身份：`users`、`auth_sessions`、`storage_scopes`、`artifacts`、`storage_scope_artifacts`、`system_metadata`。
+- 对话：`sessions`、`messages`、`chat_search_documents`、`chat_search_fts`。
+- 模型：`workspaces`、`workspace_drafts`、`draft_dataframes`、`model_imports`、
+  `model_import_candidates`、`model_versions`、`model_dataframes`、`publish_receipts`。
+- 脚本与运行：`script_resources`、`simulation_runs`、`result_datasets`。
+- 派生：`result_analysis_runs`、`result_analysis_inputs`、`dataset_lineage_snapshots`、`dataset_views`、
+  `run_comparisons`。
+- 删除：`version_deletion_previews` 和版本/运行/结果的 tombstone 字段。
 
-```mermaid
-erDiagram
-  users ||--o{ auth_sessions : authenticates
-  users ||--o{ sessions : owns
-  storage_scopes ||--|| users : charges
-  storage_scopes ||--o{ storage_scope_artifacts : charges
-  artifacts ||--o{ storage_scope_artifacts : referenced
-  sessions ||--|| workspaces : has
-  workspaces ||--o{ model_versions : versions
-  model_versions ||--o{ version_artifacts : inputs
-  version_artifacts ||--o| dataframe_bindings : inferred_as
-  workspaces ||--o{ ingestions : receives
-  ingestions ||--o{ ingestion_artifacts : contains
-  sessions ||--o{ simulation_tasks : runs
-  model_versions ||--o{ simulation_tasks : binds
-  simulation_tasks ||--o{ result_datasets : produces
-  sessions ||--o{ result_analysis_runs : analyzes
-  result_analysis_runs ||--o{ result_analysis_inputs : consumes
-  result_datasets ||--o{ result_analysis_inputs : input
-  result_analysis_runs ||--o{ result_datasets : derives
-  result_datasets ||--o{ dataset_views : presents
-  sessions ||--o{ task_comparisons : compares
-  sessions ||--o{ messages : contains
-```
+## Invariants
 
-## 3. 身份、会话和搜索
+每个 session 只有一个 workspace，每个 workspace 最多一个 draft；草稿和版本内的 `table_name` 唯一。
+发布版本的内容与 DataFrame 行由触发器禁止修改，同一 workspace 的存活 `content_hash` 唯一。active version
+必须属于当前 workspace。
 
-- `users`：从内置 `init_users.csv` 初始化的固定用户，保存 ID、名称、Argon2id 密码散列和唯一计费 scope。
-- `auth_sessions`：只保存随机登录 token 的 SHA-256、用户、创建/访问/到期时间；同一用户可有多个登录。
-- `system_metadata`：保存 `init_users_sha256`，用来拒绝 CSV 改动后的旧数据库启动。
-- `storage_scopes`：每个用户唯一的计费主体、artifact/字节硬限制、使用量和告警比例。
-- `sessions`：必填 `user_id`、标题和 `title_source=default|auto|user`。
-- `messages`：八类消息的可读摘要和 payload；可选关联 task。
-- `chat_search_documents` + `chat_search_fts`：session 标题、用户/助手文本、附件名和任务摘要。
-  触发器保持外部内容 FTS 同步，`rebuild-search-index` 可离线重建。
+运行插入必须同时绑定同一 session 的模型版本和脚本，`(session_id, client_run_id)` 唯一；运行保存模型
+content hash、脚本 artifact/hash、engine contract、Agent bundle/skills。结果只能有 run 或 analysis 一个生产者。
 
-业务 session 不保存通用 scope 列。所有子资源通过 session 归属于固定用户；手工标题不会被首条消息的
-自动标题覆盖。
+删除结果时 `artifact_id` 置空且同时写 `deleted_at_ms/tombstone_json`；存活结果则反之。派生结果的
+`dataset_lineage_snapshots` 保存来源 ID、名称、schema/hash 和生产者摘要。`dataset_views.view_dataset_id` 指向
+独立物化结果，因此来源 tombstone 不影响读取。
 
-## 4. Artifact 与摄取
+## Ownership and queries
 
-- `artifacts`：全局 SHA-256、逻辑大小、格式、媒体类型和 CAS 相对路径。
-- `storage_scope_artifacts`：每个计费主体对 artifact 的引用计数；同 scope 相同内容只计一次。
-- `artifact_gc_failures`：物理删除失败的幂等重试记录。
-- `ingestions`：`workspace_id + client_batch_id` 唯一，持久化阶段、基线、发布版本和错误。
-- `ingestion_artifacts`：client file ID、相对路径、原始/解包/规范化角色和单文件状态。
+所有 repository 查询显式接收 `UserId`，通过 session 连接验证所有权。错误 ID 与跨用户 ID 都返回
+`RepoError::NotFound`。storage scope ID 只来自认证 principal，不接收客户端值。
 
-文件先流式写 staging，事务检查配额并登记引用后原子发布。失败不会推进 workspace 或留下可见的部分
-版本。
+## Artifact references
 
-## 5. 工作区和不可变版本
+commit 在一个 immediate transaction 中检查配额、去重并增加引用；发布 blob 使用原子 rename。导入 apply、
+失败或放弃会释放 staging 引用。版本/结果删除在元数据事务完成后幂等 release，并由 GC 清理零引用 blob。
 
-- `workspaces`：一个 session 一行，保存 active/draft 指针。
-- `model_versions`：父版本、状态、source/origin、manifest、patch 和 content hash。
-- `version_artifacts`：版本内输入及安全相对路径；可追溯 source artifact 和 Excel sheet。
-- `dataframe_bindings`：基于列名的类型、置信度、决议、列 schema 和完整推断证据。
+## Search and recovery
 
-触发器禁止更新已发布的 model version、version artifact 和 binding。active 只能指向同 workspace 的
-ready 版本；激活和回退只移动指针，不改历史任务。
-
-## 6. 仿真任务
-
-`simulation_tasks` 的可复现字段全部必填：
-
-| 字段 | 说明 |
-|---|---|
-| `session_id` | 所属会话 |
-| `status/stage` | 后端任务状态和阶段 |
-| `study_type/study_spec_json` | 开放分析类型及完整参数 |
-| `model_version_id` | 不可变输入版本 |
-| `script_artifact_id` | 实际执行的 RSS |
-| `agent_bundle_version/agent_skill_refs_json` | 生成脚本时的 agent 合同 |
-| `engine_contract_version` | tensoreval 命令/结果合同 |
-| `exit_code/error_json` | 执行结果或结构化错误 |
-| 三个时间戳 | 创建、开始、完成 |
-
-schema 不包含通用 `params_json`、任务路径表或预设领域统计值。
-
-## 7. 通用结果、分析与比较
-
-- `result_datasets`：只属于一个 simulation task 或 analysis run，保存 artifact、名称、schema/hash、
-  行数和字节数。成功数据统一为 Snappy Parquet。
-- `result_analysis_runs`：用户意图、RSS script artifact、状态、agent/skill/engine 版本。
-- `result_analysis_inputs`：有序 dataset/alias 血缘。
-- `dataset_views`：六类受控 `VisualizationSpec`，不保存任意 ECharts option。
-- `task_comparisons`：基准/候选任务、固化的兼容性快照和差值 analysis run。
-
-分析结果仍是普通 DataFrame。统计、筛选、聚合和差值不拆成 SQL 指标列；用户提出问题时由 RSS 读取
-Parquet 并产出派生数据集。
-
-## 8. 配额和删除
-
-默认每个用户 storage scope 20,000 个唯一 artifact、20 GiB，80% 告警。删除 session 会级联删除其业务
-记录；artifact 引用归零后由 GC 删除 blob 并扣减计数。达到硬限制时保持历史读、搜索和下载可用。
-
-## 9. 发布迁移
-
-V3 发布前已把未上线版本压为一份 `00000000000000_initial`。部署时必须删除旧开发数据库和 DATA_DIR
-后从空目录启动。此后 schema 变更恢复永久只追加迁移规则。
+会话标题、消息、模型导入、脚本和运行摘要写入 FTS5 trigram 外部内容表。索引损坏只让搜索返回 503，不影响
+会话和消息读取。启动恢复将 processing 导入、queued/running 运行标记失败，不重写已提交资源。

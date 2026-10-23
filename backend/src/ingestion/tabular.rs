@@ -158,7 +158,7 @@ pub fn normalize_excel_to_parquet(
     Ok(outputs)
 }
 
-/// 把 CSV 确定性地规范化为 UTF-8 Parquet，供 tensoreval v2 named input 使用。
+/// 把 CSV 确定性地规范化为 UTF-8 Parquet，供 tensoreval 命名输入使用。
 pub fn normalize_csv_to_parquet(source: &Path, output: &Path) -> Result<TableSchema, TabularError> {
     let mut reader = csv::ReaderBuilder::new()
         .flexible(true)

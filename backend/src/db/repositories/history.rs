@@ -10,7 +10,7 @@ use diesel::{
 };
 #[derive(Debug, Clone)]
 pub struct SearchFilters {
-    pub study_type: Option<String>,
+    pub script_name: Option<String>,
     pub status: Option<String>,
     pub from_ms: Option<i64>,
     pub to_ms: Option<i64>,
@@ -63,17 +63,17 @@ impl HistoryRepo {
             let limit=limit.clamp(1,20);
             let rows=if query.chars().count()<=2 {
                 let pattern=format!("%{}%",escape_like(&query));
-                sql_query("SELECT s.id AS session_id,s.title,s.updated_at_ms,0.0 AS score,d.search_text AS snippet FROM chat_search_documents d JOIN sessions s ON s.id=d.session_id WHERE s.user_id=? AND d.search_text LIKE ? ESCAPE '\\' AND (? IS NULL OR s.updated_at_ms>=?) AND (? IS NULL OR s.updated_at_ms<=?) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_tasks t WHERE t.session_id=s.id AND t.study_type=?)) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_tasks t WHERE t.session_id=s.id AND t.status=?)) ORDER BY s.updated_at_ms DESC,s.id DESC LIMIT ?")
+                sql_query("SELECT s.id AS session_id,s.title,s.updated_at_ms,0.0 AS score,d.search_text AS snippet FROM chat_search_documents d JOIN sessions s ON s.id=d.session_id WHERE s.user_id=? AND d.search_text LIKE ? ESCAPE '\\' AND (? IS NULL OR s.updated_at_ms>=?) AND (? IS NULL OR s.updated_at_ms<=?) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_runs r JOIN script_resources sr ON sr.id=r.script_resource_id WHERE r.session_id=s.id AND sr.name=? AND r.deleted_at_ms IS NULL)) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_runs r WHERE r.session_id=s.id AND r.status=? AND r.deleted_at_ms IS NULL)) ORDER BY s.updated_at_ms DESC,s.id DESC LIMIT ?")
                     .bind::<Text,_>(&scope.0).bind::<Text,_>(pattern)
                     .bind::<Nullable<BigInt>,_>(filters.from_ms).bind::<Nullable<BigInt>,_>(filters.from_ms).bind::<Nullable<BigInt>,_>(filters.to_ms).bind::<Nullable<BigInt>,_>(filters.to_ms)
-                    .bind::<Nullable<Text>,_>(filters.study_type.clone()).bind::<Nullable<Text>,_>(filters.study_type.clone()).bind::<Nullable<Text>,_>(filters.status.clone()).bind::<Nullable<Text>,_>(filters.status.clone())
+                    .bind::<Nullable<Text>,_>(filters.script_name.clone()).bind::<Nullable<Text>,_>(filters.script_name.clone()).bind::<Nullable<Text>,_>(filters.status.clone()).bind::<Nullable<Text>,_>(filters.status.clone())
                     .bind::<BigInt,_>(limit*10).load::<HitRow>(&mut conn)?
             } else {
                 let literal=format!("\"{}\"",query.replace('"',"\"\""));
-                sql_query("SELECT s.id AS session_id,s.title,s.updated_at_ms,bm25(chat_search_fts) AS score,snippet(chat_search_fts,0,'','', '…',16) AS snippet FROM chat_search_fts JOIN chat_search_documents d ON d.id=chat_search_fts.rowid JOIN sessions s ON s.id=d.session_id WHERE chat_search_fts MATCH ? AND s.user_id=? AND (? IS NULL OR s.updated_at_ms>=?) AND (? IS NULL OR s.updated_at_ms<=?) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_tasks t WHERE t.session_id=s.id AND t.study_type=?)) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_tasks t WHERE t.session_id=s.id AND t.status=?)) ORDER BY score ASC,s.updated_at_ms DESC,s.id DESC LIMIT ?")
+                sql_query("SELECT s.id AS session_id,s.title,s.updated_at_ms,bm25(chat_search_fts) AS score,snippet(chat_search_fts,0,'','', '…',16) AS snippet FROM chat_search_fts JOIN chat_search_documents d ON d.id=chat_search_fts.rowid JOIN sessions s ON s.id=d.session_id WHERE chat_search_fts MATCH ? AND s.user_id=? AND (? IS NULL OR s.updated_at_ms>=?) AND (? IS NULL OR s.updated_at_ms<=?) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_runs r JOIN script_resources sr ON sr.id=r.script_resource_id WHERE r.session_id=s.id AND sr.name=? AND r.deleted_at_ms IS NULL)) AND (? IS NULL OR EXISTS(SELECT 1 FROM simulation_runs r WHERE r.session_id=s.id AND r.status=? AND r.deleted_at_ms IS NULL)) ORDER BY score ASC,s.updated_at_ms DESC,s.id DESC LIMIT ?")
                     .bind::<Text,_>(literal).bind::<Text,_>(&scope.0)
                     .bind::<Nullable<BigInt>,_>(filters.from_ms).bind::<Nullable<BigInt>,_>(filters.from_ms).bind::<Nullable<BigInt>,_>(filters.to_ms).bind::<Nullable<BigInt>,_>(filters.to_ms)
-                    .bind::<Nullable<Text>,_>(filters.study_type.clone()).bind::<Nullable<Text>,_>(filters.study_type).bind::<Nullable<Text>,_>(filters.status.clone()).bind::<Nullable<Text>,_>(filters.status)
+                    .bind::<Nullable<Text>,_>(filters.script_name.clone()).bind::<Nullable<Text>,_>(filters.script_name).bind::<Nullable<Text>,_>(filters.status.clone()).bind::<Nullable<Text>,_>(filters.status)
                     .bind::<BigInt,_>(limit*10).load::<HitRow>(&mut conn)?
             };
             let mut seen=std::collections::HashSet::new();
@@ -144,7 +144,7 @@ impl HistoryRepo {
     }
     pub async fn rebuild(&self) -> RepoResult<()> {
         let pool = self.pool.clone();
-        tokio::task::spawn_blocking(move||{let mut c=pool.get().map_err(RepoError::Pool)?;c.transaction::<_,RepoError,_>(|c|{diesel::delete(schema::chat_search_documents::table).execute(c)?;sql_query("INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) SELECT id,'session_title',id,title,updated_at_ms FROM sessions").execute(c)?;sql_query("INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) SELECT session_id,'message',id,content,created_at_ms FROM messages WHERE role IN ('user','assistant')").execute(c)?;sql_query("INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) SELECT session_id,'task_summary',id,COALESCE(study_type,'')||' '||status,COALESCE(finished_at_ms,started_at_ms,created_at_ms) FROM simulation_tasks").execute(c)?;sql_query("INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) SELECT w.session_id,'attachment',ia.id,ia.file_name,ia.created_at_ms FROM ingestion_artifacts ia JOIN ingestions i ON i.id=ia.ingestion_id JOIN workspaces w ON w.id=i.workspace_id").execute(c)?;Ok(())})}).await.map_err(RepoError::Join)?
+        tokio::task::spawn_blocking(move||{let mut c=pool.get().map_err(RepoError::Pool)?;c.transaction::<_,RepoError,_>(|c|{diesel::delete(schema::chat_search_documents::table).execute(c)?;sql_query("INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) SELECT id,'session_title',id,title,updated_at_ms FROM sessions").execute(c)?;sql_query("INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) SELECT session_id,'message',id,content,created_at_ms FROM messages WHERE role IN ('user','assistant')").execute(c)?;sql_query("INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) SELECT session_id,'model_import',id,source_summary_json,created_at_ms FROM model_imports").execute(c)?;sql_query("INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) SELECT session_id,'script',id,name,created_at_ms FROM script_resources").execute(c)?;sql_query("INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) SELECT r.session_id,'run_summary',r.id,s.name||' '||r.status,COALESCE(r.finished_at_ms,r.started_at_ms,r.created_at_ms) FROM simulation_runs r JOIN script_resources s ON s.id=r.script_resource_id WHERE r.deleted_at_ms IS NULL").execute(c)?;Ok(())})}).await.map_err(RepoError::Join)?
     }
 }
 #[derive(QueryableByName)]

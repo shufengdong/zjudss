@@ -119,7 +119,7 @@ describe('functional coverage catalog', () => {
     const report = await validateCatalog(
       [{
         id: 'BROKEN-001',
-        source: 'docs/integration-testing-design.md#1-目标和覆盖口径',
+        source: 'docs/integration-testing-design.md#coverage-matrix',
         title: 'broken entry',
         layers: ['api'],
         lanes: [],
@@ -248,7 +248,7 @@ describe('functional coverage catalog', () => {
 
     const report = await validateCatalog(entries, repoRoot, null, { requiredLane: 'pr' })
 
-    expect(report.missingFeatureScopes).toContain('LEGACY')
+    expect(report.missingFeatureScopes).toContain('MODEL-IMPORT')
     expect(report.gatePassed).toBe(false)
   })
 })

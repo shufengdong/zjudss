@@ -1,4 +1,5 @@
 use crate::application::ModelPatch;
+use crate::db::models::DraftRef;
 use crate::tools::{
     ToolServices,
     support::{DomainToolError, object_schema},
@@ -10,9 +11,9 @@ use std::sync::Arc;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Args {
-    pub input_id: i32,
+    pub table_name: String,
     pub patch: ModelPatch,
-    pub expected_draft_version_id: Option<i32>,
+    pub expected_draft: Option<DraftRef>,
 }
 pub struct ModifyModelTool {
     services: Arc<ToolServices>,
@@ -28,33 +29,26 @@ impl Tool for ModifyModelTool {
     type Output = Value;
     type Error = DomainToolError;
     fn description(&self) -> String {
-        "校验 tableKind、唯一 rowKey、from/to 和 unit，并派生不可变模型版本。对 .dss 文本使用保留 tableKind=dss_property（dss_property 不是引擎函数），rowKey.object 指定如 circuit.IEEE13Nodeckt 的对象，changes.<property> 指定唯一属性及 {from,to,unit}；对 .rss 参数使用 tableKind=rss_parameter、rowKey.name 和 changes.value。"
-            .into()
+        "按唯一 rowKey 修改草稿中的一个规范 Parquet DataFrame。必须提供当前 expectedDraft（无草稿时为 null）；修改只产生新的草稿 revision，用户点击“生成版本”后才发布。".into()
     }
     fn parameters(&self) -> Value {
         object_schema(
-            json!({"inputId":{"type":"integer"},"patch":{"type":"object","properties":{"tableKind":{"type":"string"},"rowKey":{"type":"object"},"changes":{"type":"object"}},"required":["tableKind","rowKey","changes"],"additionalProperties":false},"expectedDraftVersionId":{"type":["integer","null"]}}),
-            &["inputId", "patch", "expectedDraftVersionId"],
+            json!({"tableName":{"type":"string"},"patch":{"type":"object","properties":{"rowKey":{"type":"object"},"changes":{"type":"object"}},"required":["rowKey","changes"],"additionalProperties":false},"expectedDraft":{"anyOf":[{"type":"object","properties":{"id":{"type":"integer"},"revision":{"type":"integer"}},"required":["id","revision"],"additionalProperties":false},{"type":"null"}]}}),
+            &["tableName", "patch", "expectedDraft"],
         )
     }
     async fn call(&self, _: &mut ToolContext, a: Args) -> Result<Value, Self::Error> {
-        if matches!(
-            a.patch.table_kind.as_str(),
-            "rss_parameter" | "dss_property"
-        ) {
-            self.services.require_skill("rss-generation").await?;
-        }
         let v = self
             .services
             .model_patch
             .modify(
                 &self.services.principal,
                 self.services.session_id,
-                a.input_id,
+                a.table_name,
                 a.patch,
-                a.expected_draft_version_id,
+                a.expected_draft,
             )
             .await?;
-        Ok(json!({"versionId":v.id,"status":v.status,"contentHash":v.content_hash}))
+        Ok(json!({"draftId":v.id.to_string(),"revision":v.revision}))
     }
 }

@@ -78,7 +78,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     eprintln!("[db] ready at {}", runtime.database_url);
 
     let engine = adapters::engine_from_env()?;
-    eprintln!("[config] engine = tensoreval parquet v2");
+    eprintln!("[config] engine = tensoreval parquet v3");
     let auth = AuthService::new(
         pool.clone(),
         runtime.session_ttl,

@@ -10,7 +10,7 @@ use std::sync::Arc;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Args {
-    pub task_id: i32,
+    pub run_id: i32,
 }
 pub struct ListResultDatasetsTool {
     services: Arc<ToolServices>,
@@ -26,10 +26,10 @@ impl Tool for ListResultDatasetsTool {
     type Output = Value;
     type Error = DomainToolError;
     fn description(&self) -> String {
-        "列出指定仿真任务产生的数据集、列 schema 与已保存视图。".into()
+        "列出指定仿真运行仍然存在的数据集、列 schema、血缘与已保存视图。".into()
     }
     fn parameters(&self) -> Value {
-        object_schema(json!({"taskId":{"type":"integer"}}), &["taskId"])
+        object_schema(json!({"runId":{"type":"integer"}}), &["runId"])
     }
     fn annotations(&self) -> ToolAnnotations {
         ToolAnnotations::default().with_read_only(true)
@@ -38,7 +38,7 @@ impl Tool for ListResultDatasetsTool {
         let rows = self
             .services
             .datasets
-            .list(&self.services.principal, args.task_id)
+            .list(&self.services.principal, args.run_id)
             .await
             .map_err(|e| DomainToolError::new("dataset_error", e.to_string()))?;
         serde_json::to_value(rows)

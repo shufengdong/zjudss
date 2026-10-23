@@ -5,7 +5,7 @@ import{useSessionFeed}from'./hooks/useSessionFeed';import{useWorkspace}from'./ho
 import{useRunHistory}from'./hooks/useRunHistory';import{useStorageUsage}from'./hooks/useStorageUsage';import{useMediaQuery}from'./hooks/useMediaQuery'
 import HistorySidebar from'./components/history/HistorySidebar';import Composer from'./components/Composer';import UploadQueue from'./components/uploads/UploadQueue'
 import ResultPanel,{type WorkbenchTab}from'./components/ResultPanel';import DatasetWorkbench from'./components/datasets/DatasetWorkbench'
-import ComparisonView from'./components/tasks/ComparisonView';import ExampleLibrary from'./components/examples/ExampleLibrary';import MessageItem from'./components/messages/MessageItem'
+import ComparisonView from'./components/comparisons/ComparisonView';import ExampleLibrary from'./components/examples/ExampleLibrary';import MessageItem from'./components/messages/MessageItem'
 import{PanelLeftIcon,PanelRightIcon}from'./components/icons'
 import LoginPage from'./components/auth/LoginPage'
 import{AUTHENTICATION_REQUIRED_EVENT,authReducer,initialAuthState,preferenceKey}from'./state/auth'

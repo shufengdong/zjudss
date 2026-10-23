@@ -7,7 +7,8 @@ use std::time::Duration;
 use arrow_array::{Float64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use backend::adapters::{
-    ENGINE_CONTRACT_VERSION, EngineConfig, NamedInput, ProcessEngine, RunMode, RunSpec, SimEngine,
+    ENGINE_CONTRACT_VERSION, EngineConfig, ImportInspectSpec, ImportProfile, ImportSpec,
+    NamedInput, ProcessEngine, RunMode, RunSpec, SimEngine,
 };
 use backend::engine_resources::{EngineExample, EngineResourceRegistry};
 use parquet::arrow::ArrowWriter;
@@ -31,6 +32,8 @@ struct ReleaseReport {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ContractChecks {
+    static_model_import: bool,
+    single_solve_model_import: bool,
     named_parquet_input: bool,
     result_dir: bool,
     output_format_parquet: bool,
@@ -151,7 +154,62 @@ fn write_named_input(path: &Path) {
     writer.close().unwrap();
 }
 
-async fn verify_expr_df(engine: &ProcessEngine, root: &Path) -> ContractChecks {
+async fn verify_model_import_profiles(
+    engine: &ProcessEngine,
+    engine_root: &Path,
+    root: &Path,
+) -> (bool, bool) {
+    let source = engine_root.join("sparrowzz/dss/models/4bus_daily_qsts/4bus_dy.dss");
+    let base = std::fs::read_to_string(&source)
+        .unwrap_or_else(|_| panic!("release_engine_import_fixture_missing:{}", source.display()));
+    for (name, profile, suffix) in [
+        ("static", ImportProfile::StaticDss, ""),
+        (
+            "single-solve",
+            ImportProfile::SingleSolveExecution,
+            "\nSolve\n",
+        ),
+    ] {
+        let input_tree = root.join(format!("import-{name}"));
+        std::fs::create_dir_all(&input_tree).unwrap();
+        std::fs::write(input_tree.join("model.dss"), format!("{base}{suffix}")).unwrap();
+        let inspection = engine
+            .inspect_model_import(ImportInspectSpec {
+                input_tree: input_tree.clone(),
+                timeout: Duration::from_secs(30),
+            })
+            .await
+            .unwrap_or_else(|error| panic!("release_engine_import_inspect_failed:{}", error.code));
+        assert_eq!(inspection.entry_candidates.len(), 1);
+        let imported = engine
+            .import_model(ImportSpec {
+                input_tree,
+                entry_candidate_id: inspection.entry_candidates[0].id.clone(),
+                result_dir: root.join(format!("import-{name}-results")),
+                timeout: Duration::from_secs(120),
+            })
+            .await
+            .unwrap_or_else(|error| {
+                panic!("release_engine_model_import_failed:{name}:{}", error.code)
+            });
+        assert_eq!(imported.profile, profile);
+        assert_eq!(imported.dataframes.len(), 21);
+        assert!(
+            imported
+                .dataframes
+                .iter()
+                .all(|dataset| dataset.metadata.snappy)
+        );
+    }
+    (true, true)
+}
+
+async fn verify_expr_df(
+    engine: &ProcessEngine,
+    root: &Path,
+    static_model_import: bool,
+    single_solve_model_import: bool,
+) -> ContractChecks {
     let tree = root.join("expr-df");
     std::fs::create_dir_all(&tree).unwrap();
     write_named_input(&tree.join("input.parquet"));
@@ -209,6 +267,8 @@ async fn verify_expr_df(engine: &ProcessEngine, root: &Path) -> ContractChecks {
     assert!(!failure.message.trim().is_empty());
 
     ContractChecks {
+        static_model_import,
+        single_solve_model_import,
         named_parquet_input: true,
         result_dir: true,
         output_format_parquet: true,
@@ -345,7 +405,15 @@ async fn real_engine_imports_all_examples_and_runs_representative_studies() {
     let temp = tempfile::tempdir().unwrap();
     let importable = import_all_examples(&snapshot, &temp.path().join("imports"));
     assert_eq!(importable, 97, "release_engine_import_count");
-    let contract_checks = verify_expr_df(&engine, temp.path()).await;
+    let (static_model_import, single_solve_model_import) =
+        verify_model_import_profiles(&engine, &cwd, temp.path()).await;
+    let contract_checks = verify_expr_df(
+        &engine,
+        temp.path(),
+        static_model_import,
+        single_solve_model_import,
+    )
+    .await;
 
     let cases = [
         ("rss", "bmopf_4bus_power_flow.rss", "dataframe_power_flow"),

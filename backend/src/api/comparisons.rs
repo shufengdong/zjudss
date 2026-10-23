@@ -34,8 +34,8 @@ pub async fn get(
     Ok(Json(ComparisonDto {
         id: c.id.to_string(),
         session_id: c.session_id.to_string(),
-        baseline_run_id: c.baseline_task_id.to_string(),
-        candidate_run_id: c.candidate_task_id.to_string(),
+        baseline_run_id: c.baseline_run_id.to_string(),
+        candidate_run_id: c.candidate_run_id.to_string(),
         compatibility,
         analysis_run_id: c.analysis_run_id.to_string(),
         created_at: ms_to_iso(c.created_at_ms),

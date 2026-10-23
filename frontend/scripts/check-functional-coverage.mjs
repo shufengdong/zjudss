@@ -12,9 +12,9 @@ import YAML from 'yaml'
 const REQUIRED_ARRAYS = ['layers', 'lanes', 'tests', 'assertions', 'fixtures']
 export const REQUIRED_FEATURE_SCOPES = [
   'BOOT', 'AUTH', 'SESSION', 'MESSAGE', 'SSE', 'SCHED', 'UPLOAD',
-  'INPUT-RSS', 'INPUT-BUNDLE', 'INPUT-DF', 'INFERENCE', 'WORKSPACE',
-  'EXAMPLE', 'AGENT', 'STUDY', 'TASK', 'DATASET', 'ANALYSIS', 'VIEW',
-  'COMPARE', 'HISTORY', 'STORAGE', 'UI', 'LEGACY',
+  'MODEL-IMPORT', 'WORKSPACE', 'VERSION', 'EXAMPLE', 'AGENT', 'SCRIPT',
+  'RUN', 'DATASET', 'ANALYSIS', 'VIEW', 'COMPARE', 'HISTORY', 'STORAGE',
+  'UI', 'RECOVERY', 'ENGINE',
 ]
 const execFileAsync = promisify(execFile)
 const ENUMERATION_ONLY_TESTS = new Set([

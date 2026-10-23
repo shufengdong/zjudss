@@ -122,7 +122,7 @@ async fn scripted_tool_call_runs_registered_tool_and_persists_events() {
     );
     let trace = factory.trace();
     assert_eq!(trace[0].scenario_id, "storage");
-    assert_eq!(trace[0].tool_names.len(), 22);
+    assert_eq!(trace[0].tool_names.len(), 16);
     assert!(trace[0].system_prompt.contains("# Engine resources"));
     assert_eq!(trace[0].calls.len(), 2);
 }
@@ -173,9 +173,9 @@ async fn missing_skill_is_a_failed_tool_result() {
         expected_prompt: None,
         turns: vec![
             ScriptTurn::ToolCall {
-                call_id: "study".into(),
-                name: "run_study".into(),
-                args: json!({"modelVersionId": 1, "studyType": "power_flow", "studySpec": {}}),
+                call_id: "script".into(),
+                name: "create_script".into(),
+                args: json!({"name":"flow.rss","content":"result = 1"}),
             },
             ScriptTurn::Text {
                 text: "请先加载技能".into(),
@@ -189,7 +189,7 @@ async fn missing_skill_is_a_failed_tool_result() {
     assert!(
         events.iter().any(|event| {
             event["type"] == "tool-call"
-                && event["toolName"] == "run_study"
+                && event["toolName"] == "create_script"
                 && event["status"] == "failed"
         }),
         "events: {events:#?}"

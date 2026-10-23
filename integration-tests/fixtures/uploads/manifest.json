@@ -38,6 +38,33 @@
       "units": {}
     },
     {
+      "path": "bundle/single-solve.rssbundle/model.dss",
+      "format": "dss",
+      "bytes": 38,
+      "sha256": "a72c995f12afd384beef9df7b7f99093d5daf7d88071b1bbfbed20bc414a8560",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    },
+    {
+      "path": "bundle/unsupported-multi-solve.rssbundle/model.dss",
+      "format": "dss",
+      "bytes": 44,
+      "sha256": "1d8c1da4b4e066b80ca62c8d04a4f3db984f79f0894d7e3b84b92271450a3abf",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    },
+    {
+      "path": "bundle/unsupported-specialist.rssbundle/model.dss",
+      "format": "dss",
+      "bytes": 56,
+      "sha256": "86f943dbb63d36f05939d09771ca6bb4e051ddf7390cfffd03b02c1eeb285f3b",
+      "schema": null,
+      "rowCount": null,
+      "units": {}
+    },
+    {
       "path": "dataframes/ambiguous.csv",
       "format": "csv",
       "bytes": 22,

@@ -1,6 +1,7 @@
 import type { APIRequestContext } from '@playwright/test'
 import { test, expect } from './fixtures'
 import { directApi, resetBackend } from './helpers/server'
+import { createReadySession, uploadScriptAndRun } from './helpers/journeys'
 
 async function createSession(api: APIRequestContext, title: string) {
   const response = await api.post('/api/sessions', { data: { title } })
@@ -8,67 +9,31 @@ async function createSession(api: APIRequestContext, title: string) {
   return response.json() as Promise<{ id: string }>
 }
 
-test('two users cannot enumerate or guess each other session, message, SSE, task, or dataset resources', async ({ loginAs, control }) => {
+test('two users cannot enumerate or guess each other session, message, SSE, run, or dataset resources', async ({ loginAs, control }) => {
   const alice = await loginAs('alice@example.com')
   const bob = await loginAs('bob@example.com')
-  const aliceSession = await createSession(alice.api, 'Alice 私有会话')
+  const { sessionId: aliceSessionId } = await createReadySession(alice.page, alice.api, 'Alice 私有会话')
   const bobSession = await createSession(bob.api, 'Bob 私有会话')
 
   const aliceList = await alice.api.get('/api/sessions')
   const bobList = await bob.api.get('/api/sessions')
-  expect((await aliceList.json()).sessions.map((session: { id: string }) => session.id)).toEqual([aliceSession.id])
+  expect((await aliceList.json()).sessions.map((session: { id: string }) => session.id)).toEqual([aliceSessionId])
   expect((await bobList.json()).sessions.map((session: { id: string }) => session.id)).toEqual([bobSession.id])
 
-  await control.enqueueLlm({
-    id: 'alice-import',
-    expectedPrompt: '导入隔离案例',
-    turns: [
-      {
-        kind: 'tool_call', call_id: 'import-alice', name: 'import_example',
-        args: { exampleId: 'e2e-demo', engineResourceSnapshot: 'e2e-snapshot', expectedDraftVersionId: null },
-      },
-      { kind: 'text', text: '案例导入完成' },
-    ],
+  const { run } = await uploadScriptAndRun({
+    page: alice.page, api: alice.api, control, sessionId: aliceSessionId,
+    engine: { kind: 'success', data: [{ name: 'voltages', rows: [['bus-1', 1.0]], valueUnit: 'pu' }] },
   })
-  expect((await alice.api.post(`/api/sessions/${aliceSession.id}/messages`, { data: { message: '导入隔离案例' } })).status()).toBe(202)
-  let versionId = ''
-  await expect.poll(async () => {
-    const workspace = await (await alice.api.get(`/api/sessions/${aliceSession.id}/workspace`)).json()
-    versionId = workspace.draft?.versionId ?? workspace.active?.versionId ?? ''
-    return versionId
-  }).not.toBe('')
-
-  await control.enqueueEngine({ kind: 'success', data: [{ name: 'voltages', rows: [['bus-1', 1.0]], valueUnit: 'pu' }] })
-  await control.enqueueLlm({
-    id: 'alice-study',
-    expectedPrompt: '运行隔离潮流',
-    turns: [
-      { kind: 'tool_call', call_id: 'skill-1', name: 'load_agent_skill', args: { skill_id: 'study-planning' } },
-      { kind: 'tool_call', call_id: 'skill-2', name: 'load_agent_skill', args: { skill_id: 'rss-generation' } },
-      {
-        kind: 'tool_call', call_id: 'run-alice', name: 'run_study',
-        args: { modelVersionId: Number(versionId), studyType: 'power_flow', studySpec: {}, script: 'result = 1\n' },
-      },
-      { kind: 'text', text: '隔离潮流完成' },
-    ],
-  })
-  expect((await alice.api.post(`/api/sessions/${aliceSession.id}/messages`, { data: { message: '运行隔离潮流' } })).status()).toBe(202)
-  let taskId = ''
-  await expect.poll(async () => {
-    const tasks = await (await alice.api.get(`/api/sessions/${aliceSession.id}/tasks`)).json()
-    taskId = tasks[0]?.id ?? ''
-    return tasks[0]?.status ?? ''
-  }).toBe('succeeded')
-  const aliceDatasets = await (await alice.api.get(`/api/tasks/${taskId}/datasets`)).json()
+  const aliceDatasets = (await (await alice.api.get(`/api/runs/${run.id}/datasets`)).json()).datasets
   expect(aliceDatasets).toHaveLength(1)
   const datasetId = aliceDatasets[0].id as string
 
   const hiddenPaths = [
-    `/api/sessions/${aliceSession.id}/messages`,
-    `/api/sessions/${aliceSession.id}/events`,
-    `/api/sessions/${aliceSession.id}/tasks`,
-    `/api/tasks/${taskId}`,
-    `/api/tasks/${taskId}/datasets`,
+    `/api/sessions/${aliceSessionId}/messages`,
+    `/api/sessions/${aliceSessionId}/events`,
+    `/api/sessions/${aliceSessionId}/runs`,
+    `/api/runs/${run.id}`,
+    `/api/runs/${run.id}/datasets`,
     `/api/datasets/${datasetId}`,
     `/api/datasets/${datasetId}/rows`,
     `/api/datasets/${datasetId}/download`,

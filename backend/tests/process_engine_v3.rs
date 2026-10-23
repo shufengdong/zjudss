@@ -129,7 +129,7 @@ fn four_commands_use_private_cwd_parquet_results_and_safe_named_inputs() {
 }
 
 #[test]
-fn task_local_tree_survives_shared_example_removal() {
+fn run_local_tree_survives_shared_example_removal() {
     let source = tempfile::tempdir().unwrap();
     std::fs::write(source.path().join("case.rss"), "result = 1;\n").unwrap();
     let task = tempfile::tempdir().unwrap();
@@ -316,7 +316,7 @@ fn output_validation_rejects_symlinks_and_capability_probe_fails_closed() {
     std::fs::set_permissions(&good, std::fs::Permissions::from_mode(0o755)).unwrap();
     let capabilities = EngineCapabilities::probe(&good).unwrap();
     assert_eq!(capabilities.contract_version, ENGINE_CONTRACT_VERSION);
-    capabilities.require_v2().unwrap();
+    capabilities.require_v3().unwrap();
     let mismatched = EngineCapabilities {
         contract_version: "legacy".into(),
         result_dir: true,
@@ -327,7 +327,7 @@ fn output_validation_rejects_symlinks_and_capability_probe_fails_closed() {
         script_validation: true,
     };
     assert_eq!(
-        mismatched.require_v2().unwrap_err().code,
+        mismatched.require_v3().unwrap_err().code,
         "engine_contract_mismatch"
     );
 

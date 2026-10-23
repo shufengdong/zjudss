@@ -47,7 +47,7 @@ cd ..
 - `backend/src/adapters/`：所有 `tensoreval` 进程调用的唯一边界。
 - `backend/src/engine_resources/`：启动 preflight、引擎文档/catalog/案例快照。
 - `backend/migrations/00000000000000_initial/`：V3 空库初始化的权威 schema。
-- `backend/resources/agent/v2/manifest.json`：Agent bundle、engine contract、资源 hash 和允许工具的权威清单。
+- `backend/resources/agent/v3/manifest.json`：Agent bundle、engine contract、资源 hash 和允许工具的权威清单。
 - `frontend/src/types/`：前端使用的公共 DTO 类型；HTTP 语义以 `docs/api-design.md` 为准。
 - `integration-tests/catalog/features.yaml`：机器可读功能目录和测试追溯入口。
 

@@ -65,7 +65,7 @@ impl EngineCapabilities {
         })
     }
 
-    pub fn require_v2(&self) -> Result<(), AdapterError> {
+    fn require_parquet_contract(&self) -> Result<(), AdapterError> {
         if self.contract_version != ENGINE_CONTRACT_VERSION {
             return Err(AdapterError::new(
                 "engine_contract_mismatch",
@@ -98,7 +98,7 @@ impl EngineCapabilities {
     }
 
     pub fn require_v3(&self) -> Result<(), AdapterError> {
-        self.require_v2()?;
+        self.require_parquet_contract()?;
         if !self.static_dss_import || !self.single_solve_import {
             return Err(AdapterError::new(
                 "engine_model_import_unsupported",

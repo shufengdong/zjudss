@@ -138,6 +138,73 @@ impl VersionRepo {
         Self { pool }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub async fn replace_draft_dataframe(
+        &self,
+        user: &UserId,
+        session_id: i32,
+        expected: Option<DraftRef>,
+        table_name: String,
+        artifact_id: i32,
+        schema_json: String,
+        row_count: i64,
+        content_hash: String,
+        now_ms: i64,
+    ) -> Result<(DraftRef, Option<i32>), VersionRepoError> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            conn.immediate_transaction::<_, VersionRepoError, _>(|conn| {
+                let workspace = load_workspace_by_session(conn, &user, session_id)?;
+                ensure_artifacts_owned(conn, &user, std::iter::once(artifact_id))?;
+                let current = schema::workspace_drafts::table
+                    .filter(schema::workspace_drafts::workspace_id.eq(workspace.id))
+                    .first::<WorkspaceDraft>(conn)
+                    .optional()?;
+                let current_ref = current.as_ref().map(|draft| DraftRef { id: draft.id, revision: draft.revision });
+                if current_ref != expected { return Err(VersionRepoError::DraftConflict); }
+                let (draft_id, revision) = if let Some(draft) = current {
+                    (draft.id, draft.revision + 1)
+                } else {
+                    diesel::insert_into(schema::workspace_drafts::table).values((
+                        schema::workspace_drafts::workspace_id.eq(workspace.id),
+                        schema::workspace_drafts::base_version_id.eq(workspace.active_version_id),
+                        schema::workspace_drafts::revision.eq(1_i64),
+                        schema::workspace_drafts::diagnostics_json.eq("{}"),
+                        schema::workspace_drafts::created_at_ms.eq(now_ms),
+                        schema::workspace_drafts::updated_at_ms.eq(now_ms),
+                    )).execute(conn)?;
+                    let draft_id = last_id(conn)?;
+                    if let Some(version_id) = workspace.active_version_id {
+                        diesel::sql_query("INSERT INTO draft_dataframes(draft_id,table_name,artifact_id,schema_json,row_count,content_hash,created_at_ms) SELECT ?1,table_name,artifact_id,schema_json,row_count,content_hash,?2 FROM model_dataframes WHERE version_id=?3")
+                            .bind::<Integer,_>(draft_id).bind::<BigInt,_>(now_ms).bind::<Integer,_>(version_id).execute(conn)?;
+                        diesel::sql_query("UPDATE storage_scope_artifacts SET ref_count=ref_count+1 WHERE storage_scope_id=(SELECT storage_scope_id FROM users WHERE id=?1) AND artifact_id IN(SELECT artifact_id FROM model_dataframes WHERE version_id=?2)")
+                            .bind::<Text,_>(&user).bind::<Integer,_>(version_id).execute(conn)?;
+                    }
+                    (draft_id, 1)
+                };
+                let replaced = schema::draft_dataframes::table
+                    .filter(schema::draft_dataframes::draft_id.eq(draft_id))
+                    .filter(schema::draft_dataframes::table_name.eq(&table_name))
+                    .select(schema::draft_dataframes::artifact_id)
+                    .first::<i32>(conn).optional()?;
+                diesel::delete(schema::draft_dataframes::table
+                    .filter(schema::draft_dataframes::draft_id.eq(draft_id))
+                    .filter(schema::draft_dataframes::table_name.eq(&table_name)))
+                    .execute(conn)?;
+                diesel::insert_into(schema::draft_dataframes::table).values(crate::db::models::NewDraftDataframe {
+                    draft_id, table_name, artifact_id, schema_json, row_count, content_hash, created_at_ms: now_ms,
+                }).execute(conn)?;
+                diesel::update(schema::workspace_drafts::table.find(draft_id)).set((
+                    schema::workspace_drafts::revision.eq(revision),
+                    schema::workspace_drafts::updated_at_ms.eq(now_ms),
+                )).execute(conn)?;
+                Ok((DraftRef { id: draft_id, revision }, replaced))
+            })
+        }).await.map_err(|error| VersionRepoError::Repository(RepoError::Join(error)))?
+    }
+
     pub async fn workspace(
         &self,
         user: &UserId,

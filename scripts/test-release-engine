@@ -45,7 +45,7 @@ export RELEASE_ENGINE_REPORT="$report_dir/engine-report.json"
 cargo test \
   --manifest-path "$repo_root/backend/Cargo.toml" \
   --features release-test \
-  --test process_engine_v2 \
+  --test process_engine_v3 \
   --test release_engine_cases \
   -- --nocapture
 
