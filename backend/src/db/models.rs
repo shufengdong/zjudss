@@ -3,10 +3,12 @@
 // Diesel 2.x：派生宏（Queryable/Insertable）只从 crate 根重导出（默认 feature
 // `with-deprecated`），prelude 仅含 trait 与 DSL；故显式导入。
 use super::schema::{
-    artifacts, auth_sessions, dataframe_bindings, dataset_views, ingestion_artifacts, ingestions,
-    messages, model_versions, result_analysis_inputs, result_analysis_runs, result_datasets,
-    sessions, simulation_tasks, storage_scope_artifacts, storage_scopes, task_comparisons, users,
-    version_artifacts, workspaces,
+    artifacts, auth_sessions, dataframe_bindings, dataset_lineage_snapshots, dataset_views,
+    draft_dataframes, ingestion_artifacts, ingestions, messages, model_import_candidates,
+    model_import_selections, model_imports, model_versions, publish_receipts,
+    result_analysis_inputs, result_analysis_runs, result_datasets, script_resources, sessions,
+    simulation_runs, simulation_tasks, storage_scope_artifacts, storage_scopes, task_comparisons,
+    users, version_artifacts, version_deletion_previews, workspace_drafts, workspaces,
 };
 #[allow(deprecated)]
 use diesel::{Insertable, Queryable};
@@ -142,6 +144,219 @@ pub struct NewWorkspace {
     pub session_id: i32,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+#[derive(Queryable, Debug, Clone)]
+#[diesel(table_name = workspace_drafts)]
+pub struct WorkspaceDraft {
+    pub id: i32,
+    pub workspace_id: i32,
+    pub base_version_id: Option<i32>,
+    pub revision: i64,
+    pub diagnostics_json: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = workspace_drafts)]
+pub struct NewWorkspaceDraft {
+    pub workspace_id: i32,
+    pub base_version_id: Option<i32>,
+    pub revision: i64,
+    pub diagnostics_json: String,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Queryable, Debug, Clone)]
+#[diesel(table_name = draft_dataframes)]
+pub struct DraftDataframe {
+    pub id: i32,
+    pub draft_id: i32,
+    pub table_name: String,
+    pub artifact_id: i32,
+    pub schema_json: String,
+    pub row_count: i64,
+    pub content_hash: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = draft_dataframes)]
+pub struct NewDraftDataframe {
+    pub draft_id: i32,
+    pub table_name: String,
+    pub artifact_id: i32,
+    pub schema_json: String,
+    pub row_count: i64,
+    pub content_hash: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Queryable, Debug, Clone)]
+#[diesel(table_name = model_imports)]
+pub struct ModelImport {
+    pub id: i32,
+    pub workspace_id: i32,
+    pub session_id: i32,
+    pub client_import_id: String,
+    pub source_kind: String,
+    pub source_summary_json: String,
+    pub source_sha256: String,
+    pub base_draft_id: Option<i32>,
+    pub base_draft_revision: Option<i64>,
+    pub status: String,
+    pub stages_json: String,
+    pub diagnostics_json: String,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = model_imports)]
+pub struct NewModelImport {
+    pub workspace_id: i32,
+    pub session_id: i32,
+    pub client_import_id: String,
+    pub source_kind: String,
+    pub source_summary_json: String,
+    pub source_sha256: String,
+    pub base_draft_id: Option<i32>,
+    pub base_draft_revision: Option<i64>,
+    pub status: String,
+    pub stages_json: String,
+    pub diagnostics_json: String,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Queryable, Insertable, Debug, Clone)]
+#[diesel(table_name = model_import_candidates)]
+pub struct ModelImportCandidate {
+    pub id: i32,
+    pub import_id: i32,
+    pub candidate_id: String,
+    pub candidate_kind: String,
+    pub display_name: String,
+    pub table_name: Option<String>,
+    pub artifact_id: Option<i32>,
+    pub schema_json: Option<String>,
+    pub row_count: Option<i64>,
+    pub content_hash: Option<String>,
+    pub evidence_json: String,
+    pub selected: bool,
+    pub created_at_ms: i64,
+}
+
+#[derive(Queryable, Insertable, Debug, Clone)]
+#[diesel(table_name = model_import_selections)]
+pub struct ModelImportSelection {
+    pub import_id: i32,
+    pub candidate_id: String,
+    pub table_name: Option<String>,
+    pub selected: bool,
+    pub created_at_ms: i64,
+}
+
+#[derive(Queryable, Insertable, Debug, Clone)]
+#[diesel(table_name = publish_receipts)]
+pub struct PublishReceipt {
+    pub id: i32,
+    pub draft_id: i32,
+    pub draft_revision: i64,
+    pub client_publish_id: String,
+    pub version_id: i32,
+    pub created_at_ms: i64,
+}
+
+#[derive(Queryable, Debug, Clone)]
+#[diesel(table_name = script_resources)]
+pub struct ScriptResource {
+    pub id: i32,
+    pub session_id: i32,
+    pub artifact_id: i32,
+    pub name: String,
+    pub source_kind: String,
+    pub content_hash: String,
+    pub validation_status: String,
+    pub required_aliases_json: String,
+    pub outputs_json: String,
+    pub diagnostics_json: String,
+    pub agent_bundle_version: Option<String>,
+    pub agent_skill_refs_json: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Insertable, Debug, Clone)]
+#[diesel(table_name = script_resources)]
+pub struct NewScriptResource {
+    pub session_id: i32,
+    pub artifact_id: i32,
+    pub name: String,
+    pub source_kind: String,
+    pub content_hash: String,
+    pub validation_status: String,
+    pub required_aliases_json: String,
+    pub outputs_json: String,
+    pub diagnostics_json: String,
+    pub agent_bundle_version: Option<String>,
+    pub agent_skill_refs_json: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Queryable, Debug, Clone)]
+#[diesel(table_name = simulation_runs)]
+pub struct SimulationRun {
+    pub id: i32,
+    pub session_id: i32,
+    pub model_version_id: i32,
+    pub model_content_hash: String,
+    pub script_resource_id: i32,
+    pub script_artifact_id: i32,
+    pub script_content_hash: String,
+    pub client_run_id: String,
+    pub status: String,
+    pub stage: String,
+    pub engine_contract_version: String,
+    pub agent_bundle_version: Option<String>,
+    pub agent_skill_refs_json: String,
+    pub exit_code: Option<i32>,
+    pub error_json: Option<String>,
+    pub created_at_ms: i64,
+    pub started_at_ms: Option<i64>,
+    pub finished_at_ms: Option<i64>,
+    pub deleted_at_ms: Option<i64>,
+    pub tombstone_json: Option<String>,
+}
+
+#[derive(Queryable, Insertable, Debug, Clone)]
+#[diesel(table_name = dataset_lineage_snapshots)]
+pub struct DatasetLineageSnapshot {
+    pub id: i32,
+    pub derived_dataset_id: i32,
+    pub source_dataset_id: i32,
+    pub source_name: String,
+    pub source_schema_json: String,
+    pub source_schema_hash: String,
+    pub source_producer_json: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Queryable, Insertable, Debug, Clone)]
+#[diesel(table_name = version_deletion_previews)]
+pub struct VersionDeletionPreviewRecord {
+    pub token_hash: String,
+    pub user_id: String,
+    pub version_id: i32,
+    pub impact_hash: String,
+    pub impact_json: String,
+    pub expires_at_ms: i64,
+    pub created_at_ms: i64,
 }
 
 #[derive(Queryable, Debug, Clone)]

@@ -62,11 +62,17 @@ pub fn recover_interrupted_runs(
     now_ms: i64,
 ) -> Result<(), diesel::result::Error> {
     conn.batch_execute(&format!(
-        "UPDATE simulation_tasks
+        "UPDATE simulation_runs
          SET status='failed', stage='recovery',
              error_json='{{\"code\":\"service_restarted\",\"message\":\"服务重启，运行已中止\"}}',
              finished_at_ms={now_ms}
-         WHERE status IN ('pending','running');
+         WHERE status IN ('queued','running');
+         UPDATE model_imports
+         SET status='failed',
+             error_code='service_restarted',
+             error_message='服务重启，模型导入已中止',
+             updated_at_ms={now_ms}
+         WHERE status='processing';
          UPDATE result_analysis_runs
          SET status='failed', stage='recovery',
              error_json='{{\"code\":\"service_restarted\",\"message\":\"服务重启，运行已中止\"}}',

@@ -76,110 +76,163 @@ CREATE TABLE workspaces (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  session_id INTEGER NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
  active_version_id INTEGER REFERENCES model_versions(id) ON DELETE SET NULL,
- draft_version_id INTEGER REFERENCES model_versions(id) ON DELETE SET NULL,
  created_at_ms INTEGER NOT NULL,
- updated_at_ms INTEGER NOT NULL,
- CHECK(active_version_id IS NULL OR draft_version_id IS NULL OR active_version_id<>draft_version_id)
+ updated_at_ms INTEGER NOT NULL
 );
 CREATE TABLE model_versions (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
- parent_version_id INTEGER REFERENCES model_versions(id) ON DELETE SET NULL,
- status TEXT NOT NULL CHECK(status IN ('collecting','ready','invalid')),
- source_kind TEXT NOT NULL CHECK(source_kind IN ('rss','rssbundle','dataframes','mixed')),
- origin_kind TEXT NOT NULL CHECK(origin_kind IN ('upload','example','generated')),
- manifest_json TEXT NOT NULL,
- patch_json TEXT,
  content_hash TEXT NOT NULL,
+ source_summary_json TEXT NOT NULL,
+ engine_contract_version TEXT NOT NULL,
  created_at_ms INTEGER NOT NULL,
- UNIQUE(workspace_id,content_hash)
+ deleted_at_ms INTEGER,
+ tombstone_json TEXT
 );
 CREATE INDEX idx_versions_workspace_time ON model_versions(workspace_id,created_at_ms DESC,id DESC);
-CREATE TABLE version_artifacts (
+CREATE UNIQUE INDEX idx_live_version_content
+ ON model_versions(workspace_id,content_hash) WHERE deleted_at_ms IS NULL;
+
+CREATE TABLE workspace_drafts (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ workspace_id INTEGER NOT NULL UNIQUE REFERENCES workspaces(id) ON DELETE CASCADE,
+ base_version_id INTEGER REFERENCES model_versions(id) ON DELETE SET NULL,
+ revision INTEGER NOT NULL CHECK(revision>0),
+ diagnostics_json TEXT NOT NULL,
+ created_at_ms INTEGER NOT NULL,
+ updated_at_ms INTEGER NOT NULL
+);
+CREATE TABLE draft_dataframes (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ draft_id INTEGER NOT NULL REFERENCES workspace_drafts(id) ON DELETE CASCADE,
+ table_name TEXT NOT NULL CHECK(length(table_name)>0),
+ artifact_id INTEGER NOT NULL REFERENCES artifacts(id) ON DELETE RESTRICT,
+ schema_json TEXT NOT NULL,
+ row_count INTEGER NOT NULL CHECK(row_count>=0),
+ content_hash TEXT NOT NULL CHECK(length(content_hash)=64),
+ created_at_ms INTEGER NOT NULL,
+ UNIQUE(draft_id,table_name)
+);
+CREATE INDEX idx_draft_dataframes_artifact ON draft_dataframes(artifact_id);
+CREATE TABLE model_dataframes (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  version_id INTEGER NOT NULL REFERENCES model_versions(id) ON DELETE CASCADE,
+ table_name TEXT NOT NULL CHECK(length(table_name)>0),
  artifact_id INTEGER NOT NULL REFERENCES artifacts(id) ON DELETE RESTRICT,
- role TEXT NOT NULL CHECK(role IN ('entry','source','data','input','generated','manifest')),
- relative_path TEXT,
- display_name TEXT NOT NULL,
- source_artifact_id INTEGER REFERENCES artifacts(id) ON DELETE SET NULL,
- sheet_name TEXT
+ schema_json TEXT NOT NULL,
+ row_count INTEGER NOT NULL CHECK(row_count>=0),
+ content_hash TEXT NOT NULL CHECK(length(content_hash)=64),
+ created_at_ms INTEGER NOT NULL,
+ UNIQUE(version_id,table_name)
 );
-CREATE UNIQUE INDEX idx_version_artifact_path ON version_artifacts(version_id,relative_path) WHERE relative_path IS NOT NULL;
-CREATE TABLE dataframe_bindings (
- id INTEGER PRIMARY KEY AUTOINCREMENT,
- version_artifact_id INTEGER NOT NULL UNIQUE REFERENCES version_artifacts(id) ON DELETE CASCADE,
- table_kind TEXT,
- confidence REAL CHECK(confidence IS NULL OR (confidence>=0 AND confidence<=1)),
- resolution TEXT NOT NULL CHECK(resolution IN ('pending','inferred','user_confirmed','rejected')),
- columns_json TEXT NOT NULL,
- evidence_json TEXT NOT NULL
-);
+CREATE INDEX idx_model_dataframes_artifact ON model_dataframes(artifact_id);
 
-CREATE TABLE ingestions (
+CREATE TABLE model_imports (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
- client_batch_id TEXT NOT NULL,
- origin_kind TEXT NOT NULL CHECK(origin_kind IN ('upload','example')),
- source_ref_json TEXT,
- base_version_id INTEGER REFERENCES model_versions(id) ON DELETE SET NULL,
- published_version_id INTEGER REFERENCES model_versions(id) ON DELETE SET NULL,
- status TEXT NOT NULL CHECK(status IN ('accepted','extracting','inferring','validating','succeeded','completed_with_errors','failed')),
+ session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+ client_import_id TEXT NOT NULL,
+ source_kind TEXT NOT NULL CHECK(source_kind IN ('upload','case')),
+ source_summary_json TEXT NOT NULL,
+ source_sha256 TEXT NOT NULL CHECK(length(source_sha256)=64),
+ base_draft_id INTEGER REFERENCES workspace_drafts(id) ON DELETE SET NULL,
+ base_draft_revision INTEGER,
+ status TEXT NOT NULL CHECK(status IN ('accepted','processing','awaiting_resolution','ready_to_apply','applied','failed','discarded')),
  stages_json TEXT NOT NULL,
+ diagnostics_json TEXT NOT NULL,
  error_code TEXT,
  error_message TEXT,
  created_at_ms INTEGER NOT NULL,
  updated_at_ms INTEGER NOT NULL,
- UNIQUE(workspace_id,client_batch_id)
+ UNIQUE(session_id,client_import_id),
+ CHECK((base_draft_id IS NULL)=(base_draft_revision IS NULL))
 );
-CREATE TABLE ingestion_artifacts (
+CREATE INDEX idx_model_imports_workspace_time ON model_imports(workspace_id,created_at_ms DESC,id DESC);
+CREATE TABLE model_import_candidates (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
- ingestion_id INTEGER NOT NULL REFERENCES ingestions(id) ON DELETE CASCADE,
- client_file_id TEXT NOT NULL,
- artifact_id INTEGER NOT NULL REFERENCES artifacts(id) ON DELETE RESTRICT,
- file_name TEXT NOT NULL,
- relative_path TEXT,
- media_type TEXT,
- role TEXT NOT NULL CHECK(role IN ('uploaded','example','extracted','normalized')),
- source_artifact_id INTEGER REFERENCES artifacts(id) ON DELETE SET NULL,
- sheet_name TEXT,
- status TEXT NOT NULL CHECK(status IN ('accepted','processing','ready','failed')),
- error_code TEXT,
- error_message TEXT,
+ import_id INTEGER NOT NULL REFERENCES model_imports(id) ON DELETE CASCADE,
+ candidate_id TEXT NOT NULL,
+ candidate_kind TEXT NOT NULL CHECK(candidate_kind IN ('entry','table')),
+ display_name TEXT NOT NULL,
+ table_name TEXT,
+ artifact_id INTEGER REFERENCES artifacts(id) ON DELETE RESTRICT,
+ schema_json TEXT,
+ row_count INTEGER CHECK(row_count IS NULL OR row_count>=0),
+ content_hash TEXT,
+ evidence_json TEXT NOT NULL,
+ selected BOOLEAN NOT NULL DEFAULT 0,
  created_at_ms INTEGER NOT NULL,
- updated_at_ms INTEGER NOT NULL,
- UNIQUE(ingestion_id,client_file_id,role,sheet_name)
+ UNIQUE(import_id,candidate_id)
 );
-CREATE INDEX idx_ingestions_workspace_time ON ingestions(workspace_id,created_at_ms DESC,id DESC);
-CREATE INDEX idx_ingestion_artifacts_ingestion ON ingestion_artifacts(ingestion_id,id);
+CREATE INDEX idx_import_candidates_artifact ON model_import_candidates(artifact_id);
+CREATE TABLE model_import_selections (
+ import_id INTEGER NOT NULL REFERENCES model_imports(id) ON DELETE CASCADE,
+ candidate_id TEXT NOT NULL,
+ table_name TEXT,
+ selected BOOLEAN NOT NULL,
+ created_at_ms INTEGER NOT NULL,
+ PRIMARY KEY(import_id,candidate_id),
+ FOREIGN KEY(import_id,candidate_id)
+   REFERENCES model_import_candidates(import_id,candidate_id) ON DELETE CASCADE
+);
+CREATE TABLE publish_receipts (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ draft_id INTEGER NOT NULL,
+ draft_revision INTEGER NOT NULL,
+ client_publish_id TEXT NOT NULL,
+ version_id INTEGER NOT NULL REFERENCES model_versions(id) ON DELETE RESTRICT,
+ created_at_ms INTEGER NOT NULL,
+ UNIQUE(draft_id,draft_revision,client_publish_id)
+);
 
-CREATE TABLE simulation_tasks (
+CREATE TABLE script_resources (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
- status TEXT NOT NULL CHECK(status IN ('pending','running','succeeded','failed','cancelled')),
- stage TEXT,
- study_type TEXT NOT NULL,
- model_version_id INTEGER NOT NULL REFERENCES model_versions(id),
- study_spec_json TEXT NOT NULL,
- script_artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
- agent_bundle_version TEXT NOT NULL,
+ artifact_id INTEGER NOT NULL REFERENCES artifacts(id) ON DELETE RESTRICT,
+ name TEXT NOT NULL CHECK(length(name)>0),
+ source_kind TEXT NOT NULL CHECK(source_kind IN ('upload','agent')),
+ content_hash TEXT NOT NULL CHECK(length(content_hash)=64),
+ validation_status TEXT NOT NULL CHECK(validation_status IN ('valid','invalid')),
+ required_aliases_json TEXT NOT NULL,
+ outputs_json TEXT NOT NULL,
+ diagnostics_json TEXT NOT NULL,
+ agent_bundle_version TEXT,
  agent_skill_refs_json TEXT NOT NULL,
+ created_at_ms INTEGER NOT NULL
+);
+CREATE INDEX idx_scripts_session_time ON script_resources(session_id,created_at_ms,id);
+
+CREATE TABLE simulation_runs (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+ model_version_id INTEGER NOT NULL REFERENCES model_versions(id) ON DELETE RESTRICT,
+ model_content_hash TEXT NOT NULL CHECK(length(model_content_hash)=64),
+ script_resource_id INTEGER NOT NULL REFERENCES script_resources(id) ON DELETE RESTRICT,
+ script_artifact_id INTEGER NOT NULL REFERENCES artifacts(id) ON DELETE RESTRICT,
+ script_content_hash TEXT NOT NULL CHECK(length(script_content_hash)=64),
+ client_run_id TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed')),
+ stage TEXT NOT NULL,
  engine_contract_version TEXT NOT NULL,
+ agent_bundle_version TEXT,
+ agent_skill_refs_json TEXT NOT NULL,
  exit_code INTEGER,
  error_json TEXT,
  created_at_ms INTEGER NOT NULL,
  started_at_ms INTEGER,
- finished_at_ms INTEGER
+ finished_at_ms INTEGER,
+ deleted_at_ms INTEGER,
+ tombstone_json TEXT,
+ UNIQUE(session_id,client_run_id)
 );
-CREATE INDEX idx_tasks_session_time ON simulation_tasks(session_id,created_at_ms);
-CREATE INDEX idx_tasks_session_id ON simulation_tasks(session_id,id);
-CREATE INDEX idx_tasks_status ON simulation_tasks(status);
-CREATE INDEX idx_simulation_tasks_model_version ON simulation_tasks(model_version_id);
+CREATE INDEX idx_runs_session_time ON simulation_runs(session_id,created_at_ms,id);
+CREATE INDEX idx_runs_status ON simulation_runs(status);
+CREATE INDEX idx_runs_model_version ON simulation_runs(model_version_id);
 
 CREATE TABLE messages (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
- task_id INTEGER REFERENCES simulation_tasks(id) ON DELETE SET NULL,
+ run_id INTEGER REFERENCES simulation_runs(id) ON DELETE SET NULL,
  role TEXT NOT NULL,
  kind TEXT NOT NULL,
  content TEXT NOT NULL DEFAULT '',
@@ -187,7 +240,7 @@ CREATE TABLE messages (
  created_at_ms INTEGER NOT NULL
 );
 CREATE INDEX idx_messages_session_time ON messages(session_id,created_at_ms);
-CREATE INDEX idx_messages_task ON messages(task_id);
+CREATE INDEX idx_messages_run ON messages(run_id);
 
 CREATE TABLE result_analysis_runs (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -208,57 +261,89 @@ CREATE TABLE result_analysis_runs (
 CREATE INDEX idx_result_analysis_runs_session ON result_analysis_runs(session_id,id);
 CREATE TABLE result_datasets (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
- task_id INTEGER REFERENCES simulation_tasks(id) ON DELETE CASCADE,
+ run_id INTEGER REFERENCES simulation_runs(id) ON DELETE CASCADE,
  analysis_run_id INTEGER REFERENCES result_analysis_runs(id) ON DELETE CASCADE,
- artifact_id INTEGER NOT NULL REFERENCES artifacts(id),
+ artifact_id INTEGER REFERENCES artifacts(id),
  result_name TEXT NOT NULL,
  schema_json TEXT NOT NULL,
  schema_hash TEXT NOT NULL,
  row_count INTEGER NOT NULL CHECK(row_count>=0),
  size_bytes INTEGER NOT NULL CHECK(size_bytes>=0),
  created_at_ms INTEGER NOT NULL,
- CHECK((task_id IS NOT NULL)<>(analysis_run_id IS NOT NULL)),
- UNIQUE(task_id,result_name),
+ deleted_at_ms INTEGER,
+ tombstone_json TEXT,
+ CHECK((run_id IS NOT NULL)<>(analysis_run_id IS NOT NULL)),
+ CHECK((deleted_at_ms IS NULL AND artifact_id IS NOT NULL AND tombstone_json IS NULL)
+    OR (deleted_at_ms IS NOT NULL AND artifact_id IS NULL AND tombstone_json IS NOT NULL)),
+ UNIQUE(run_id,result_name),
  UNIQUE(analysis_run_id,result_name)
 );
-CREATE INDEX idx_result_datasets_task ON result_datasets(task_id,id);
+CREATE INDEX idx_result_datasets_run ON result_datasets(run_id,id);
 CREATE INDEX idx_result_datasets_analysis ON result_datasets(analysis_run_id,id);
 CREATE TABLE result_analysis_inputs (
  analysis_run_id INTEGER NOT NULL REFERENCES result_analysis_runs(id) ON DELETE CASCADE,
  dataset_id INTEGER NOT NULL REFERENCES result_datasets(id) ON DELETE RESTRICT,
  alias TEXT NOT NULL,
  ordinal INTEGER NOT NULL,
+ source_name TEXT NOT NULL,
+ source_schema_json TEXT NOT NULL,
+ source_schema_hash TEXT NOT NULL,
+ source_producer_json TEXT NOT NULL,
  PRIMARY KEY(analysis_run_id,dataset_id),
  UNIQUE(analysis_run_id,alias),
  UNIQUE(analysis_run_id,ordinal)
 );
+CREATE TABLE dataset_lineage_snapshots (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ derived_dataset_id INTEGER NOT NULL REFERENCES result_datasets(id) ON DELETE CASCADE,
+ source_dataset_id INTEGER NOT NULL REFERENCES result_datasets(id) ON DELETE RESTRICT,
+ source_name TEXT NOT NULL,
+ source_schema_json TEXT NOT NULL,
+ source_schema_hash TEXT NOT NULL,
+ source_producer_json TEXT NOT NULL,
+ created_at_ms INTEGER NOT NULL,
+ UNIQUE(derived_dataset_id,source_dataset_id)
+);
 CREATE TABLE dataset_views (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
- dataset_id INTEGER NOT NULL REFERENCES result_datasets(id) ON DELETE CASCADE,
+ source_dataset_id INTEGER NOT NULL REFERENCES result_datasets(id) ON DELETE RESTRICT,
+ view_dataset_id INTEGER NOT NULL UNIQUE REFERENCES result_datasets(id) ON DELETE RESTRICT,
  name TEXT NOT NULL,
  kind TEXT NOT NULL CHECK(kind IN ('line','bar','scatter','heatmap','boxplot','histogram')),
  spec_json TEXT NOT NULL,
  is_default BOOLEAN NOT NULL DEFAULT 0,
  created_at_ms INTEGER NOT NULL,
- UNIQUE(dataset_id,name)
+ UNIQUE(source_dataset_id,name)
 );
-CREATE INDEX idx_dataset_views_dataset ON dataset_views(dataset_id,id);
-CREATE TABLE task_comparisons (
+CREATE INDEX idx_dataset_views_source ON dataset_views(source_dataset_id,id);
+CREATE TABLE run_comparisons (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
- baseline_task_id INTEGER NOT NULL REFERENCES simulation_tasks(id) ON DELETE RESTRICT,
- candidate_task_id INTEGER NOT NULL REFERENCES simulation_tasks(id) ON DELETE RESTRICT,
+ baseline_run_id INTEGER NOT NULL REFERENCES simulation_runs(id) ON DELETE RESTRICT,
+ candidate_run_id INTEGER NOT NULL REFERENCES simulation_runs(id) ON DELETE RESTRICT,
+ baseline_snapshot_json TEXT NOT NULL,
+ candidate_snapshot_json TEXT NOT NULL,
  compatibility_json TEXT NOT NULL,
  analysis_run_id INTEGER NOT NULL UNIQUE REFERENCES result_analysis_runs(id) ON DELETE RESTRICT,
  created_at_ms INTEGER NOT NULL,
- CHECK(baseline_task_id<>candidate_task_id)
+ CHECK(baseline_run_id<>candidate_run_id)
 );
-CREATE INDEX idx_comparisons_session_time ON task_comparisons(session_id,created_at_ms,id);
+CREATE INDEX idx_comparisons_session_time ON run_comparisons(session_id,created_at_ms,id);
+
+CREATE TABLE version_deletion_previews (
+ token_hash TEXT PRIMARY KEY CHECK(length(token_hash)=64),
+ user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ version_id INTEGER NOT NULL REFERENCES model_versions(id) ON DELETE CASCADE,
+ impact_hash TEXT NOT NULL CHECK(length(impact_hash)=64),
+ impact_json TEXT NOT NULL,
+ expires_at_ms INTEGER NOT NULL,
+ created_at_ms INTEGER NOT NULL
+);
 
 CREATE TABLE chat_search_documents (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
- source_kind TEXT NOT NULL CHECK(source_kind IN ('session_title','message','attachment','task_summary')),
+ source_kind TEXT NOT NULL CHECK(source_kind IN ('session_title','message','model_import','run_summary','script')),
  source_id INTEGER,
  search_text TEXT NOT NULL,
  updated_at_ms INTEGER NOT NULL,
@@ -268,14 +353,20 @@ CREATE INDEX idx_chat_search_session_source ON chat_search_documents(session_id,
 CREATE VIRTUAL TABLE chat_search_fts USING fts5(search_text,content='chat_search_documents',content_rowid='id',tokenize='trigram');
 
 CREATE TRIGGER validate_workspace_active_update BEFORE UPDATE OF active_version_id ON workspaces WHEN NEW.active_version_id IS NOT NULL BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM model_versions WHERE id=NEW.active_version_id AND workspace_id=NEW.id AND status='ready') THEN RAISE(ABORT,'invalid active model version') END;
+ SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM model_versions WHERE id=NEW.active_version_id AND workspace_id=NEW.id AND deleted_at_ms IS NULL) THEN RAISE(ABORT,'invalid active model version') END;
 END;
-CREATE TRIGGER validate_workspace_draft_update BEFORE UPDATE OF draft_version_id ON workspaces WHEN NEW.draft_version_id IS NOT NULL BEGIN
- SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM model_versions WHERE id=NEW.draft_version_id AND workspace_id=NEW.id) THEN RAISE(ABORT,'invalid draft model version') END;
+CREATE TRIGGER immutable_model_versions BEFORE UPDATE OF workspace_id,content_hash,source_summary_json,engine_contract_version,created_at_ms ON model_versions BEGIN SELECT RAISE(ABORT,'model versions are immutable'); END;
+CREATE TRIGGER immutable_model_dataframes BEFORE UPDATE ON model_dataframes BEGIN SELECT RAISE(ABORT,'model dataframes are immutable'); END;
+CREATE TRIGGER validate_run_insert BEFORE INSERT ON simulation_runs BEGIN
+ SELECT CASE WHEN NOT EXISTS(
+   SELECT 1 FROM sessions s
+   JOIN workspaces w ON w.session_id=s.id
+   JOIN model_versions v ON v.workspace_id=w.id
+   JOIN script_resources r ON r.session_id=s.id
+   WHERE s.id=NEW.session_id AND v.id=NEW.model_version_id
+     AND v.deleted_at_ms IS NULL AND r.id=NEW.script_resource_id
+ ) THEN RAISE(ABORT,'run resources must belong to one session') END;
 END;
-CREATE TRIGGER immutable_model_versions BEFORE UPDATE OF workspace_id,status,source_kind,origin_kind,manifest_json,patch_json,content_hash,created_at_ms ON model_versions BEGIN SELECT RAISE(ABORT,'model versions are immutable'); END;
-CREATE TRIGGER immutable_version_artifacts BEFORE UPDATE ON version_artifacts BEGIN SELECT RAISE(ABORT,'version artifacts are immutable'); END;
-CREATE TRIGGER immutable_dataframe_bindings BEFORE UPDATE ON dataframe_bindings BEGIN SELECT RAISE(ABORT,'dataframe bindings are immutable'); END;
 
 CREATE TRIGGER chat_docs_ai AFTER INSERT ON chat_search_documents BEGIN INSERT INTO chat_search_fts(rowid,search_text) VALUES(new.id,new.search_text); END;
 CREATE TRIGGER chat_docs_ad AFTER DELETE ON chat_search_documents BEGIN INSERT INTO chat_search_fts(chat_search_fts,rowid,search_text) VALUES('delete',old.id,old.search_text); END;
@@ -287,9 +378,23 @@ CREATE TRIGGER chat_session_ai AFTER INSERT ON sessions BEGIN INSERT INTO chat_s
 CREATE TRIGGER chat_session_au AFTER UPDATE OF title ON sessions BEGIN UPDATE chat_search_documents SET search_text=new.title,updated_at_ms=new.updated_at_ms WHERE session_id=new.id AND source_kind='session_title' AND source_id=new.id; END;
 CREATE TRIGGER chat_message_ai AFTER INSERT ON messages WHEN new.role IN ('user','assistant') BEGIN INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) VALUES(new.session_id,'message',new.id,new.content,new.created_at_ms); END;
 CREATE TRIGGER chat_message_ad AFTER DELETE ON messages BEGIN DELETE FROM chat_search_documents WHERE session_id=old.session_id AND source_kind='message' AND source_id=old.id; END;
-CREATE TRIGGER chat_attachment_ai AFTER INSERT ON ingestion_artifacts BEGIN
- INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) SELECT w.session_id,'attachment',new.id,new.file_name,new.created_at_ms FROM ingestions i JOIN workspaces w ON w.id=i.workspace_id WHERE i.id=new.ingestion_id;
+CREATE TRIGGER chat_import_ai AFTER INSERT ON model_imports BEGIN
+ INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms)
+ VALUES(new.session_id,'model_import',new.id,new.source_summary_json,new.created_at_ms);
 END;
-CREATE TRIGGER chat_attachment_ad AFTER DELETE ON ingestion_artifacts BEGIN DELETE FROM chat_search_documents WHERE source_kind='attachment' AND source_id=old.id; END;
-CREATE TRIGGER chat_task_ai AFTER INSERT ON simulation_tasks BEGIN INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) VALUES(new.session_id,'task_summary',new.id,new.study_type||' '||new.status,new.created_at_ms); END;
-CREATE TRIGGER chat_task_au AFTER UPDATE OF status,study_type ON simulation_tasks BEGIN UPDATE chat_search_documents SET search_text=new.study_type||' '||new.status,updated_at_ms=COALESCE(new.finished_at_ms,new.started_at_ms,new.created_at_ms) WHERE session_id=new.session_id AND source_kind='task_summary' AND source_id=new.id; END;
+CREATE TRIGGER chat_import_ad AFTER DELETE ON model_imports BEGIN DELETE FROM chat_search_documents WHERE source_kind='model_import' AND source_id=old.id; END;
+CREATE TRIGGER chat_script_ai AFTER INSERT ON script_resources BEGIN
+ INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms)
+ VALUES(new.session_id,'script',new.id,new.name,new.created_at_ms);
+END;
+CREATE TRIGGER chat_run_ai AFTER INSERT ON simulation_runs BEGIN
+ INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms)
+ SELECT new.session_id,'run_summary',new.id,s.name||' '||new.status,new.created_at_ms
+ FROM script_resources s WHERE s.id=new.script_resource_id;
+END;
+CREATE TRIGGER chat_run_au AFTER UPDATE OF status ON simulation_runs BEGIN
+ UPDATE chat_search_documents SET
+   search_text=(SELECT name FROM script_resources WHERE id=new.script_resource_id)||' '||new.status,
+   updated_at_ms=COALESCE(new.finished_at_ms,new.started_at_ms,new.created_at_ms)
+ WHERE session_id=new.session_id AND source_kind='run_summary' AND source_id=new.id;
+END;
