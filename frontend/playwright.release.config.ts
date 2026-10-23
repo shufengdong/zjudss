@@ -1,7 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
 
-const proxyToken = process.env.RELEASE_PROXY_TOKEN ?? 'release-proxy-token'
-
 export default defineConfig({
   testDir: '../integration-tests/release',
   testMatch: 'real-dependencies.spec.ts',
@@ -32,7 +30,6 @@ export default defineConfig({
       env: {
         ...process.env,
         VITE_API_TARGET: 'http://127.0.0.1:8080',
-        VITE_E2E_PROXY_TOKEN: proxyToken,
       },
       url: 'http://127.0.0.1:15183',
       reuseExistingServer: false,

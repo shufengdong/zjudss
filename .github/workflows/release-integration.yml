@@ -1,4 +1,4 @@
-name: v2 candidate release gate
+name: V3 candidate release gate
 
 on:
   workflow_dispatch:

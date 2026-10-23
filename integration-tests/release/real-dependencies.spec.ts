@@ -52,6 +52,55 @@ async function agentBundleEvidence() {
   return { version: manifest.agentBundleVersion as string, sha256: hash.digest('hex') }
 }
 
+function parseCsvRecords(text: string): string[][] {
+  const records: string[][] = []
+  let record: string[] = []
+  let field = ''
+  let quoted = false
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]
+    if (quoted) {
+      if (char === '"' && text[index + 1] === '"') {
+        field += '"'
+        index += 1
+      } else if (char === '"') {
+        quoted = false
+      } else {
+        field += char
+      }
+    } else if (char === '"') {
+      quoted = true
+    } else if (char === ',') {
+      record.push(field)
+      field = ''
+    } else if (char === '\n') {
+      record.push(field.replace(/\r$/, ''))
+      records.push(record)
+      record = []
+      field = ''
+    } else {
+      field += char
+    }
+  }
+  if (field || record.length) {
+    record.push(field.replace(/\r$/, ''))
+    records.push(record)
+  }
+  return records.filter((row) => row.some((value) => value.length > 0))
+}
+
+async function fixedUserSeed() {
+  const bytes = await readFile(join(process.cwd(), '../backend/resources/init_users.csv'))
+  const records = parseCsvRecords(bytes.toString('utf8'))
+  expect(records[0]).toEqual(['ID', 'NAME'])
+  expect(records.length).toBeGreaterThan(1)
+  return {
+    id: records[1][0],
+    userCount: records.length - 1,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+  }
+}
+
 async function apiJson(api: APIRequestContext, path: string) {
   const response = await api.get(path)
   expect(response.ok(), `${path} returned ${response.status()}`).toBe(true)
@@ -151,13 +200,14 @@ async function uploadDataframes(page: Page, api: APIRequestContext, sessionId: s
 
 async function runJourney(browser: Browser, report: AttemptReport) {
   const context = await browser.newContext()
-  await context.addCookies([
-    { name: 'zjudss-e2e-subject', value: `release-${report.attempt}@example.invalid`, url: 'http://127.0.0.1:15183' },
-    { name: 'zjudss-e2e-tenant', value: 'release-candidate', url: 'http://127.0.0.1:15183' },
-  ])
   const page = await context.newPage()
   const api = context.request
   try {
+    const seed = await fixedUserSeed()
+    const login = await api.post('/api/auth/login', {
+      data: { id: seed.id, password: seed.id },
+    })
+    expect(login.status()).toBe(200)
     await page.goto('/')
     const createResponse = page.waitForResponse((response) =>
       response.url().endsWith('/api/sessions') && response.request().method() === 'POST')
@@ -355,6 +405,7 @@ test('real DeepSeek and tensoreval complete the semantic release journey', async
     const engineReportPath = process.env.RELEASE_ENGINE_REPORT
     const engineReport = engineReportPath ? JSON.parse(await readFile(engineReportPath, 'utf8')) : null
     const agentBundle = await agentBundleEvidence()
+    const seed = await fixedUserSeed()
     await writeFile(reportPath, JSON.stringify({
       schemaVersion: 1,
       testIds: ['ENGINE-RELEASE-001', 'REAL-RELEASE-001'],
@@ -362,6 +413,8 @@ test('real DeepSeek and tensoreval complete the semantic release journey', async
       model: process.env.LLM_MODEL ?? 'deepseek-chat',
       agentBundleVersion: agentBundle.version,
       agentBundleSha256: agentBundle.sha256,
+      userSeedSha256: seed.sha256,
+      userCount: seed.userCount,
       engineContract: engineReport?.engineContract ?? null,
       engineBinarySha256: engineReport?.binarySha256 ?? null,
       attempts,

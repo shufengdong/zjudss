@@ -1,21 +1,23 @@
-# 配电网仿真智能体 v2 数据库设计
+# 配电网仿真智能体 V3 数据库设计
 
 > 状态：已实现。权威 SQL 为
-> `backend/migrations/00000000000000_initial/up.sql`。v2 仅支持空库初始化。
+> `backend/migrations/00000000000000_initial/up.sql`。V3 仅支持空库初始化。
 
 ## 1. 约定
 
 - SQLite 启用外键；主键用 `INTEGER PRIMARY KEY AUTOINCREMENT`。
 - 时间为 Unix 毫秒 `INTEGER`，出网转换为 ISO 8601；文件大小和行数使用 64 位整数。
 - JSON 保存在 TEXT，写入前使用 canonical JSON；应用层校验其 schema。
-- 每个 repository 查询显式接收 access scope；子资源通过 session join 校验归属。
+- 每个 repository 查询显式接收 `UserId`；子资源通过 `sessions.user_id` join 校验归属。
 - blob 路径是 DATA_DIR 内的相对路径，客户端和 LLM 永远看不到服务器路径。
 
 ## 2. 表关系
 
 ```mermaid
 erDiagram
-  storage_scopes ||--o{ sessions : owns
+  users ||--o{ auth_sessions : authenticates
+  users ||--o{ sessions : owns
+  storage_scopes ||--|| users : charges
   storage_scopes ||--o{ storage_scope_artifacts : charges
   artifacts ||--o{ storage_scope_artifacts : referenced
   sessions ||--|| workspaces : has
@@ -38,13 +40,17 @@ erDiagram
 
 ## 3. 身份、会话和搜索
 
-- `storage_scopes`：计费主体、artifact/字节硬限制、使用量和告警比例。
-- `sessions`：access scope、storage scope、标题和 `title_source=default|auto|user`。
+- `users`：从内置 `init_users.csv` 初始化的固定用户，保存 ID、名称、Argon2id 密码散列和唯一计费 scope。
+- `auth_sessions`：只保存随机登录 token 的 SHA-256、用户、创建/访问/到期时间；同一用户可有多个登录。
+- `system_metadata`：保存 `init_users_sha256`，用来拒绝 CSV 改动后的旧数据库启动。
+- `storage_scopes`：每个用户唯一的计费主体、artifact/字节硬限制、使用量和告警比例。
+- `sessions`：必填 `user_id`、标题和 `title_source=default|auto|user`。
 - `messages`：八类消息的可读摘要和 payload；可选关联 task。
 - `chat_search_documents` + `chat_search_fts`：session 标题、用户/助手文本、附件名和任务摘要。
   触发器保持外部内容 FTS 同步，`rebuild-search-index` 可离线重建。
 
-session 的 scope 列和 storage scope 外键均为 NOT NULL。手工标题不会被首条消息的自动标题覆盖。
+业务 session 不保存通用 scope 列。所有子资源通过 session 归属于固定用户；手工标题不会被首条消息的
+自动标题覆盖。
 
 ## 4. Artifact 与摄取
 
@@ -99,10 +105,10 @@ Parquet 并产出派生数据集。
 
 ## 8. 配额和删除
 
-默认每个 storage scope 20,000 个唯一 artifact、20 GiB，80% 告警。删除 session 会级联删除其业务
+默认每个用户 storage scope 20,000 个唯一 artifact、20 GiB，80% 告警。删除 session 会级联删除其业务
 记录；artifact 引用归零后由 GC 删除 blob 并扣减计数。达到硬限制时保持历史读、搜索和下载可用。
 
 ## 9. 发布迁移
 
-v2 发布前已把开发期迁移压为一份 `00000000000000_initial`。部署时必须删除旧开发数据库和 DATA_DIR
+V3 发布前已把未上线版本压为一份 `00000000000000_initial`。部署时必须删除旧开发数据库和 DATA_DIR
 后从空目录启动。此后 schema 变更恢复永久只追加迁移规则。

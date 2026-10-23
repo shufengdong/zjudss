@@ -14,7 +14,7 @@
   fixtures: []
 - id: AUTH-001
   source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: trusted proxy 身份与跨 scope 隔离
+  title: 固定用户登录与受保护路由
   layers:
     - api
   lanes:
@@ -22,10 +22,159 @@
   tests:
     - runner: rust
       file: backend/tests/auth_scope.rs
-      name: trusted_proxy_scopes_all_session_resources
+      name: invalid_credentials_and_missing_auth_have_stable_distinct_errors
   assertions:
-    - 非归属 scope 对资源猜测得到统一 404
+    - 未知 ID 与错误密码统一为 invalid_credentials，缺少登录为 authentication_required
+  fixtures:
+    - integration-tests/fixtures/init_users.csv
+- id: AUTH-SEED-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 内置 CSV 原子初始化固定用户
+  layers:
+    - backend
+  lanes:
+    - pr
+  tests:
+    - runner: rust
+      file: backend/tests/user_seed.rs
+      name: embedded_csv_seeds_all_users_with_argon2id_hashes_and_scopes
+    - runner: rust
+      file: backend/tests/user_seed.rs
+      name: identical_seed_is_idempotent_and_changed_seed_requires_reset
+  assertions:
+    - 密码以独立 salt 的 Argon2id 保存，相同 seed 幂等，字节变化要求重置且失败不产生部分用户
+  fixtures:
+    - integration-tests/fixtures/init_users.csv
+- id: AUTH-SESSION-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 不透明持久登录、续期和到期
+  layers:
+    - api
+    - backend
+  lanes:
+    - pr
+  tests:
+    - runner: rust
+      file: backend/tests/auth_scope.rs
+      name: login_sets_persistent_opaque_cookie_and_me_returns_user
+    - runner: rust
+      file: backend/tests/auth_scope.rs
+      name: expiring_session_renews_and_expired_session_is_deleted
+    - runner: playwright
+      file: integration-tests/e2e/auth-isolation.spec.ts
+      name: login persists across refresh and logout removes stale user state
+  assertions:
+    - 浏览器只获得 HttpOnly Cookie，数据库只保存 token hash，刷新保持登录且后半有效期才续期
+  fixtures:
+    - integration-tests/fixtures/init_users.csv
+- id: AUTH-LOGOUT-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 登出只撤销当前浏览器
+  layers:
+    - api
+    - frontend
+  lanes:
+    - pr
+  tests:
+    - runner: rust
+      file: backend/tests/auth_scope.rs
+      name: logout_is_idempotent_and_revokes_only_current_browser
+    - runner: playwright
+      file: integration-tests/e2e/auth-isolation.spec.ts
+      name: login persists across refresh and logout removes stale user state
+  assertions:
+    - 登出幂等、返回过期 Cookie，返回历史页不能恢复业务状态且其他浏览器会话保持有效
+  fixtures:
+    - integration-tests/fixtures/init_users.csv
+- id: AUTH-SSE-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 登录到期和登出立即终止对应 SSE
+  layers:
+    - api
+    - backend
+  lanes:
+    - pr
+  tests:
+    - runner: rust
+      file: backend/tests/auth_sse.rs
+      name: heartbeat_is_read_only_after_connection_renewal
+    - runner: rust
+      file: backend/tests/auth_sse.rs
+      name: expiry_ends_an_open_stream
+    - runner: rust
+      file: backend/tests/auth_sse.rs
+      name: logout_ends_only_the_matching_browser_stream
+  assertions:
+    - SSE 心跳不续期，到期或当前 token 登出立即结束，其他浏览器 token 不受影响
   fixtures: []
+- id: AUTH-ISOLATION-SESSION-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 会话、消息和历史跨用户统一隐藏
+  layers:
+    - api
+    - backend
+  lanes:
+    - pr
+  tests:
+    - runner: rust
+      file: backend/tests/auth_scope.rs
+      name: repository_boundary_and_http_resources_are_scoped_by_user_id
+    - runner: playwright
+      file: integration-tests/e2e/auth-isolation.spec.ts
+      name: two users cannot enumerate or guess each other session, message, SSE, task, or dataset resources
+  assertions:
+    - 会话、消息、SSE 和历史搜索只读取当前用户，直接猜测 ID 与不存在资源同为 404
+  fixtures:
+    - integration-tests/fixtures/init_users.csv
+- id: AUTH-ISOLATION-MODEL-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 摄取、工作区和模型版本跨用户统一隐藏
+  layers:
+    - backend
+  lanes:
+    - pr
+  tests:
+    - runner: rust
+      file: backend/tests/auth_scope.rs
+      name: repository_boundary_and_http_resources_are_scoped_by_user_id
+  assertions:
+    - 摄取、工作区和版本查询经所属 business session 校验 user_id
+  fixtures:
+    - integration-tests/fixtures/init_users.csv
+- id: AUTH-ISOLATION-RUN-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 仿真任务、结果与下载跨用户统一隐藏
+  layers:
+    - api
+    - backend
+  lanes:
+    - pr
+  tests:
+    - runner: rust
+      file: backend/tests/auth_scope.rs
+      name: repository_boundary_and_http_resources_are_scoped_by_user_id
+    - runner: playwright
+      file: integration-tests/e2e/auth-isolation.spec.ts
+      name: two users cannot enumerate or guess each other session, message, SSE, task, or dataset resources
+  assertions:
+    - task、dataset metadata、rows 和 download 全部经 session.user_id 校验
+  fixtures:
+    - integration-tests/fixtures/init_users.csv
+- id: AUTH-ISOLATION-ANALYSIS-001
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: 分析、比较与存储用量跨用户统一隐藏
+  layers:
+    - backend
+  lanes:
+    - pr
+  tests:
+    - runner: rust
+      file: backend/tests/auth_scope.rs
+      name: repository_boundary_and_http_resources_are_scoped_by_user_id
+  assertions:
+    - analysis、comparison 与 storage usage 只通过当前用户和其可信 storage_scope_id 访问
+  fixtures:
+    - integration-tests/fixtures/init_users.csv
 - id: INPUT-DF-001
   source: docs/integration-testing-design.md#5-功能覆盖矩阵
   title: DataFrame 多格式摄取
@@ -346,7 +495,7 @@
   fixtures: []
 - id: AUTH-E2E-001
   source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: trusted proxy 身份认证与两 owner 全资源隔离
+  title: Cookie 登录与两用户全资源隔离
   layers:
     - api
     - backend
@@ -355,17 +504,17 @@
   tests:
     - runner: playwright
       file: integration-tests/e2e/auth-isolation.spec.ts
-      name: two owners cannot enumerate or guess each other session
-      message: null
-      SSE: null
-      task: null
-      or dataset resources: null
+      name: two users cannot enumerate or guess each other session, message, SSE, task, or dataset resources
     - runner: playwright
       file: integration-tests/e2e/auth-isolation.spec.ts
-      name: trusted proxy rejects missing and incorrect credentials
+      name: cookie login rejects missing and incorrect credentials
+    - runner: playwright
+      file: integration-tests/e2e/auth-isolation.spec.ts
+      name: database reset invalidates an existing browser cookie
   assertions:
-    - 两个浏览器上下文的会话、消息、SSE、任务、数据集、下载和历史搜索互不可见且伪造身份返回 401
-  fixtures: []
+    - 两个浏览器上下文的会话、消息、SSE、任务、数据集、下载和历史搜索互不可见，重置数据库使旧 Cookie 失效
+  fixtures:
+    - integration-tests/fixtures/init_users.csv
 - id: INPUT-DF-002
   source: docs/integration-testing-design.md#5-功能覆盖矩阵
   title: 浏览器多格式 DataFrame 摄取与表头推断旅程
@@ -771,7 +920,7 @@
     - route:GET /health
 - id: ROUTE-002
   source: docs/integration-testing-design.md#5-功能覆盖矩阵
-  title: GET /api/me 公开路由
+  title: GET /api/me 受保护路由
   layers:
     - api
   lanes:
@@ -785,6 +934,40 @@
   fixtures: []
   contracts:
     - route:GET /api/me
+- id: ROUTE-028
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: POST /api/auth/login 公开路由
+  layers:
+    - api
+  lanes:
+    - pr
+  tests:
+    - runner: playwright
+      file: integration-tests/e2e/auth-isolation.spec.ts
+      name: login persists across refresh and logout removes stale user state
+  assertions:
+    - route:POST /api/auth/login 由真实浏览器登录行为执行并验证结果
+  fixtures:
+    - integration-tests/fixtures/init_users.csv
+  contracts:
+    - route:POST /api/auth/login
+- id: ROUTE-029
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: POST /api/auth/logout 公开路由
+  layers:
+    - api
+  lanes:
+    - pr
+  tests:
+    - runner: playwright
+      file: integration-tests/e2e/auth-isolation.spec.ts
+      name: login persists across refresh and logout removes stale user state
+  assertions:
+    - route:POST /api/auth/logout 由真实浏览器退出行为执行并验证结果
+  fixtures:
+    - integration-tests/fixtures/init_users.csv
+  contracts:
+    - route:POST /api/auth/logout
 - id: ROUTE-003
   source: docs/integration-testing-design.md#5-功能覆盖矩阵
   title: GET /api/storage-usage 公开路由
@@ -1967,6 +2150,48 @@
   fixtures: []
   contracts:
     - view:histogram
+- id: ERROR-038
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: authentication_required 稳定错误
+  layers:
+    - api
+    - backend
+  lanes:
+    - pr
+  tests:
+    - runner: rust
+      file: backend/tests/auth_scope.rs
+      name: invalid_credentials_and_missing_auth_have_stable_distinct_errors
+    - runner: playwright
+      file: integration-tests/e2e/auth-isolation.spec.ts
+      name: cookie login rejects missing and incorrect credentials
+  assertions:
+    - 缺少、未知或过期 Cookie 统一返回 authentication_required
+  fixtures:
+    - integration-tests/fixtures/init_users.csv
+  contracts:
+    - error:authentication_required
+- id: ERROR-039
+  source: docs/integration-testing-design.md#5-功能覆盖矩阵
+  title: invalid_credentials 稳定错误
+  layers:
+    - api
+    - backend
+  lanes:
+    - pr
+  tests:
+    - runner: rust
+      file: backend/tests/auth_scope.rs
+      name: invalid_credentials_and_missing_auth_have_stable_distinct_errors
+    - runner: playwright
+      file: integration-tests/e2e/auth-isolation.spec.ts
+      name: cookie login rejects missing and incorrect credentials
+  assertions:
+    - 未知用户与错误密码使用相同的 invalid_credentials 响应
+  fixtures:
+    - integration-tests/fixtures/init_users.csv
+  contracts:
+    - error:invalid_credentials
 - id: ERROR-001
   source: docs/integration-testing-design.md#5-功能覆盖矩阵
   title: archive_invalid 稳定错误

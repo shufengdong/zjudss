@@ -1,6 +1,6 @@
-# 配电网仿真智能体 v2 架构
+# 配电网仿真智能体 V3 架构
 
-> 状态：v2 已实现。部署和重置说明见 [v2-deployment.md](v2-deployment.md)，HTTP 线格式见
+> 状态：V3 实施中。部署和重置说明见 [v3-deployment.md](v3-deployment.md)，HTTP 线格式见
 > [api-design.md](api-design.md)，数据库见 [db-design.md](db-design.md)，全链路验收设计见
 > [integration-testing-design.md](integration-testing-design.md)。
 
@@ -28,11 +28,13 @@ flowchart LR
 
 ## 2. 身份和并发
 
-- `AUTH_MODE=instance` 用于可信单用户或单租户环境。
-- 公开部署必须使用 `trusted_proxy`。代理移除外部同名头，再注入
-  `X-Zjudss-Subject`、可选 `X-Zjudss-Tenant` 和 `X-Zjudss-Proxy-Token`。
-- access scope 约束 session、消息、版本、任务、数据集、SSE 和历史搜索；猜测其他 scope 的 ID 与
-  不存在 ID 都返回 404。
+- 空库启动从内置 `init_users.csv` 原子初始化固定用户，每个用户获得唯一 storage scope；CSV 内容 hash
+  固化在数据库，CSV 改动要求重置数据库和 DATA_DIR。
+- 用户以 ID 和密码登录；当前版本初始密码与 ID 相同。服务端在 SQLite 中保存 Argon2id 散列和不透明
+  登录 token 的 SHA-256，浏览器只持有 HttpOnly Cookie。
+- 用户所有权约束 session、消息、版本、任务、数据集、SSE 和历史搜索；猜测其他用户的 ID 与不存在 ID
+  都返回 404。
+- 登录可跨浏览器独立存在；退出只撤销当前 Cookie，并立即结束对应 SSE。公网 HTTPS 必须使用 Secure Cookie。
 - 每条用户消息创建一次短生命周期 agent run。会话连续性来自 SQLite，不为用户常驻 agent。
 - 同一 session 串行，owner 最多 2 个活动 run，实例最多 8 个，等待队列最多 32；第 33 个等待项返回
   `429 agent_queue_full` 且不写用户消息。
@@ -54,13 +56,13 @@ flowchart LR
 
 非测试启动必须提供 `TENSOREVAL_CWD`。启动阶段校验：
 
-1. tensoreval capability 与 v2 命令合同；
+1. tensoreval capability 与当前命令合同；
 2. `sparrowzz/dss/docs` 文档和 catalog hash；
 3. 根 RSS、rssbundle 案例及依赖 hash；
 4. 嵌入式 agent manifest、system prompt、skill hash 和合同兼容关系。
 
 通过后把只读资源发布为 hash 标识的 snapshot。运行期按稳定文档 section/example ID 读取，不直接依赖
-变化中的源目录。导入案例会复制完整依赖到当前 storage scope；后续修改不会写回共享案例。
+变化中的源目录。导入案例会复制完整依赖到当前用户 storage scope；后续修改不会写回共享案例。
 
 开发环境可以用受控的 `eig-rs` 工作树作为 `TENSOREVAL_CWD`。候选发布必须把合同范围内的资源和
 跨目录案例依赖打成固定 artifact，并记录 binary SHA-256；服务不把任意相邻源码目录当成发布事实。
@@ -77,7 +79,7 @@ trigram，一至二字符使用转义且有界的 LIKE。FTS 故障只影响搜�
 
 ## 6. 前端工作台
 
-- 左侧：按 scope 恢复上次会话、历史搜索、重命名和删除。
+- 左侧：按用户恢复上次会话、历史搜索、重命名和删除，底部显示用户菜单。
 - 中间：八类持久消息、自然语言输入、多文件/目录上传和上传队列。
 - 右侧：active/draft 工作区、推断证据、缺失输入、摄取状态和任务历史。
 - 结果层：每张 DataFrame 都有 cursor 分页表格和 Parquet 下载；保存的视图支持折线、柱状、散点、
@@ -88,10 +90,10 @@ trigram，一至二字符使用转义且有界的 LIKE。FTS 故障只影响搜�
 
 ## 7. 存储和发布
 
-每个计费 scope 默认 20,000 个唯一 artifact、20 GiB、80% 告警，不按天自动删除。硬限制只阻止新
+每个用户计费 scope 默认 20,000 个唯一 artifact、20 GiB、80% 告警，不按天自动删除。硬限制只阻止新
 artifact，历史读取和下载仍可用。删除会话后由 GC 在引用归零时释放空间。
 
-v2 只支持全新数据库和 DATA_DIR。仓库包含一份 initial migration，不提供旧原型 schema、CSV 结果、
+V3 只支持全新数据库和 DATA_DIR。仓库包含一份 initial migration，不提供旧原型 schema、CSV 结果、
 固定 metrics、`/curves`、`/report` 或运行时回退。
 
 ## 8. 自动化验收边界

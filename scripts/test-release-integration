@@ -28,12 +28,8 @@ mkdir -p "$run_root/data" "$run_root/dataframes"
 export RELEASE_ENGINE_REPORT="$report_dir/engine-report.json"
 export RELEASE_LLM_REPORT="$report_dir/llm-report.json"
 export RELEASE_DATAFRAME_DIR="$run_root/dataframes"
-export RELEASE_PROXY_TOKEN="release-proxy-$$"
 export DATA_DIR="$run_root/data"
 export DATABASE_URL="sqlite://$run_root/release.db"
-export AUTH_MODE=trusted_proxy
-export AUTH_PROXY_TOKEN="$RELEASE_PROXY_TOKEN"
-export PUBLIC_DEPLOYMENT=true
 export LLM_PROVIDER=deepseek
 
 sanitize_log() {
@@ -88,6 +84,7 @@ node -e '
   const report = JSON.parse(fs.readFileSync(process.env.RELEASE_LLM_REPORT, "utf8"));
   if (!report.success || !report.attempts?.some((attempt) => attempt.outcome === "passed")) process.exit(1);
   if (report.agentBundleVersion !== "v2.0.1" || !/^[a-f0-9]{64}$/.test(report.agentBundleSha256 ?? "")) process.exit(1);
+  if (!/^[a-f0-9]{64}$/.test(report.userSeedSha256 ?? "") || !(report.userCount > 0)) process.exit(1);
   if (!["ENGINE-RELEASE-001", "REAL-RELEASE-001"].every((id) => report.testIds?.includes(id))) process.exit(1);
   if (!/^[a-f0-9]{64}$/.test(report.engineBinarySha256 ?? "") || !report.engineContract) process.exit(1);
   const text = JSON.stringify(report);

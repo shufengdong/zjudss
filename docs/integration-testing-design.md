@@ -2,7 +2,7 @@
 
 > 状态：已于 2026-10-23 落地。本文定义“100% 功能覆盖”的验收口径；它不表示
 > 100% 源码行覆盖，也不表示穷举所有数据组合。系统架构见 [architecture.md](architecture.md)，HTTP/SSE
-> 合同见 [api-design.md](api-design.md)，发布环境要求见 [v2-deployment.md](v2-deployment.md)，详细任务见
+> 合同见 [api-design.md](api-design.md)，发布环境要求见 [v3-deployment.md](v3-deployment.md)，详细任务见
 > [2026-10-22-v2-integration-testing.md](superpowers/plans/2026-10-22-v2-integration-testing.md)。
 
 ## 1. 目标和覆盖口径
@@ -25,7 +25,7 @@
 2. `api-design.md` 的 HTTP/SSE 合同；
 3. `architecture.md`、`db-design.md`、`frontend-design.md`、`model-workspace-design.md`、
    `agent-prompt-skills-design.md` 的行为；
-4. `v2-deployment.md` 的启动、安全和发布约束。
+4. `v3-deployment.md` 的启动、安全和发布约束。
 
 发现实现与设计不一致时，先决定修实现还是修设计，再更新功能目录。测试不能通过固化偶然行为来消除
 差异。
@@ -132,7 +132,7 @@ L0、L1、L2 不依赖网络。L3 允许使用 secret，禁止在日志中输出
 | ID 前缀 | 必须覆盖的行为 | 主要层级 |
 |---|---|---|
 | BOOT | 空库 migration；capability、文档/catalog/案例、prompt/skill hash 校验；不兼容时拒绝接流量 | L0/L2/L3 |
-| AUTH | instance、trusted proxy、缺失/错误 token、伪造 header、tenant scope、跨 scope 统一 404 | L0/L1/L2 |
+| AUTH | 固定用户 seed、正确/错误登录、持久 Cookie、续期/到期、退出、SSE 撤销、跨用户统一 404 | L0/L1/L2 |
 | SESSION | 创建、列表、重命名、删除、分页、恢复最后会话、失效导航偏好回退 | L1 |
 | MESSAGE | 八类消息持久化和渲染；乐观消息替换；Markdown；旧 session 响应不污染当前页 | L0/L1 |
 | SSE | 先订阅后快照、稳定去重、Last-Event-ID 补发、断线重连、gap 后 resync、控制事件 | L0/L1/L2 |
@@ -158,11 +158,11 @@ L0、L1、L2 不依赖网络。L3 允许使用 secret，禁止在日志中输出
 
 ### 5.1 全部 HTTP/SSE 端点
 
-每个端点至少覆盖成功、认证失败、跨 scope/不存在资源，以及该端点定义的参数边界和稳定错误码：
+每个端点至少覆盖成功、认证失败、跨用户/不存在资源，以及该端点定义的参数边界和稳定错误码：
 
 | 资源 | 端点 |
 |---|---|
-| 系统/身份 | `GET /health`、`GET /api/me` |
+| 系统/身份 | `GET /health`、`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/me` |
 | 会话 | `GET/POST /api/sessions`、`PATCH/DELETE /api/sessions/{id}` |
 | 消息/SSE | `GET/POST /api/sessions/{id}/messages`、`GET /api/sessions/{id}/events` |
 | 上传 | `POST /api/sessions/{id}/attachments` |
@@ -215,7 +215,8 @@ L1 至少执行以下完整旅程。每条旅程的关键用户动作从页面�
    DataFrame/视图 → 刷新后恢复分析和图表。
 5. **历史恢复**：积累超过一页消息 → 搜索/around/older → 刷新和 SSE 断线重连 → 重命名/删除会话 →
    验证 last-session 回退和其他 session 状态隔离。
-6. **多人隔离**：两个浏览器 context 代表不同 owner/tenant，验证列表、ID 猜测、下载、SSE、搜索均隔离。
+6. **多人隔离**：两个浏览器 context 登录不同固定用户，验证列表、ID 猜测、下载、SSE、搜索均隔离；
+   刷新保持登录，退出/返回不可恢复旧状态，切换用户不闪现旧数据，数据库重置使旧 Cookie 失效。
 7. **容量和失败**：触发 80% 告警、硬配额、队列满、LLM 失败、引擎失败/超时和图表超限，确认错误可见、
    输入可重试、已发布数据不回滚、半成品不发布。
 8. **响应式工作台**：桌面和窄屏完成上传、对话、工作区、任务和结果查看；验证焦点、可访问名称和键盘
@@ -233,7 +234,8 @@ L1 至少执行以下完整旅程。每条旅程的关键用户动作从页面�
 | SSE 丢帧/断线/旧游标 | proxy/control endpoint | 补发或 resync，无重复业务消息 |
 | 并发配额竞争 | barrier 并发请求 | 计数不超限，不出现负数或孤儿引用 |
 | 恶意归档 | fixtures | 穿越、绝对路径、重复路径、炸弹和 symlink 被拒绝 |
-| 伪造身份头 | 第二 browser context | trusted proxy token 失败，资源不可枚举 |
+| 跨用户资源猜测 | 第二 browser context | session、消息、SSE、版本、任务、数据集、下载和搜索不可枚举 |
+| 当前浏览器退出/到期 | Cookie 撤销或测试时钟 | 受保护请求返回 401，对应 SSE 结束，其他浏览器登录保持有效 |
 | FTS 索引故障 | 替换/损坏测试索引 | 搜索明确失败，普通历史仍可读 |
 | 服务重启 | 杀死并重启 e2e server | 已提交消息/任务/视图恢复，运行中任务按合同收敛 |
 
@@ -301,7 +303,7 @@ CI 归档 JUnit、功能覆盖 JSON/HTML、Playwright trace 和真实引擎合�
 4. L1 使用生产前后端代码路径，只有 LLM 与 engine adapter 实现被依赖注入替换；
 5. 发布任务真实调用 DeepSeek 和当前合同的 tensoreval，缺少依赖时明确失败；
 6. CI 报告显示 PR 和 release 各自适用功能项为 100%，且能由功能 ID 追溯到需求、测试和断言；
-7. `development-status.md` 和 `v2-deployment.md` 的验证状态改为与实际门禁一致。
+7. `development-status.md` 和 `v3-deployment.md` 的验证状态改为与实际门禁一致。
 
 当前仓库已实现 Playwright、Scripted LLM、ScenarioEngine、机器可读功能目录和真实 DeepSeek 发布链路。
 普通 PR 由 `.github/workflows/ci.yml` 执行 L0/L1/L2 和严格 PR 目录门禁；候选发布由受保护环境中的

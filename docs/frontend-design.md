@@ -1,4 +1,4 @@
-# 配电网仿真智能体 v2 前端设计
+# 配电网仿真智能体 V3 前端设计
 
 > 状态：已实现。HTTP 契约以 [api-design.md](api-design.md) 为准，TypeScript 出网类型以
 > `frontend/src/types/` 为准。
@@ -16,7 +16,8 @@
                          └─ DataFrame/比较详情层
 ```
 
-- 历史侧栏参考常见对话产品：最近会话分组、服务端全文搜索、重命名和删除。
+- 未登录时只显示登录页；历史侧栏参考常见对话产品：最近会话分组、服务端全文搜索、重命名和删除，
+  底部显示当前用户名称、头像首字母以及包含 ID 和退出动作的菜单。
 - 对话区渲染八类持久消息；顶部可打开案例库和右侧工作台。
 - 右侧在“模型工作区 / 仿真历史”间切换，桌面可调整宽度，窄屏为抽屉。
 - DataFrame 使用独立详情层，避免大表进入聊天消息状态。
@@ -32,8 +33,11 @@
 - `useSimulationHistory/useTaskDatasets/useDataset/useDatasetView/useComparison`：结果工作台。
 - `useStorageUsage`：80% 告警。
 
-启动先读取 `/api/me`。导航偏好键为 `zjudss:last-session:<scopeKey>`；若该 session 已不可访问则
-打开当前列表第一项。localStorage 不保存聊天、模型或授权信息。
+启动先读取 `/api/me`，状态为 `loading | anonymous | authenticated`。未认证时不挂载任何业务 hook 或
+SSE；用户变化时以 `user.id + epoch` 重建整个工作台，销毁旧消息、草稿、任务、选择和定时器。
+导航偏好键为 `zjudss:last-session:<userId>`；若该 session 已不可访问则打开当前列表第一项。
+localStorage 不保存凭据、用户对象、聊天、模型或授权信息。同源标签页通过 `BroadcastChannel` 提前同步
+退出显示，服务器 Cookie 始终是授权事实。
 
 ## 4. 消息归并
 
@@ -93,7 +97,8 @@ ID；刷新后从比较 API 恢复兼容性和差值 DataFrame。
 
 ## 9. 验证
 
-Vitest 覆盖 session keyed 状态、workspace null 快照、SSE 控制事件、schema 列序、null、合法重复行、
+Vitest 覆盖认证状态机、登录/退出、全局 401、session keyed 状态、workspace null 快照、SSE 控制事件、
+schema 列序、null、合法重复行、
 六类图表和直方图边界。基础门禁运行 `npm test -- --run` 与 `npm run build`。
 
 完整前端验收由 12 个 Playwright 文件中的 18 个浏览器用例从浏览器访问 Vite 和真实 Axum e2e server，

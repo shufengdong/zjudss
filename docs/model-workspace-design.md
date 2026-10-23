@@ -137,8 +137,8 @@ active 后，新 draft 必须在 ready 且用户通过自然语言确认使用�
 ### 4.4 历史文件配额与保留
 
 首版默认给每个存储归属主体保存最多 **20,000 个唯一 artifact、20 GiB 逻辑容量**。两个限制任一达到
-即拒绝会增加唯一 artifact 数或逻辑字节的提交。v2 的 `AUTH_MODE=instance` 按整个可信私有实例计费；
-`AUTH_MODE=trusted_proxy` 按认证得到的 owner/tenant 计费，不能共用实例总额度。默认值可由
+即拒绝会增加唯一 artifact 数或逻辑字节的提交。V3 按认证用户的唯一 storage scope 计费，不同用户
+不能共用实例总额度。默认值可由
 `OWNER_ARTIFACT_LIMIT`（20,000）和 `OWNER_STORAGE_LIMIT_BYTES`（21,474,836,480）配置，并允许部署
 层按 owner 覆盖。
 
@@ -463,7 +463,7 @@ HTTP 错误体扩展为 `{ "error": "可读信息", "code": "稳定错误码", "
 15. DataFrame 始终有分页表格入口，并可拥有多个 `dataset_views`；前端把受控 `VisualizationSpec`
     编译为 ECharts option，模型和 API 不传任意可执行图表配置。
 16. 每个归属主体默认保留 20,000 个唯一 artifact、20 GiB；不按时间静默淘汰，删除历史后再由 GC
-    释放额度；instance 模式按实例、trusted_proxy 模式按 owner/tenant 计费。
+    释放额度；V3 始终按固定用户的唯一 storage scope 计费。
 17. 服务启动时预索引 `TENSOREVAL_CWD/sparrowzz/dss/docs`，脚本生成时按需注入相关 section；不把整套
     文档常驻每轮 prompt，也不把“学习”实现为模型微调。
 18. 根目录 RSS 和已发布 rssbundle 形成只读案例库；导入必须复制到用户 artifact/版本链，修改永不写回

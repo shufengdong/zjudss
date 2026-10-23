@@ -2,16 +2,17 @@
 
 > 新开的 agent 先读本文。详细机制见 `architecture.md`、`api-design.md`、`db-design.md`、
 > `frontend-design.md`、`model-workspace-design.md`、`agent-prompt-skills-design.md` 和
-> `v2-deployment.md`。自动化全链路验收见 `integration-testing-design.md`。
+> `v3-deployment.md`。自动化全链路验收见 `integration-testing-design.md`。
 
 ## 当前结论
 
-配电网仿真智能体 v2 已完成实现，并通过现有组件、服务集成和真实 tensoreval smoke test：
+第三版直接替换前两个未上线版本。固定用户认证已经实现；DataFrame 模型、易变脚本和仿真结果的新资源
+合同正在按已批准计划实施。当前已完成的基础能力如下：
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
-| 身份与隔离 | ✅ | instance/trusted_proxy、scope repository、跨 owner 统一 404 |
-| Agent 调度 | ✅ | 实例 8、owner 2、session 1、等待 32；agent 按消息短生命周期创建 |
+| 身份与隔离 | ✅ | 固定用户、HttpOnly 登录 Cookie、user repository、跨用户统一 404、SSE 撤销 |
+| Agent 调度 | ✅ | 实例 8、用户 2、session 1、等待 32；agent 按消息短生命周期创建 |
 | 消息与恢复 | ✅ | 八类消息、持久事件、Last-Event-ID、resync、最近页/older/around |
 | Artifact/配额 | ✅ | SHA-256 CAS、原子配额、20,000/20 GiB、80% 告警、GC |
 | 模型工作区 | ✅ | active/draft、不可变版本、替换/移除/确认/激活/回退 |
@@ -22,8 +23,8 @@
 | 结果分析 | ✅ | RSS 脚本、受控 alias、派生 Parquet、血缘、六类视图 |
 | 任务比较 | ✅ | 结果名/稳定键/dtype/单位兼容性和差值 DataFrame |
 | 历史检索 | ✅ | FTS5 trigram、短查询有界 LIKE、任务/时间过滤、agent 历史工具 |
-| 前端工作台 | ✅ | scope 恢复、历史搜索、目录上传、案例、工作区、任务、表格、ECharts |
-| v2 schema | ✅ | 单一 initial migration，无原型结果表或兼容分支 |
+| 前端工作台 | ✅ | 登录状态机、用户菜单、按用户恢复、历史搜索、目录上传、案例、工作区、任务、表格、ECharts |
+| V3 schema | 进行中 | 单一 initial migration；认证已切换，模型/脚本/结果资源重构待完成 |
 
 当前运行合同为 Agent bundle `v2.0.1` 和 engine contract `dss-v2-b3fc74c0`，固定到
 eig-rs `9a01af9a60bcbb3b2814f08dc269456ac1399280` 记录的 sparrowzz
@@ -39,14 +40,14 @@ hash 为准。相邻 `../eig-rs` 只用于开发期合同生成或核验，不�
 1. 所有 tensoreval/仿真内核调用只能通过 `backend/src/adapters/`。
 2. LLM 和前端只传稳定资源 ID 与受控 spec，不能传服务器路径、命令、SQL 或 ECharts option。
 3. 模型版本、artifact、结果数据集和分析脚本发布后不可修改；变化产生新版本/资源。
-4. 所有资源读取先校验 access scope；跨 scope 与不存在资源都返回 404。
-5. 公开部署必须使用 trusted proxy。instance 只用于可信单用户或单租户。
+4. 所有资源读取先校验 `UserId`；跨用户与不存在资源都返回 404。
+5. 固定用户来自内置 CSV，初始密码与 ID 相同；公网 HTTPS 必须设置 `SESSION_COOKIE_SECURE=true`。
 6. 仿真和分析结果统一为 Snappy Parquet；数据库只存 schema、行数、血缘和 artifact 引用。
 7. 领域写操作以自然语言为主；固定控件只用于上传、历史、案例浏览、结果读取和下载。
 
 ## 运行时链路
 
-`Artifact → Ingestion → ModelVersion → SimulationTask → ResultDataset → ResultAnalysisRun/Comparison`
+`User → Session → Artifact → Ingestion → ModelVersion → SimulationTask → ResultDataset`
 
 上传可以分多批进行。DataFrame 类型根据列名推断，文件名和 sheet 名只作展示；模糊、未知、dtype 冲突
 或同类型重复时保持 collecting，等待用户在对话中确认。错传文件重新上传使用新 batch/file ID，再由
@@ -62,14 +63,17 @@ hash 为准。相邻 `../eig-rs` 只用于开发期合同生成或核验，不�
 时间戳为 ISO 8601。后端 REST/SSE 直接输出 camelCase。
 
 前端按 session 键控消息，先接 SSE 再读取快照。localStorage 键
-`zjudss:last-session:<scopeKey>` 只保存导航偏好。DataFrame 大表数据保留在结果 hook 中，不写入聊天
+`zjudss:last-session:<userId>` 只保存导航偏好。DataFrame 大表数据保留在结果 hook 中，不写入聊天
 全局 state。已有视图由本地六类 builder 编译，禁止执行 formatter。
 
 ## Schema 与数据
 
-v2 仅支持空库初始化。部署前删除旧开发 SQLite 和 DATA_DIR；不做回填或双读。唯一 migration 为
+V3 仅支持空库初始化。部署前删除旧开发 SQLite 和 DATA_DIR；不做回填或双读。唯一 migration 为
 `backend/migrations/00000000000000_initial`。成功结果只进入 `result_datasets`，没有
 `task_files/task_results/curve_data/params_json`。
+
+启动从编译内置的 `init_users.csv` 原子初始化固定用户并保存种子 SHA-256；CSV 字节变化后必须重置
+数据库与 DATA_DIR。候选发布证据只记录种子 SHA-256 和用户数量，不记录用户 ID。
 
 ## 验证状态
 
@@ -99,4 +103,4 @@ v2 仅支持空库初始化。部署前删除旧开发 SQLite 和 DATA_DIR；不
 当前生产 Agent provider 为 DeepSeek。`StubEngine`、Scripted LLM 和 ScenarioEngine 只用于测试依赖
 注入；生产入口不提供 v1 兼容分支、引擎 stub 回退或旧 CSV 结果读取。
 
-发布命令和配置见 `docs/v2-deployment.md`。
+发布命令和配置见 `docs/v3-deployment.md`。
