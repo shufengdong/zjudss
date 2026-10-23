@@ -218,6 +218,7 @@ impl AppState {
                     sha256: source_hash,
                 }],
             }],
+            source_hashes: Default::default(),
         });
         Self::new_with_resources_and_agent_factory(
             pool,
@@ -319,6 +320,7 @@ impl AppState {
             documents: Default::default(),
             knowledge: EngineKnowledge::from_documents(&[]),
             examples: vec![],
+            source_hashes: Default::default(),
         });
         Self::new_with_resources(
             pool,
@@ -510,6 +512,7 @@ impl AppState {
             documents: Default::default(),
             knowledge: EngineKnowledge::from_documents(&[]),
             examples: vec![],
+            source_hashes: Default::default(),
         });
         Self::new_with_resources_and_agent_factory(
             pool,

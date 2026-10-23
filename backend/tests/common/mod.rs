@@ -11,8 +11,7 @@ use backend::auth::{AuthService, CurrentUser, UserId};
 use backend::catalog::SchemaCatalog;
 use backend::config::RuntimeConfig;
 use backend::db::{self, DbPool};
-use backend::engine_resources::{EngineResourceRegistry, ResourceContract, SourceFileSpec};
-use sha2::{Digest, Sha256};
+use backend::engine_resources::EngineResourceRegistry;
 use tempfile::TempDir;
 
 pub struct TestApp {
@@ -174,34 +173,12 @@ impl TestApp {
         .expect("build isolated test config");
         AgentKnowledge::load_embedded(&config.agent_bundle_version)
             .expect("preflight embedded agent knowledge");
-        let hash = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
-        let mut docs_hash = Sha256::new();
-        docs_hash.update(b"docs/guide.md");
-        docs_hash.update(b"\0");
-        docs_hash.update(guide);
-        docs_hash.update(b"\0");
-        let engine_snapshot = EngineResourceRegistry::load_with_contract(
-            &config.tensoreval_cwd,
-            ResourceContract {
-                contract_version: "test-contract".into(),
-                catalog_schema_version: 2,
-                dataframes_sha256: hash(dataframes),
-                functions_sha256: hash(functions),
-                docs_tree_sha256: format!("{:x}", docs_hash.finalize()),
-                doc_paths: vec!["docs/guide.md".into()],
-                root_rss: vec![SourceFileSpec {
-                    path: "demo.rss".into(),
-                    sha256: hash(demo_rss),
-                }],
-                bundles: vec![],
-            },
-            &HashSet::new(),
-        )
-        .expect("preflight isolated engine resource fixture");
+        let engine_snapshot = EngineResourceRegistry::load(&config.tensoreval_cwd, &HashSet::new())
+            .expect("preflight isolated engine resource fixture");
         EngineResourceRegistry::publish(&engine_snapshot, &config.data_dir)
             .expect("publish isolated engine snapshot");
         let catalog = std::sync::Arc::new(
-            SchemaCatalog::from_snapshot(&engine_snapshot, "test-contract")
+            SchemaCatalog::from_snapshot(&engine_snapshot, &engine_snapshot.contract_version)
                 .expect("load isolated schema catalog"),
         );
         let engine_snapshot = std::sync::Arc::new(engine_snapshot);

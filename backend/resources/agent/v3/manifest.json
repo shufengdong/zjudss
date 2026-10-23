@@ -1,19 +1,6 @@
 {
   "agentBundleVersion": "v3.0.0",
   "engineContractVersion": "tensoreval-parquet-v3",
-  "eigRsCommit": "9a01af9a60bcbb3b2814f08dc269456ac1399280",
-  "sparrowzzCommit": "b3fc74c0ff1fd25deb4448edd3a9c0e8644bb3c1",
-  "sourceDirty": false,
-  "catalogSchemaVersion": 2,
-  "compatibleCatalogSchemaVersions": [
-    2
-  ],
-  "catalogs": {
-    "dataframes": "ead67bd4354e0acb99a957c4f96fd80f85e96268a7a190fb36ac65cce98cd471",
-    "functions": "d84b715c62b79ba95931b04e2df1c351928c02c8124b73f18b709f2430331496"
-  },
-  "docsTreeSha256": "294483308ac9fd5c8ffb11cf23416c2381a3b27340b9ef3d06a8244a8c9269a3",
-  "examplesSourceSha256": "3c8d9c81176045843d7c8bf0d05d6d6872ca547cb360a6e462e9281938b05698",
   "systemSha256": "0b6b9bd3721676867d3991a166513c9ec3fc68c915de5bd5ede0421f8b2f1822",
   "skillIndexSha256": "a6a665ee2621fc46e4c551566e06d62651ef4eadf1fb9edaa725afc3087c1be7",
   "allowedTools": [

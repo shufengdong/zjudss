@@ -1,27 +1,38 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
-
 use super::examples::EngineExample;
 use super::knowledge::EngineKnowledge;
 
 #[derive(Debug, Clone)]
-pub struct ResourceContract {
-    pub contract_version: String,
-    pub catalog_schema_version: u32,
-    pub dataframes_sha256: String,
-    pub functions_sha256: String,
-    pub docs_tree_sha256: String,
-    pub doc_paths: Vec<String>,
-    pub root_rss: Vec<SourceFileSpec>,
-    pub bundles: Vec<SourceFileSpec>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SourceFileSpec {
+pub(crate) struct SourceFileSpec {
     pub path: String,
     pub sha256: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ResourceLimits {
+    pub max_documents: usize,
+    pub max_document_bytes: u64,
+    pub max_total_document_bytes: u64,
+    pub max_examples: usize,
+    pub max_example_files: usize,
+    pub max_example_bytes: u64,
+    pub max_dependency_depth: usize,
+}
+
+impl Default for ResourceLimits {
+    fn default() -> Self {
+        Self {
+            max_documents: 512,
+            max_document_bytes: 4 * 1024 * 1024,
+            max_total_document_bytes: 64 * 1024 * 1024,
+            max_examples: 2_048,
+            max_example_files: 10_000,
+            max_example_bytes: 2 * 1024 * 1024 * 1024,
+            max_dependency_depth: 64,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -37,13 +48,5 @@ pub struct EngineResourceSnapshot {
     pub documents: BTreeMap<String, Vec<u8>>,
     pub knowledge: EngineKnowledge,
     pub examples: Vec<EngineExample>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct EmbeddedExampleSources {
-    pub schema_version: u32,
-    pub source_commit: String,
-    pub root_rss: Vec<SourceFileSpec>,
-    pub bundles: Vec<SourceFileSpec>,
+    pub(crate) source_hashes: BTreeMap<String, String>,
 }

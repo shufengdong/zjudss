@@ -13,14 +13,6 @@ const SYSTEM: &str = include_str!("../../resources/agent/v3/system.md");
 pub struct AgentManifest {
     pub agent_bundle_version: String,
     pub engine_contract_version: String,
-    pub eig_rs_commit: String,
-    pub sparrowzz_commit: String,
-    pub source_dirty: bool,
-    pub catalog_schema_version: u32,
-    pub compatible_catalog_schema_versions: Vec<u32>,
-    pub catalogs: BTreeMap<String, String>,
-    pub docs_tree_sha256: String,
-    pub examples_source_sha256: String,
     pub system_sha256: String,
     pub skill_index_sha256: String,
     pub allowed_tools: Vec<String>,
@@ -134,15 +126,6 @@ impl AgentKnowledge {
             return Err(KnowledgeError::new(
                 "agent_bundle_mismatch",
                 "请求版本与资源版本不一致",
-            ));
-        }
-        if !manifest
-            .compatible_catalog_schema_versions
-            .contains(&manifest.catalog_schema_version)
-        {
-            return Err(KnowledgeError::new(
-                "engine_contract_mismatch",
-                "agent bundle 不兼容 catalog schema",
             ));
         }
         verify_hash(

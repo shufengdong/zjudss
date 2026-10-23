@@ -16,10 +16,7 @@ fn fixture(
     let system = "Stable system rules".to_string();
     let manifest = json!({
         "agentBundleVersion":"test", "engineContractVersion":"contract-1",
-        "eigRsCommit":"a", "sparrowzzCommit":"b", "sourceDirty":false,
-        "catalogSchemaVersion":2, "compatibleCatalogSchemaVersions":[2],
-        "catalogs":{"dataframes":"x","functions":"y"}, "docsTreeSha256":"z",
-        "examplesSourceSha256":"e", "systemSha256":hash(&system),
+        "systemSha256":hash(&system),
         "skillIndexSha256":hash(&index), "allowedTools":["known_tool"]
     })
     .to_string();
@@ -42,15 +39,22 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
         knowledge.manifest.engine_contract_version,
         "tensoreval-parquet-v3"
     );
-    assert_eq!(
-        knowledge.manifest.eig_rs_commit,
-        "9a01af9a60bcbb3b2814f08dc269456ac1399280"
-    );
-    assert_eq!(
-        knowledge.manifest.sparrowzz_commit,
-        "b3fc74c0ff1fd25deb4448edd3a9c0e8644bb3c1"
-    );
-    assert!(!knowledge.manifest.source_dirty);
+    let manifest = serde_json::to_value(&knowledge.manifest).unwrap();
+    for removed in [
+        "eigRsCommit",
+        "sparrowzzCommit",
+        "sourceDirty",
+        "catalogSchemaVersion",
+        "compatibleCatalogSchemaVersions",
+        "catalogs",
+        "docsTreeSha256",
+        "examplesSourceSha256",
+    ] {
+        assert!(
+            manifest.get(removed).is_none(),
+            "stale engine pin: {removed}"
+        );
+    }
     assert_eq!(knowledge.skill_index().count(), 6);
     assert!(knowledge.skill("result-analysis").is_some());
     assert!(!knowledge.system_prompt.contains("/Users/"));

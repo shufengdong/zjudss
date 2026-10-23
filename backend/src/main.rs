@@ -35,7 +35,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let runtime = RuntimeConfig::from_env()?;
     let llm = LlmConfig::from_env();
     let knowledge = AgentKnowledge::load_embedded(&runtime.agent_bundle_version)?;
-    let engine_resources = EngineResourceRegistry::load(&runtime.tensoreval_cwd)?;
+    let engine_resources =
+        EngineResourceRegistry::load(&runtime.tensoreval_cwd, &std::collections::HashSet::new())?;
     let snapshot_path = EngineResourceRegistry::publish(&engine_resources, &runtime.data_dir)?;
     let catalog = std::sync::Arc::new(SchemaCatalog::from_snapshot(
         &engine_resources,

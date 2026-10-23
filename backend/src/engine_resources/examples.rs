@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::snapshot::SourceFileSpec;
+use super::snapshot::{ResourceLimits, SourceFileSpec};
 use super::{EngineResourceError, hash_file, safe_file};
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,6 +62,7 @@ pub(crate) fn load_examples(
     root_specs: &[SourceFileSpec],
     bundle_specs: &[SourceFileSpec],
     capabilities: &HashSet<String>,
+    limits: ResourceLimits,
 ) -> Result<Vec<EngineExample>, EngineResourceError> {
     let mut examples = Vec::new();
     let mut ids = HashSet::new();
@@ -77,7 +78,16 @@ pub(crate) fn load_examples(
             ));
         }
         let mut diagnostics = Vec::new();
-        let dependencies = discover_rss_dependencies(engine_root, &path, &bytes, &mut diagnostics);
+        if contains_dynamic_dependency(&bytes) {
+            diagnostics.push("dynamic dependency".to_string());
+        }
+        let dependencies = discover_rss_dependencies(
+            engine_root,
+            &path,
+            &bytes,
+            &mut diagnostics,
+            limits.max_dependency_depth,
+        )?;
         let entry_source = format!("sparrowzz/dss/{}", spec.path);
         let mut files = vec![ExampleSourceFile {
             virtual_path: entry_source.clone(),
@@ -108,6 +118,9 @@ pub(crate) fn load_examples(
                 source_path: relative,
                 sha256: format!("{:x}", Sha256::digest(&data)),
             });
+        }
+        if files.len() > limits.max_example_files || total > limits.max_example_bytes {
+            return Err(super::limit_error("example files or bytes"));
         }
         files.sort_by(|left, right| left.virtual_path.cmp(&right.virtual_path));
         examples.push(EngineExample {
@@ -144,6 +157,8 @@ pub(crate) fn load_examples(
         let mut diagnostics = Vec::new();
         let mut total = bytes.len() as u64;
         let mut tree = Sha256::new();
+        tree.update(spec.path.as_bytes());
+        tree.update(&bytes);
         let mut entry_found = false;
         let manifest_source = manifest_path
             .strip_prefix(engine_root)
@@ -161,15 +176,27 @@ pub(crate) fn load_examples(
             sha256: spec.sha256.clone(),
         }];
         for file in &manifest.files {
-            safe_relative(&file.path)?;
-            let path = safe_file(bundle_root, &file.path)?;
+            if safe_relative(&file.path).is_err() {
+                diagnostics.push(format!("unsafe file: {}", file.path));
+                continue;
+            }
+            let path = match safe_file(bundle_root, &file.path) {
+                Ok(path) => path,
+                Err(_) => {
+                    diagnostics.push(format!("missing file: {}", file.path));
+                    continue;
+                }
+            };
             match hash_file(&path) {
-                Ok(hash) if hash == file.sha256 => {
+                Ok(hash) => {
                     total += std::fs::metadata(&path)
                         .map_err(EngineResourceError::io)?
                         .len();
                     tree.update(file.path.as_bytes());
                     tree.update(hash.as_bytes());
+                    if hash != file.sha256 {
+                        diagnostics.push(format!("hash mismatch: {}", file.path));
+                    }
                     if file.path == manifest.entry {
                         entry_found = true;
                     }
@@ -189,7 +216,6 @@ pub(crate) fn load_examples(
                         sha256: hash,
                     });
                 }
-                Ok(_) => diagnostics.push(format!("hash mismatch: {}", file.path)),
                 Err(_) => diagnostics.push(format!("missing file: {}", file.path)),
             }
         }
@@ -205,6 +231,9 @@ pub(crate) fn load_examples(
         let id = example_id("rssbundle", rel_bundle);
         if !ids.insert(id.clone()) {
             return Err(EngineResourceError::new("duplicate_example_id", rel_bundle));
+        }
+        if files.len() > limits.max_example_files || total > limits.max_example_bytes {
+            return Err(super::limit_error("example files or bytes"));
         }
         examples.push(EngineExample {
             id,
@@ -266,11 +295,12 @@ fn discover_rss_dependencies(
     entry_path: &Path,
     bytes: &[u8],
     diagnostics: &mut Vec<String>,
-) -> Vec<PathBuf> {
+    max_depth: usize,
+) -> Result<Vec<PathBuf>, EngineResourceError> {
     let mut dependencies = Vec::new();
-    let mut visited = HashSet::new();
-    let mut queue = vec![(entry_path.to_path_buf(), bytes.to_vec())];
-    while let Some((current, data)) = queue.pop() {
+    let mut visited = HashSet::from([entry_path.to_path_buf()]);
+    let mut queue = vec![(entry_path.to_path_buf(), bytes.to_vec(), 0_usize)];
+    while let Some((current, data, depth)) = queue.pop() {
         let text = String::from_utf8_lossy(&data);
         for token in dependency_tokens(&text) {
             if token.contains("://") {
@@ -282,8 +312,8 @@ fn discover_rss_dependencies(
             } else {
                 current.parent().unwrap_or(engine_root).join(&token)
             };
-            match candidate.canonicalize() {
-                Ok(path) if path.starts_with(engine_root) && path.is_file() => {
+            match contained_regular_file(engine_root, &candidate) {
+                Some(path) => {
                     if visited.insert(path.clone()) {
                         match std::fs::read(&path) {
                             Ok(bytes) => {
@@ -296,7 +326,11 @@ fn discover_rss_dependencies(
                                             || extension.eq_ignore_ascii_case("dss")
                                     })
                                 {
-                                    queue.push((path, bytes));
+                                    let next_depth = depth.saturating_add(1);
+                                    if next_depth > max_depth {
+                                        return Err(super::limit_error("dependency depth"));
+                                    }
+                                    queue.push((path, bytes, next_depth));
                                 }
                             }
                             Err(_) => diagnostics.push(format!("missing dependency: {token}")),
@@ -308,7 +342,38 @@ fn discover_rss_dependencies(
         }
     }
     dependencies.sort();
-    dependencies
+    Ok(dependencies)
+}
+
+fn contained_regular_file(engine_root: &Path, candidate: &Path) -> Option<PathBuf> {
+    for ancestor in candidate.ancestors() {
+        if ancestor == engine_root {
+            break;
+        }
+        if std::fs::symlink_metadata(ancestor)
+            .ok()
+            .is_some_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return None;
+        }
+    }
+    candidate
+        .canonicalize()
+        .ok()
+        .filter(|path| path.starts_with(engine_root) && path.is_file())
+}
+
+fn contains_dynamic_dependency(bytes: &[u8]) -> bool {
+    let source = String::from_utf8_lossy(bytes).to_ascii_lowercase();
+    ["import_dss(", "import_bmopf(", "read("]
+        .iter()
+        .any(|call| {
+            source.match_indices(call).any(|(index, _)| {
+                !source[index + call.len()..]
+                    .trim_start()
+                    .starts_with(['\"', '\''])
+            })
+        })
 }
 
 fn dependency_tokens(text: &str) -> Vec<String> {
@@ -375,6 +440,10 @@ fn infer_study(path: &str) -> String {
 }
 
 fn example_id(kind: &str, path: &str) -> String {
-    let hash = format!("{:x}", Sha256::digest(format!("{kind}:{path}").as_bytes()));
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    let hash = format!(
+        "{:x}",
+        Sha256::digest(format!("{kind}:{normalized}").as_bytes())
+    );
     format!("ex_{}", &hash[..26])
 }

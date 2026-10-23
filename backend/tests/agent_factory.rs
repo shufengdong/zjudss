@@ -119,7 +119,7 @@ async fn chat_builds_one_agent_per_user_message() {
         assert!(prompt.contains("# Skill index"));
         assert!(prompt.contains("model-intake"));
         assert!(prompt.contains("# Engine resources"));
-        assert!(prompt.contains("test-contract"));
+        assert!(prompt.contains("tensoreval-parquet-v3"));
     }
 }
 
