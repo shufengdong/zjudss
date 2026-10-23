@@ -141,10 +141,10 @@ impl SimulationService {
             .iter()
             .find(|(input, _)| input.role == "entry")
             .map(|(input, _)| input.clone());
-        let script_artifact_id = if version.source_kind == "rssbundle" {
+        let script_artifact_id = if matches!(version.source_kind.as_str(), "rss" | "rssbundle") {
             entry
                 .clone()
-                .ok_or_else(|| SimulationError::new("bundle_entry_missing", "rssbundle 缺少入口"))?
+                .ok_or_else(|| SimulationError::new("model_entry_missing", "RSS 模型缺少入口"))?
                 .artifact_id
         } else {
             let script = request.script.as_deref().ok_or_else(|| {
@@ -289,17 +289,26 @@ impl SimulationService {
                 .await?;
             Vec::new()
         };
-        let script_path = if source_kind == "rssbundle" {
-            PathBuf::from("model.rssbundle")
-        } else {
-            self.materialize_script(scope_id, script_artifact_id, &input_tree)
-                .await?
+        let script_path = match source_kind {
+            "rssbundle" => PathBuf::from("model.rssbundle"),
+            "rss" => entry
+                .as_ref()
+                .and_then(|input| input.relative_path.as_deref())
+                .map(PathBuf::from)
+                .ok_or_else(|| {
+                    SimulationError::new("model_entry_missing", "RSS 模型入口路径缺失")
+                })?,
+            _ => {
+                self.materialize_script(scope_id, script_artifact_id, &input_tree)
+                    .await?
+            }
         };
         self.stage(&request.principal, task.id, "inspect", &writer)
             .await?;
         if source_kind == "rss" {
             let inspect = entry
-                .and_then(|v| v.relative_path)
+                .as_ref()
+                .and_then(|v| v.relative_path.as_deref())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| script_path.clone());
             self.engine

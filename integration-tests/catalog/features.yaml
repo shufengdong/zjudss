@@ -452,3 +452,13 @@
     - { runner: release, file: scripts/test-release-engine, name: real_engine_imports_all_examples_and_runs_representative_studies }
   assertions: [发布命令要求显式真实依赖并稳定拒绝缺失或不兼容环境, 73 个固定案例的依赖哈希均正确且可导入临时 scope, 命名 Parquet、expr_df、多结果、Snappy、失败诊断和五类代表 study 均通过真实引擎]
   fixtures: []
+- id: REAL-RELEASE-001
+  source: docs/integration-testing-design.md#8-测试数据和真实依赖验收
+  title: 真实 DeepSeek 与 tensoreval 候选发布语义旅程
+  layers: [frontend, api, backend, agent, adapter]
+  lanes: [release]
+  tests:
+    - { runner: vitest, file: frontend/src/release/semantic-assertions.test.ts, name: accepts stable IDs and skills loaded before gated tools }
+    - { runner: release, file: scripts/test-release-integration, name: real DeepSeek and tensoreval complete the semantic release journey }
+  assertions: [缺少 secret、binary、资源目录或合同 hash 不匹配时失败且日志去敏, 浏览器以自然语言完成 DataFrame 潮流、RSS 短路、派生分析、参数修改、重跑和比较, 仅明确 provider 暂时错误最多重试两次且每次工具 trace 均归档]
+  fixtures: []

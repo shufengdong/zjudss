@@ -1,0 +1,94 @@
+#!/bin/sh
+set -eu
+
+# real DeepSeek and tensoreval complete the semantic release journey
+for required in DEEPSEEK_API_KEY TENSOREVAL_BIN TENSOREVAL_CWD; do
+  eval "value=\${$required:-}"
+  if [ -z "$value" ]; then
+    echo "release_integration_missing:$required" >&2
+    exit 2
+  fi
+done
+if [ ! -x "$TENSOREVAL_BIN" ]; then
+  echo "release_integration_binary_invalid" >&2
+  exit 2
+fi
+if [ ! -d "$TENSOREVAL_CWD" ]; then
+  echo "release_integration_cwd_invalid" >&2
+  exit 2
+fi
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+report_dir="$repo_root/target/release-integration"
+run_root="$report_dir/run-$$"
+raw_log="$run_root/raw.log"
+public_log="$report_dir/release.log"
+mkdir -p "$run_root/data" "$run_root/dataframes"
+
+export RELEASE_ENGINE_REPORT="$report_dir/engine-report.json"
+export RELEASE_LLM_REPORT="$report_dir/llm-report.json"
+export RELEASE_DATAFRAME_DIR="$run_root/dataframes"
+export RELEASE_PROXY_TOKEN="release-proxy-$$"
+export DATA_DIR="$run_root/data"
+export DATABASE_URL="sqlite://$run_root/release.db"
+export AUTH_MODE=trusted_proxy
+export AUTH_PROXY_TOKEN="$RELEASE_PROXY_TOKEN"
+export PUBLIC_DEPLOYMENT=true
+export LLM_PROVIDER=deepseek
+
+sanitize_log() {
+  node -e '
+    const fs = require("node:fs");
+    let text = fs.readFileSync(process.argv[1], "utf8");
+    for (const value of [process.env.DEEPSEEK_API_KEY, process.env.TENSOREVAL_BIN, process.env.TENSOREVAL_CWD, process.env.DATA_DIR, process.cwd()]) {
+      if (value) text = text.split(value).join("<redacted>");
+    }
+    text = text.replace(/\/(?:Users|private|tmp)\/[^\s"`]+/g, "<path>");
+    fs.writeFileSync(process.argv[2], text);
+  ' "$raw_log" "$public_log"
+}
+
+finish() {
+  code=$?
+  trap - EXIT INT TERM
+  if [ -f "$raw_log" ]; then
+    sanitize_log
+    tail -n 40 "$public_log"
+    rm -f "$raw_log"
+  fi
+  exit "$code"
+}
+trap finish EXIT INT TERM
+
+"$repo_root/scripts/test-release-engine" >"$raw_log" 2>&1
+
+cat > "$run_root/export-dataframes.rss" <<'EOF'
+[bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para] = import_dss("sparrowzz/dss/models/4bus_daily_qsts/4bus_dy.dss");
+EOF
+(
+  cd "$TENSOREVAL_CWD"
+  "$TENSOREVAL_BIN" --df --result-dir "$RELEASE_DATAFRAME_DIR" --output-format parquet "$run_root/export-dataframes.rss"
+) >>"$raw_log" 2>&1
+
+(
+  cd "$repo_root/frontend"
+  NODE_PATH=./node_modules ./node_modules/.bin/playwright test --config=playwright.release.config.ts
+) >>"$raw_log" 2>&1
+
+if [ ! -s "$RELEASE_ENGINE_REPORT" ]; then
+  echo "release_integration_engine_report_missing" >>"$raw_log"
+  exit 1
+fi
+if [ ! -s "$RELEASE_LLM_REPORT" ]; then
+  echo "release_integration_llm_report_missing" >>"$raw_log"
+  exit 1
+fi
+node -e '
+  const fs = require("node:fs");
+  const report = JSON.parse(fs.readFileSync(process.env.RELEASE_LLM_REPORT, "utf8"));
+  if (!report.success || !report.attempts?.some((attempt) => attempt.outcome === "passed")) process.exit(1);
+  const text = JSON.stringify(report);
+  for (const value of [process.env.DEEPSEEK_API_KEY, process.env.TENSOREVAL_BIN, process.env.TENSOREVAL_CWD, process.env.DATA_DIR]) {
+    if (value && text.includes(value)) process.exit(1);
+  }
+' >>"$raw_log" 2>&1

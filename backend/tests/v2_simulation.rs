@@ -178,6 +178,56 @@ async fn ready_version_persists_reproducible_task_and_generic_parquet_dataset() 
 }
 
 #[tokio::test]
+async fn rss_studies_execute_the_immutable_entry_artifact_without_generated_script() {
+    let app = TestApp::spawn().await;
+    let p = instance();
+    let session = app
+        .state
+        .session_repo
+        .create(&p.access, "rss entry", 1)
+        .await
+        .unwrap();
+    let snapshot = app.state.example_import_service.snapshot();
+    let example = snapshot
+        .examples
+        .iter()
+        .find(|example| example.source_kind == "rss")
+        .unwrap();
+    let version = app
+        .state
+        .example_import_service
+        .import(&p, session.id, &example.id, &snapshot.id, None)
+        .await
+        .unwrap();
+    let entry = app
+        .state
+        .workspace_service
+        .inputs(&p.access, version.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|(input, _)| input.role == "entry")
+        .unwrap()
+        .0;
+
+    let outcome = app
+        .state
+        .simulation_service
+        .run(RunStudyRequest {
+            principal: p,
+            session_id: session.id,
+            model_version_id: version.id,
+            study_type: "power_flow".into(),
+            study_spec: json!({}),
+            script: None,
+            skill_refs: vec![],
+        })
+        .await
+        .unwrap();
+    assert_eq!(outcome.task.script_artifact_id, entry.artifact_id);
+}
+
+#[tokio::test]
 async fn task_dataset_rows_and_download_hide_foreign_scope_and_use_parquet_headers() {
     let app = TestApp::spawn().await;
     let p = instance();
