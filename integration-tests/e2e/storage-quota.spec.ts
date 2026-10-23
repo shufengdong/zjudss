@@ -1,17 +1,15 @@
 import { resolve } from 'node:path'
 import { test, expect } from './fixtures'
+import { createSessionFromPage } from './helpers/journeys'
 
 test('warning and hard quota are visible while rejected ingestion leaves usage and workspace intact', async ({ appPage, control }) => {
   const identity = { subject: 'quota@example.com', tenant: 'grid-q' }
   const { page, api } = await appPage(identity)
-  const create = await api.post('/api/sessions', { data: { title: '存储配额' } })
-  const sessionId = (await create.json()).id as string
+  const sessionId = await createSessionFromPage(page, '存储配额')
   await control.setStorageLimits(
     { kind: 'owner', key: 'tenant:grid-q:owner:quota@example.com' },
     { artifactLimit: 1, byteLimit: 1024 * 1024, warningRatio: 0.8 },
   )
-  await page.goto('/')
-
   const input = page.locator('input[type=file]').first()
   await input.setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/bus.csv'))
   await expect.poll(async () => (await (await api.get('/api/storage-usage')).json()).artifactCount).toBe(1)

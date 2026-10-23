@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 import type { APIRequestContext,Page } from '@playwright/test'
 import {test,expect}from'./fixtures'
+import {createSessionFromPage}from'./helpers/journeys'
 const root=resolve(process.cwd(),'../integration-tests/fixtures/uploads/rss')
 async function ws(api:APIRequestContext,id:string){return (await (await api.get(`/api/sessions/${id}/workspace`)).json()) as any}
 const current=(value:any)=>value.draft??value.active
@@ -9,8 +10,8 @@ async function send(page:Page,message:string){await page.getByRole('textbox',{na
 
 test('re-uploaded RSS creates immutable replacements and version pointers remain reversible',async({appPage,control})=>{
   const{page,api}=await appPage({subject:'rss-replace@example.com',tenant:'grid-b'})
-  const created=await api.post('/api/sessions',{data:{title:'RSS 重传'}});const session=(await created.json()).id as string
-  await page.goto('/');await upload(page,resolve(root,'broken.rss'))
+  const session=await createSessionFromPage(page,'RSS 重传')
+  await upload(page,resolve(root,'broken.rss'))
   await expect.poll(async()=>current(await ws(api,session))?.status).toBe('collecting')
   const broken=current(await ws(api,session))
   await upload(page,resolve(root,'replacement.rss'))
@@ -85,4 +86,7 @@ test('re-uploaded RSS creates immutable replacements and version pointers remain
   expect((await (await api.get(`/api/tasks/${oldTask.id}`)).json()).modelVersionId).toBe(uploaded.versionId)
   const versions=await (await api.get(`/api/sessions/${session}/versions`)).json()
   expect(versions.versions).toHaveLength(6)
+  const versionResponse=await api.get(`/api/versions/${uploaded.versionId}`)
+  expect(versionResponse.status()).toBe(200)
+  expect((await versionResponse.json()).versionId).toBe(uploaded.versionId)
 })

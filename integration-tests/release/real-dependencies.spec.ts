@@ -1,5 +1,6 @@
 import { test, expect, type APIRequestContext, type Browser, type Page } from '@playwright/test'
 import { readdir, readFile, writeFile, mkdir } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import {
   agentTurnCompleted,
@@ -29,6 +30,27 @@ interface AttemptReport {
 }
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function agentBundleEvidence() {
+  const root = join(process.cwd(), '../backend/resources/agent/v2')
+  const files: string[] = []
+  const visit = async (directory: string, prefix = '') => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name
+      if (entry.isDirectory()) await visit(join(directory, entry.name), relative)
+      else if (entry.isFile()) files.push(relative)
+    }
+  }
+  await visit(root)
+  files.sort()
+  const hash = createHash('sha256')
+  for (const relative of files) {
+    const bytes = await readFile(join(root, relative))
+    hash.update(relative).update('\0').update(bytes).update('\0')
+  }
+  const manifest = JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8'))
+  return { version: manifest.agentBundleVersion as string, sha256: hash.digest('hex') }
+}
 
 async function apiJson(api: APIRequestContext, path: string) {
   const response = await api.get(path)
@@ -73,16 +95,27 @@ async function sendAndCollect(
   api: APIRequestContext,
   sessionId: string,
   text: string,
-  requiredTools: string[],
+  _requiredTools: string[],
 ) {
   const before = (await apiJson(api, `/api/sessions/${sessionId}/messages?limit=100`)).messages as any[]
   const lastId = Math.max(0, ...before.map((message) => Number(message.id)))
+  let terminalCandidate: { key: string; since: number } | null = null
   await page.getByRole('textbox', { name: '消息' }).fill(text)
   await page.getByRole('button', { name: '发送消息' }).click()
   const messages = await waitFor(async () => {
     const all = (await apiJson(api, `/api/sessions/${sessionId}/messages?limit=100`)).messages as any[]
     const current = all.filter((message) => Number(message.id) > lastId)
-    return agentTurnCompleted(current, requiredTools) ? current : undefined
+    if (agentTurnCompleted(current, _requiredTools)) return current
+    if (!agentTurnCompleted(current)) {
+      terminalCandidate = null
+      return undefined
+    }
+    const key = current.map((message) => `${message.id}:${message.status ?? ''}`).join('|')
+    if (terminalCandidate?.key !== key) {
+      terminalCandidate = { key, since: Date.now() }
+      return undefined
+    }
+    return Date.now() - terminalCandidate.since >= 5_000 ? current : undefined
   })
   const trace = traceFrom(messages)
   const assistant = messages.filter((message: any) => message.type === 'assistant').at(-1)
@@ -125,10 +158,13 @@ async function runJourney(browser: Browser, report: AttemptReport) {
   const page = await context.newPage()
   const api = context.request
   try {
-    const created = await api.post('/api/sessions', { data: { title: `候选发布 ${report.attempt}` } })
+    await page.goto('/')
+    const createResponse = page.waitForResponse((response) =>
+      response.url().endsWith('/api/sessions') && response.request().method() === 'POST')
+    await page.getByRole('button', { name: '新建仿真' }).click()
+    const created = await createResponse
     expect(created.status()).toBe(201)
     const sessionId = String((await created.json()).id)
-    await page.goto('/')
     const initialWorkspace = await uploadDataframes(page, api, sessionId)
     let dataframeVersionId = String(initialWorkspace.draft.versionId)
 
@@ -143,10 +179,11 @@ async function runJourney(browser: Browser, report: AttemptReport) {
       const input = current.draft.inputs.find((candidate: any) => candidate.fileName === fileName)
       expect(input?.inputId).toMatch(/^\d+$/)
       const trace = await sendAndCollect(page, api, sessionId,
-        `我已逐项审阅并接受 ${fileName} 当前证据中的候选类型歧义、最高候选差异、置信度差异、全部类型冲突以及空值列风险。我的最终人工裁决是 tableKind=${tableKind}，无需再次确认或复述风险。请检查工作区后直接调用 confirm_dataframe_mapping：inputId=${input.inputId}，tableKind=${tableKind}，expectedDraftVersionId=${dataframeVersionId}。`,
+        `我已逐项审阅并接受 ${fileName} 当前证据中的候选类型歧义、最高候选差异、置信度差异、全部类型冲突以及空值列风险。我的最终人工裁决是 tableKind=${tableKind}，无需再次确认或复述风险。请检查工作区，并只把每个 input 顶层的 tableKind/resolution 视为当前状态；evidence 中的原始候选不能覆盖它。此前 user_confirmed 的输入仍然有效。然后必须直接调用 confirm_dataframe_mapping：inputId=${input.inputId}，tableKind=${tableKind}，expectedDraftVersionId=${dataframeVersionId}。`,
         ['confirm_dataframe_mapping'])
       expectToolTrace(trace, {
         requiredTools: ['inspect_workspace', 'confirm_dataframe_mapping'],
+        allowedTools: ['inspect_workspace', 'confirm_dataframe_mapping'],
       })
       report.segments.push(summarizeTrace(`confirm_${tableKind}`, trace))
       const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
@@ -162,7 +199,10 @@ async function runJourney(browser: Browser, report: AttemptReport) {
       trace = await sendAndCollect(page, api, sessionId,
         `请激活已确认完成的 DataFrame 候选版本 ID ${dataframeVersionId}，expectedDraftVersionId 也是 ${dataframeVersionId}。请直接调用激活工具。`,
         ['activate_model_version'])
-      expectToolTrace(trace, { requiredTools: ['activate_model_version'] })
+      expectToolTrace(trace, {
+        requiredTools: ['activate_model_version'],
+        allowedTools: ['inspect_workspace', 'activate_model_version'],
+      })
       report.segments.push(summarizeTrace('activate_dataframes', trace))
       await waitFor(async () => {
         const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
@@ -173,10 +213,11 @@ async function runJourney(browser: Browser, report: AttemptReport) {
     }
 
     trace = await sendAndCollect(page, api, sessionId,
-      `当前 active DataFrame 模型版本 ID 是 ${dataframeVersionId}。请检查工作区，加载 study-planning 和 rss-generation 技能，必要时查询内核文档，然后直接执行径向 power_flow。请使用兼容的六参数 ds_radial_pf(bus, line, linecode, load, transformer, voltage_source)，把默认 bus_voltage 结果命名为 voltage，不要只解释。`,
+      `当前 active DataFrame 模型版本 ID 是 ${dataframeVersionId}，状态已经是 ready，六个输入的顶层 resolution 都是 inferred 或 user_confirmed。请检查工作区，并只读取 input 顶层 tableKind/resolution，不要把 evidence 中的原始候选误读为当前状态。加载 study-planning 和 rss-generation 技能；如需补充证据，只能使用 search_engine_docs/read_engine_doc_section，禁止调用 search_examples 或案例工具。然后必须且只能执行一次径向 power_flow。使用兼容的六参数 ds_radial_pf(bus, line, linecode, load, transformer, voltage_source)，把默认 bus_voltage 结果命名为 voltage；不要因重复解释已确认映射而停止。`,
       ['run_study'])
     expectToolTrace(trace, {
       requiredTools: ['inspect_workspace', 'load_agent_skill', 'run_study'],
+      allowedTools: ['inspect_workspace', 'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section', 'run_study'],
       gatedTools: { run_study: ['study-planning', 'rss-generation'] },
     })
     report.segments.push(summarizeTrace('dataframe_power_flow', trace))
@@ -193,6 +234,7 @@ async function runJourney(browser: Browser, report: AttemptReport) {
       ['run_result_analysis'])
     expectToolTrace(trace, {
       requiredTools: ['list_result_datasets', 'load_agent_skill', 'run_result_analysis'],
+      allowedTools: ['list_result_datasets', 'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section', 'run_result_analysis'],
       gatedTools: { run_result_analysis: ['result-analysis'] },
     })
     report.segments.push(summarizeTrace('result_analysis', trace))
@@ -201,10 +243,11 @@ async function runJourney(browser: Browser, report: AttemptReport) {
     const shortExample = examples.examples.find((example: any) => example.studyType === 'short_circuit' && example.sourceKind === 'rss')
     expect(shortExample?.id).toMatch(/^ex_/)
     trace = await sendAndCollect(page, api, sessionId,
-      `请导入并激活 IEEE13 短路案例。先检查工作区，再用 search_examples 按 query=ieee13_short_circuit、sourceKind=rss 搜索，并用 inspect_example 检查搜索返回的稳定 exampleId。导入调用的 expectedDraftVersionId 是当前版本 ${dataframeVersionId}。导入成功后，激活调用的 versionId 和 expectedDraftVersionId 都必须填写 import_example 返回的新版本 ID，不要沿用旧基线 ${dataframeVersionId}。`,
+      `请导入并激活 IEEE13 短路案例。先检查工作区；调用 search_examples 时使用空 query 和 study_type=short_circuit。搜索结果中必须包含稳定 exampleId=${shortExample.id}，随后必须调用 inspect_example 检查这个 ID，再调用 import_example。导入调用的 expectedDraftVersionId 是当前版本 ${dataframeVersionId}。导入成功后，激活调用的 versionId 和 expectedDraftVersionId 都必须填写 import_example 返回的新版本 ID，不要沿用旧基线 ${dataframeVersionId}。`,
       ['activate_model_version'])
     expectToolTrace(trace, {
       requiredTools: ['inspect_workspace', 'search_examples', 'inspect_example', 'import_example', 'activate_model_version'],
+      allowedTools: ['inspect_workspace', 'search_examples', 'inspect_example', 'import_example', 'activate_model_version'],
     })
     report.segments.push(summarizeTrace('import_short_circuit', trace))
     let workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
@@ -216,6 +259,7 @@ async function runJourney(browser: Browser, report: AttemptReport) {
       ['run_study'])
     expectToolTrace(trace, {
       requiredTools: ['load_agent_skill', 'run_study'],
+      allowedTools: ['inspect_workspace', 'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section', 'run_study'],
       gatedTools: { run_study: ['study-planning', 'rss-generation'] },
     })
     report.segments.push(summarizeTrace('short_circuit_baseline', trace))
@@ -232,6 +276,7 @@ async function runJourney(browser: Browser, report: AttemptReport) {
       ['activate_model_version'])
     expectToolTrace(trace, {
       requiredTools: ['load_agent_skill', 'modify_model', 'activate_model_version'],
+      allowedTools: ['inspect_workspace', 'load_agent_skill', 'modify_model', 'activate_model_version'],
       gatedTools: { modify_model: ['rss-generation'] },
     })
     report.segments.push(summarizeTrace('modify_and_activate', trace))
@@ -244,6 +289,7 @@ async function runJourney(browser: Browser, report: AttemptReport) {
       ['run_study'])
     expectToolTrace(trace, {
       requiredTools: ['load_agent_skill', 'run_study'],
+      allowedTools: ['inspect_workspace', 'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section', 'run_study'],
       gatedTools: { run_study: ['study-planning', 'rss-generation'] },
     })
     report.segments.push(summarizeTrace('short_circuit_candidate', trace))
@@ -257,16 +303,18 @@ async function runJourney(browser: Browser, report: AttemptReport) {
       ['compare_simulations'])
     expectToolTrace(trace, {
       requiredTools: ['load_agent_skill', 'compare_simulations'],
+      allowedTools: ['load_agent_skill', 'compare_simulations'],
       gatedTools: { compare_simulations: ['comparison'] },
     })
     report.segments.push(summarizeTrace('comparison', trace))
 
     return expectDomainState(api, {
       sessionId,
-      minimumVersions: 3,
+      expectedVersions: 8,
       taskStudyTypes: ['power_flow', 'short_circuit', 'short_circuit'],
-      minimumAnalysisRuns: 1,
-      minimumComparisons: 1,
+      expectedDatasets: 3,
+      expectedAnalysisRuns: 2,
+      expectedComparisons: 1,
       activeVersionId: changedVersionId,
     })
   } finally {
@@ -296,7 +344,7 @@ test('real DeepSeek and tensoreval complete the semantic release journey', async
           attemptReport.segments.push(summarizeTrace('provider_transient', error.trace))
           if (attempt < 3) continue
         } else {
-          attemptReport.reason = error instanceof Error ? error.name : 'semantic_failure'
+        attemptReport.reason = error instanceof Error ? error.message : 'semantic_failure'
         }
         throw error
       }
@@ -306,10 +354,14 @@ test('real DeepSeek and tensoreval complete the semantic release journey', async
     await mkdir(dirname(reportPath), { recursive: true })
     const engineReportPath = process.env.RELEASE_ENGINE_REPORT
     const engineReport = engineReportPath ? JSON.parse(await readFile(engineReportPath, 'utf8')) : null
+    const agentBundle = await agentBundleEvidence()
     await writeFile(reportPath, JSON.stringify({
       schemaVersion: 1,
+      testIds: ['ENGINE-RELEASE-001', 'REAL-RELEASE-001'],
       provider: 'deepseek',
       model: process.env.LLM_MODEL ?? 'deepseek-chat',
+      agentBundleVersion: agentBundle.version,
+      agentBundleSha256: agentBundle.sha256,
       engineContract: engineReport?.engineContract ?? null,
       engineBinarySha256: engineReport?.binarySha256 ?? null,
       attempts,

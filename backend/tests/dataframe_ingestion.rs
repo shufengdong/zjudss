@@ -292,32 +292,33 @@ async fn multipart_api_returns_202_and_get_restores_terminal_state() {
     let ingestion_id = response["ingestionId"].as_str().unwrap();
     assert_eq!(response["accepted"][0]["clientFileId"], "bus-file");
 
-    let mut terminal = None;
-    for _ in 0..100 {
-        let response = app
-            .router
-            .clone()
-            .oneshot(
-                Request::get(format!("/api/ingestions/{ingestion_id}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let value: serde_json::Value =
-            serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+    let terminal = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let response = app
+                .router
+                .clone()
+                .oneshot(
+                    Request::get(format!("/api/ingestions/{ingestion_id}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
                 .unwrap();
-        if matches!(
-            value["ingestion"]["status"].as_str(),
-            Some("succeeded" | "completed_with_errors" | "failed")
-        ) {
-            terminal = Some(value);
-            break;
+            assert_eq!(response.status(), StatusCode::OK);
+            let value: serde_json::Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+                    .unwrap();
+            if matches!(
+                value["ingestion"]["status"].as_str(),
+                Some("succeeded" | "completed_with_errors" | "failed")
+            ) {
+                break value;
+            }
+            tokio::task::yield_now().await;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    let terminal = terminal.expect("background ingestion reaches a persisted terminal state");
+    })
+    .await
+    .expect("background ingestion reaches a persisted terminal state");
     assert_eq!(terminal["ingestion"]["status"], "succeeded");
     assert!(terminal["ingestion"]["publishedVersionId"].is_string());
 }

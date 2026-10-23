@@ -360,7 +360,18 @@ impl IngestionService {
                 .await;
             if let Ok(record) = self.repo.find(&principal.access, ingestion_id).await {
                 let writer = self.writer(&principal, record.session_id);
+                let storage_scope = self.artifacts.resolve_scope(&principal.storage).await.ok();
                 for (item, artifact) in &record.items {
+                    if let Some(scope) = &storage_scope {
+                        let referenced = self
+                            .workspaces
+                            .references_artifact(&principal.access, artifact.id)
+                            .await
+                            .unwrap_or(true);
+                        if !referenced {
+                            let _ = self.artifacts.release(scope.id, artifact.id).await;
+                        }
+                    }
                     if item.role == "uploaded" && item.status != "ready" {
                         let _ = self
                             .repo

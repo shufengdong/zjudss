@@ -1,14 +1,9 @@
 import { resolve } from 'node:path'
 import type { APIRequestContext, Page } from '@playwright/test'
 import { test, expect } from './fixtures'
+import { createSessionFromPage } from './helpers/journeys'
 
 const uploads = resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes')
-
-async function createSession(api: APIRequestContext, title: string) {
-  const response = await api.post('/api/sessions', { data: { title } })
-  expect(response.status()).toBe(201)
-  return (await response.json()).id as string
-}
 
 async function workspace(api: APIRequestContext, sessionId: string) {
   return (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()) as any
@@ -22,8 +17,7 @@ async function upload(page: Page, paths: string[]) {
 
 test('headers drive CSV Excel and Parquet inference while ambiguous and invalid tables stay collecting', async ({ appPage }) => {
   const { page, api } = await appPage({ subject: 'dataframe-evidence@example.com', tenant: 'grid-b' })
-  const sessionId = await createSession(api, '表头推断证据')
-  await page.goto('/')
+  const sessionId = await createSessionFromPage(page, '表头推断证据')
   await upload(page, [
     resolve(uploads, 'bus.csv'), resolve(uploads, 'bus-duplicate.csv'), resolve(uploads, 'load.csv'),
     resolve(uploads, 'load.parquet'), resolve(uploads, 'ambiguous.csv'), resolve(uploads, 'unknown.csv'),
@@ -38,13 +32,20 @@ test('headers drive CSV Excel and Parquet inference while ambiguous and invalid 
   expect(draft.inputs.some((input: any) => input.fileName === 'bus.csv' && input.resolution === 'pending')).toBe(true)
   expect(draft.inputs.some((input: any) => input.fileName === 'load.parquet')).toBe(true)
   expect(draft.inputs.some((input: any) => input.sheetName === 'Loads')).toBe(true)
+  const mixed = draft.inputs.find((input: any) => input.sheetName === 'Mixed')
+  expect(mixed, 'Mixed sheet must not be silently dropped').toBeTruthy()
+  expect(mixed.resolution).toBe('pending')
+  expect(mixed.typeConflicts.length).toBeGreaterThan(0)
+  const duplicate = draft.inputs.find((input: any) => input.sheetName === 'DuplicateColumns')
+  expect(duplicate, 'DuplicateColumns sheet must not be silently dropped').toBeTruthy()
+  expect(duplicate.resolution).toBe('pending')
+  expect(duplicate.candidates).toBeInstanceOf(Array)
   expect(draft.inputs.some((input: any) => input.sheetName === 'Empty')).toBe(false)
 })
 
 test('supplemental batches create immutable children and natural language confirms and activates mappings', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'dataframe-ready@example.com', tenant: 'grid-b' })
-  const sessionId = await createSession(api, '分批补传')
-  await page.goto('/')
+  const sessionId = await createSessionFromPage(page, '分批补传')
   await upload(page, [resolve(uploads, 'bus.csv')])
   await expect.poll(async () => current(await workspace(api, sessionId))?.status).toBe('ready')
   const first = current(await workspace(api, sessionId))
@@ -61,9 +62,7 @@ test('supplemental batches create immutable children and natural language confir
   await expect(page.getByText('候选模型已激活', { exact: true })).toBeVisible()
   await expect.poll(async () => (await workspace(api, sessionId)).active?.versionId).toBe(second.versionId)
 
-  const ambiguousSession = await createSession(api, '自然语言确认映射')
-  await page.reload()
-  await page.getByRole('button', { name: '打开会话“自然语言确认映射”' }).click()
+  const ambiguousSession = await createSessionFromPage(page, '自然语言确认映射')
   await upload(page, [resolve(uploads, 'bus.csv')])
   await expect.poll(async () => (await workspace(api, ambiguousSession)).active?.status).toBe('ready')
   await upload(page, [resolve(uploads, 'ambiguous.csv')])

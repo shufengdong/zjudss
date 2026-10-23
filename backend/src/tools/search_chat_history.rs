@@ -13,11 +13,11 @@ use std::sync::Arc;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Args {
-    query: String,
-    study_type: Option<String>,
-    status: Option<String>,
-    from_ms: Option<i64>,
-    to_ms: Option<i64>,
+    pub query: String,
+    pub study_type: Option<String>,
+    pub status: Option<String>,
+    pub from_ms: Option<i64>,
+    pub to_ms: Option<i64>,
 }
 pub struct SearchChatHistoryTool {
     services: Arc<ToolServices>,

@@ -10,8 +10,8 @@ use std::sync::Arc;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Args {
-    session_id: Option<i32>,
-    limit: Option<i64>,
+    pub session_id: Option<i32>,
+    pub limit: Option<i64>,
 }
 pub struct ListSimulationHistoryTool {
     services: Arc<ToolServices>,

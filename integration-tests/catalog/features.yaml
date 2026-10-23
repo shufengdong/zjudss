@@ -123,8 +123,8 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/history_search.rs
-      name: task_filters_work_and_missing_fts_does_not_break_plain_history_reads
+      file: backend/tests/workspace_tools.rs
+      name: history_tools_search_list_and_read_only_the_bound_scope
   assertions:
     - FTS 故障不影响普通历史读取
   fixtures: []
@@ -185,7 +185,10 @@
   tests:
     - runner: vitest
       file: frontend/src/types/contracts.test.ts
-      name: frontend public enum contracts
+      name: exports all message types from the union source
+    - runner: vitest
+      file: frontend/src/types/contracts.test.ts
+      name: exports all visualization kinds from the union source
   assertions:
     - 前端 union 类型由运行时常量直接推导
   fixtures: []
@@ -758,11 +761,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: session CRUD renders optimistic user, tool-call, and assistant messages
   assertions:
-    - route:GET /health 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /health 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /health
@@ -774,11 +777,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: session CRUD renders optimistic user, tool-call, and assistant messages
   assertions:
-    - route:GET /api/me 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/me 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/me
@@ -790,11 +793,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/storage-quota.spec.ts
+      name: warning and hard quota are visible while rejected ingestion leaves usage and workspace intact
   assertions:
-    - route:GET /api/storage-usage 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/storage-usage 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/storage-usage
@@ -806,11 +809,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/bundle-examples.spec.ts
+      name: example search and natural-language import copy a snapshot-pinned editable model
   assertions:
-    - route:GET /api/examples 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/examples 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/examples
@@ -822,11 +825,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/bundle-examples.spec.ts
+      name: example search and natural-language import copy a snapshot-pinned editable model
   assertions:
-    - route:GET /api/examples/{id} 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/examples/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/examples/{id}
@@ -838,11 +841,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: session CRUD renders optimistic user, tool-call, and assistant messages
   assertions:
-    - route:GET /api/sessions 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/sessions 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/sessions
@@ -854,11 +857,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: session CRUD renders optimistic user, tool-call, and assistant messages
   assertions:
-    - route:POST /api/sessions 由生产路由表唯一声明并受公开合同测试保护
+    - route:POST /api/sessions 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:POST /api/sessions
@@ -870,11 +873,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: session CRUD renders optimistic user, tool-call, and assistant messages
   assertions:
-    - route:GET /api/history/search 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/history/search 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/history/search
@@ -886,11 +889,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: session CRUD renders optimistic user, tool-call, and assistant messages
   assertions:
-    - route:PATCH /api/sessions/{id} 由生产路由表唯一声明并受公开合同测试保护
+    - route:PATCH /api/sessions/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:PATCH /api/sessions/{id}
@@ -902,11 +905,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: session CRUD renders optimistic user, tool-call, and assistant messages
   assertions:
-    - route:DELETE /api/sessions/{id} 由生产路由表唯一声明并受公开合同测试保护
+    - route:DELETE /api/sessions/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:DELETE /api/sessions/{id}
@@ -918,11 +921,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: older history, refresh, restart, and invalid localStorage recover committed state
   assertions:
-    - route:GET /api/sessions/{id}/messages 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/sessions/{id}/messages 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/sessions/{id}/messages
@@ -934,11 +937,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: session CRUD renders optimistic user, tool-call, and assistant messages
   assertions:
-    - route:POST /api/sessions/{id}/messages 由生产路由表唯一声明并受公开合同测试保护
+    - route:POST /api/sessions/{id}/messages 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:POST /api/sessions/{id}/messages
@@ -950,11 +953,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/dataframe-workspace.spec.ts
+      name: headers drive CSV Excel and Parquet inference while ambiguous and invalid tables stay collecting
   assertions:
-    - route:POST /api/sessions/{id}/attachments 由生产路由表唯一声明并受公开合同测试保护
+    - route:POST /api/sessions/{id}/attachments 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:POST /api/sessions/{id}/attachments
@@ -966,11 +969,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: SSE cursor replays committed messages, requests resync, and does not duplicate DOM rows
   assertions:
-    - route:GET /api/sessions/{id}/events 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/sessions/{id}/events 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/sessions/{id}/events
@@ -982,11 +985,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/malicious-bundle.spec.ts
+      name: path traversal absolute duplicate symlink and compression-bomb ZIPs fail atomically
   assertions:
-    - route:GET /api/ingestions/{id} 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/ingestions/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/ingestions/{id}
@@ -998,11 +1001,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/dataframe-workspace.spec.ts
+      name: headers drive CSV Excel and Parquet inference while ambiguous and invalid tables stay collecting
   assertions:
-    - route:GET /api/sessions/{id}/workspace 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/sessions/{id}/workspace 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/sessions/{id}/workspace
@@ -1014,11 +1017,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/rss-replacement.spec.ts
+      name: re-uploaded RSS creates immutable replacements and version pointers remain reversible
   assertions:
-    - route:GET /api/sessions/{id}/versions 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/sessions/{id}/versions 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/sessions/{id}/versions
@@ -1030,11 +1033,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/rss-replacement.spec.ts
+      name: re-uploaded RSS creates immutable replacements and version pointers remain reversible
   assertions:
-    - route:GET /api/versions/{id} 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/versions/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/versions/{id}
@@ -1046,11 +1049,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/rss-replacement.spec.ts
+      name: re-uploaded RSS creates immutable replacements and version pointers remain reversible
   assertions:
-    - route:GET /api/tasks/{id} 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/tasks/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/tasks/{id}
@@ -1062,11 +1065,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/simulation-results.spec.ts
+      name: natural language runs all study families and exposes reproducible multi-result Parquet data
   assertions:
-    - route:GET /api/sessions/{id}/tasks 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/sessions/{id}/tasks 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/sessions/{id}/tasks
@@ -1078,11 +1081,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/simulation-results.spec.ts
+      name: natural language runs all study families and exposes reproducible multi-result Parquet data
   assertions:
-    - route:GET /api/tasks/{id}/datasets 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/tasks/{id}/datasets 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/tasks/{id}/datasets
@@ -1094,11 +1097,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/simulation-results.spec.ts
+      name: natural language runs all study families and exposes reproducible multi-result Parquet data
   assertions:
-    - route:GET /api/datasets/{id} 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/datasets/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/datasets/{id}
@@ -1110,11 +1113,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/simulation-results.spec.ts
+      name: natural language runs all study families and exposes reproducible multi-result Parquet data
   assertions:
-    - route:GET /api/datasets/{id}/rows 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/datasets/{id}/rows 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/datasets/{id}/rows
@@ -1126,11 +1129,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/simulation-results.spec.ts
+      name: natural language runs all study families and exposes reproducible multi-result Parquet data
   assertions:
-    - route:GET /api/datasets/{id}/download 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/datasets/{id}/download 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/datasets/{id}/download
@@ -1142,11 +1145,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/analysis-views.spec.ts
+      name: result analysis creates traceable Parquet and all six controlled ECharts views survive reload
   assertions:
-    - route:GET /api/analysis-runs/{id} 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/analysis-runs/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/analysis-runs/{id}
@@ -1158,11 +1161,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/analysis-views.spec.ts
+      name: result analysis creates traceable Parquet and all six controlled ECharts views survive reload
   assertions:
-    - route:GET /api/dataset-views/{id}/data 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/dataset-views/{id}/data 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/dataset-views/{id}/data
@@ -1174,11 +1177,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/contract_manifest.rs
-      name: production_router_and_manifest_share_one_declaration
+    - runner: playwright
+      file: integration-tests/e2e/comparison.spec.ts
+      name: compatible tasks create a recoverable difference dataset while name and unit mismatches fail closed
   assertions:
-    - route:GET /api/task-comparisons/{id} 由生产路由表唯一声明并受公开合同测试保护
+    - route:GET /api/task-comparisons/{id} 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - route:GET /api/task-comparisons/{id}
@@ -1191,11 +1194,11 @@
   lanes:
     - pr
   tests:
-    - runner: vitest
-      file: frontend/src/types/contracts.test.ts
-      name: frontend public enum contracts
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: session CRUD renders optimistic user, tool-call, and assistant messages
   assertions:
-    - user 消息保持前后端可判别并可恢复渲染
+    - message:user 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - message:user
@@ -1208,11 +1211,11 @@
   lanes:
     - pr
   tests:
-    - runner: vitest
-      file: frontend/src/types/contracts.test.ts
-      name: frontend public enum contracts
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: session CRUD renders optimistic user, tool-call, and assistant messages
   assertions:
-    - assistant 消息保持前后端可判别并可恢复渲染
+    - message:assistant 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - message:assistant
@@ -1225,11 +1228,11 @@
   lanes:
     - pr
   tests:
-    - runner: vitest
-      file: frontend/src/types/contracts.test.ts
-      name: frontend public enum contracts
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: session CRUD renders optimistic user, tool-call, and assistant messages
   assertions:
-    - tool-call 消息保持前后端可判别并可恢复渲染
+    - message:tool-call 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - message:tool-call
@@ -1242,11 +1245,11 @@
   lanes:
     - pr
   tests:
-    - runner: vitest
-      file: frontend/src/types/contracts.test.ts
-      name: frontend public enum contracts
+    - runner: playwright
+      file: integration-tests/e2e/simulation-results.spec.ts
+      name: natural language runs all study families and exposes reproducible multi-result Parquet data
   assertions:
-    - progress 消息保持前后端可判别并可恢复渲染
+    - message:progress 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - message:progress
@@ -1259,11 +1262,11 @@
   lanes:
     - pr
   tests:
-    - runner: vitest
-      file: frontend/src/types/contracts.test.ts
-      name: frontend public enum contracts
+    - runner: playwright
+      file: integration-tests/e2e/simulation-results.spec.ts
+      name: natural language runs all study families and exposes reproducible multi-result Parquet data
   assertions:
-    - result 消息保持前后端可判别并可恢复渲染
+    - message:result 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - message:result
@@ -1276,11 +1279,11 @@
   lanes:
     - pr
   tests:
-    - runner: vitest
-      file: frontend/src/types/contracts.test.ts
-      name: frontend public enum contracts
+    - runner: playwright
+      file: integration-tests/e2e/dataframe-workspace.spec.ts
+      name: headers drive CSV Excel and Parquet inference while ambiguous and invalid tables stay collecting
   assertions:
-    - attachment 消息保持前后端可判别并可恢复渲染
+    - message:attachment 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - message:attachment
@@ -1293,11 +1296,11 @@
   lanes:
     - pr
   tests:
-    - runner: vitest
-      file: frontend/src/types/contracts.test.ts
-      name: frontend public enum contracts
+    - runner: playwright
+      file: integration-tests/e2e/dataframe-workspace.spec.ts
+      name: supplemental batches create immutable children and natural language confirms and activates mappings
   assertions:
-    - model-status 消息保持前后端可判别并可恢复渲染
+    - message:model-status 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - message:model-status
@@ -1310,11 +1313,11 @@
   lanes:
     - pr
   tests:
-    - runner: vitest
-      file: frontend/src/types/contracts.test.ts
-      name: frontend public enum contracts
+    - runner: playwright
+      file: integration-tests/e2e/comparison.spec.ts
+      name: compatible tasks create a recoverable difference dataset while name and unit mismatches fail closed
   assertions:
-    - comparison 消息保持前后端可判别并可恢复渲染
+    - message:comparison 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - message:comparison
@@ -1327,10 +1330,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      file: backend/tests/workspace_tools.rs
+      name: inspect_workspace_exposes_stable_input_display_names_to_the_agent
   assertions:
-    - inspect_workspace 同时存在于知识清单和运行时注册表
+    - tool:inspect_workspace 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:inspect_workspace
@@ -1343,10 +1346,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      file: backend/tests/scripted_agent.rs
+      name: scripted_tool_call_runs_registered_tool_and_persists_events
   assertions:
-    - search_examples 同时存在于知识清单和运行时注册表
+    - tool:search_examples 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:search_examples
@@ -1359,10 +1362,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      file: backend/tests/workspace_tools.rs
+      name: prompt_skill_document_and_example_tools_are_id_bounded
   assertions:
-    - inspect_example 同时存在于知识清单和运行时注册表
+    - tool:inspect_example 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:inspect_example
@@ -1374,11 +1377,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+    - runner: playwright
+      file: integration-tests/e2e/bundle-examples.spec.ts
+      name: example search and natural-language import copy a snapshot-pinned editable model
   assertions:
-    - import_example 同时存在于知识清单和运行时注册表
+    - tool:import_example 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:import_example
@@ -1391,10 +1394,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      file: backend/tests/workspace_tools.rs
+      name: mapping_replace_remove_and_concurrency_create_only_child_versions
   assertions:
-    - remove_model_input 同时存在于知识清单和运行时注册表
+    - tool:remove_model_input 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:remove_model_input
@@ -1407,10 +1410,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      file: backend/tests/workspace_tools.rs
+      name: mapping_replace_remove_and_concurrency_create_only_child_versions
   assertions:
-    - replace_model_input 同时存在于知识清单和运行时注册表
+    - tool:replace_model_input 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:replace_model_input
@@ -1422,11 +1425,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+    - runner: playwright
+      file: integration-tests/e2e/dataframe-workspace.spec.ts
+      name: supplemental batches create immutable children and natural language confirms and activates mappings
   assertions:
-    - confirm_dataframe_mapping 同时存在于知识清单和运行时注册表
+    - tool:confirm_dataframe_mapping 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:confirm_dataframe_mapping
@@ -1439,10 +1442,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      file: backend/tests/workspace_tools.rs
+      name: structured_patch_fails_closed_then_writes_a_new_parquet_child
   assertions:
-    - modify_model 同时存在于知识清单和运行时注册表
+    - tool:modify_model 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:modify_model
@@ -1455,10 +1458,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      file: backend/tests/workspace_tools.rs
+      name: checked_activation_and_rollback_only_move_workspace_pointers
   assertions:
-    - activate_model_version 同时存在于知识清单和运行时注册表
+    - tool:activate_model_version 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:activate_model_version
@@ -1471,10 +1474,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      file: backend/tests/workspace_tools.rs
+      name: checked_activation_and_rollback_only_move_workspace_pointers
   assertions:
-    - rollback_model_version 同时存在于知识清单和运行时注册表
+    - tool:rollback_model_version 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:rollback_model_version
@@ -1486,11 +1489,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+    - runner: playwright
+      file: integration-tests/e2e/simulation-results.spec.ts
+      name: natural language runs all study families and exposes reproducible multi-result Parquet data
   assertions:
-    - run_study 同时存在于知识清单和运行时注册表
+    - tool:run_study 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:run_study
@@ -1502,11 +1505,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+    - runner: playwright
+      file: integration-tests/e2e/analysis-views.spec.ts
+      name: result analysis creates traceable Parquet and all six controlled ECharts views survive reload
   assertions:
-    - list_result_datasets 同时存在于知识清单和运行时注册表
+    - tool:list_result_datasets 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:list_result_datasets
@@ -1518,11 +1521,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+    - runner: playwright
+      file: integration-tests/e2e/analysis-views.spec.ts
+      name: result analysis creates traceable Parquet and all six controlled ECharts views survive reload
   assertions:
-    - run_result_analysis 同时存在于知识清单和运行时注册表
+    - tool:run_result_analysis 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:run_result_analysis
@@ -1534,11 +1537,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+    - runner: playwright
+      file: integration-tests/e2e/analysis-views.spec.ts
+      name: result analysis creates traceable Parquet and all six controlled ECharts views survive reload
   assertions:
-    - create_dataset_view 同时存在于知识清单和运行时注册表
+    - tool:create_dataset_view 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:create_dataset_view
@@ -1550,11 +1553,11 @@
   lanes:
     - pr
   tests:
-    - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+    - runner: playwright
+      file: integration-tests/e2e/comparison.spec.ts
+      name: compatible tasks create a recoverable difference dataset while name and unit mismatches fail closed
   assertions:
-    - compare_simulations 同时存在于知识清单和运行时注册表
+    - tool:compare_simulations 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:compare_simulations
@@ -1567,10 +1570,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      file: backend/tests/history_search.rs
+      name: task_filters_work_and_missing_fts_does_not_break_plain_history_reads
   assertions:
-    - list_simulation_history 同时存在于知识清单和运行时注册表
+    - tool:list_simulation_history 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:list_simulation_history
@@ -1583,10 +1586,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      file: backend/tests/workspace_tools.rs
+      name: history_tools_search_list_and_read_only_the_bound_scope
   assertions:
-    - search_chat_history 同时存在于知识清单和运行时注册表
+    - tool:search_chat_history 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:search_chat_history
@@ -1599,10 +1602,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      file: backend/tests/workspace_tools.rs
+      name: history_tools_search_list_and_read_only_the_bound_scope
   assertions:
-    - read_chat_context 同时存在于知识清单和运行时注册表
+    - tool:read_chat_context 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:read_chat_context
@@ -1616,9 +1619,9 @@
   tests:
     - runner: rust
       file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      name: get_storage_usage_returns_current_scope_only
   assertions:
-    - get_storage_usage 同时存在于知识清单和运行时注册表
+    - tool:get_storage_usage 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:get_storage_usage
@@ -1631,10 +1634,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      file: backend/tests/workspace_tools.rs
+      name: every_embedded_skill_loads_by_stable_id_and_rejects_unknown
   assertions:
-    - load_agent_skill 同时存在于知识清单和运行时注册表
+    - tool:load_agent_skill 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:load_agent_skill
@@ -1647,10 +1650,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      file: backend/tests/workspace_tools.rs
+      name: prompt_skill_document_and_example_tools_are_id_bounded
   assertions:
-    - search_engine_docs 同时存在于知识清单和运行时注册表
+    - tool:search_engine_docs 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:search_engine_docs
@@ -1663,10 +1666,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/tool_manifest.rs
-      name: manifest_allowed_tools_equal_runtime_registry
+      file: backend/tests/workspace_tools.rs
+      name: prompt_skill_document_and_example_tools_are_id_bounded
   assertions:
-    - read_engine_doc_section 同时存在于知识清单和运行时注册表
+    - tool:read_engine_doc_section 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - tool:read_engine_doc_section
@@ -1679,10 +1682,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/agent_knowledge.rs
-      name: embedded_bundle_is_hash_verified_and_contains_only_compact_policy
+      file: backend/tests/workspace_tools.rs
+      name: every_embedded_skill_loads_by_stable_id_and_rejects_unknown
   assertions:
-    - comparison 固化在校验过 hash 的内置技能包中
+    - skill:comparison 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - skill:comparison
@@ -1695,10 +1698,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/agent_knowledge.rs
-      name: embedded_bundle_is_hash_verified_and_contains_only_compact_policy
+      file: backend/tests/workspace_tools.rs
+      name: every_embedded_skill_loads_by_stable_id_and_rejects_unknown
   assertions:
-    - model-intake 固化在校验过 hash 的内置技能包中
+    - skill:model-intake 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - skill:model-intake
@@ -1711,10 +1714,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/agent_knowledge.rs
-      name: embedded_bundle_is_hash_verified_and_contains_only_compact_policy
+      file: backend/tests/workspace_tools.rs
+      name: every_embedded_skill_loads_by_stable_id_and_rejects_unknown
   assertions:
-    - result-analysis 固化在校验过 hash 的内置技能包中
+    - skill:result-analysis 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - skill:result-analysis
@@ -1727,10 +1730,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/agent_knowledge.rs
-      name: embedded_bundle_is_hash_verified_and_contains_only_compact_policy
+      file: backend/tests/workspace_tools.rs
+      name: every_embedded_skill_loads_by_stable_id_and_rejects_unknown
   assertions:
-    - rss-generation 固化在校验过 hash 的内置技能包中
+    - skill:rss-generation 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - skill:rss-generation
@@ -1743,10 +1746,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/agent_knowledge.rs
-      name: embedded_bundle_is_hash_verified_and_contains_only_compact_policy
+      file: backend/tests/workspace_tools.rs
+      name: every_embedded_skill_loads_by_stable_id_and_rejects_unknown
   assertions:
-    - study-planning 固化在校验过 hash 的内置技能包中
+    - skill:study-planning 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - skill:study-planning
@@ -1759,10 +1762,10 @@
     - pr
   tests:
     - runner: rust
-      file: backend/tests/agent_knowledge.rs
-      name: embedded_bundle_is_hash_verified_and_contains_only_compact_policy
+      file: backend/tests/workspace_tools.rs
+      name: every_embedded_skill_loads_by_stable_id_and_rejects_unknown
   assertions:
-    - troubleshooting 固化在校验过 hash 的内置技能包中
+    - skill:troubleshooting 由对应行为测试执行并验证结果，不以注册表枚举代替
   fixtures: []
   contracts:
     - skill:troubleshooting

@@ -87,6 +87,9 @@ node -e '
   const fs = require("node:fs");
   const report = JSON.parse(fs.readFileSync(process.env.RELEASE_LLM_REPORT, "utf8"));
   if (!report.success || !report.attempts?.some((attempt) => attempt.outcome === "passed")) process.exit(1);
+  if (report.agentBundleVersion !== "v2.0.0" || !/^[a-f0-9]{64}$/.test(report.agentBundleSha256 ?? "")) process.exit(1);
+  if (!["ENGINE-RELEASE-001", "REAL-RELEASE-001"].every((id) => report.testIds?.includes(id))) process.exit(1);
+  if (!/^[a-f0-9]{64}$/.test(report.engineBinarySha256 ?? "") || !report.engineContract) process.exit(1);
   const text = JSON.stringify(report);
   for (const value of [process.env.DEEPSEEK_API_KEY, process.env.TENSOREVAL_BIN, process.env.TENSOREVAL_CWD, process.env.DATA_DIR]) {
     if (value && text.includes(value)) process.exit(1);

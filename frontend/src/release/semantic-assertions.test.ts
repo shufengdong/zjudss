@@ -49,7 +49,7 @@ describe('release semantic assertions', () => {
     ], { requiredTools: ['run_study'], gatedTools: { run_study: ['study-planning'] } })).toThrow(/not loaded before/)
   })
 
-  test('accepts a failed tool call only when the agent recovers with the same tool', () => {
+  test('requires a failed side effect to recover with the same tool', () => {
     expect(() => expectToolTrace([
       call('run_result_analysis', 'running', { taskId: 1 }),
       call('run_result_analysis', 'failed', { taskId: 1 }),
@@ -59,6 +59,35 @@ describe('release semantic assertions', () => {
     expect(() => expectToolTrace([
       call('run_result_analysis', 'failed', { taskId: 1 }),
     ], { requiredTools: [] })).toThrow(/failed without recovery/)
+  })
+
+  test('accepts a failed read when a later read supplies evidence and the side effect succeeds', () => {
+    expect(() => expectToolTrace([
+      call('read_engine_doc_section', 'failed'),
+      call('search_engine_docs', 'success'),
+      call('run_result_analysis', 'success', { taskId: 1 }),
+    ], {
+      requiredTools: ['run_result_analysis'],
+      allowedTools: ['read_engine_doc_section', 'search_engine_docs', 'run_result_analysis'],
+    })).not.toThrow()
+  })
+
+  test('rejects unexpected successful tools and repeated side effects', () => {
+    expect(() => expectToolTrace([
+      call('inspect_workspace', 'success'),
+      call('search_examples', 'success'),
+    ], {
+      requiredTools: ['inspect_workspace'],
+      allowedTools: ['inspect_workspace'],
+    })).toThrow(/unexpected successful tool search_examples/)
+
+    expect(() => expectToolTrace([
+      call('run_study', 'success', { modelVersionId: 1 }),
+      call('run_study', 'success', { modelVersionId: 1 }),
+    ], {
+      requiredTools: ['run_study'],
+      allowedTools: ['run_study'],
+    })).toThrow(/run_study succeeded 2 times/)
   })
 
   test('paginates the complete message history with nextBeforeId', async () => {

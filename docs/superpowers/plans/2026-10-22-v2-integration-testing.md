@@ -766,7 +766,7 @@ git commit -m "测试：启用百分百功能覆盖发布门禁"
 - Consumes: all commands and reports from Tasks 1–14.
 - Produces: clean branch whose documented commands reproduce PR acceptance; release evidence remains environment-specific.
 
-- [ ] **Step 1: 从干净 worktree 重装并运行 PR 门禁**
+- [x] **Step 1: 从干净 worktree 重装并运行 PR 门禁**
 
 使用 `superpowers:using-git-worktrees` 创建临时干净 worktree，并在其中运行：
 
@@ -774,23 +774,23 @@ Run: `npm ci --prefix frontend && cd backend && cargo fmt --check && cargo test 
 
 Expected: PASS，不依赖开发机残留数据库、DATA_DIR、node_modules 外文件或真实网络。
 
-- [ ] **Step 2: 审查测试隔离和敏感数据**
+- [x] **Step 2: 审查测试隔离和敏感数据**
 
 搜索生产 router 的 `__e2e`、测试回退、固定 sleep、绝对 fixture 路径、key/header/prompt 原文日志；任何命中
 必须解释为测试 feature 内合法使用或修复。
 
-- [ ] **Step 3: 运行发布门禁并保存证据**
+- [x] **Step 3: 运行发布门禁并保存证据**
 
 Run: `./scripts/test-release-integration`
 
 Expected: 在配置完整的候选发布环境 PASS；报告含 engine/agent bundle hash、测试 ID 和语义断言结果。
 
-- [ ] **Step 4: 请求代码审查并修复阻断项**
+- [x] **Step 4: 请求代码审查并修复阻断项**
 
 审查重点为生产/测试隔离、adapter 硬边界、测试是否真正经过浏览器、功能目录是否存在虚假覆盖、真实 LLM
 断言是否允许合理措辞变化。修复后只重跑受影响测试及完整 PR 门禁各一次。
 
-- [ ] **Step 5: 最终提交（仅有审查修复时）**
+- [x] **Step 5: 最终提交（仅有审查修复时）**
 
 ```bash
 git add <review-fix-files>

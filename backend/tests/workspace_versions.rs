@@ -438,4 +438,36 @@ async fn version_inputs_require_owned_artifacts_and_are_returned_by_the_api() {
         body["inputs"][0]["matchedRequiredColumns"],
         json!(["name", "p"])
     );
+
+    let replacement = app
+        .state
+        .workspace_service
+        .publish_version(
+            &alice,
+            workspace.workspace.id,
+            Some(version.id),
+            draft("replacement", VersionOrigin::Generated),
+        )
+        .await
+        .unwrap();
+    app.state
+        .workspace_service
+        .activate(&alice, workspace.workspace.id, replacement.id)
+        .await
+        .unwrap();
+    assert!(
+        app.state
+            .workspace_service
+            .references_artifact(&alice, alice_artifact.id)
+            .await
+            .unwrap(),
+        "an artifact referenced only by a historical version must remain owned"
+    );
+    assert!(
+        !app.state
+            .workspace_service
+            .references_artifact(&scope("bob@example.com"), alice_artifact.id)
+            .await
+            .unwrap()
+    );
 }

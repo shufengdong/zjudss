@@ -2,13 +2,13 @@ mod common;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use backend::application::{RunScheduler, SchedulerError};
 use backend::auth::{AccessScope, AuthConfig};
 use serde_json::{Value, json};
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 use tower::ServiceExt;
 
@@ -24,9 +24,12 @@ fn scope(key: &str) -> AccessScope {
 async fn observed_max(
     scheduler: RunScheduler,
     jobs: impl IntoIterator<Item = (AccessScope, i32)>,
+    expected_maximum: usize,
 ) -> usize {
     let active = Arc::new(AtomicUsize::new(0));
     let maximum = Arc::new(AtomicUsize::new(0));
+    let (entered_tx, mut entered_rx) = mpsc::unbounded_channel();
+    let (release_tx, release_rx) = watch::channel(false);
     let mut set = JoinSet::new();
     for (owner, session_id) in jobs {
         let ticket = scheduler
@@ -34,17 +37,29 @@ async fn observed_max(
             .expect("job should fit waiting queue");
         let active = active.clone();
         let maximum = maximum.clone();
+        let entered_tx = entered_tx.clone();
+        let mut release_rx = release_rx.clone();
         set.spawn(async move {
             ticket
                 .run(async move {
                     let now = active.fetch_add(1, Ordering::SeqCst) + 1;
                     maximum.fetch_max(now, Ordering::SeqCst);
-                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    entered_tx.send(()).expect("observer remains available");
+                    while !*release_rx.borrow() {
+                        release_rx
+                            .changed()
+                            .await
+                            .expect("release signal remains open");
+                    }
                     active.fetch_sub(1, Ordering::SeqCst);
                 })
                 .await;
         });
     }
+    for _ in 0..expected_maximum {
+        entered_rx.recv().await.expect("expected admitted run");
+    }
+    release_tx.send(true).expect("running jobs observe release");
     while set.join_next().await.is_some() {}
     maximum.load(Ordering::SeqCst)
 }
@@ -53,15 +68,15 @@ async fn observed_max(
 async fn enforces_global_owner_and_session_limits() {
     let scheduler = RunScheduler::new(8, 2, 32);
     let global_jobs = (0..16).map(|index| (scope(&format!("owner-{index}")), index));
-    assert_eq!(observed_max(scheduler, global_jobs).await, 8);
+    assert_eq!(observed_max(scheduler, global_jobs, 8).await, 8);
 
     let scheduler = RunScheduler::new(8, 2, 32);
     let owner_jobs = (0..8).map(|index| (scope("alice"), index));
-    assert_eq!(observed_max(scheduler, owner_jobs).await, 2);
+    assert_eq!(observed_max(scheduler, owner_jobs, 2).await, 2);
 
     let scheduler = RunScheduler::new(8, 2, 32);
     let session_jobs = (0..4).map(|_| (scope("alice"), 7));
-    assert_eq!(observed_max(scheduler, session_jobs).await, 1);
+    assert_eq!(observed_max(scheduler, session_jobs, 1).await, 1);
 }
 
 #[test]

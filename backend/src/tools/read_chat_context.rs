@@ -10,9 +10,9 @@ use std::sync::Arc;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Args {
-    session_id: Option<i32>,
-    around_message_id: i32,
-    radius: Option<i64>,
+    pub session_id: Option<i32>,
+    pub around_message_id: i32,
+    pub radius: Option<i64>,
 }
 pub struct ReadChatContextTool {
     services: Arc<ToolServices>,

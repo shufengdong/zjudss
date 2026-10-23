@@ -17,6 +17,12 @@ export const REQUIRED_FEATURE_SCOPES = [
   'COMPARE', 'HISTORY', 'STORAGE', 'UI', 'LEGACY',
 ]
 const execFileAsync = promisify(execFile)
+const ENUMERATION_ONLY_TESTS = new Set([
+  'production_router_and_manifest_share_one_declaration',
+  'manifest_allowed_tools_equal_runtime_registry',
+  'frontend public enum contracts',
+  'embedded_bundle_is_hash_verified_and_contains_only_compact_policy',
+])
 
 export function contractKeys(manifest) {
   return [
@@ -42,6 +48,36 @@ export async function loadCatalog(catalogPath) {
   const value = YAML.parse(await fs.readFile(catalogPath, 'utf8'))
   if (!Array.isArray(value)) throw new Error('functional coverage catalog must be an array')
   return value
+}
+
+export async function loadRouteEvidence(evidencePath) {
+  try {
+    return (await fs.readFile(evidencePath, 'utf8'))
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+  } catch (error) {
+    if (error?.code === 'ENOENT') return []
+    throw error
+  }
+}
+
+function routeMatches(contract, request) {
+  const match = /^route:([A-Z]+) (.+)$/.exec(contract)
+  if (!match || request?.method !== match[1] || request.status < 200 || request.status >= 400) return false
+  const pattern = match[2]
+    .split('/')
+    .map((part) => /^\{[^}]+\}$/.test(part) ? '[^/]+' : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('/')
+  return new RegExp(`^${pattern}$`).test(request.path)
+}
+
+function hasRouteEvidence(entry, contract, evidence) {
+  return entry.tests.some((test) => test.runner === 'playwright' && evidence.some((result) =>
+    result.passed === true
+      && result.file === test.file
+      && result.name === test.name
+      && result.requests?.some?.((request) => routeMatches(contract, request))))
 }
 
 function headingAnchor(heading) {
@@ -72,7 +108,14 @@ async function testSymbolExists(repoRoot, test) {
   if (!test || typeof test.file !== 'string' || typeof test.name !== 'string') return false
   try {
     const content = await fs.readFile(path.join(repoRoot, test.file), 'utf8')
-    return content.includes(test.name)
+    const escaped = test.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    if (test.runner === 'rust') {
+      return new RegExp(`(?:async\\s+)?fn\\s+${escaped}\\s*\\(`).test(content)
+    }
+    if (test.runner === 'release') {
+      return new RegExp(`^#\\s*${escaped}\\s*$`, 'm').test(content)
+    }
+    return new RegExp(`(?:test|it)(?:\\.each\\([\\s\\S]{0,500}?\\))?\\s*\\(\\s*['\"\\x60]${escaped}`).test(content)
   } catch {
     return false
   }
@@ -93,6 +136,7 @@ function runnerCoversLane(runner, lane) {
 
 export async function validateCatalog(entries, repoRoot, manifest = null, options = {}) {
   const requiredLane = options.requiredLane ?? null
+  const routeEvidence = options.routeEvidence ?? []
   const counts = new Map()
   for (const entry of entries) counts.set(entry.id, (counts.get(entry.id) ?? 0) + 1)
   const duplicateIds = [...counts.entries()]
@@ -146,6 +190,16 @@ export async function validateCatalog(entries, repoRoot, manifest = null, option
         }
         if (requiredLane && await testSourceHasUnexpectedSkip(repoRoot, test)) {
           unexpectedSkips.push(`${test.file}::${test.name}`)
+        }
+        if (entry?.contracts?.length && ENUMERATION_ONLY_TESTS.has(test.name)) {
+          errors.push(`enumeration-only test cannot prove contract behavior ${test.file}::${test.name}`)
+        }
+      }
+    }
+    if (options.requireRouteEvidence && Array.isArray(entry?.contracts)) {
+      for (const contract of entry.contracts.filter((value) => value.startsWith('route:'))) {
+        if (!hasRouteEvidence(entry, contract, routeEvidence)) {
+          errors.push(`route contract lacks successful runtime evidence ${contract}`)
         }
       }
     }
@@ -262,7 +316,13 @@ async function main() {
   const catalogPath = catalogArg ?? path.join(repoRoot, 'integration-tests/catalog/features.yaml')
   const manifest = checkManifest ? await loadProductionManifest(repoRoot) : null
   const report = await validateCatalog(
-    await loadCatalog(catalogPath), repoRoot, manifest, { requiredLane },
+    await loadCatalog(catalogPath), repoRoot, manifest, {
+      requiredLane,
+      requireRouteEvidence: requiredLane === 'pr',
+      routeEvidence: requiredLane === 'pr'
+        ? await loadRouteEvidence(path.join(repoRoot, 'target/functional-coverage/e2e-routes.ndjson'))
+        : [],
+    },
   )
   const jsonPath = args.find((arg) => arg.startsWith('--report-json='))?.slice('--report-json='.length)
   const htmlPath = args.find((arg) => arg.startsWith('--report-html='))?.slice('--report-html='.length)

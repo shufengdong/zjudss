@@ -281,6 +281,17 @@ impl WorkspaceService {
             .map_err(Into::into)
     }
 
+    pub async fn references_artifact(
+        &self,
+        scope: &AccessScope,
+        artifact_id: i32,
+    ) -> Result<bool, WorkspaceError> {
+        self.repo
+            .references_artifact(scope, artifact_id)
+            .await
+            .map_err(Into::into)
+    }
+
     async fn emit_status(
         &self,
         scope: &AccessScope,

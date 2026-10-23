@@ -17,6 +17,7 @@ async function messages(api: APIRequestContext, sessionId: string) {
 
 test('session CRUD renders optimistic user, tool-call, and assistant messages', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'session-crud@example.com', tenant: 'grid-a' })
+  expect((await api.get('/health')).status()).toBe(200)
   await page.goto('/')
   await expect(page.getByRole('button', { name: '新建仿真' })).toBeVisible()
 

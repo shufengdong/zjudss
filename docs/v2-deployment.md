@@ -97,6 +97,10 @@ cwd/sparrowzz/dss/docs/
 cwd/sparrowzz/dss/models/
 ```
 
+受保护环境还必须配置 `TENSOREVAL_SHA256` 变量。workflow 在执行前计算下载 binary 的 SHA-256 并与该
+变量精确比较，因此仅有同名 artifact 或任意 run ID 不能替换已批准的仿真内核。发布报告保存测试 ID、
+agent bundle 版本与目录 SHA-256、engine contract 和 binary SHA-256。
+
 `.github/workflows/release-integration.yml` 先复用完整 PR 门禁，再执行 `scripts/test-release-integration` 和
 `--require-release`。真实旅程验证全部 73 个固定案例、代表 study、DataFrame 潮流、RSS 短路、结果问答、
 参数修改重跑和比较，并归档去敏后的 engine/LLM 报告、功能覆盖 JSON/HTML 与 Playwright 失败 trace。

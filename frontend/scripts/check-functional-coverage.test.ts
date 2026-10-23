@@ -44,6 +44,77 @@ describe('functional coverage catalog', () => {
     expect(report.validEntries).toBe(0)
   })
 
+  it('rejects text that is present but is not a declared test', async () => {
+    const entries = await loadCatalog(fixture('valid.yaml'))
+    entries[0].tests[0].name = 'safe'
+
+    const report = await validateCatalog(entries, repoRoot)
+
+    expect(report.missing).toEqual([
+      'BOOT-001: test symbol missing backend/tests/app_bootstrap.rs::safe',
+    ])
+  })
+
+  it('rejects enumeration-only evidence for a production contract', async () => {
+    const entries = await loadCatalog(fixture('valid.yaml'))
+    entries[0].contracts = ['route:GET /health']
+    entries[0].tests = [{
+      runner: 'rust',
+      file: 'backend/tests/contract_manifest.rs',
+      name: 'production_router_and_manifest_share_one_declaration',
+    }]
+
+    const report = await validateCatalog(entries, repoRoot)
+
+    expect(report.missing).toEqual([
+      'BOOT-001: enumeration-only test cannot prove contract behavior backend/tests/contract_manifest.rs::production_router_and_manifest_share_one_declaration',
+    ])
+  })
+
+  it('rejects an unrelated passing test as route behavior evidence', async () => {
+    const entries = await loadCatalog(fixture('valid.yaml'))
+    entries[0].contracts = ['route:GET /health']
+    entries[0].tests = [{
+      runner: 'playwright',
+      file: 'integration-tests/e2e/session-recovery.spec.ts',
+      name: 'session CRUD renders optimistic user, tool-call, and assistant messages',
+    }]
+    const report = await validateCatalog(entries, repoRoot, null, {
+      requireRouteEvidence: true,
+      routeEvidence: [{
+        file: entries[0].tests[0].file,
+        name: entries[0].tests[0].name,
+        passed: true,
+        requests: [{ method: 'GET', path: '/api/sessions', status: 200 }],
+      }],
+    })
+
+    expect(report.missing).toEqual([
+      'BOOT-001: route contract lacks successful runtime evidence route:GET /health',
+    ])
+  })
+
+  it('accepts a successful matching route response from the declared test', async () => {
+    const entries = await loadCatalog(fixture('valid.yaml'))
+    entries[0].contracts = ['route:GET /api/sessions/{id}']
+    entries[0].tests = [{
+      runner: 'playwright',
+      file: 'integration-tests/e2e/session-recovery.spec.ts',
+      name: 'session CRUD renders optimistic user, tool-call, and assistant messages',
+    }]
+    const report = await validateCatalog(entries, repoRoot, null, {
+      requireRouteEvidence: true,
+      routeEvidence: [{
+        file: entries[0].tests[0].file,
+        name: entries[0].tests[0].name,
+        passed: true,
+        requests: [{ method: 'GET', path: '/api/sessions/42', status: 200 }],
+      }],
+    })
+
+    expect(report.missing).toEqual([])
+  })
+
   it('requires lanes, tests and business assertions', async () => {
     const report = await validateCatalog(
       [{

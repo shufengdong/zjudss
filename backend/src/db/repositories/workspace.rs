@@ -491,6 +491,35 @@ impl WorkspaceRepo {
         .await
         .map_err(RepoError::Join)?
     }
+
+    pub async fn references_artifact(
+        &self,
+        scope: &AccessScope,
+        artifact_id: i32,
+    ) -> RepoResult<bool> {
+        let pool = self.pool.clone();
+        let scope = scope.clone();
+        tokio::task::spawn_blocking(move || -> RepoResult<bool> {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            let count = schema::version_artifacts::table
+                .inner_join(
+                    schema::model_versions::table
+                        .inner_join(schema::workspaces::table.inner_join(schema::sessions::table)),
+                )
+                .filter(schema::sessions::access_scope_kind.eq(scope.kind))
+                .filter(schema::sessions::access_scope_key.eq(scope.key))
+                .filter(
+                    schema::version_artifacts::artifact_id
+                        .eq(artifact_id)
+                        .or(schema::version_artifacts::source_artifact_id.eq(Some(artifact_id))),
+                )
+                .count()
+                .get_result::<i64>(&mut conn)?;
+            Ok(count > 0)
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
 }
 
 fn ensure_session(

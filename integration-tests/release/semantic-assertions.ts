@@ -17,15 +17,17 @@ export interface ToolTraceEntry {
 
 export interface ExpectedToolDependencies {
   requiredTools: string[]
+  allowedTools?: string[]
   gatedTools?: Record<string, string[]>
 }
 
 export interface ExpectedDomainState {
   sessionId: string
-  minimumVersions: number
+  expectedVersions: number
   taskStudyTypes: string[]
-  minimumAnalysisRuns: number
-  minimumComparisons: number
+  expectedDatasets: number
+  expectedAnalysisRuns: number
+  expectedComparisons: number
   activeVersionId?: string
 }
 
@@ -44,6 +46,11 @@ const allowedTools = new Set([
   'run_result_analysis', 'create_dataset_view', 'compare_simulations',
   'list_simulation_history', 'search_chat_history', 'read_chat_context', 'get_storage_usage',
   'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section',
+])
+const sideEffectTools = new Set([
+  'import_example', 'remove_model_input', 'replace_model_input', 'confirm_dataframe_mapping',
+  'modify_model', 'activate_model_version', 'rollback_model_version', 'run_study',
+  'run_result_analysis', 'create_dataset_view', 'compare_simulations',
 ])
 
 function invariant(condition: unknown, message: string): asserts condition {
@@ -97,6 +104,19 @@ export function expectToolTrace(trace: ToolTraceEntry[], expectedDependencies: E
       `required tool ${required} did not succeed`,
     )
   }
+  const expectedAllowed = expectedDependencies.allowedTools
+    ? new Set(expectedDependencies.allowedTools)
+    : null
+  if (expectedAllowed) {
+    for (const call of trace.filter((candidate) => candidate.status === 'success')) {
+      invariant(expectedAllowed.has(call.toolName), `unexpected successful tool ${call.toolName}`)
+    }
+  }
+  for (const tool of sideEffectTools) {
+    const expectedCount = expectedDependencies.requiredTools.filter((required) => required === tool).length
+    const actualCount = trace.filter((call) => call.toolName === tool && call.status === 'success').length
+    invariant(actualCount === expectedCount, `${tool} succeeded ${actualCount} times; expected ${expectedCount}`)
+  }
   for (const [tool, skills] of Object.entries(expectedDependencies.gatedTools ?? {})) {
     const gatedIndex = trace.findIndex((call) => call.toolName === tool && call.status === 'running')
     invariant(gatedIndex >= 0, `gated tool ${tool} was not called`)
@@ -110,7 +130,8 @@ export function expectToolTrace(trace: ToolTraceEntry[], expectedDependencies: E
     }
   }
   const unrecovered = trace.find((call, index) => call.status === 'failed'
-    && !trace.slice(index + 1).some((later) => later.toolName === call.toolName && later.status === 'success'))
+    && !trace.slice(index + 1).some((later) => later.status === 'success'
+      && (!sideEffectTools.has(call.toolName) || later.toolName === call.toolName)))
   invariant(!unrecovered, `tool ${unrecovered?.toolName ?? 'unknown'} failed without recovery`)
 }
 
@@ -138,20 +159,18 @@ export async function expectDomainState(api: SemanticApiContext, expected: Expec
   const versions = (await json(api, `/api/sessions/${expected.sessionId}/versions`)).versions as any[]
   const tasks = await json(api, `/api/sessions/${expected.sessionId}/tasks`)
   const messages = await readAllMessages(api, expected.sessionId)
-  invariant(versions.length >= expected.minimumVersions, `expected at least ${expected.minimumVersions} versions, got ${versions.length}`)
+  invariant(versions.length === expected.expectedVersions, `expected exactly ${expected.expectedVersions} versions, got ${versions.length}`)
   if (expected.activeVersionId) {
     invariant(workspace.active?.versionId === expected.activeVersionId, 'active version does not match the expected stable ID')
   }
-  const succeededStudies = tasks.filter((task: any) => task.status === 'succeeded').map((task: any) => task.studyType)
-  for (const studyType of expected.taskStudyTypes) {
-    const index = succeededStudies.indexOf(studyType)
-    invariant(index >= 0, `missing succeeded ${studyType} task`)
-    succeededStudies.splice(index, 1)
-  }
+  const succeededStudies = tasks.filter((task: any) => task.status === 'succeeded').map((task: any) => task.studyType).sort()
+  const expectedStudies = [...expected.taskStudyTypes].sort()
+  invariant(JSON.stringify(succeededStudies) === JSON.stringify(expectedStudies),
+    `expected exact studies ${expectedStudies.join(',')}, got ${succeededStudies.join(',')}`)
   const analysisIds = [...new Set(messages.map((message) => message.analysisRunId).filter(Boolean))]
   const comparisonIds = [...new Set(messages.filter((message) => message.type === 'comparison').map((message) => message.comparisonId))]
-  invariant(analysisIds.length >= expected.minimumAnalysisRuns, `expected at least ${expected.minimumAnalysisRuns} analysis runs`)
-  invariant(comparisonIds.length >= expected.minimumComparisons, `expected at least ${expected.minimumComparisons} comparisons`)
+  invariant(analysisIds.length === expected.expectedAnalysisRuns, `expected exactly ${expected.expectedAnalysisRuns} analysis runs`)
+  invariant(comparisonIds.length === expected.expectedComparisons, `expected exactly ${expected.expectedComparisons} comparisons`)
   const datasets = []
   for (const task of tasks.filter((task: any) => task.status === 'succeeded')) {
     datasets.push(...await json(api, `/api/tasks/${task.id}/datasets`))
@@ -159,11 +178,13 @@ export async function expectDomainState(api: SemanticApiContext, expected: Expec
   const analyses = []
   for (const id of analysisIds) analyses.push(await json(api, `/api/analysis-runs/${id}`))
   const succeededAnalyses = analyses.filter((analysis) => analysis.status === 'succeeded')
-  invariant(succeededAnalyses.length >= expected.minimumAnalysisRuns,
-    `expected at least ${expected.minimumAnalysisRuns} succeeded analysis runs`)
+  invariant(succeededAnalyses.length === expected.expectedAnalysisRuns,
+    `expected exactly ${expected.expectedAnalysisRuns} succeeded analysis runs`)
   for (const id of comparisonIds) {
     await json(api, `/api/task-comparisons/${id}`)
   }
+  invariant(datasets.length === expected.expectedDatasets,
+    `expected exactly ${expected.expectedDatasets} datasets, got ${datasets.length}`)
   return {
     activeVersionId: workspace.active?.versionId ?? null,
     versionCount: versions.length,

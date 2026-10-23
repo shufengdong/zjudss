@@ -11,7 +11,7 @@ use backend::application::{
     SourceKind, VersionDraft, VersionInputDraft, VersionOrigin,
 };
 use backend::auth::{AccessScope, Principal, StorageScopeRef};
-use backend::db::models::NewSimulationTask;
+use backend::db::models::{NewMessage, NewSimulationTask};
 use backend::storage::StageLimits;
 use backend::tools::{self, ToolServices};
 use rig::tool::{Tool, ToolContext};
@@ -341,6 +341,22 @@ async fn prompt_skill_document_and_example_tools_are_id_bounded() {
     assert_eq!(skill_required.code, "skill_required");
 
     let section = &app.state.engine_snapshot.knowledge.sections[0];
+    let searched = tools::search_engine_docs::SearchEngineDocsTool::new(services.clone())
+        .call(
+            &mut context,
+            tools::search_engine_docs::Args {
+                query: section.title.clone(),
+                max_chars: Some(40),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(searched["snapshotId"], app.state.engine_snapshot.id);
+    assert!(
+        searched["hits"]
+            .as_array()
+            .is_some_and(|hits| !hits.is_empty())
+    );
     let read = tools::read_engine_doc_section::ReadEngineDocSectionTool::new(services.clone())
         .call(
             &mut context,
@@ -385,6 +401,117 @@ async fn prompt_skill_document_and_example_tools_are_id_bounded() {
         assert!(!text.contains("filename") && !text.contains("path"));
         assert!(text.contains("expecteddraftversionid"));
     }
+}
+
+#[tokio::test]
+async fn every_embedded_skill_loads_by_stable_id_and_rejects_unknown() {
+    let app = TestApp::spawn().await;
+    let (session_id, _) = workspace_with_csv(&app, &[("bus.csv", b"id,p\nb1,100\n")]).await;
+    let shared = services(&app, session_id);
+    let mut context = ToolContext::new();
+    for skill_id in [
+        "comparison",
+        "model-intake",
+        "result-analysis",
+        "rss-generation",
+        "study-planning",
+        "troubleshooting",
+    ] {
+        let value = tools::load_agent_skill::LoadAgentSkillTool::new(shared.clone())
+            .call(
+                &mut context,
+                tools::load_agent_skill::Args {
+                    skill_id: skill_id.into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(value["id"], skill_id);
+        assert!(
+            value["sha256"]
+                .as_str()
+                .is_some_and(|hash| hash.len() == 64)
+        );
+    }
+    let error = tools::load_agent_skill::LoadAgentSkillTool::new(shared)
+        .call(
+            &mut context,
+            tools::load_agent_skill::Args {
+                skill_id: "../unknown".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "skill_not_found");
+}
+
+#[tokio::test]
+async fn history_tools_search_list_and_read_only_the_bound_scope() {
+    let app = TestApp::spawn().await;
+    let (session_id, _) = workspace_with_csv(&app, &[("bus.csv", b"id,p\nb1,100\n")]).await;
+    let message = app
+        .state
+        .message_repo
+        .create(
+            &principal().access,
+            NewMessage {
+                session_id,
+                task_id: None,
+                role: "user".into(),
+                kind: "text".into(),
+                content: "查询配电网历史上下文".into(),
+                payload_json: None,
+                created_at_ms: 2,
+            },
+        )
+        .await
+        .unwrap();
+    let shared = services(&app, session_id);
+    let mut context = ToolContext::new();
+
+    let hits = tools::search_chat_history::SearchChatHistoryTool::new(shared.clone())
+        .call(
+            &mut context,
+            tools::search_chat_history::Args {
+                query: "配电网历史".into(),
+                study_type: None,
+                status: None,
+                from_ms: None,
+                to_ms: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(hits[0]["sessionId"], session_id.to_string());
+
+    let context_rows = tools::read_chat_context::ReadChatContextTool::new(shared.clone())
+        .call(
+            &mut context,
+            tools::read_chat_context::Args {
+                session_id: None,
+                around_message_id: message.id,
+                radius: Some(2),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        context_rows
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["id"] == message.id.to_string()))
+    );
+
+    let simulations = tools::list_simulation_history::ListSimulationHistoryTool::new(shared)
+        .call(
+            &mut context,
+            tools::list_simulation_history::Args {
+                session_id: None,
+                limit: Some(10),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(simulations, json!([]));
 }
 
 #[tokio::test]

@@ -70,11 +70,13 @@ v2 仅支持空库初始化。部署前删除旧开发 SQLite 和 DATA_DIR；不
 - Playwright 已覆盖浏览器 → Vite → Axum → SQLite/CAS 的 L1/L2 全链路、身份隔离、恢复、配额、恶意
   归档和响应式无障碍；PR workflow 执行 Rust、Vitest、构建、全部浏览器旅程和严格功能目录门禁。
 - 功能目录现有 154 项，逐项覆盖 24 个顶层范围和 112 个生产公共合同；`--require-pr` 报告为
-  `288/288`、100%，且会拒绝
-  缺项、重复/未知合同、错误 lane、`manual-only`、skip 和不存在的测试符号。
+  `288/288`、100%，且会拒绝缺项、重复/未知合同、错误 lane、`manual-only`、skip、不存在的测试声明，
+  以及用路由/工具/枚举清单测试冒充合同行为覆盖。27 个公开路由还必须由目录关联的已通过 Playwright
+  用例产生实际成功响应证据；任意无关测试映射不能通过门禁。
 - 2026-10-23 已用真实 DeepSeek 和合同 `dss-v2-d2b6d88a` 的 release tensoreval 完成 DataFrame 潮流、
   RSS 短路、结果分析、案例导入、参数修改、重跑和比较：8 个模型版本、3 个任务、3 个结果数据集、
-  2 次分析和 1 次比较。候选发布 workflow 要求受保护环境 secret 和固定 engine artifact，缺失即失败。
+  2 次分析和 1 次比较。候选发布 workflow 要求受保护环境 secret、固定 engine artifact SHA-256，报告记录
+  测试 ID、agent bundle hash、engine contract 和 binary hash；缺失或不匹配即失败。
 - Agent manifest 与运行时注册表已由双向枚举测试锁定为同一组 22 个工具，包含 `get_storage_usage` 和
   `list_result_datasets`。
 
