@@ -5,8 +5,11 @@ import { createSessionFromPage } from './helpers/journeys'
 
 const fixtures = resolve(process.cwd(), '../integration-tests/fixtures/uploads')
 async function workspace(api:APIRequestContext,id:string){return (await (await api.get(`/api/sessions/${id}/workspace`)).json()) as any}
+function isCreateImport(response:{url():string;request():{method():string}}){
+  return new URL(response.url()).pathname.endsWith('/model-imports')&&response.request().method()==='POST'
+}
 async function upload(page:Page,path:string,directory=false){
-  const response=page.waitForResponse(r=>r.url().includes('/model-imports')&&r.request().method()==='POST')
+  const response=page.waitForResponse(isCreateImport)
   await page.locator('input[type=file]').nth(directory?1:0).setInputFiles(path)
   expect((await response).status()).toBe(202)
   await expect(page.getByRole('button',{name:'确认合并'})).toBeVisible()
@@ -37,7 +40,7 @@ test('single-Solve bundles become drafts while repeated Solve and specialist lif
   const identity={id:accepted.draft.id,revision:accepted.draft.revision,tables:accepted.draft.tables.map((table:any)=>table.contentHash)}
 
   for(const name of ['unsupported-multi-solve.rssbundle','unsupported-specialist.rssbundle']){
-    const responsePromise=page.waitForResponse(response=>response.url().includes('/model-imports')&&response.request().method()==='POST')
+    const responsePromise=page.waitForResponse(isCreateImport)
     await page.locator('input[type=file]').nth(1).setInputFiles(resolve(fixtures,`bundle/${name}`))
     const response=await responsePromise
     expect(response.status()).toBe(202)
