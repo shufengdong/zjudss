@@ -9,7 +9,7 @@ export async function readEvent(
   const controller = new AbortController()
   const response = await directApi(
     path,
-    { ...identity, token: 'e2e-proxy-token' },
+    identity.subject,
     { headers: lastEventId ? { 'last-event-id': lastEventId } : {}, signal: controller.signal },
   )
   if (!response.ok || !response.body) throw new Error(`SSE failed: ${response.status}`)

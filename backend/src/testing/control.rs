@@ -26,7 +26,6 @@ pub struct E2eConfig {
     pub root: PathBuf,
     pub bind: SocketAddr,
     pub control_token: String,
-    pub proxy_token: String,
 }
 
 #[derive(Debug)]
@@ -59,7 +58,6 @@ impl E2eConfig {
         root: PathBuf,
         bind: &str,
         control_token: &str,
-        proxy_token: &str,
     ) -> Result<Self, E2eConfigError> {
         let bind = bind.parse::<SocketAddr>().map_err(|error| {
             E2eConfigError::new("e2e_bind_invalid", format!("E2E_BIND 无效: {error}"))
@@ -76,17 +74,10 @@ impl E2eConfig {
                 "E2E_CONTROL_TOKEN 不能为空",
             ));
         }
-        if proxy_token.is_empty() {
-            return Err(E2eConfigError::new(
-                "e2e_proxy_token_missing",
-                "E2E_PROXY_TOKEN 不能为空",
-            ));
-        }
         Ok(Self {
             root,
             bind,
             control_token: control_token.into(),
-            proxy_token: proxy_token.into(),
         })
     }
 
@@ -99,7 +90,6 @@ impl E2eConfig {
             root,
             &bind,
             &std::env::var("E2E_CONTROL_TOKEN").unwrap_or_default(),
-            &std::env::var("E2E_PROXY_TOKEN").unwrap_or_default(),
         )
     }
 }
@@ -317,7 +307,7 @@ pub async fn run_e2e_server(
         db::recover_interrupted_runs(&mut connection, crate::application::now_ms())?;
         seed_users(
             &mut connection,
-            b"ID,NAME\nalice@example.com,Alice\nbob@example.com,Bob\n",
+            include_bytes!("../../../integration-tests/fixtures/init_users.csv"),
             crate::application::now_ms(),
             StorageLimits::default(),
         )?;

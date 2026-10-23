@@ -269,13 +269,13 @@
 - Modify: `backend/src/bin/e2e-server.rs`
 - Add fixture: `integration-tests/fixtures/init_users.csv` if deterministic e2e identities cannot use the embedded production fixture without revealing real IDs in test logs
 
-- [ ] Change the browser fixture to obtain cookies through `POST /api/auth/login`; never inject identity headers. Provide `loginAs(id)` and a second isolated browser context. The e2e server must seed deterministic test users through the same `seed_users` path.
+- [x] Change the browser fixture to obtain cookies through `POST /api/auth/login`; never inject identity headers. Provide `loginAs(id)` and a second isolated browser context. The e2e server must seed deterministic test users through the same `seed_users` path.
 
-- [ ] Add browser journeys for persistent refresh, two users' direct-URL/search/resource isolation, logout/back-button denial, switching identities without stale paint, and a database reset invalidating an old cookie. Record successful responses for login/logout/me and every protected route required by the functional coverage gate.
+- [x] Add browser journeys for persistent refresh, two users' direct-URL/search/resource isolation, logout/back-button denial, switching identities without stale paint, and a database reset invalidating an old cookie. Record successful responses for login/logout/me and every protected route required by the functional coverage gate.
 
-- [ ] Run `cd frontend && npm run test:e2e -- auth-isolation.spec.ts` and fix only auth/fixture failures.
+- [x] Run `cd frontend && npm run test:e2e -- auth-isolation.spec.ts` and fix only auth/fixture failures.
 
-- [ ] Run `cd frontend && npm run test:e2e`.
+- [x] Run `cd frontend && npm run test:e2e`.
 
 - [ ] Commit: `git add integration-tests backend/src/bin/e2e-server.rs && git commit -m "test: cover v3 authenticated isolation"`.
 

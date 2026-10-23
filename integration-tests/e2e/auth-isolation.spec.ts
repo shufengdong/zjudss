@@ -1,6 +1,6 @@
 import type { APIRequestContext } from '@playwright/test'
 import { test, expect } from './fixtures'
-import { directApi } from './helpers/server'
+import { directApi, resetBackend } from './helpers/server'
 
 async function createSession(api: APIRequestContext, title: string) {
   const response = await api.post('/api/sessions', { data: { title } })
@@ -8,9 +8,9 @@ async function createSession(api: APIRequestContext, title: string) {
   return response.json() as Promise<{ id: string }>
 }
 
-test('two owners cannot enumerate or guess each other session, message, SSE, task, or dataset resources', async ({ appPage, control }) => {
-  const alice = await appPage({ subject: 'alice@example.com', tenant: 'shared-grid' })
-  const bob = await appPage({ subject: 'bob@example.com', tenant: 'shared-grid' })
+test('two users cannot enumerate or guess each other session, message, SSE, task, or dataset resources', async ({ loginAs, control }) => {
+  const alice = await loginAs('alice@example.com')
+  const bob = await loginAs('bob@example.com')
   const aliceSession = await createSession(alice.api, 'Alice 私有会话')
   const bobSession = await createSession(bob.api, 'Bob 私有会话')
 
@@ -83,9 +83,43 @@ test('two owners cannot enumerate or guess each other session, message, SSE, tas
   expect((await history.json()).items).toEqual([])
 })
 
-test('trusted proxy rejects missing and incorrect credentials', async () => {
-  const missing = await directApi('/api/me', {})
+test('cookie login rejects missing and incorrect credentials', async () => {
+  const missing = await directApi('/api/me')
   expect(missing.status).toBe(401)
-  const wrong = await directApi('/api/me', { subject: 'mallory@example.com', token: 'wrong-token' })
+  const wrong = await fetch('http://127.0.0.1:18080/api/auth/login', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'alice@example.com', password: 'wrong' }),
+  })
   expect(wrong.status).toBe(401)
+})
+
+test('login persists across refresh and logout removes stale user state', async ({ loginAs }) => {
+  const alice = await loginAs('alice@example.com')
+  await createSession(alice.api, 'Alice 不应泄漏')
+  await alice.page.goto('/')
+  await expect(alice.page.getByText('Alice', { exact: true })).toBeVisible()
+  await expect(alice.page.getByRole('button', { name: '打开会话“Alice 不应泄漏”' })).toBeVisible()
+  await alice.page.reload()
+  await expect(alice.page.getByText('Alice', { exact: true })).toBeVisible()
+  await alice.page.goto('/?history-check=1')
+  await expect(alice.page.getByText('Alice', { exact: true })).toBeVisible()
+
+  await alice.page.getByRole('button', { name: 'A Alice' }).click()
+  await alice.page.getByRole('button', { name: '退出登录' }).click()
+  await expect(alice.page.getByLabel('用户 ID')).toBeVisible()
+  await alice.page.goBack()
+  await expect(alice.page.getByLabel('用户 ID')).toBeVisible()
+
+  await alice.page.getByLabel('用户 ID').fill('bob@example.com')
+  await alice.page.getByLabel('密码').fill('bob@example.com')
+  await alice.page.getByRole('button', { name: '登录' }).click()
+  await expect(alice.page.getByText('Bob', { exact: true })).toBeVisible()
+  await expect(alice.page.getByText('Alice 不应泄漏', { exact: true })).toHaveCount(0)
+})
+
+test('database reset invalidates an existing browser cookie', async ({ loginAs }) => {
+  const alice = await loginAs('alice@example.com')
+  expect((await alice.api.get('/api/me')).status()).toBe(200)
+  await resetBackend()
+  expect((await alice.api.get('/api/me')).status()).toBe(401)
 })

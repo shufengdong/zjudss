@@ -8,6 +8,7 @@ export interface AppHandle { page: Page; context: BrowserContext; api: APIReques
 
 type Fixtures = {
   appPage: (identity: AppIdentity) => Promise<AppHandle>
+  loginAs: (id: string) => Promise<AppHandle>
   control: ControlClient
 }
 
@@ -37,13 +38,11 @@ export const test = base.extend<Fixtures>({
     await use(async (identity) => {
       const context = await browser.newContext()
       contexts.push(context)
-      const cookies = [
-        { name: 'zjudss-e2e-subject', value: identity.subject, url: 'http://127.0.0.1:15173' },
-      ]
-      if (identity.tenant) {
-        cookies.push({ name: 'zjudss-e2e-tenant', value: identity.tenant, url: 'http://127.0.0.1:15173' })
-      }
-      await context.addCookies(cookies)
+      const login = await context.request.post('http://127.0.0.1:15173/api/auth/login', {
+        data: { id: identity.subject, password: identity.subject },
+      })
+      record('POST', '/api/auth/login', login.status())
+      if (!login.ok()) throw new Error(`e2e login failed for ${identity.subject}: ${login.status()}`)
       const page = await context.newPage()
       page.on('response', (response) => record(response.request().method(), response.url(), response.status()))
       return { page, context, api: trackApi(context.request), identity }
@@ -57,6 +56,7 @@ export const test = base.extend<Fixtures>({
       requests: [...requests.values()],
     })}\n`)
   },
+  loginAs: async ({ appPage }, use) => use((id) => appPage({ subject: id })),
   control: async ({}, use) => use(new ControlClient()),
 })
 

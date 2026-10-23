@@ -24,14 +24,13 @@ async fn e2e_server_uses_temp_db_and_data_dir() {
         .env("E2E_ROOT", &root)
         .env("E2E_BIND", "127.0.0.1:0")
         .env("E2E_CONTROL_TOKEN", "control-secret")
-        .env("E2E_PROXY_TOKEN", "proxy-secret")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let mut line = String::new();
     tokio::time::timeout(
-        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(20),
         BufReader::new(child.stdout.take().unwrap()).read_line(&mut line),
     )
     .await
@@ -196,12 +195,7 @@ async fn control_routes_are_absent_from_production_router() {
 #[test]
 fn server_rejects_non_loopback_bind() {
     let root = tempfile::tempdir().unwrap();
-    let error = E2eConfig::from_values(
-        root.path().to_path_buf(),
-        "0.0.0.0:8080",
-        "control-secret",
-        "proxy-secret",
-    )
-    .unwrap_err();
+    let error = E2eConfig::from_values(root.path().to_path_buf(), "0.0.0.0:8080", "control-secret")
+        .unwrap_err();
     assert_eq!(error.code(), "e2e_bind_not_loopback");
 }

@@ -12,7 +12,6 @@ const backend = join(root, 'backend')
 const frontend = join(root, 'frontend')
 const e2eRoot = await mkdtemp(join(tmpdir(), 'zjudss-e2e-'))
 const controlToken = 'e2e-control-token'
-const proxyToken = 'e2e-proxy-token'
 const children = new Set()
 let backendProcess
 let stopping = false
@@ -49,7 +48,6 @@ async function startBackend() {
       E2E_ROOT: e2eRoot,
       E2E_BIND: '127.0.0.1:18080',
       E2E_CONTROL_TOKEN: controlToken,
-      E2E_PROXY_TOKEN: proxyToken,
     },
     stdio: ['ignore', 'pipe', 'inherit'],
   })
@@ -85,6 +83,12 @@ async function restartBackend() {
   await startBackend()
 }
 
+async function resetBackend() {
+  await stopBackend()
+  await rm(e2eRoot, { recursive: true, force: true })
+  await startBackend()
+}
+
 function waitForHttp(url, deadline = Date.now() + 20_000) {
   return new Promise((resolvePromise, reject) => {
     const probe = () => {
@@ -113,6 +117,16 @@ function startHarnessControl() {
     if (req.method === 'POST' && req.url === '/restart') {
       try {
         await restartBackend()
+        res.writeHead(204).end()
+      } catch (error) {
+        res.writeHead(500, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: String(error) }))
+      }
+      return
+    }
+    if (req.method === 'POST' && req.url === '/reset') {
+      try {
+        await resetBackend()
         res.writeHead(204).end()
       } catch (error) {
         res.writeHead(500, { 'content-type': 'application/json' })
@@ -160,7 +174,6 @@ run('npm', ['run', 'dev', '--', '--host', '127.0.0.1', '--port', '15173', '--str
   env: {
     ...process.env,
     VITE_API_TARGET: 'http://127.0.0.1:18080',
-    VITE_E2E_PROXY_TOKEN: proxyToken,
   },
 })
 await waitForHttp('http://127.0.0.1:15173')

@@ -18,7 +18,8 @@ export function useSessionFeed(sessionId:string|null){
       onMessage:(message)=>dispatch({type:'event',sessionId:id,message}),
       onControl:()=>void reload(id),
     })
-    void sub.opened.then(()=>reload(id)).catch(()=>reload(id))
+    const loadSnapshot=()=>{void reload(id).catch(()=>undefined)}
+    void sub.opened.then(loadSnapshot,loadSnapshot)
     return sub.close
   },[sessionId,reload])
   const older=useCallback(async()=>{

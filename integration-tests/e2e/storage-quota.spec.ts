@@ -7,7 +7,7 @@ test('warning and hard quota are visible while rejected ingestion leaves usage a
   const { page, api } = await appPage(identity)
   const sessionId = await createSessionFromPage(page, '存储配额')
   await control.setStorageLimits(
-    { kind: 'owner', key: 'tenant:grid-q:owner:quota@example.com' },
+    { kind: 'user', key: 'quota@example.com' },
     { artifactLimit: 1, byteLimit: 1024 * 1024, warningRatio: 0.8 },
   )
   const input = page.locator('input[type=file]').first()

@@ -6,9 +6,9 @@ describe('UserMenu', () => {
   it('shows the user name, reveals the ID, and logs out explicitly', () => {
     const onLogout = vi.fn()
     render(<UserMenu user={{ id: 'alice', name: 'Alice Zhang' }} onLogout={onLogout} />)
-    expect(screen.getByRole('button', { name: '打开用户菜单' })).toHaveTextContent('Alice Zhang')
+    expect(screen.getByRole('button', { name: /Alice Zhang/ })).toHaveTextContent('Alice Zhang')
     expect(screen.queryByText('用户 ID：alice')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '打开用户菜单' }))
+    fireEvent.click(screen.getByRole('button', { name: /Alice Zhang/ }))
     expect(screen.getByText('用户 ID：alice')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '退出登录' }))
     expect(onLogout).toHaveBeenCalledTimes(1)

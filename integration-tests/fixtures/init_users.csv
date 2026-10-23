@@ -1,0 +1,19 @@
+ID,NAME
+alice@example.com,Alice
+bob@example.com,Bob
+analysis@example.com,Analysis Test
+bundles@example.com,Bundle Test
+examples@example.com,Example Test
+compare@example.com,Comparison Test
+dataframe-evidence@example.com,DataFrame Evidence Test
+dataframe-ready@example.com,DataFrame Ready Test
+malicious@example.com,Archive Safety Test
+restart@example.com,Restart Test
+desktop@example.com,Desktop Test
+narrow@example.com,Narrow Test
+rss-replace@example.com,RSS Replacement Test
+history@example.com,History Test
+session-crud@example.com,Session Test
+sse@example.com,SSE Test
+studies@example.com,Study Test
+quota@example.com,Quota Test

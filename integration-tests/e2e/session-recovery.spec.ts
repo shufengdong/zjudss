@@ -92,6 +92,8 @@ test('older history, refresh, restart, and invalid localStorage recover committe
     const response = await api.post(`/api/sessions/${session.id}/messages`, { data: { message: `批量消息 ${index}` } })
     expect(response.status()).toBe(202)
     await expect.poll(async () => ((await control.trace()) as { agent: unknown[] }).agent.length).toBe(baseline + index + 1)
+    await expect.poll(async () => (await messages(api, session.id)).messages
+      .filter((message: { type: string }) => message.type === 'assistant').length).toBe(index + 1)
   }
   await expect.poll(async () => (await messages(api, session.id)).messages.length).toBe(52)
 
