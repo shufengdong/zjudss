@@ -594,7 +594,7 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
         get(analysis::view_data),
         ["GET"]
     );
-    add_route!("/api/task-comparisons/{id}", get(comparisons::get), ["GET"]);
+    add_route!("/api/run-comparisons/{id}", get(comparisons::get), ["GET"]);
     (public, protected, manifest)
 }
 

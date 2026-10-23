@@ -7,6 +7,7 @@ import ResultCard from './ResultCard'
 import AttachmentCard from './AttachmentCard'
 import ComparisonCard from './ComparisonCard'
 import ModelStatusCard from './ModelStatusCard'
+import ScriptCard from './ScriptCard'
 
 interface MessageItemProps {
   message: Message
@@ -36,6 +37,8 @@ export default function MessageItem({ message, handlers }: MessageItemProps) {
       return <ModelStatusCard message={message} />
     case 'comparison':
       return <ComparisonCard message={message} handlers={handlers} />
+    case 'script':
+      return <ScriptCard script={message.script} activeVersionId={handlers.activeVersionId} onRun={handlers.onRunScript} notify={handlers.notify}/>
     default:
       return null
   }

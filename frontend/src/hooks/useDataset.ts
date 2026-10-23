@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getDataset, getDatasetRows } from '../api/client'
+import { deleteDataset, getDataset, getDatasetRows } from '../api/client'
 import type { DatasetMetadata, DatasetPage } from '../types'
 
 export function mergePages(current: DatasetPage | null, next: DatasetPage): DatasetPage {
@@ -55,5 +55,7 @@ export function useDataset(id: string | null, columns?: string[]) {
     }
   }, [id, page?.nextCursor, projection])
 
-  return { metadata, page, loading, error, loadMore }
+  const remove = useCallback(async()=>{if(!id)return;await deleteDataset(id);setMetadata(null);setPage(null)},[id])
+
+  return { metadata, page, loading, error, loadMore, remove }
 }

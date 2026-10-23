@@ -1,31 +1,19 @@
-import type { ModelVersionSnapshot, Workspace } from '../../types'
-function Version({label,value,onSuggest}:{label:string;value:ModelVersionSnapshot|null|undefined;onSuggest:(text:string)=>void}){
-  return <section className="rounded-xl border border-slate-200 bg-white p-3">
-    <div className="flex items-center"><h3 className="text-xs font-semibold text-slate-700">{label}</h3>
-      {value&&<span className="ml-auto rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px]">{value.versionId}</span>}
-    </div>
-    {!value?<p className="mt-2 text-xs text-slate-400">暂无模型</p>:<>
-      <div className="mt-2 text-xs text-slate-500">{value.sourceKind} · {value.status} · {value.inputs?.length??value.recognizedTables?.length??0} 个输入</div>
-      {(value.inputs??[]).map(input=><div key={input.inputId} aria-label={`模型输入 ${input.fileName}${input.sheetName?` ${input.sheetName}`:''}`} className="mt-2 rounded-lg bg-slate-50 p-2 text-[11px] text-slate-600">
-        <div className="truncate font-medium">{input.fileName}{input.sheetName?` / ${input.sheetName}`:''}</div>
-        <div>{input.tableKind??'待识别'} · {input.resolution} {input.confidence!==null?`· ${Math.round(input.confidence*100)}%`:''}</div>
-        {input.candidates.length>0&&<div>候选：{input.candidates.map(candidate=>String((candidate as {tableKind?:unknown}).tableKind??'')).filter(Boolean).join('、')}</div>}
-        {input.missingRequiredColumns.length>0&&<div className="text-amber-600">缺列：{input.missingRequiredColumns.join('、')}</div>}
-        {input.typeConflicts.length>0&&<div className="text-red-500">类型冲突：{input.typeConflicts.map(String).join('、')}</div>}
-      </div>)}
-      {value.missing.length>0&&<p className="mt-2 text-xs text-amber-600">缺少：{value.missing.join('、')}</p>}
-      {!!value.ambiguities?.length&&<p className="mt-2 text-xs text-amber-600">待确认：{value.ambiguities.map(item=>`${item.inputId} (${item.candidates.join('、')})`).join('；')}</p>}
-      {!!value.diagnostics?.length&&<p className="mt-2 text-xs text-red-500">诊断：{value.diagnostics.map(String).join('；')}</p>}
-      {label==='候选版本'&&value.status==='ready'&&<button onClick={()=>onSuggest(`请激活候选模型版本 ${value.versionId}`)} className="mt-3 rounded-lg bg-brand-500 px-3 py-1.5 text-xs text-white">在对话中激活</button>}
-    </>}
-  </section>
-}
-export default function WorkspacePanel({workspace,onSuggest}:{workspace?:Workspace;onSuggest:(text:string)=>void}){
+import{useEffect,useMemo,useState}from'react'
+import{activateVersion,deleteVersion,discardModelImport,listVersions,previewVersionDeletion,publishDraft,resolveModelImport}from'../../api/client'
+import type{ModelImport,ModelVersion,Workspace}from'../../types'
+const clientId=(prefix:string)=>`${prefix}-${crypto.randomUUID?.()??`${Date.now()}-${Math.random()}`}`
+export default function WorkspacePanel({sessionId,workspace,imports,onReload,notify}:{sessionId:string|null;workspace?:Workspace;imports:ModelImport[];onReload:()=>Promise<void>;notify:(text:string)=>void}){
+  const[versions,setVersions]=useState<ModelVersion[]>([]),[busy,setBusy]=useState(false),[selected,setSelected]=useState<Record<string,string[]>>({})
+  useEffect(()=>{if(sessionId)void listVersions(sessionId).then(setVersions).catch(()=>setVersions([]));else setVersions([])},[sessionId,workspace?.active?.id,workspace?.draft?.revision])
+  const pending=useMemo(()=>imports.filter(item=>!['applied','discarded'].includes(item.status)),[imports])
+  const act=async(action:()=>Promise<unknown>)=>{setBusy(true);try{await action();await onReload()}catch(error){notify(error instanceof Error?error.message:'操作失败')}finally{setBusy(false)}}
+  const resolve=(item:ModelImport)=>act(async()=>{const ids=selected[item.id]??item.candidates.filter(candidate=>candidate.selected).map(candidate=>candidate.id);await resolveModelImport(item.id,ids,workspace?.draft);notify('导入内容已合并到草稿')})
+  const activate=(version:ModelVersion)=>act(async()=>{let discard=false;if(workspace?.draft){discard=window.confirm('激活历史版本会放弃当前草稿，是否继续？');if(!discard)return}await activateVersion(version.id,workspace?.draft??null,discard)})
+  const removeVersion=(version:ModelVersion)=>act(async()=>{const preview=await previewVersionDeletion(version.id);if(!window.confirm(`将删除 ${preview.runCount} 个运行和 ${preview.resultCount} 个原始结果，是否继续？`))return;await deleteVersion(version.id,preview.impactToken)})
   return <div className="space-y-3 p-3">
-    <Version label="当前模型" value={workspace?.active} onSuggest={onSuggest}/>
-    <Version label="候选版本" value={workspace?.draft} onSuggest={onSuggest}/>
-    {!!workspace?.activeIngestions.length&&<section className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs text-blue-700">
-      正在处理 {workspace.activeIngestions.length} 个上传批次
-    </section>}
+    <section className="rounded-xl border bg-white p-3"><h3 className="text-xs font-semibold">当前模型</h3>{workspace?.active?<><div className="mt-2 font-mono text-xs">版本 {workspace.active.id}</div><div className="text-xs text-slate-500">{workspace.active.tables.length} 张 DataFrame</div></>:<p className="mt-2 text-xs text-slate-400">暂无已发布模型</p>}</section>
+    <section className="rounded-xl border bg-white p-3"><div className="flex items-center"><h3 className="text-xs font-semibold">可变草稿</h3>{workspace?.draft&&<span className="ml-auto text-[10px] text-slate-400">修订 {workspace.draft.revision}</span>}</div>{workspace?.draft?<>{workspace.draft.tables.map(table=><div key={table.id} className="mt-2 rounded bg-slate-50 p-2 text-xs"><b>{table.tableName}</b><span className="ml-2 text-slate-400">{table.rowCount} 行</span></div>)}<button disabled={busy||workspace.draft.tables.length===0} onClick={()=>void act(async()=>{await publishDraft(sessionId!,workspace.draft!,clientId('publish'));notify('版本已生成并自动激活')})} className="mt-3 rounded bg-brand-500 px-3 py-1.5 text-xs text-white disabled:bg-slate-300">生成版本</button></>:<p className="mt-2 text-xs text-slate-400">上传模型文件或应用案例后形成草稿</p>}</section>
+    {pending.map(item=><section key={item.id} className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs"><div className="font-medium">模型导入 #{item.id} · {item.status}</div>{item.errorMessage&&<p className="mt-1 text-red-600">{item.errorMessage}</p>}{item.candidates.map(candidate=><label key={candidate.id} className="mt-2 flex gap-2"><input type="checkbox" checked={(selected[item.id]??item.candidates.filter(value=>value.selected).map(value=>value.id)).includes(candidate.id)} onChange={event=>setSelected(values=>{const current=values[item.id]??item.candidates.filter(value=>value.selected).map(value=>value.id);return{...values,[item.id]:event.target.checked?[...current,candidate.id]:current.filter(id=>id!==candidate.id)}})}/><span>{candidate.displayName}{candidate.tableName?` → ${candidate.tableName}`:''}</span></label>)}{['awaiting_resolution','ready_to_apply'].includes(item.status)&&<div className="mt-3 flex gap-2"><button disabled={busy} onClick={()=>void resolve(item)} className="rounded bg-brand-500 px-3 py-1 text-white">确认合并</button><button disabled={busy} onClick={()=>void act(()=>discardModelImport(item.id))} className="rounded border px-3 py-1">抛弃</button></div>}</section>)}
+    <section className="rounded-xl border bg-white p-3"><h3 className="text-xs font-semibold">版本历史</h3>{versions.map(version=><div key={version.id} className="mt-2 flex items-center rounded bg-slate-50 p-2 text-xs"><span>版本 {version.id} · {version.tables.length} 表</span>{workspace?.active?.id!==version.id&&<><button disabled={busy} onClick={()=>void activate(version)} className="ml-auto rounded border px-2 py-1">激活</button><button disabled={busy} onClick={()=>void removeVersion(version)} className="ml-1 rounded border border-red-200 px-2 py-1 text-red-600">删除</button></>}</div>)}</section>
   </div>
 }

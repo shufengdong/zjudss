@@ -45,7 +45,7 @@ function sameAggregate(left: Message, right: Message): boolean {
     case 'result':
       return (
         right.type === 'result' &&
-        left.taskId === right.taskId &&
+        left.runId === right.runId &&
         left.analysisRunId === right.analysisRunId
       )
     default:

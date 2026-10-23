@@ -1,12 +1,12 @@
 import{useState}from'react'
 import type{MouseEvent as ReactMouseEvent}from'react'
-import type{SimulationTask,Workspace}from'../types'
+import type{ModelImport,SimulationRun,Workspace}from'../types'
 import WorkspacePanel from'./workspace/WorkspacePanel'
-import TaskHistory from'./tasks/TaskHistory'
-export type WorkbenchTab='workspace'|'tasks'
-export default function ResultPanel({open,overlay,tab,onTab,onClose,workspace,tasks,onSuggest,onTask,onCompare}:{
+import RunHistory from'./runs/RunHistory'
+export type WorkbenchTab='workspace'|'runs'
+export default function ResultPanel({open,overlay,tab,onTab,onClose,sessionId,workspace,imports,runs,onReload,notify,onRun}:{
   open:boolean;overlay:boolean;tab:WorkbenchTab;onTab:(tab:WorkbenchTab)=>void;onClose:()=>void
-  workspace?:Workspace;tasks:SimulationTask[];onSuggest:(text:string)=>void;onTask:(id:string)=>void;onCompare:(ids:string[])=>void
+  sessionId:string|null;workspace?:Workspace;imports:ModelImport[];runs:SimulationRun[];onReload:()=>Promise<void>;notify:(text:string)=>void;onRun:(id:string)=>void
 }){
   const[width,setWidth]=useState(400)
   if(!open)return null
@@ -17,8 +17,8 @@ export default function ResultPanel({open,overlay,tab,onTab,onClose,workspace,ta
   const panel=<aside style={overlay?undefined:{width}} className={`${overlay?'fixed inset-y-0 right-0 z-40 w-[min(92vw,430px)] shadow-2xl':'relative'} flex shrink-0 flex-col border-l bg-slate-50`}>
     {!overlay&&<button aria-label="调整工作台宽度" onMouseDown={startResize} className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize"/>}
     <header className="flex h-12 items-center border-b bg-white px-2"><button onClick={()=>onTab('workspace')} className={`px-3 py-2 text-sm ${tab==='workspace'?'text-brand-600':''}`}>模型工作区</button>
-      <button onClick={()=>onTab('tasks')} className={`px-3 py-2 text-sm ${tab==='tasks'?'text-brand-600':''}`}>仿真历史</button><button aria-label="关闭结果面板" onClick={onClose} className="ml-auto px-3">×</button></header>
-    <div className="flex-1 overflow-auto">{tab==='workspace'?<WorkspacePanel workspace={workspace} onSuggest={onSuggest}/>:<TaskHistory tasks={tasks} onOpen={onTask} onCompare={onCompare}/>}</div>
+      <button onClick={()=>onTab('runs')} className={`px-3 py-2 text-sm ${tab==='runs'?'text-brand-600':''}`}>运行记录</button><button aria-label="关闭结果面板" onClick={onClose} className="ml-auto px-3">×</button></header>
+    <div className="flex-1 overflow-auto">{tab==='workspace'?<WorkspacePanel sessionId={sessionId} workspace={workspace} imports={imports} onReload={onReload} notify={notify}/>:<RunHistory runs={runs} onOpen={onRun}/>}</div>
   </aside>
   return <>{overlay&&<button className="fixed inset-0 z-30 bg-black/30" onClick={onClose} aria-label="关闭工作台"/>}{panel}</>
 }

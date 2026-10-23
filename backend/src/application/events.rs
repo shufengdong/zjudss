@@ -20,7 +20,6 @@ pub const MESSAGE_TYPES: &[&str] = &[
     "model-status",
     "comparison",
     "script",
-    "dataset-deleted",
 ];
 
 /// 毫秒时间戳 → ISO 8601 字符串（前端 `timestamp` 字段用）。
@@ -243,8 +242,8 @@ pub enum AppEvent {
         id: String,
         timestamp: String,
         comparison_id: String,
-        baseline_task_id: String,
-        candidate_task_id: String,
+        baseline_run_id: String,
+        candidate_run_id: String,
         analysis_run_id: String,
         title: String,
         outputs: Vec<ResultOutputRef>,
@@ -254,13 +253,6 @@ pub enum AppEvent {
         id: String,
         timestamp: String,
         script: serde_json::Value,
-    },
-    #[serde(rename = "dataset-deleted", rename_all = "camelCase")]
-    DatasetDeleted {
-        id: String,
-        timestamp: String,
-        dataset_id: String,
-        tombstone: serde_json::Value,
     },
 }
 
@@ -316,8 +308,8 @@ struct ModelStatusPayload {
 #[serde(rename_all = "camelCase")]
 struct ComparisonPayload {
     comparison_id: String,
-    baseline_task_id: String,
-    candidate_task_id: String,
+    baseline_run_id: String,
+    candidate_run_id: String,
     analysis_run_id: String,
     title: String,
     outputs: Vec<ResultOutputRef>,
@@ -325,12 +317,6 @@ struct ComparisonPayload {
 #[derive(Serialize, Deserialize)]
 struct ScriptPayload {
     script: serde_json::Value,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DatasetDeletedPayload {
-    dataset_id: String,
-    tombstone: serde_json::Value,
 }
 
 impl AppEvent {
@@ -409,8 +395,8 @@ impl AppEvent {
                     id,
                     timestamp,
                     comparison_id: p.comparison_id,
-                    baseline_task_id: p.baseline_task_id,
-                    candidate_task_id: p.candidate_task_id,
+                    baseline_run_id: p.baseline_run_id,
+                    candidate_run_id: p.candidate_run_id,
                     analysis_run_id: p.analysis_run_id,
                     title: p.title,
                     outputs: p.outputs,
@@ -422,15 +408,6 @@ impl AppEvent {
                     id,
                     timestamp,
                     script: payload.script,
-                },
-                None => fallback_assistant(id, timestamp, &msg.content),
-            },
-            ("tool", "dataset-deleted") => match parse_payload::<DatasetDeletedPayload>(msg) {
-                Some(payload) => AppEvent::DatasetDeleted {
-                    id,
-                    timestamp,
-                    dataset_id: payload.dataset_id,
-                    tombstone: payload.tombstone,
                 },
                 None => fallback_assistant(id, timestamp, &msg.content),
             },
@@ -448,7 +425,7 @@ impl AppEvent {
             | Self::Attachment { id, .. }
             | Self::ModelStatus { id, .. }
             | Self::Comparison { id, .. } => id,
-            Self::Script { id, .. } | Self::DatasetDeleted { id, .. } => id,
+            Self::Script { id, .. } => id,
         };
         id.parse().ok()
     }
@@ -559,24 +536,6 @@ impl EventWriter {
         .await
     }
 
-    pub async fn dataset_deleted(
-        &self,
-        dataset_id: i32,
-        tombstone: serde_json::Value,
-    ) -> Result<AppEvent, RepoError> {
-        let payload = DatasetDeletedPayload {
-            dataset_id: dataset_id.to_string(),
-            tombstone,
-        };
-        self.emit(
-            "tool",
-            "dataset-deleted",
-            format!("结果数据集 {dataset_id} 已删除"),
-            Some(serde_json::to_value(payload).unwrap_or_default()),
-            None,
-        )
-        .await
-    }
 
     pub async fn tool_call(
         &self,
@@ -680,16 +639,16 @@ impl EventWriter {
     pub async fn comparison(
         &self,
         comparison_id: i32,
-        baseline_task_id: i32,
-        candidate_task_id: i32,
+        baseline_run_id: i32,
+        candidate_run_id: i32,
         analysis_run_id: i32,
         title: &str,
         outputs: Vec<ResultOutputRef>,
     ) -> Result<AppEvent, RepoError> {
         let payload = ComparisonPayload {
             comparison_id: comparison_id.to_string(),
-            baseline_task_id: baseline_task_id.to_string(),
-            candidate_task_id: candidate_task_id.to_string(),
+            baseline_run_id: baseline_run_id.to_string(),
+            candidate_run_id: candidate_run_id.to_string(),
             analysis_run_id: analysis_run_id.to_string(),
             title: title.to_string(),
             outputs,

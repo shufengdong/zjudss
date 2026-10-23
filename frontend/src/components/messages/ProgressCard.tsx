@@ -25,7 +25,7 @@ function StageIcon({ status }: { status: StageStatus }) {
 export default function ProgressCard({ message }: { message: ProgressMessage }) {
   const operationLabel = {
     ingestion: '模型摄取进度',
-    simulation: '仿真进度',
+    run: '运行进度',
     analysis: '结果分析进度',
   }[message.operation.kind]
   return (

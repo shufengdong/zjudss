@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDataset } from './useDataset'
 import { getDataset, getDatasetRows } from '../api/client'
 
-vi.mock('../api/client', () => ({ getDataset: vi.fn(), getDatasetRows: vi.fn() }))
+vi.mock('../api/client', () => ({ getDataset: vi.fn(), getDatasetRows: vi.fn(), deleteDataset:vi.fn() }))
 
 const deferred = <T,>() => {
   let resolve!: (value: T) => void
@@ -11,7 +11,7 @@ const deferred = <T,>() => {
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
   return { promise, resolve, reject }
 }
-const metadata = (id: string) => ({ id, taskId: 't', analysisRunId: null, name: id, rowCount: 2, sizeBytes: 1, columns: [{ name: 'key', dtype: 'Utf8', nullable: false }], views: [] })
+const metadata = (id: string) => ({ id, runId: 'r', analysisRunId: null, name: id, rowCount: 2, sizeBytes: 1, columns: [{ name: 'key', dtype: 'Utf8', nullable: false }], views: [],schemaHash:'h',lineage:[] })
 const page = (id: string, rows: unknown[][], nextCursor: string | null) => ({ datasetId: id, columns: ['key'], rows, nextCursor, diagnostics: {} })
 
 describe('useDataset request ordering', () => {

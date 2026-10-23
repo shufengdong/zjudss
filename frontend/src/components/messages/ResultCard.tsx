@@ -8,7 +8,7 @@ export default function ResultCard({
   message: ResultMessage
   handlers: MessageHandlers
 }) {
-  const producerId = message.taskId ?? message.analysisRunId ?? ''
+  const producerId = message.runId ?? message.analysisRunId ?? ''
   return (
     <div className="mx-4 my-2 max-w-[78%] rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:mx-6">
       <div className="mb-3 flex items-center gap-2">

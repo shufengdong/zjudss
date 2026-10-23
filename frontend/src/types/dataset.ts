@@ -5,8 +5,9 @@ export interface DatasetView {
   id:string; name:string; kind:VisualizationKind; spec:Record<string,unknown>; isDefault:boolean
 }
 export interface DatasetMetadata {
-  id:string; taskId:string|null; analysisRunId:string|null; name:string; rowCount:number
-  sizeBytes:number; columns:ResultColumn[]; views:DatasetView[]
+  id:string; runId:string|null; analysisRunId:string|null; name:string; rowCount:number
+  sizeBytes:number; columns:ResultColumn[]; views:DatasetView[];schemaHash:string
+  lineage:{sourceDatasetId:string;name:string;schema:unknown;schemaHash:string;producer:unknown;deleted:boolean;tombstone?:unknown}[]
 }
 export interface DatasetPage {
   datasetId:string; columns:string[]; rows:unknown[][]; nextCursor:string|null; diagnostics:Record<string,number>

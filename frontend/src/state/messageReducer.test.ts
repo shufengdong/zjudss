@@ -12,14 +12,14 @@ describe('messageReducer', () => {
         ...base,
         id: '1',
         type: 'progress',
-        operation: { kind: 'simulation', id: 'task-7' },
+        operation: { kind: 'run', id: 'run-7' },
         stages: [{ key: 'prepare', label: '准备', status: 'running' }],
       },
       {
         ...base,
         id: '2',
         type: 'progress',
-        operation: { kind: 'simulation', id: 'task-7' },
+        operation: { kind: 'run', id: 'run-7' },
         stages: [{ key: 'prepare', label: '准备', status: 'done' }],
       },
       {

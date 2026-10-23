@@ -221,11 +221,9 @@ async fn deleting_one_result_hides_content_releases_quota_and_keeps_run() {
         )
         .await
         .unwrap();
-    assert!(
-        messages
-            .iter()
-            .any(|message| message.kind == "dataset-deleted")
-    );
+    assert!(messages.iter().any(|message| message.role == "assistant"
+        && message.content.contains("结果数据集")
+        && message.content.contains("已删除")));
 }
 
 #[tokio::test]

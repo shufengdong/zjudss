@@ -343,7 +343,7 @@ impl DatasetService {
             self.events.clone(),
         );
         writer
-            .dataset_deleted(id, tombstone.clone())
+            .assistant(&format!("结果数据集 {id} 已删除"))
             .await
             .map_err(DatasetError::Repository)?;
         Ok(DeletedDatasetDto {

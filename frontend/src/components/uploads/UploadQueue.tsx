@@ -1,4 +1,4 @@
-import type { UploadEntry } from '../../hooks/useIngestion'
+import type { UploadEntry } from '../../hooks/useModelImports'
 export default function UploadQueue({entries}:{entries:UploadEntry[]}){
   if(!entries.length)return null
   return <div className="space-y-1 border-t border-slate-100 px-4 py-2">

@@ -3,8 +3,8 @@ import { useExamples } from '../../hooks/useExamples'
 import { getExample } from '../../api/client'
 import type { ExampleDetail as Detail } from '../../types'
 import ExampleDetail from './ExampleDetail'
-export default function ExampleLibrary({onUse,onClose}:{onUse:(id:string,title:string)=>void;onClose:()=>void}){
-  const [query,setQuery]=useState('');const [detail,setDetail]=useState<Detail|null>(null);const {examples,loading}=useExamples(query)
+export default function ExampleLibrary({onUse,onClose}:{onUse:(id:string,title:string,snapshot:string)=>void;onClose:()=>void}){
+  const [query,setQuery]=useState('');const [detail,setDetail]=useState<Detail|null>(null);const {examples,loading,engineResourceSnapshot}=useExamples(query)
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" role="dialog" aria-label="内置案例库">
     <div className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-2xl bg-white shadow-2xl">
       <div className="flex items-center gap-2 border-b p-4"><h2 className="font-semibold">内置案例库</h2>
@@ -17,7 +17,7 @@ export default function ExampleLibrary({onUse,onClose}:{onUse:(id:string,title:s
           <div className="mt-2 text-[11px] text-slate-400">{item.sourceKind} · {item.studyType} · {item.fileCount} 文件</div>
           <button aria-label={`查看案例“${item.title}”详情`} onClick={()=>void getExample(item.id).then(setDetail)}
             className="mt-3 rounded-lg border px-3 py-1.5 text-xs">查看详情</button>
-          <button aria-label={`使用案例“${item.title}”`} disabled={!item.importable} onClick={()=>onUse(item.id,item.title)}
+          <button aria-label={`使用案例“${item.title}”`} disabled={!item.importable} onClick={()=>onUse(item.id,item.title,engineResourceSnapshot)}
             className="ml-2 mt-3 rounded-lg bg-brand-500 px-3 py-1.5 text-xs text-white disabled:bg-slate-300">使用此案例</button>
         </article>)}
       </div></>}

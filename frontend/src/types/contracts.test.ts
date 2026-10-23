@@ -6,7 +6,7 @@ describe('frontend public enum contracts', () => {
     const values: readonly MessageType[] = MESSAGE_TYPES
     expect(values).toEqual([
       'user', 'assistant', 'tool-call', 'progress',
-      'result', 'attachment', 'model-status', 'comparison',
+      'result', 'attachment', 'model-status', 'comparison', 'script',
     ])
   })
 
