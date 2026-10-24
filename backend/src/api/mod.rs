@@ -269,7 +269,6 @@ impl From<CaseImportError> for ApiError {
                 details: None,
             },
             CaseImportError::ModelImport(error) => error.into(),
-            CaseImportError::Io(error) => Self::internal(error.to_string()),
         }
     }
 }

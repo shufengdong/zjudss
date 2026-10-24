@@ -253,6 +253,83 @@ async fn applying_a_case_rejects_post_publication_mutation_atomically() {
 }
 
 #[tokio::test]
+async fn applying_a_case_rejects_missing_published_file_atomically() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let cookie = app.login_cookie("alice@example.com").await;
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "missing case source", 1)
+        .await
+        .unwrap();
+    let example = app
+        .state
+        .engine_snapshot
+        .examples
+        .iter()
+        .find(|example| backend::application::CaseImportService::is_modelizable(example))
+        .unwrap();
+    let missing = example
+        .files
+        .iter()
+        .find(|file| file.role == "main-rss")
+        .unwrap();
+    std::fs::remove_file(
+        app.state
+            .engine_snapshot
+            .engine_root
+            .join(&missing.source_path),
+    )
+    .unwrap();
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/sessions/{}/draft/example", session.id))
+                .header("cookie", &cookie)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "exampleId": example.id,
+                        "engineResourceSnapshot": app.state.engine_snapshot.id,
+                        "clientImportId": "missing-case-source"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let error: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert_eq!(error["code"], "case_not_modelizable");
+
+    #[derive(QueryableByName)]
+    struct Count {
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        count: i64,
+    }
+    let mut conn = app.pool.get().unwrap();
+    let count = diesel::sql_query(
+        "SELECT count(*) count FROM model_imports WHERE client_import_id='missing-case-source'",
+    )
+    .get_result::<Count>(&mut conn)
+    .unwrap()
+    .count;
+    assert_eq!(count, 0);
+    assert_eq!(
+        std::fs::read_dir(app.state.data_dir.join("staging"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn case_catalog_preserves_directories_and_includes_invalid_leaves() {
     let app = TestApp::spawn().await;
     let alice = app.login_cookie("alice@example.com").await;

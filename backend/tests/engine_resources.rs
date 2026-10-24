@@ -215,6 +215,29 @@ fn bundle_manifest_rejects_duplicate_missing_unsafe_and_hash_mismatch_files() {
     assert!(!serialized.contains(fixture.cwd.to_string_lossy().as_ref()));
 }
 
+#[test]
+fn bundle_manifest_without_a_dss_source_is_not_importable() {
+    let fixture = fixture();
+    let main = b"model = import_dss(\"dss/model.dss\");\n";
+    let model = b"new circuit.demo basekv=12.47\n";
+    let mut manifest = valid_manifest(main, model);
+    manifest["files"] = json!([
+        {"path":"main.rss","role":"main-rss","sha256":hash(main)}
+    ]);
+    let bundle = fixture.dss().join("rssbundle/Invalid/no-dss.rssbundle");
+    write_case(&bundle, &manifest);
+
+    let snapshot = fixture.load();
+    let example = snapshot
+        .examples
+        .iter()
+        .find(|example| example.title == "no-dss")
+        .unwrap();
+
+    assert!(!example.importable);
+    assert_eq!(example.diagnostics, ["model_import_source_missing"]);
+}
+
 #[cfg(unix)]
 #[test]
 fn bundle_manifest_rejects_symlinked_files_without_blocking_other_cases() {

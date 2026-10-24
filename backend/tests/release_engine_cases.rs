@@ -10,6 +10,7 @@ use backend::adapters::{
     ENGINE_CONTRACT_VERSION, EngineConfig, ImportInspectSpec, ImportProfile, ImportSpec,
     NamedInput, ProcessEngine, RunMode, RunSpec, SimEngine,
 };
+use backend::application::CaseImportService;
 use backend::engine_resources::{EngineExample, EngineResourceRegistry};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
@@ -111,6 +112,11 @@ fn import_all_examples(
         if !example.importable {
             continue;
         }
+        assert!(
+            CaseImportService::is_modelizable(example),
+            "release_engine_importable_case_not_modelizable:{}",
+            example.id
+        );
         let scope = root.join(&example.id);
         for file in &example.files {
             copy_file(

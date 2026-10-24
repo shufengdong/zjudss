@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
@@ -15,7 +16,6 @@ pub enum CaseImportError {
     SnapshotMismatch,
     NotModelizable,
     SourceChanged,
-    Io(std::io::Error),
     ModelImport(ModelImportError),
 }
 
@@ -26,7 +26,6 @@ impl std::fmt::Display for CaseImportError {
             Self::SnapshotMismatch => write!(formatter, "引擎资源快照不匹配"),
             Self::NotModelizable => write!(formatter, "案例不能转换为 DataFrame 模型"),
             Self::SourceChanged => write!(formatter, "案例源文件已变化"),
-            Self::Io(error) => write!(formatter, "{error}"),
             Self::ModelImport(error) => write!(formatter, "{error}"),
         }
     }
@@ -93,23 +92,23 @@ impl CaseImportService {
             .manifest
             .as_ref()
             .ok_or(CaseImportError::NotModelizable)?;
-        let mut verified = Vec::with_capacity(example.files.len());
         for source in &example.files {
             let path = safe_snapshot_file(&self.snapshot.engine_root, &source.source_path)?;
-            let bytes = std::fs::read(path).map_err(CaseImportError::Io)?;
-            if format!("{:x}", Sha256::digest(&bytes)) != source.sha256 {
+            let file = std::fs::File::open(path).map_err(|_| CaseImportError::SourceChanged)?;
+            if sha256_reader(file).map_err(|_| CaseImportError::SourceChanged)? != source.sha256 {
                 return Err(CaseImportError::SourceChanged);
             }
-            verified.push((source, bytes));
         }
 
-        let mut files = Vec::with_capacity(verified.len());
-        for (index, (source, bytes)) in verified.into_iter().enumerate() {
+        let mut files = Vec::with_capacity(example.files.len());
+        for (index, source) in example.files.iter().enumerate() {
+            let path = safe_snapshot_file(&self.snapshot.engine_root, &source.source_path)?;
+            let file = std::fs::File::open(path).map_err(|_| CaseImportError::SourceChanged)?;
             let staged = self
                 .model_imports
                 .artifact_store()
                 .stage(
-                    std::io::Cursor::new(bytes),
+                    file,
                     StageLimits {
                         max_bytes: self.max_file_bytes,
                     },
@@ -117,6 +116,9 @@ impl CaseImportService {
                 .map_err(|error| {
                     CaseImportError::ModelImport(ModelImportError::Invalid(error.to_string()))
                 })?;
+            if staged.sha256 != source.sha256 {
+                return Err(CaseImportError::SourceChanged);
+            }
             files.push(UploadFile {
                 client_file_id: format!("case-{index}"),
                 file_name: std::path::Path::new(&source.virtual_path)
@@ -177,16 +179,65 @@ fn safe_snapshot_file(
     for part in std::path::Path::new(&relative).components() {
         current.push(part.as_os_str());
         if std::fs::symlink_metadata(&current)
-            .map_err(CaseImportError::Io)?
+            .map_err(|_| CaseImportError::SourceChanged)?
             .file_type()
             .is_symlink()
         {
             return Err(CaseImportError::SourceChanged);
         }
     }
-    let canonical = current.canonicalize().map_err(CaseImportError::Io)?;
+    let canonical = current
+        .canonicalize()
+        .map_err(|_| CaseImportError::SourceChanged)?;
     if !canonical.starts_with(root) || !canonical.is_file() {
         return Err(CaseImportError::SourceChanged);
     }
     Ok(canonical)
+}
+
+fn sha256_reader(mut reader: impl Read) -> std::io::Result<String> {
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Read};
+
+    struct BoundedReadProbe {
+        remaining: usize,
+        largest_buffer: usize,
+    }
+
+    impl Read for BoundedReadProbe {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.largest_buffer = self.largest_buffer.max(buffer.len());
+            let count = self.remaining.min(buffer.len());
+            buffer[..count].fill(b'x');
+            self.remaining -= count;
+            Ok(count)
+        }
+    }
+
+    #[test]
+    fn hashes_case_sources_in_bounded_chunks() {
+        let mut reader = BoundedReadProbe {
+            remaining: 3 * 1024 * 1024,
+            largest_buffer: 0,
+        };
+
+        let digest = super::sha256_reader(&mut reader).unwrap();
+
+        assert_eq!(digest.len(), 64);
+        assert_eq!(reader.remaining, 0);
+        assert!(reader.largest_buffer <= 64 * 1024);
+    }
 }

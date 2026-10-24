@@ -697,7 +697,44 @@ fn hash_bounded_file(
     max_bytes: u64,
     kind: &str,
 ) -> Result<String, EngineResourceError> {
-    read_bounded_file(path, max_bytes, kind).map(|bytes| hash_bytes(&bytes))
+    hash_bounded_file_with_size(path, max_bytes, kind).map(|(hash, _)| hash)
+}
+
+pub(crate) fn hash_bounded_file_with_size(
+    path: &Path,
+    max_bytes: u64,
+    kind: &str,
+) -> Result<(String, u64), EngineResourceError> {
+    let expected_size = std::fs::metadata(path)
+        .map_err(EngineResourceError::io)?
+        .len();
+    if expected_size > max_bytes {
+        return Err(limit_error(kind));
+    }
+    let mut file = std::fs::File::open(path).map_err(EngineResourceError::io)?;
+    let mut hasher = Sha256::new();
+    let mut size = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer).map_err(EngineResourceError::io)?;
+        if count == 0 {
+            break;
+        }
+        size = size
+            .checked_add(count as u64)
+            .ok_or_else(|| limit_error(kind))?;
+        if size > max_bytes {
+            return Err(limit_error(kind));
+        }
+        hasher.update(&buffer[..count]);
+    }
+    if size != expected_size {
+        return Err(EngineResourceError::new(
+            "engine_resource_changed_during_scan",
+            "resource changed while hashing",
+        ));
+    }
+    Ok((format!("{:x}", hasher.finalize()), size))
 }
 
 pub(crate) fn safe_file(root: &Path, relative: &str) -> Result<PathBuf, EngineResourceError> {
@@ -770,5 +807,25 @@ mod tests {
         file.write_all(&[0]).unwrap();
         let error = read_bounded_file(&path, 1024, "test file").unwrap_err();
         assert_eq!(error.code(), "engine_resource_limit_exceeded");
+    }
+
+    #[test]
+    fn bounded_hash_reports_the_streamed_size_and_digest() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("model.dss");
+        let content = vec![b'x'; 3 * 1024 * 1024];
+        std::fs::write(&path, &content).unwrap();
+
+        let (digest, size) =
+            hash_bounded_file_with_size(&path, content.len() as u64, "test file").unwrap();
+
+        assert_eq!(digest, hash_bytes(&content));
+        assert_eq!(size, content.len() as u64);
+        assert_eq!(
+            hash_bounded_file_with_size(&path, content.len() as u64 - 1, "test file")
+                .unwrap_err()
+                .code(),
+            "engine_resource_limit_exceeded"
+        );
     }
 }

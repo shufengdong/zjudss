@@ -6,7 +6,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::snapshot::{ResourceLimits, SourceFileSpec};
-use super::{EngineResourceError, read_bounded_file, safe_file};
+use super::{EngineResourceError, hash_bounded_file_with_size, read_bounded_file, safe_file};
 
 const SUPPORTED_BUNDLE_SCHEMA_VERSION: u32 = 1;
 const SUPPORTED_BUNDLE_ARTIFACT: &str = "mems.dss-rss-bundle";
@@ -299,15 +299,15 @@ pub(crate) fn load_examples(
                 .max_example_bytes
                 .checked_sub(total)
                 .ok_or_else(|| super::limit_error("example bytes"))?;
-            let data = match read_bounded_file(&path, remaining, "example bytes") {
-                Ok(data) => data,
-                Err(_) => {
-                    diagnostics.push(format!("file_missing_or_unsafe: {}", declared_file.path));
-                    continue;
-                }
-            };
-            total = total.saturating_add(data.len() as u64);
-            let actual_hash = format!("{:x}", Sha256::digest(&data));
+            let (actual_hash, size) =
+                match hash_bounded_file_with_size(&path, remaining, "example bytes") {
+                    Ok(result) => result,
+                    Err(_) => {
+                        diagnostics.push(format!("file_missing_or_unsafe: {}", declared_file.path));
+                        continue;
+                    }
+                };
+            total = total.saturating_add(size);
             tree.update(declared_file.path.as_bytes());
             tree.update(actual_hash.as_bytes());
             if actual_hash != declared_file.sha256 {
@@ -328,6 +328,13 @@ pub(crate) fn load_examples(
         }
         if !entry_found {
             diagnostics.push("entry_not_declared".to_string());
+        }
+        if !manifest
+            .files
+            .iter()
+            .any(|file| file.path.to_ascii_lowercase().ends_with(".dss"))
+        {
+            diagnostics.push("model_import_source_missing".to_string());
         }
         let category_path = category_path(&bundle_path)?;
         examples.push(EngineExample {
