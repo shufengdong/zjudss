@@ -139,10 +139,10 @@ export default function Sidebar({
                       >
                         <button
                           type="button"
-                          aria-label={`打开会话“${sessionTitle(s)}”`}
                           onClick={() => onSelect(s.id)}
                           className="min-w-0 flex-1 cursor-pointer select-none px-2 py-2 text-left"
                         >
+                          <span className="sr-only">打开会话</span>
                           <div className="truncate text-sm text-slate-700">{sessionTitle(s)}</div>
                           <div className="mt-0.5 flex items-center gap-1.5">
                             <span

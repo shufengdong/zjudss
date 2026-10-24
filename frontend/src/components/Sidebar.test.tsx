@@ -35,7 +35,7 @@ describe('Sidebar session deletion', () => {
   it('selects a session from the whole content area without selecting text', () => {
     const { onSelect } = renderSidebar()
 
-    const sessionButton = screen.getByRole('button', { name: '打开会话“馈线短路分析”' })
+    const sessionButton = screen.getByRole('button', { name: /打开会话.*馈线短路分析/ })
     expect(sessionButton).toContainElement(screen.getByText('已完成'))
     expect(sessionButton).toHaveClass('cursor-pointer', 'select-none')
     fireEvent.click(screen.getByText('已完成'))
@@ -58,7 +58,7 @@ describe('Sidebar session deletion', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: '打开会话“新会话”' })).toHaveTextContent('新会话')
+    expect(screen.getByRole('button', { name: /打开会话.*新会话/ })).toHaveTextContent('新会话')
   })
 
   it('requires explicit confirmation and explains the irreversible impact', () => {

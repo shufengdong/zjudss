@@ -46,6 +46,7 @@ test('an empty account bootstraps a session before message, upload, and example 
 
   await page.getByRole('button', { name: '案例库' }).click()
   await page.getByRole('textbox', { name: '搜索内置案例' }).fill('E2E')
+  await page.getByRole('button', { name: 'E2E demo', exact: true }).click()
   await page.getByRole('button', { name: '使用案例“E2E demo”' }).click()
   await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
 
@@ -115,11 +116,11 @@ test('session CRUD renders optimistic user, tool-call, and assistant messages', 
 
   const other = await createSession(api, '切换目标')
   await page.reload()
-  await page.getByRole('button', { name: '打开会话“馈线恢复测试”' }).click()
+  await page.getByRole('button', { name: /打开会话.*馈线恢复测试/ }).click()
   await expect(page.getByRole('heading', { name: '馈线恢复测试' })).toBeVisible()
-  await page.getByRole('button', { name: '打开会话“切换目标”' }).getByText('已完成').click()
+  await page.getByRole('button', { name: /打开会话.*切换目标/ }).getByText('已完成').click()
   await expect(page.getByRole('heading', { name: '切换目标' })).toBeVisible()
-  await page.getByRole('button', { name: '打开会话“馈线恢复测试”' }).click()
+  await page.getByRole('button', { name: /打开会话.*馈线恢复测试/ }).click()
 
   await control.enqueueLlm({
     id: 'browser-message-types',
@@ -155,7 +156,7 @@ test('session CRUD renders optimistic user, tool-call, and assistant messages', 
   await page.getByRole('button', { name: '打开“切换目标”的会话操作' }).click()
   await page.getByRole('button', { name: '删除“切换目标”' }).click()
   await page.getByRole('button', { name: '确认删除' }).click()
-  await expect(page.getByRole('button', { name: '打开会话“切换目标”' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /打开会话.*切换目标/ })).toHaveCount(0)
   expect((await messages(api, created.id)).messages.map((item) => item.type)).toEqual(
     expect.arrayContaining(['user', 'tool-call', 'assistant']),
   )

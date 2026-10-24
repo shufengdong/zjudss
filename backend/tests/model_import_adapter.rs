@@ -86,8 +86,9 @@ async fn static_import_emits_all_canonical_snappy_tables_including_zero_rows() {
             .iter()
             .any(|dataset| dataset.metadata.row_count == 0)
     );
+    let canonical_root = root.path().canonicalize().unwrap();
     assert!(imported.dataframes.iter().all(|dataset| {
-        dataset.path.starts_with(root.path())
+        dataset.path.starts_with(&canonical_root)
             && dataset.path.extension() == Some("parquet".as_ref())
     }));
 }

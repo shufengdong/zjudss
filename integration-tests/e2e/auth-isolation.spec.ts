@@ -67,7 +67,7 @@ test('login persists across refresh and logout removes stale user state', async 
   await createSession(alice.api, 'Alice 不应泄漏')
   await alice.page.goto('/')
   await expect(alice.page.getByText('Alice', { exact: true })).toBeVisible()
-  await expect(alice.page.getByRole('button', { name: '打开会话“Alice 不应泄漏”' })).toBeVisible()
+  await expect(alice.page.getByRole('button', { name: /打开会话.*Alice 不应泄漏/ })).toBeVisible()
   await alice.page.reload()
   await expect(alice.page.getByText('Alice', { exact: true })).toBeVisible()
   await alice.page.goto('/?history-check=1')
