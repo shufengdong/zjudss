@@ -25,7 +25,8 @@ impl Tool for InspectExampleTool {
     type Output = Value;
     type Error = DomainToolError;
     fn description(&self) -> String {
-        "按稳定 exampleId 查看案例摘要、验证状态和资源要求；不接受路径。".into()
+        "按稳定 exampleId 查看案例目录、规范 manifest、声明文件角色与验证诊断；不接受物理路径。"
+            .into()
     }
     fn parameters(&self) -> Value {
         object_schema(json!({"example_id":{"type":"string"}}), &["example_id"])
@@ -39,7 +40,34 @@ impl Tool for InspectExampleTool {
             .examples
             .iter()
             .find(|e| e.id == args.example_id)
-            .map(|e| json!({"snapshotId":self.services.engine_snapshot.id,"example":e}))
+            .map(|example| {
+                let files = example
+                    .files
+                    .iter()
+                    .map(|file| {
+                        json!({
+                            "path": file.virtual_path,
+                            "role": file.role,
+                            "sha256": file.sha256,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                json!({
+                    "snapshotId": self.services.engine_snapshot.id,
+                    "example": {
+                        "exampleId": example.id,
+                        "title": example.title,
+                        "categoryPath": example.category_path,
+                        "bundlePath": example.bundle_path,
+                        "entryPath": example.entry_path,
+                        "manifest": example.manifest,
+                        "files": files,
+                        "treeHash": example.tree_hash,
+                        "importable": example.importable,
+                        "diagnostics": example.diagnostics,
+                    }
+                })
+            })
             .ok_or_else(|| DomainToolError::new("example_not_found", "未知 exampleId"))
     }
 }
