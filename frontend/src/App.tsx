@@ -12,6 +12,7 @@ import{AUTHENTICATION_REQUIRED_EVENT,authReducer,initialAuthState,preferenceKey}
 const localId=()=>`local-user-${Date.now()}-${Math.random()}`
 function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
   const[sessions,setSessions]=useState<Session[]>([]),[selectedId,setSelectedId]=useState<string|null>(null)
+  const[sessionLoadState,setSessionLoadState]=useState<'loading'|'ready'|'error'>('loading'),[sessionLoadAttempt,setSessionLoadAttempt]=useState(0)
   const[draft,setDraft]=useState(''),[sidebarCollapsed,setSidebarCollapsed]=useState(false),[panelOpen,setPanelOpen]=useState(true)
   const[tab,setTab]=useState<WorkbenchTab>('workspace'),[datasetId,setDatasetId]=useState<string|null>(null),[comparisonId,setComparisonId]=useState<string|null>(null)
   const[examplesOpen,setExamplesOpen]=useState(false),[toast,setToast]=useState<string|null>(null)
@@ -23,13 +24,18 @@ function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
   const runs=useRunHistory(selectedId,feed?.messages.length??0),usage=useStorageUsage(feed?.messages.length??0)
   const select=useCallback((id:string)=>{setSelectedId(id);setDatasetId(null);setComparisonId(null);if(isNarrow)setSidebarCollapsed(true);localStorage.setItem(preferenceKey(user.id),id)},[user.id,isNarrow])
   useEffect(()=>{if(isNarrow){setSidebarCollapsed(true);setPanelOpen(false)}},[isNarrow])
-  useEffect(()=>{let live=true;void listSessions().then(list=>{if(!live)return;setSessions(list)
-    const remembered=localStorage.getItem(preferenceKey(user.id)),next=list.some(s=>s.id===remembered)?remembered:list[0]?.id??null;if(next)setSelectedId(next)
-  }).catch(e=>notify(e instanceof Error?e.message:'初始化失败'));return()=>{live=false}},[notify])
+  useEffect(()=>{let live=true;setSessionLoadState('loading');void listSessions().then(async list=>{if(!live)return
+    const available=list.length===0?[await createSession()]:list;if(!live)return
+    setSessions(available);const remembered=localStorage.getItem(preferenceKey(user.id)),next=available.some(s=>s.id===remembered)?remembered!:available[0].id
+    setSelectedId(next);localStorage.setItem(preferenceKey(user.id),next);setSessionLoadState('ready')
+  }).catch(e=>{if(live){setSessionLoadState('error');notify(e instanceof Error?e.message:'会话初始化失败')}});return()=>{live=false}},[notify,sessionLoadAttempt,user.id])
   useEffect(()=>{const messages=feed?.messages??[];if(messages.some(message=>message.type==='model-status')&&selectedId)void workspaceState.reload(selectedId)},[feed?.messages,selectedId,workspaceState.reload])
   const newSession=useCallback(async()=>{try{const value=await createSession();setSessions(v=>[value,...v]);select(value.id)}catch(e){notify(e instanceof Error?e.message:'新建失败')}},[notify,select])
   const rename=async(id:string,title:string)=>{try{const value=await renameSessionApi(id,title);setSessions(v=>v.map(s=>s.id===id?value:s))}catch(e){notify(e instanceof Error?e.message:'重命名失败')}}
-  const removeSession=async(id:string)=>{try{await deleteSessionApi(id);const rest=sessions.filter(s=>s.id!==id);setSessions(rest);if(selectedId===id)setSelectedId(rest[0]?.id??null)}catch(e){notify(e instanceof Error?e.message:'删除失败')}}
+  const removeSession=async(id:string)=>{try{await deleteSessionApi(id);const rest=sessions.filter(s=>s.id!==id)
+    if(rest.length===0){setSessions([]);setSelectedId(null);setSessionLoadState('loading');try{const replacement=await createSession();setSessions([replacement]);select(replacement.id);setSessionLoadState('ready')}catch(e){setSessionLoadState('error');notify(e instanceof Error?e.message:'会话初始化失败')}return}
+    setSessions(rest);if(selectedId===id)select(rest[0].id)
+  }catch(e){notify(e instanceof Error?e.message:'删除失败')}}
   const sendText=useCallback((text:string)=>{
     const content=text.trim();if(!content||!selectedId)return
     const optimistic:Message={id:localId(),type:'user',timestamp:new Date().toISOString(),content};add(selectedId,optimistic);setDraft('')
@@ -38,6 +44,9 @@ function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
   const runScript=useCallback(async(script:Extract<Message,{type:'script'}>['script'])=>{const active=workspaceState.workspace?.active;if(!active){notify('请先生成或激活模型版本');return}try{await createRun(script.id,active.id,crypto.randomUUID?.()??`${Date.now()}-${Math.random()}`);notify('运行已提交')}catch(error){if(error instanceof ApiError&&error.code==='active_model_changed')await reloadWorkspace();throw error}},[workspaceState.workspace?.active?.id,notify,reloadWorkspace])
   const handlers:MessageHandlers=useMemo(()=>({onOpenDataset:setDatasetId,onOpenComparison:setComparisonId,onRunScript:runScript,activeVersionId:workspaceState.workspace?.active?.id??null,notify}),[notify,runScript,workspaceState.workspace?.active?.id])
   const openRun=async(id:string)=>{try{const datasets=await listRunDatasets(id);if(datasets[0])setDatasetId(datasets[0].id);else notify('该运行暂无结果数据集')}catch(e){notify(e instanceof Error?e.message:'结果加载失败')}}
+  if(sessionLoadState!=='ready')return <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 text-center text-sm text-slate-600">
+    {sessionLoadState==='loading'?<p>正在准备会话…</p>:<div role="alert" className="rounded-xl border border-red-200 bg-white p-6 shadow-sm"><p className="text-red-700">会话初始化失败，请重试</p><div className="mt-4 flex justify-center gap-2"><button type="button" onClick={()=>setSessionLoadAttempt(value=>value+1)} className="rounded-lg bg-brand-500 px-3 py-1.5 text-white">重试</button><button type="button" onClick={onLogout} className="rounded-lg border px-3 py-1.5">退出登录</button></div></div>}
+  </main>
   const title=sessions.find(s=>s.id===selectedId)?.title??'配电网仿真智能体'
   return <div className="flex h-screen w-full overflow-hidden">
     {isNarrow&&!sidebarCollapsed&&<button className="fixed inset-0 z-30 bg-black/30" aria-label="关闭历史侧栏" onClick={()=>setSidebarCollapsed(true)}/>}

@@ -128,8 +128,14 @@
   tests:
     - runner: playwright
       file: integration-tests/e2e/session-recovery.spec.ts
+      name: an empty account bootstraps a session before message, upload, and example actions
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
+      name: session bootstrap blocks primary actions and provides a persistent retry
+    - runner: playwright
+      file: integration-tests/e2e/session-recovery.spec.ts
       name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions: [session CRUD is durable, only whole sessions are deleted]
+  assertions: [empty accounts bootstrap a selected session, primary actions are unavailable until ready, bootstrap failures offer retry, deleting the last session creates a replacement, primary actions are not silent no-ops, session CRUD is durable, only whole sessions are deleted]
   fixtures: [fixed user seed]
   contracts:
     - "route:GET /api/sessions"

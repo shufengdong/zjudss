@@ -1,4 +1,5 @@
 import type { APIRequestContext } from '@playwright/test'
+import { resolve } from 'node:path'
 import { test, expect } from './fixtures'
 import { readEvent } from './helpers/events'
 import { restartBackend } from './helpers/server'
@@ -15,6 +16,86 @@ async function messages(api: APIRequestContext, sessionId: string) {
   return response.json() as Promise<{ messages: Array<{ id: string; type: string; content?: string }> }>
 }
 
+test('an empty account bootstraps a session before message, upload, and example actions', async ({ appPage, control }) => {
+  const { page, api } = await appPage({ subject: 'empty-session@example.com' })
+  const createResponse = page.waitForResponse((response) =>
+    response.url().endsWith('/api/sessions') && response.request().method() === 'POST', { timeout: 10_000 })
+  await page.goto('/')
+  const createdResponse = await createResponse
+  expect(createdResponse.status()).toBe(201)
+  const created = await createdResponse.json() as { id: string }
+  await expect.poll(async () => {
+    const sessions = (await (await api.get('/api/sessions')).json()).sessions as Array<{ id: string }>
+    return sessions.map(session => session.id)
+  }).toEqual([created.id])
+
+  await control.enqueueLlm({
+    id: 'empty-session-message',
+    expectedPrompt: '检查空账户会话',
+    turns: [{ kind: 'text', text: '空账户会话已就绪' }],
+  })
+  await page.getByRole('textbox', { name: '消息' }).fill('检查空账户会话')
+  await page.getByRole('button', { name: '发送消息' }).click()
+  await expect(page.getByText('空账户会话已就绪', { exact: true })).toBeVisible()
+
+  await page.locator('input[type=file]').first().setInputFiles(
+    resolve(process.cwd(), '../integration-tests/fixtures/uploads/rss/replacement.rss'),
+  )
+  await expect(page.getByRole('article', { name: '脚本 replacement.rss' })).toBeVisible()
+
+  await page.getByRole('button', { name: '案例库' }).click()
+  await page.getByRole('textbox', { name: '搜索内置案例' }).fill('E2E')
+  await page.getByRole('button', { name: '使用案例“E2E demo”' }).click()
+  await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
+
+  const deleted = page.waitForResponse((response) =>
+    response.url().endsWith(`/api/sessions/${created.id}`) && response.request().method() === 'DELETE')
+  const replacement = page.waitForResponse((response) =>
+    response.url().endsWith('/api/sessions') && response.request().method() === 'POST', { timeout: 10_000 })
+  await page.getByRole('button', { name: '打开“未命名”的会话操作' }).click()
+  await page.getByRole('button', { name: '删除“未命名”' }).click()
+  expect((await deleted).status()).toBe(204)
+  const replacementResponse = await replacement
+  expect(replacementResponse.status()).toBe(201)
+  const replacementSession = await replacementResponse.json() as { id: string }
+  await expect.poll(async () => {
+    const sessions = (await (await api.get('/api/sessions')).json()).sessions as Array<{ id: string }>
+    return sessions.map(session => session.id)
+  }).toEqual([replacementSession.id])
+
+  await control.enqueueLlm({
+    id: 'replacement-session-message',
+    expectedPrompt: '检查替代会话',
+    turns: [{ kind: 'text', text: '替代会话已就绪' }],
+  })
+  await page.getByRole('textbox', { name: '消息' }).fill('检查替代会话')
+  await page.getByRole('button', { name: '发送消息' }).click()
+  await expect(page.getByText('替代会话已就绪', { exact: true })).toBeVisible()
+})
+
+test('session bootstrap blocks primary actions and provides a persistent retry', async ({ appPage }) => {
+  const { page } = await appPage({ subject: 'bootstrap-error@example.com' })
+  let release!: () => void
+  const gate = new Promise<void>(resolveGate => { release = resolveGate })
+  let allowSuccess = false
+  await page.route('**/api/sessions', async route => {
+    if (route.request().method() === 'GET' && !allowSuccess) {
+      await gate
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: '会话初始化失败' }) })
+      return
+    }
+    await route.continue()
+  })
+  await page.goto('/')
+  await expect(page.getByText('正在准备会话…', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '案例库' })).toHaveCount(0)
+  release()
+  await expect(page.getByRole('alert')).toContainText('会话初始化失败')
+  allowSuccess = true
+  await page.getByRole('button', { name: '重试' }).click()
+  await expect(page.getByRole('textbox', { name: '消息' })).toBeVisible()
+})
+
 test('session CRUD renders optimistic user, tool-call, and assistant messages', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'session-crud@example.com', tenant: 'grid-a' })
   expect((await api.get('/health')).status()).toBe(200)
@@ -24,7 +105,7 @@ test('session CRUD renders optimistic user, tool-call, and assistant messages', 
   const createResponse = page.waitForResponse((response) => response.url().endsWith('/api/sessions') && response.request().method() === 'POST')
   await page.getByRole('button', { name: '新建仿真' }).click()
   const created = await (await createResponse).json() as { id: string }
-  await page.getByRole('button', { name: '打开“未命名”的会话操作' }).click()
+  await page.getByRole('button', { name: '打开“未命名”的会话操作' }).first().click()
   await page.getByRole('button', { name: '重命名“未命名”' }).click()
   await page.getByRole('textbox', { name: '重命名“”' }).fill('馈线恢复测试')
   await page.getByRole('textbox', { name: '重命名“”' }).press('Enter')

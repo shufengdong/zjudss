@@ -32,8 +32,10 @@ ECharts option。比较和物化视图通过稳定 ID 打开。
 ## State and recovery
 
 消息 state 以 session 分区，先建立 SSE 再读快照，按稳定 message ID 去重。临时 user 消息在 POST 成功后
-替换成服务端 ID。workspace、imports、scripts、runs 和 usage 独立加载；切换 session 时清理导入队列，避免
-旧会话卡片泄漏。401 统一进入登录页，SSE resync 触发有界重载。
+替换成服务端 ID。用户没有任何会话时，首次进入自动创建并选中一个空会话；删除最后一个会话后也建立替代会话，保证发送、上传和案例应用都有明确归属。
+会话准备期间不渲染上述主操作；初始化失败显示持久的重试和退出入口，不保留可点击的无效控件。
+workspace、imports、scripts、runs 和 usage 独立加载；切换 session 时清理导入队列，避免旧会话卡片泄漏。401 统一进入登录页，
+SSE resync 触发有界重载。
 
 ## Accessibility
 

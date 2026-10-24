@@ -20,7 +20,8 @@ EXAMPLE、AGENT、SCRIPT、RUN、DATASET、ANALYSIS、VIEW、COMPARE、HISTORY�
 
 ## Deterministic journeys
 
-浏览器套件验证固定用户登录/退出/重置；会话 CRUD、分页和 SSE；DSS/bundle/ZIP/表格导入；案例确认；draft
+浏览器套件验证固定用户登录/退出/重置；空账户自动建立会话后的发送、上传和案例应用，以及初始化失败重试和删除最后会话后的替代会话；会话 CRUD、分页和 SSE；
+DSS/bundle/ZIP/表格导入；案例确认；draft
 发布、active race、历史激活和版本删除；脚本预览/全文/复制与 Agent 只创建；按钮运行、多结果与单结果删除；
 分析、视图、比较在来源删除后继续读取；两用户隔离；重启收敛与 FTS 局部失败；配额、恶意归档和响应式无障碍。
 

@@ -14,6 +14,8 @@ narrow@example.com,Narrow Test
 rss-replace@example.com,RSS Replacement Test
 history@example.com,History Test
 session-crud@example.com,Session Test
+empty-session@example.com,Empty Session Test
+bootstrap-error@example.com,Bootstrap Error Test
 sse@example.com,SSE Test
 studies@example.com,Study Test
 quota@example.com,Quota Test

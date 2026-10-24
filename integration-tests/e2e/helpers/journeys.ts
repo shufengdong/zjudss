@@ -5,6 +5,10 @@ import type { ControlClient } from './control'
 
 export async function createSessionFromPage(page: Page, title: string) {
   await page.goto('/')
+  await expect.poll(async () => {
+    const response = await page.request.get('/api/sessions')
+    return ((await response.json()) as { sessions: unknown[] }).sessions.length
+  }).toBeGreaterThan(0)
   const newSession = page.getByRole('button', { name: '新建仿真' })
   if (!await newSession.isVisible()) {
     await page.getByRole('button', { name: '展开历史侧栏' }).click()
@@ -16,7 +20,7 @@ export async function createSessionFromPage(page: Page, title: string) {
   const response = await responsePromise
   expect(response.status()).toBe(201)
   const sessionId = (await response.json()).id as string
-  const sessionMenu = page.getByRole('button', { name: '打开“未命名”的会话操作' })
+  const sessionMenu = page.getByRole('button', { name: '打开“未命名”的会话操作' }).first()
   if (!await sessionMenu.isVisible()) {
     await page.getByRole('button', { name: '展开历史侧栏' }).click()
     await expect(sessionMenu).toBeVisible()

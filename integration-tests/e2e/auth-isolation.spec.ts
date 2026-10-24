@@ -17,8 +17,12 @@ test('two users cannot enumerate or guess each other session, message, SSE, run,
 
   const aliceList = await alice.api.get('/api/sessions')
   const bobList = await bob.api.get('/api/sessions')
-  expect((await aliceList.json()).sessions.map((session: { id: string }) => session.id)).toEqual([aliceSessionId])
-  expect((await bobList.json()).sessions.map((session: { id: string }) => session.id)).toEqual([bobSession.id])
+  const aliceSessionIds = (await aliceList.json()).sessions.map((session: { id: string }) => session.id)
+  const bobSessionIds = (await bobList.json()).sessions.map((session: { id: string }) => session.id)
+  expect(aliceSessionIds).toContain(aliceSessionId)
+  expect(aliceSessionIds).not.toContain(bobSession.id)
+  expect(bobSessionIds).toEqual([bobSession.id])
+  expect(bobSessionIds).not.toContain(aliceSessionId)
 
   const { run } = await uploadScriptAndRun({
     page: alice.page, api: alice.api, control, sessionId: aliceSessionId,
