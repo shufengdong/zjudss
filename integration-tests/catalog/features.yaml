@@ -404,11 +404,14 @@
   tests:
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
+      name: model import stays a draft until publish and a script runs only after its explicit button
+    - runner: playwright
+      file: integration-tests/e2e/v3-workflows.spec.ts
       name: one result can be deleted without deleting its run or sibling result
     - runner: rust
       file: backend/src/application/datasets.rs
       name: utf8_view_values_are_returned_as_json_strings
-  assertions: [metadata rows and download are readable, Arrow Utf8View values page as JSON strings, deleting one result keeps siblings and run]
+  assertions: [metadata rows and download are readable, dataset details remain centered across content widths, Arrow Utf8View values page as JSON strings, deleting one result keeps siblings and run]
   fixtures: [multi-result run]
   contracts:
     - "route:GET /api/datasets/{id}"

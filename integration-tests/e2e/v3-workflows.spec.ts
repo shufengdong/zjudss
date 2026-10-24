@@ -37,6 +37,14 @@ test('model import stays a draft until publish and a script runs only after its 
   expect(run.modelVersionId).toBe(versionId)
   const datasets = (await (await api.get(`/api/runs/${run.id}/datasets`)).json()).datasets
   expect(datasets.map((dataset: any) => dataset.name).sort()).toEqual(['loss', 'voltage'])
+
+  await page.getByRole('button', { name: '查看 voltage' }).click()
+  const datasetDialog = page.getByRole('button', { name: '关闭数据集' }).locator('xpath=../../..')
+  const dialogBox = await datasetDialog.boundingBox()
+  const viewport = page.viewportSize()
+  expect(dialogBox).not.toBeNull()
+  expect(viewport).not.toBeNull()
+  expect(Math.abs(dialogBox!.x + dialogBox!.width / 2 - viewport!.width / 2)).toBeLessThanOrEqual(2)
 })
 
 test('one result can be deleted without deleting its run or sibling result', async ({ appPage, control }) => {
