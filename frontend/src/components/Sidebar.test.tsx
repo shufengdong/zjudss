@@ -31,6 +31,23 @@ function openDeleteConfirmation() {
 }
 
 describe('Sidebar session deletion', () => {
+  it('shows a meaningful title for legacy sessions with an empty title', () => {
+    render(
+      <Sidebar
+        sessions={[{ ...session, title: '' }]}
+        selectedId={session.id}
+        collapsed={false}
+        onSelect={vi.fn()}
+        onNew={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onToggleCollapse={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: '打开会话“新会话”' })).toHaveTextContent('新会话')
+  })
+
   it('requires explicit confirmation and explains the irreversible impact', () => {
     const onDelete = renderSidebar()
 

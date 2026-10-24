@@ -52,8 +52,8 @@ test('an empty account bootstraps a session before message, upload, and example 
     response.url().endsWith(`/api/sessions/${created.id}`) && response.request().method() === 'DELETE')
   const replacement = page.waitForResponse((response) =>
     response.url().endsWith('/api/sessions') && response.request().method() === 'POST', { timeout: 10_000 })
-  await page.getByRole('button', { name: '打开“未命名”的会话操作' }).click()
-  await page.getByRole('button', { name: '删除“未命名”' }).click()
+  await page.getByRole('button', { name: '打开“新会话”的会话操作' }).click()
+  await page.getByRole('button', { name: '删除“新会话”' }).click()
   await page.getByRole('button', { name: '确认删除' }).click()
   expect((await deleted).status()).toBe(204)
   const replacementResponse = await replacement
@@ -106,10 +106,10 @@ test('session CRUD renders optimistic user, tool-call, and assistant messages', 
   const createResponse = page.waitForResponse((response) => response.url().endsWith('/api/sessions') && response.request().method() === 'POST')
   await page.getByRole('button', { name: '新建仿真' }).click()
   const created = await (await createResponse).json() as { id: string }
-  await page.getByRole('button', { name: '打开“未命名”的会话操作' }).first().click()
-  await page.getByRole('button', { name: '重命名“未命名”' }).click()
-  await page.getByRole('textbox', { name: '重命名“”' }).fill('馈线恢复测试')
-  await page.getByRole('textbox', { name: '重命名“”' }).press('Enter')
+  await page.getByRole('button', { name: '打开“新会话”的会话操作' }).first().click()
+  await page.getByRole('button', { name: '重命名“新会话”' }).click()
+  await page.getByRole('textbox', { name: '重命名“新会话”' }).fill('馈线恢复测试')
+  await page.getByRole('textbox', { name: '重命名“新会话”' }).press('Enter')
   await expect(page.getByRole('heading', { name: '馈线恢复测试' })).toBeVisible()
 
   const other = await createSession(api, '切换目标')

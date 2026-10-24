@@ -135,7 +135,7 @@
     - runner: playwright
       file: integration-tests/e2e/session-recovery.spec.ts
       name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions: [empty accounts bootstrap a selected session, primary actions are unavailable until ready, bootstrap failures offer retry, whole-session deletion requires explicit confirmation, deleting the last session creates a replacement, primary actions are not silent no-ops, session CRUD is durable, only whole sessions are deleted]
+  assertions: [empty accounts bootstrap a selected session, new sessions use a meaningful default title until the first user message, primary actions are unavailable until ready, bootstrap failures offer retry, whole-session deletion requires explicit confirmation, deleting the last session creates a replacement, primary actions are not silent no-ops, session CRUD is durable, only whole sessions are deleted]
   fixtures: [fixed user seed]
   contracts:
     - "route:GET /api/sessions"

@@ -37,6 +37,8 @@ const STATUS_CONFIG: Record<SessionStatus, { label: string; cls: string; dot: st
   failed: { label: '失败', cls: 'bg-red-50 text-red-600', dot: 'bg-red-500' },
 }
 
+const sessionTitle = (session: Pick<Session, 'title'>) => session.title.trim() || '新会话'
+
 export default function Sidebar({
   sessions,
   selectedId,
@@ -118,7 +120,7 @@ export default function Sidebar({
                   <li key={s.id} className="relative">
                     {editingId === s.id ? (
                       <input
-                        aria-label={`重命名“${s.title}”`}
+                        aria-label={`重命名“${sessionTitle(s)}”`}
                         autoFocus
                         value={draft}
                         onChange={(e) => setDraft(e.target.value)}
@@ -138,10 +140,10 @@ export default function Sidebar({
                         <div className="min-w-0 flex-1">
                           <button
                             type="button"
-                            aria-label={`打开会话“${s.title || '未命名'}”`}
+                            aria-label={`打开会话“${sessionTitle(s)}”`}
                             onClick={() => onSelect(s.id)}
                             className="block w-full truncate text-left text-sm text-slate-700"
-                          >{s.title}</button>
+                          >{sessionTitle(s)}</button>
                           <div className="mt-0.5 flex items-center gap-1.5">
                             <span
                               className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium leading-none ${STATUS_CONFIG[s.status].cls}`}
@@ -158,7 +160,7 @@ export default function Sidebar({
                         </div>
                         <button
                           type="button"
-                          aria-label={`打开“${s.title || '未命名'}”的会话操作`}
+                          aria-label={`打开“${sessionTitle(s)}”的会话操作`}
                           onClick={(e) => {
                             e.stopPropagation()
                             setMenuId(menuId === s.id ? null : s.id)
@@ -182,7 +184,7 @@ export default function Sidebar({
                         <div className="absolute right-2 top-9 z-20 w-28 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
                           <button
                             type="button"
-                            aria-label={`重命名“${s.title || '未命名'}”`}
+                            aria-label={`重命名“${sessionTitle(s)}”`}
                             onClick={() => startRename(s)}
                             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-slate-600 hover:bg-slate-50"
                           >
@@ -191,7 +193,7 @@ export default function Sidebar({
                           </button>
                           <button
                             type="button"
-                            aria-label={`删除“${s.title || '未命名'}”`}
+                            aria-label={`删除“${sessionTitle(s)}”`}
                             onClick={() => {
                               setMenuId(null)
                               setPendingDelete(s)
@@ -228,7 +230,7 @@ export default function Sidebar({
         >
           <h2 id="delete-session-title" className="text-base font-semibold text-slate-900">删除会话</h2>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            确定删除“{pendingDelete.title || '未命名'}”吗？该会话的聊天记录、模型、脚本、仿真运行和结果都会被删除，且无法恢复。
+            确定删除“{sessionTitle(pendingDelete)}”吗？该会话的聊天记录、模型、脚本、仿真运行和结果都会被删除，且无法恢复。
           </p>
           <div className="mt-6 flex justify-end gap-2">
             <button

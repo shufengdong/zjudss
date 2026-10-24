@@ -47,7 +47,7 @@ function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
   if(sessionLoadState!=='ready')return <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 text-center text-sm text-slate-600">
     {sessionLoadState==='loading'?<p>正在准备会话…</p>:<div role="alert" className="rounded-xl border border-red-200 bg-white p-6 shadow-sm"><p className="text-red-700">会话初始化失败，请重试</p><div className="mt-4 flex justify-center gap-2"><button type="button" onClick={()=>setSessionLoadAttempt(value=>value+1)} className="rounded-lg bg-brand-500 px-3 py-1.5 text-white">重试</button><button type="button" onClick={onLogout} className="rounded-lg border px-3 py-1.5">退出登录</button></div></div>}
   </main>
-  const title=sessions.find(s=>s.id===selectedId)?.title??'配电网仿真智能体'
+  const title=sessions.find(s=>s.id===selectedId)?.title.trim()||'新会话'
   return <div className="flex h-screen w-full overflow-hidden">
     {isNarrow&&!sidebarCollapsed&&<button className="fixed inset-0 z-30 bg-black/30" aria-label="关闭历史侧栏" onClick={()=>setSidebarCollapsed(true)}/>}
     {(!isNarrow||!sidebarCollapsed)&&<div className={isNarrow?'fixed inset-y-0 left-0 z-40 shadow-2xl':'h-full'}><HistorySidebar sessions={sessions} selectedId={selectedId} collapsed={sidebarCollapsed} onSelect={select} onNew={()=>void newSession()} onRename={(id,title)=>void rename(id,title)} onDelete={id=>void removeSession(id)} onToggleCollapse={()=>setSidebarCollapsed(v=>!v)} user={user} onLogout={onLogout}/></div>}

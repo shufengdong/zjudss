@@ -19,7 +19,11 @@ impl SessionRepo {
     pub async fn create(&self, user_id: &UserId, title: &str, now_ms: i64) -> RepoResult<Session> {
         let pool = self.pool.clone();
         let user_id = user_id.clone();
-        let title = title.to_string();
+        let title = if title.trim().is_empty() {
+            "新会话".to_string()
+        } else {
+            title.to_string()
+        };
         tokio::task::spawn_blocking(move || -> RepoResult<Session> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.immediate_transaction::<Session, diesel::result::Error, _>(|conn| {

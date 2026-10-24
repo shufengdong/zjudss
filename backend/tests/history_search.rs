@@ -28,6 +28,31 @@ async fn message(app: &TestApp, p: &CurrentUser, session: i32, text: &str, at: i
 }
 
 #[tokio::test]
+async fn default_session_title_is_meaningful_and_first_message_still_replaces_it() {
+    let app = TestApp::spawn().await;
+    let owner = p("instance");
+    let session = app
+        .state
+        .session_repo
+        .create(&owner.id, "  ", 1)
+        .await
+        .unwrap();
+    assert_eq!(session.title, "新会话");
+    assert_eq!(session.title_source, "default");
+
+    message(&app, &owner, session.id, "检查馈线电压", 2).await;
+    let renamed = app
+        .state
+        .session_repo
+        .find(&owner.id, session.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(renamed.title, "检查馈线电压");
+    assert_eq!(renamed.title_source, "auto");
+}
+
+#[tokio::test]
 async fn chinese_substring_short_query_filters_delete_and_scope_are_bounded() {
     let app = TestApp::spawn().await;
     let owner = p("instance");

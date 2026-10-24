@@ -20,7 +20,7 @@ export default function HistorySidebar(props:{
         className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs shadow-sm outline-none focus:border-brand-400"/>
       {hits.length>0&&<div className="mt-1 max-h-64 overflow-auto rounded-lg border border-slate-200 bg-white p-1 shadow-xl">
         {hits.map(hit=><button key={hit.sessionId} onClick={()=>{props.onSelect(hit.sessionId);setQuery('');setHits([])}}
-          aria-label={`打开历史会话“${hit.title || '未命名'}”`}
+          aria-label={`打开历史会话“${hit.title.trim() || '新会话'}”`}
           className="block w-full rounded-md px-2 py-2 text-left hover:bg-slate-50">
           <div className="truncate text-xs font-medium text-slate-700">{hit.title}</div>
           <div className="mt-1 line-clamp-2 text-[11px] text-slate-400">{hit.snippet}</div>
