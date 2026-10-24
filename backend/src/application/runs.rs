@@ -203,7 +203,13 @@ impl RunService {
     }
     async fn execute(&self, user: CurrentUser, id: i32) {
         if let Err(error) = self.execute_inner(&user, id).await {
-            let _ = self
+            let run = self.repo.find(&user.id, id).await.ok();
+            let failed_stage = run
+                .as_ref()
+                .map(|run| run.stage.clone())
+                .unwrap_or_else(|| "run".to_string());
+            eprintln!("[run] failed id={id}, stage={failed_stage}: {error}");
+            let failed = self
                 .repo
                 .fail(
                     &user.id,
@@ -214,6 +220,25 @@ impl RunService {
                     now_ms(),
                 )
                 .await;
+            if failed.is_ok() {
+                if let Some(run) = run {
+                    let writer = EventWriter::new(
+                        user.id.clone(),
+                        run.session_id,
+                        self.messages.clone(),
+                        self.events.clone(),
+                    );
+                    let _ = writer
+                        .progress(
+                            OperationRef {
+                                kind: OperationKind::Run,
+                                id: id.to_string(),
+                            },
+                            run_failed_stages(&failed_stage),
+                        )
+                        .await;
+                }
+            }
         }
     }
     async fn execute_inner(&self, user: &CurrentUser, id: i32) -> Result<(), RunError> {
@@ -402,6 +427,18 @@ fn run_stages(active: &str) -> Vec<Stage> {
         },
     })
     .collect()
+}
+
+fn run_failed_stages(active: &str) -> Vec<Stage> {
+    run_stages(active)
+        .into_iter()
+        .map(|mut stage| {
+            if matches!(stage.status, StageStatus::Running) {
+                stage.status = StageStatus::Failed;
+            }
+            stage
+        })
+        .collect()
 }
 
 fn run_output_ref(dataset: &RunDataset) -> ResultOutputRef {

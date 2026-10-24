@@ -11,6 +11,9 @@ use serde_json::{Value, json};
 use std::io::Cursor;
 use tower::ServiceExt;
 
+#[cfg(feature = "e2e-test")]
+use backend::testing::{EngineScenario, ScenarioEngine};
+
 async fn setup(app: &TestApp) -> (backend::auth::CurrentUser, String, i32, String, String) {
     let user = common::test_user("alice@example.com");
     let cookie = app.login_cookie("alice@example.com").await;
@@ -127,6 +130,73 @@ async fn post_run(
         )
         .await
         .unwrap()
+}
+
+#[cfg(feature = "e2e-test")]
+#[tokio::test]
+async fn failed_run_publishes_a_terminal_failed_progress_event() {
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::RunFailure);
+    let app = TestApp::spawn_with_engine(std::sync::Arc::new(engine)).await;
+    let (user, cookie, session_id, version_id, script_id) = setup(&app).await;
+    let response = post_run(&app, &cookie, &script_id, &version_id, "failed-run").await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    let run_id = value["run"]["id"].as_str().unwrap().parse::<i32>().unwrap();
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let run = app.state.run_service.find(&user, run_id).await.unwrap();
+            if run.status == "failed" {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let progress = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let messages = app
+                .state
+                .message_repo
+                .list_by_session(&user.id, session_id)
+                .await
+                .unwrap();
+            let progress: Vec<Value> = messages
+                .iter()
+                .filter(|message| message.run_id == Some(run_id) && message.kind == "progress")
+                .map(|message| {
+                    serde_json::from_str(message.payload_json.as_deref().unwrap()).unwrap()
+                })
+                .collect();
+            if progress.last().is_some_and(|payload| {
+                payload["stages"]
+                    .as_array()
+                    .is_some_and(|stages| stages.iter().any(|stage| stage["status"] == "failed"))
+            }) {
+                break progress;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(progress.len(), 3);
+    assert_eq!(
+        progress.last().unwrap()["operation"]["id"],
+        run_id.to_string()
+    );
+    assert!(
+        progress.last().unwrap()["stages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|stage| stage["key"] == "run" && stage["status"] == "failed")
+    );
 }
 
 #[tokio::test]

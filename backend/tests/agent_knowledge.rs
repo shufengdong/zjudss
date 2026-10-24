@@ -57,6 +57,9 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     }
     assert_eq!(knowledge.skill_index().count(), 6);
     assert!(knowledge.skill("result-analysis").is_some());
+    let rss_generation = &knowledge.skill("rss-generation").unwrap().content;
+    assert!(rss_generation.contains("终端输出必须是 DataFrame"));
+    assert!(rss_generation.contains("未被后续节点消费的纯标量"));
     assert!(!knowledge.system_prompt.contains("/Users/"));
     assert!(!knowledge.system_prompt.contains("TENSOREVAL_CWD"));
     assert!(!knowledge.system_prompt.contains("p_nom"));
