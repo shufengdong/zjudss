@@ -2,14 +2,12 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use serde::Deserialize;
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{
-    application::{AppState, CaseImportService},
-    auth::CurrentUser,
-    db::models::DraftRef,
-};
+use crate::{application::AppState, auth::CurrentUser, db::models::DraftRef};
 
 use super::ApiError;
 
@@ -18,8 +16,6 @@ use super::ApiError;
 pub struct ExampleQuery {
     query: Option<String>,
     study_type: Option<String>,
-    source_kind: Option<String>,
-    limit: Option<usize>,
 }
 
 pub async fn list(
@@ -27,36 +23,73 @@ pub async fn list(
     _: CurrentUser,
     Query(query): Query<ExampleQuery>,
 ) -> Json<Value> {
-    let needle = query.query.unwrap_or_default().to_lowercase();
-    let limit = query.limit.unwrap_or(20).clamp(1, 100);
+    let needle = query.query.unwrap_or_default();
     let examples = state
         .engine_snapshot
         .examples
         .iter()
-        .filter(|example| {
-            CaseImportService::is_modelizable(example)
-                && (needle.is_empty()
-                    || example.title.to_lowercase().contains(&needle)
-                    || example.id.to_lowercase().contains(&needle))
-                && query.study_type.as_ref().is_none_or(|value| {
-                    example
-                        .manifest
-                        .as_ref()
-                        .is_some_and(|manifest| value == &manifest.study.kind)
-                })
-                && query
-                    .source_kind
-                    .as_ref()
-                    .is_none_or(|value| value == &example.source_kind)
-        })
-        .take(limit)
-        .map(summary)
+        .filter(|example| example.matches_catalog_query(&needle, query.study_type.as_deref()))
         .collect::<Vec<_>>();
     Json(json!({
         "engineResourceSnapshot": state.engine_snapshot.id,
-        "examples": examples,
-        "nextCursor": null,
+        "tree": build_tree(&examples, 0, &[]),
     }))
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum ExampleTreeNode {
+    Directory {
+        name: String,
+        path: Vec<String>,
+        children: Vec<ExampleTreeNode>,
+    },
+    Example {
+        example: Value,
+    },
+}
+
+fn build_tree(
+    examples: &[&crate::engine_resources::EngineExample],
+    depth: usize,
+    parent_path: &[String],
+) -> Vec<ExampleTreeNode> {
+    let mut directories = BTreeMap::<(String, String), Vec<_>>::new();
+    let mut leaves = Vec::new();
+    for example in examples {
+        if let Some(name) = example.category_path.get(depth) {
+            directories
+                .entry((name.to_lowercase(), name.clone()))
+                .or_default()
+                .push(*example);
+        } else {
+            leaves.push(*example);
+        }
+    }
+
+    let mut nodes = directories
+        .into_iter()
+        .map(|((_normalized, name), children)| {
+            let mut path = parent_path.to_vec();
+            path.push(name.clone());
+            ExampleTreeNode::Directory {
+                name,
+                children: build_tree(&children, depth + 1, &path),
+                path,
+            }
+        })
+        .collect::<Vec<_>>();
+    leaves.sort_by(|left, right| {
+        left.title
+            .to_lowercase()
+            .cmp(&right.title.to_lowercase())
+            .then_with(|| left.title.cmp(&right.title))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    nodes.extend(leaves.into_iter().map(|example| ExampleTreeNode::Example {
+        example: summary(example),
+    }));
+    nodes
 }
 
 #[derive(Deserialize)]
@@ -123,6 +156,7 @@ pub async fn get(
     let mut value = summary(example);
     if let Some(object) = value.as_object_mut() {
         object.insert("entryPath".into(), json!(example.entry_path));
+        object.insert("manifest".into(), json!(example.manifest));
         object.insert("treeHash".into(), json!(example.tree_hash));
         object.insert(
             "files".into(),
@@ -130,7 +164,11 @@ pub async fn get(
                 example
                     .files
                     .iter()
-                    .map(|file| json!({"path": file.virtual_path, "sha256": file.sha256}))
+                    .map(|file| json!({
+                        "path": file.virtual_path,
+                        "role": file.role,
+                        "sha256": file.sha256,
+                    }))
                     .collect::<Vec<_>>()
             ),
         );
@@ -140,26 +178,31 @@ pub async fn get(
 }
 
 fn summary(example: &crate::engine_resources::EngineExample) -> Value {
-    let study_type = example
+    let study = example.manifest.as_ref().map(|manifest| &manifest.study);
+    let source_entry = example
         .manifest
         .as_ref()
-        .map(|manifest| manifest.study.kind.as_str());
-    let solver = example
-        .manifest
-        .as_ref()
-        .and_then(|manifest| manifest.study.solver.as_deref());
+        .map(|manifest| manifest.source.entry.as_str());
     json!({
         "id": example.id,
         "title": example.title,
-        "description": format!("{} · {} 个文件", study_type.unwrap_or("unknown"), example.file_count),
+        "description": format!(
+            "{} · {} 个文件",
+            study.map_or("unknown", |study| study.kind.as_str()),
+            example.file_count
+        ),
         "sourceKind": example.source_kind,
-        "studyType": study_type,
-        "solver": solver,
-        "tags": [study_type.unwrap_or("unknown"), example.source_kind.as_str()],
-        "requiredFeatures": [],
+        "categoryPath": example.category_path,
+        "bundlePath": example.bundle_path,
+        "studyType": study.map(|study| study.kind.as_str()),
+        "solver": study.and_then(|study| study.solver.as_deref()),
+        "compatibility": study.map(|study| study.compatibility.as_str()),
+        "results": study.map_or_else(Vec::new, |study| study.results.clone()),
+        "sourceEntry": source_entry,
         "fileCount": example.file_count,
         "sizeBytes": example.size_bytes,
         "verification": if example.importable { "verified" } else { "invalid" },
         "importable": example.importable,
+        "diagnostics": example.diagnostics,
     })
 }

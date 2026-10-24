@@ -30,6 +30,33 @@ pub struct EngineExample {
     pub files: Vec<ExampleSourceFile>,
 }
 
+impl EngineExample {
+    pub fn matches_catalog_query(&self, query: &str, study_type: Option<&str>) -> bool {
+        let manifest = self.manifest.as_ref();
+        if let Some(expected) = study_type {
+            let expected = expected.trim().to_lowercase();
+            if !manifest.is_some_and(|manifest| manifest.study.kind.to_lowercase() == expected) {
+                return false;
+            }
+        }
+
+        let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return true;
+        }
+        let contains = |value: &str| value.to_lowercase().contains(&query);
+        contains(&self.title)
+            || contains(&self.bundle_path)
+            || manifest.is_some_and(|manifest| {
+                contains(&manifest.study.kind)
+                    || manifest.study.solver.as_deref().is_some_and(&contains)
+                    || contains(&manifest.study.compatibility)
+                    || manifest.study.results.iter().any(|result| contains(result))
+                    || contains(&manifest.source.entry)
+            })
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExampleManifest {

@@ -12,6 +12,7 @@ use backend::catalog::SchemaCatalog;
 use backend::config::RuntimeConfig;
 use backend::db::{self, DbPool};
 use backend::engine_resources::EngineResourceRegistry;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 pub struct TestApp {
@@ -162,6 +163,45 @@ impl TestApp {
             b"id\n1\n",
         )
         .unwrap();
+        let bundle = dss_root.join("rssbundle/E2E/Demo/E2E demo.rssbundle");
+        std::fs::create_dir_all(bundle.join("dss")).unwrap();
+        let bundle_main = b"model = import_dss(\"dss/model.dss\");\n";
+        let bundle_source = b"new circuit.e2e basekv=10\n";
+        std::fs::write(bundle.join("main.rss"), bundle_main).unwrap();
+        std::fs::write(bundle.join("dss/model.dss"), bundle_source).unwrap();
+        let main_hash = format!("{:x}", Sha256::digest(bundle_main));
+        let source_hash = format!("{:x}", Sha256::digest(bundle_source));
+        let manifest = serde_json::json!({
+            "schema_version": 1,
+            "artifact": "mems.dss-rss-bundle",
+            "generator": "zjudss-test/1",
+            "psa_contract_version": "0.1.0",
+            "entry": "main.rss",
+            "study": {
+                "kind": "execution_plan",
+                "compatibility": "opendss-native",
+                "solver": "radial",
+                "results": ["voltage"]
+            },
+            "source": {
+                "entry": "dss/model.dss",
+                "root": "dss",
+                "tree_sha256": source_hash
+            },
+            "files": [
+                {"path": "dss/model.dss", "role": "dss-entry", "sha256": source_hash},
+                {"path": "main.rss", "role": "main-rss", "sha256": main_hash}
+            ],
+            "inputs": []
+        });
+        std::fs::write(
+            bundle.join("manifest.json"),
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        let broken = dss_root.join("rssbundle/E2E/Demo/Broken.rssbundle");
+        std::fs::create_dir_all(&broken).unwrap();
+        std::fs::write(broken.join("manifest.json"), b"{").unwrap();
 
         let live_engine_root = engine_root.clone();
         let config = RuntimeConfig::from_values(
