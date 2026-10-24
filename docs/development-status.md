@@ -10,7 +10,7 @@
 | 固定用户与隔离 | complete | Argon2id、HttpOnly Cookie、跨用户 404、SSE 撤销 |
 | 模型导入 | complete | DSS/bundle/ZIP/CSV/Excel/Parquet、异步状态、确认/放弃、失败释放 |
 | 草稿与版本 | complete | expected revision、整表覆盖、显式发布/激活、影响预览删除 |
-| 案例库 | complete | 固定按钮进入普通导入，确认后只修改 draft |
+| 案例库 | complete | rssbundle 目录树、manifest 详情/搜索、无效叶诊断、严格清单导入、窄屏浏览 |
 | 脚本 | complete | 上传/Agent 创建、静态校验、预览/全文/复制、无编辑删除 |
 | 运行 | complete | 仅按钮创建、active race、冻结快照、私有输入树、多 Parquet 结果 |
 | 结果与派生 | complete | 单结果删除、分析、物化视图、比较、tombstone 血缘 |
@@ -22,7 +22,7 @@
 
 - Agent bundle：`v3.0.0`，目录 `backend/resources/agent/v3`。
 - Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `TENSOREVAL_CWD` 动态发现并验证
-  docs/catalog/examples，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
+  docs/catalog 与 `sparrowzz/dss/rssbundle` manifest，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
 - 公共合同：41 条路由、9 类消息、16 个工具、6 个 skills、8 个上传来源、6 类视图。
 - 模型表：adapter 固定输出 21 张规范 DataFrame，包含合法的零行表。
 
@@ -35,7 +35,8 @@ LLM 不接触物理路径。脚本创建不运行，模型修改不发布，案�
 启动会功能性探测当前 `TENSOREVAL_BIN` 的命名 Parquet、两种模型导入和脚本校验能力；启动后替换 binary
 无需重启，下一次调用直接使用路径上的当前普通文件，只有文件不存在或不再是普通文件时才拒绝。资源扫描限制为 512 篇
 Markdown、单篇 4 MiB、文档合计 64 MiB、2,048 个案例、每案例 10,000 文件/2 GiB、依赖深度 64；变更资源树
-后也必须重启。运行时允许没有案例，但候选发布门禁要求至少一个根 RSS 和一个 bundle。
+后也必须重启。案例只发现 `sparrowzz/dss/rssbundle` 下直接含 manifest 的 `.rssbundle` 目录；运行时允许没有案例，
+候选发布门禁要求至少一个 rssbundle 和一个可导入案例，并对当前存在的受支持 study 类型各运行一个代表案例。
 
 ## Reset and operation
 
@@ -47,5 +48,5 @@ Markdown、单篇 4 MiB、文档合计 64 MiB、2,048 个案例、每案例 10,0
 
 后端全量测试覆盖 schema、adapter、导入、版本、脚本、运行、删除、派生、比较、认证、恢复和配额。前端
 Vitest 覆盖公共类型、state、workspace、脚本卡、运行与数据工作台。Playwright 覆盖真实浏览器到
-Vite/Axum/SQLite/CAS 的身份、导入、案例、显式运行、派生血缘、删除、恢复、恶意 ZIP、配额和无障碍。
+Vite/Axum/SQLite/CAS 的身份、导入、分层案例目录与窄屏详情、显式运行、派生血缘、删除、恢复、恶意 ZIP、配额和无障碍。
 最终命令与真实 DeepSeek/tensoreval 候选门禁见部署文档。

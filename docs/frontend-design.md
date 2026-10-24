@@ -17,6 +17,17 @@ Composer 固定按钮支持文件和目录：`.rss` 逐个创建脚本；DSS/bun
 发布并自动激活。激活历史版本遇到 draft 时使用明确确认框放弃草稿。版本删除先读取影响预览，再提交一次性
 impact token。前端不把这些固定动作伪装成聊天消息。
 
+## Example library
+
+“案例库”是高频固定入口。界面消费后端 rssbundle 目录树：顶层分类默认展开，嵌套目录可用带
+`aria-expanded` 的按钮展开；搜索由服务端匹配 manifest 元数据并自动展开返回叶节点的祖先。损坏案例仍显示验证
+状态与诊断，但没有“使用此案例”操作。
+
+桌面使用目录/详情双栏；窄屏先显示目录，选择叶节点后切换详情，并提供明确的“返回案例目录”。详情展示 bundle
+相对路径、来源和脚本入口、study、solver、compatibility、results、generator、文件角色计数及诊断。加载、空结果、
+请求失败与重试都有独立状态；切换搜索或案例时取消旧响应的状态写入。有效案例的固定按钮继续调用
+`onUse(id,title,engineResourceSnapshot)`，进入现有候选 DataFrame 确认流程。
+
 ## Scripts and runs
 
 脚本消息使用代码块，默认只显示有界开头；“展开全文”从详情 API 懒加载，“收起”恢复预览，“复制”复制全文。

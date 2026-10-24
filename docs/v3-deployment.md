@@ -14,6 +14,11 @@ binary 必须支持命名 Parquet input、`--result-dir`、`--output-format parq
 snapshot，不固定 eig-rs/sparrowzz commit、binary SHA、资源 hash 或案例数量。生产没有 stub 回退，也不会自动
 checkout、pull、reset、clean、构建或改写配置的 eig-rs 工作树。
 
+案例根固定为 `TENSOREVAL_CWD/sparrowzz/dss/rssbundle`。候选资源必须让每个案例以直接包含
+`manifest.json` 的 `.rssbundle` 目录发布；中间目录只用于分类。manifest 声明的入口和 files 必须是 bundle 内安全
+相对路径，文件存在且 SHA-256 一致。单个无效案例会作为不可导入叶节点及脱敏诊断保留，目录逃逸或全局限制错误
+仍使启动失败。
+
 资源会原子发布到 `DATA_DIR/system/engine-resources/<snapshotId>`，运行进程内保持不变；更新 eig-rs 后必须重启。
 限制为 512 篇 Markdown、单篇 4 MiB、文档总计 64 MiB、2,048 个案例、每案例 10,000 文件/2 GiB、依赖深度
 64。超过限制返回 `engine_resource_limit_exceeded`；扫描和发布之间发生变化返回
@@ -75,9 +80,10 @@ git diff --check
 运行、点击运行两次、执行结果分析和运行比较，再删除一个来源结果并验证运行及物化派生仍可读取。引擎门禁
 另外真实执行两种 import profile、命名 input、多个 Snappy Parquet 输出和失败诊断。报告保存测试 ID、Agent
 bundle hash、用户 seed hash/数量、engine contract/checks 和 binary hash，不保存用户 ID、密码、Cookie、secret
-或物理路径；同时记录动态 `engineResourceSnapshot` 与发现、可导入、不可导入、根 RSS、bundle 数量。binary hash
-和 snapshot 是本次证据，不是接收门槛。真实门禁要求至少一个根 RSS、一个 bundle 和一个可导入案例，不断言
-精确案例数；个别坏案例以脱敏诊断报告，不阻断其他案例。
+或物理路径；同时记录动态 `engineResourceSnapshot`、rssbundle 发现/可导入/不可导入数量、发现的 study 类型与代表
+运行。binary hash 和 snapshot 是本次证据，不是接收门槛。真实门禁要求至少一个 rssbundle 和一个可导入案例，
+并为当前存在的 `execution_plan`、`static_power_flow`、`fault_study`、`harmonic` 类型各运行一个可导入代表；不
+断言精确案例数。个别坏案例以脱敏诊断报告，不阻断其他案例。
 
 ## Failure handling
 

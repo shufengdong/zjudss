@@ -16,8 +16,8 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 | POST | `/api/auth/logout` | 撤销当前浏览器会话 |
 | GET | `/api/me` | 当前用户 |
 | GET | `/api/storage-usage` | 当前用户配额 |
-| GET | `/api/examples` | 搜索可模型化案例 |
-| GET | `/api/examples/{id}` | 案例详情 |
+| GET | `/api/examples` | rssbundle 案例目录树与搜索 |
+| GET | `/api/examples/{id}` | 规范 manifest 案例详情 |
 | POST | `/api/sessions/{id}/draft/example` | 案例进入模型导入 |
 | GET/POST | `/api/sessions` | 列表/新建会话 |
 | PATCH/DELETE | `/api/sessions/{id}` | 改名/删除整个会话 |
@@ -53,6 +53,23 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 
 发布请求携带 `expectedDraftId`、`expectedDraftRevision`、`clientPublishId`。成功冻结版本、清空草稿并自动激活。
 激活历史版本只移动 active 指针；存在草稿时必须提交 `discardDraft=true` 以及准确 expected draft。
+
+## Example catalog
+
+`GET /api/examples` 只接受可选 `query` 和 `studyType`，返回
+`{engineResourceSnapshot, tree}`。`tree` 是 `directory`/`example` 判别联合：目录包含展示 `path` 和递归
+`children`，叶节点包含稳定 ID、`categoryPath`、`bundlePath`、可空 study/solver/compatibility/sourceEntry、
+results、文件计数、验证状态与诊断。搜索匹配名称、bundle 路径、study、solver、compatibility、results 和来源
+入口，并保留匹配叶节点的全部祖先；不再分页或截断为扁平列表。无效 manifest 叶节点仍返回，但
+`importable=false`。
+
+`GET /api/examples/{id}` 增加可空 `entryPath`/`manifest`、角色化 `files`、`treeHash` 和 diagnostics。manifest
+保留 schema、artifact、generator、PSA contract、study、source、文件声明与 inputs，不返回物理源路径或文件内容。
+应用请求仍提交 `{exampleId, engineResourceSnapshot, clientImportId, expectedDraftId?, expectedDraftRevision?}`；后端只从
+已发布快照读取 manifest 声明清单，全部哈希通过后进入模型导入确认。它不会直接生成版本或运行。
+
+Agent 的 `search_examples` 使用相同搜索谓词并返回最多 50 个规范摘要；`inspect_example` 只按稳定 ID 返回规范
+manifest、角色化文件哈希和验证诊断。两个工具只读，Agent 无权直接应用案例。
 
 ## Scripts and runs
 

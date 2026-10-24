@@ -19,6 +19,8 @@ V3 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axu
 - `.dss`、DSS 目录、`.dssbundle`、`.rssbundle`、ZIP、CSV、Excel 和 Parquet 进入模型导入流水线。
 - adapter 把模型来源转换成规范命名的 Parquet DataFrame；只有这些 DataFrame 进入草稿和版本。
 - `.rss` 是会话脚本资源，不属于模型版本。创建脚本不会运行；只有脚本卡片“运行”按钮能创建运行。
+- 内置案例只来自 `TENSOREVAL_CWD/sparrowzz/dss/rssbundle`。普通目录形成分类，直接包含
+  `manifest.json` 的 `.rssbundle` 目录形成案例；`sparrowzz/dss` 其他位置的 `.rss` 不进入案例库。
 - 运行冻结模型内容 hash、脚本 artifact/hash、engine contract 和 Agent 来源信息。
 - 分析、视图和比较保存输入快照与独立 artifact；来源结果删除后，派生结果通过 tombstone 血缘继续解释。
 
@@ -42,6 +44,11 @@ V3 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axu
 到 `DATA_DIR/system/engine-resources/<snapshotId>`。案例导入只读取这个不可变发布树。源文件在扫描与发布之间变化、
 已发布目录损坏或 catalog 不兼容都会失败关闭。更新文档、catalog 或案例资源后必须重启以发布新 snapshot；
 单独替换 `TENSOREVAL_BIN` 无需重启，下一次 adapter 调用直接执行路径上的当前普通文件。
+
+案例扫描显式解析 manifest 的 schema/artifact、入口、study、source、files 和 inputs。单个无效 manifest 仍形成
+带脱敏诊断的不可导入叶节点，不阻断其他案例。应用案例时先验证不可变快照中 `manifest.json` 和
+`manifest.files` 全部哈希，再按该清单进入普通模型导入确认；bundle 内未声明文件不会被读取或暂存。HTTP、前端与
+Agent 工具共享同一规范目录和 manifest 解释结果，并且都不返回物理路径。
 
 ## Capacity and trust
 
