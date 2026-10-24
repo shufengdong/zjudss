@@ -25,6 +25,9 @@ DSS/bundle/ZIP/表格导入；案例确认；draft
 发布、active race、历史激活和版本删除；脚本预览/全文/复制与 Agent 只创建；按钮运行、多结果与单结果删除；
 分析、视图、比较在来源删除后继续读取；两用户隔离；重启收敛与 FTS 局部失败；配额、恶意归档和响应式无障碍。
 
+应用层 scripted-agent 测试额外覆盖脚本已创建后的 provider 收尾失败不覆盖成功，以及失败的
+`create_script` 不会被误判为成功。
+
 ScenarioEngine 场景由控制端按调用顺序排队，不使用 sleep；timeout 使用 barrier。测试证据写入
 `target/functional-coverage/e2e-routes.ndjson`，包含通过的测试名及实际 method/path/status。
 

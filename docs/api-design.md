@@ -63,7 +63,8 @@ DataFrame alias，再异步执行。Agent 没有运行、激活或删除工具�
 ## Messages and errors
 
 持久消息类型是 `user`、`assistant`、`tool-call`、`progress`、`result`、`attachment`、`model-status`、
-`comparison`、`script`。运行关联字段统一为 `runId`。
+`comparison`、`script`。运行关联字段统一为 `runId`。成功的 `create_script` tool-call 和 `script` 消息是脚本生成的持久成功事实；
+后续模型收尾失败不追加通用 Agent 失败，缺少 assistant 收尾时由服务端补充检查并点击“运行”的提示。
 
 主要稳定错误包括认证/隔离、配额与上传、导入与草稿冲突、脚本校验/兼容、active race、运行队列、版本删除
 影响变化、结果 busy、分析/比较/视图校验、历史索引不可用、engine snapshot/contract 不匹配。权威枚举由

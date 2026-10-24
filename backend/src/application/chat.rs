@@ -22,6 +22,13 @@ use tokio::sync::Semaphore;
 
 /// 单次对话允许的最大模型调用轮数（防死循环）。
 const MAX_TURNS: usize = 8;
+const SCRIPT_CREATED_REPLY: &str = "脚本已生成，请检查代码并点击脚本卡片“运行”";
+
+#[derive(Default)]
+struct TurnOutcome {
+    assistant_emitted: bool,
+    script_created: bool,
+}
 
 #[derive(Clone)]
 pub struct ChatService {
@@ -131,17 +138,17 @@ impl ChatService {
         let handle = tokio::spawn(future);
 
         // 5. 消费事件流 → 映射 → 落库 + 发布。
-        self.consume(events, &writer).await;
+        let outcome = self.consume(events, &writer).await;
 
-        // 6. 等 agent future 收尾；异常时补一条 assistant 错误。
-        match handle.await {
-            Ok(Ok(_response)) => { /* 最终文本已在 End 段发过 */ }
-            Ok(Err(_err)) => {
-                let _ = writer.assistant("agent 运行失败，请稍后重试").await;
+        // 6. 等 agent future 收尾。create_script 已成功即完成本轮领域操作，
+        // 后续生成收尾文本的 provider 错误不得覆盖已持久化的成功结果。
+        let agent_failed = !matches!(handle.await, Ok(Ok(_response)));
+        if outcome.script_created {
+            if !outcome.assistant_emitted {
+                let _ = writer.assistant(SCRIPT_CREATED_REPLY).await;
             }
-            Err(_join) => {
-                let _ = writer.assistant("agent 运行失败，请稍后重试").await;
-            }
+        } else if agent_failed {
+            let _ = writer.assistant("agent 运行失败，请稍后重试").await;
         }
         let _ = self
             .session_repo
@@ -167,10 +174,11 @@ impl ChatService {
     }
 
     /// 把 `RunEvents` 逐个映射为 `AppEvent` 并落库 + 发布。
-    async fn consume(&self, mut events: RunEvents, writer: &EventWriter) {
+    async fn consume(&self, mut events: RunEvents, writer: &EventWriter) -> TurnOutcome {
         // 按 call id 记住 args，让 success/failed 事件复用 running 事件的参数。
         let mut args_by_call: std::collections::HashMap<String, serde_json::Value> =
             std::collections::HashMap::new();
+        let mut outcome = TurnOutcome::default();
 
         while let Some(item) = events.next().await {
             match item {
@@ -181,7 +189,9 @@ impl ChatService {
                 })) => {
                     if let AssistantContent::Text(text) = content {
                         if !text.text.trim().is_empty() {
-                            let _ = writer.assistant(&text.text).await;
+                            if writer.assistant(&text.text).await.is_ok() {
+                                outcome.assistant_emitted = true;
+                            }
                         }
                     }
                 }
@@ -206,6 +216,9 @@ impl ChatService {
                     } else {
                         ToolStatus::Success
                     };
+                    if !tool_result.is_error && tool_result.name.as_str() == "create_script" {
+                        outcome.script_created = true;
+                    }
                     let summary = summarize(&tool_result.content);
                     let args = args_by_call
                         .get(&tool_result.call.to_string())
@@ -225,6 +238,7 @@ impl ChatService {
                 _ => {}
             }
         }
+        outcome
     }
 }
 

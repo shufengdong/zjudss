@@ -181,10 +181,12 @@ test('CSV imports merge by whole table, stale runs are rejected, and history act
   await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
   await page.getByRole('button', { name: '确认合并' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.tables?.length).toBe(2)
+  await expect(page.getByText('修订 1', { exact: true })).toBeVisible()
   await page.locator('input[type=file]').first().setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/multi.xlsx'))
   await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
   await page.getByRole('button', { name: '确认合并' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.tables?.some((table: any) => table.tableName === 'Loads')).toBe(true)
+  await expect(page.getByText('修订 2', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '生成版本' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/versions`)).json()).versions.length).toBe(2)
   const versions = (await (await api.get(`/api/sessions/${sessionId}/versions`)).json()).versions

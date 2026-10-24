@@ -177,8 +177,8 @@ async fn missing_skill_is_a_failed_tool_result() {
                 name: "create_script".into(),
                 args: json!({"name":"flow.rss","content":"result = 1"}),
             },
-            ScriptTurn::Text {
-                text: "请先加载技能".into(),
+            ScriptTurn::Error {
+                message: "provider unavailable after failed tool".into(),
             },
         ],
     });
@@ -192,6 +192,71 @@ async fn missing_skill_is_a_failed_tool_result() {
                 && event["toolName"] == "create_script"
                 && event["status"] == "failed"
         }),
+        "events: {events:#?}"
+    );
+    assert!(
+        events.iter().any(|event| {
+            event["type"] == "assistant" && event["content"] == "agent 运行失败，请稍后重试"
+        }),
+        "events: {events:#?}"
+    );
+}
+
+#[tokio::test]
+async fn successful_script_creation_is_not_overwritten_by_a_later_provider_error() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    factory.enqueue(ScriptScenario {
+        id: "script-created-before-provider-error".into(),
+        expected_prompt: Some("计算潮流".into()),
+        turns: vec![
+            ScriptTurn::ToolCall {
+                call_id: "load-rss-skill".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"rss-generation"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "create-flow-script".into(),
+                name: "create_script".into(),
+                args: json!({"name":"power-flow.rss","content":"result = 1"}),
+            },
+            ScriptTurn::Error {
+                message: "provider unavailable after tool success".into(),
+            },
+        ],
+    });
+    let app = TestApp::spawn_with_agent_factory(factory).await;
+    let session = create_session(&app).await;
+
+    assert_eq!(
+        post_and_wait(&app, &session, "计算潮流").await,
+        StatusCode::ACCEPTED
+    );
+
+    let events = messages(&app, &session).await;
+    let script_index = events
+        .iter()
+        .position(|event| event["type"] == "script")
+        .expect("script message");
+    let tool_success_index = events
+        .iter()
+        .position(|event| {
+            event["type"] == "tool-call"
+                && event["toolName"] == "create_script"
+                && event["status"] == "success"
+        })
+        .expect("successful create_script result");
+    let assistants = events
+        .iter()
+        .enumerate()
+        .filter(|(_, event)| event["type"] == "assistant")
+        .collect::<Vec<_>>();
+    assert_eq!(assistants.len(), 1, "events: {events:#?}");
+    assert_eq!(
+        assistants[0].1["content"], "脚本已生成，请检查代码并点击脚本卡片“运行”",
+        "events: {events:#?}"
+    );
+    assert!(
+        script_index < tool_success_index && tool_success_index < assistants[0].0,
         "events: {events:#?}"
     );
 }
