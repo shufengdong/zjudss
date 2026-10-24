@@ -1,5 +1,5 @@
 import type {
-  AnalysisRun, DatasetMetadata, DatasetPage, DatasetViewData, ExampleDetail, ExampleSummary,
+  AnalysisRun, DatasetMetadata, DatasetPage, DatasetViewData, ExampleDetail, ExampleTreeNode,
   HistoryHit, Message, MessagePage, ModelImport, ModelVersion, RunComparison, ScriptDetail,
   ScriptSummary, Session, SimulationRun, StorageUsage, User, VersionDeletionPreview, Workspace,
 } from '../types'
@@ -62,8 +62,8 @@ export const publishDraft=async(sessionId:string,draft:{id:string;revision:numbe
 export const activateVersion=(id:string,draft:{id:string;revision:number}|null,discardDraft=false)=>request<Workspace>(`/api/versions/${id}/activate`,{method:'POST',body:JSON.stringify({discardDraft,expectedDraft:draft?{id:Number(draft.id),revision:draft.revision}:null})})
 export const previewVersionDeletion=(id:string)=>request<VersionDeletionPreview>(`/api/versions/${id}/deletion-preview`,{method:'POST'})
 export const deleteVersion=(id:string,impactToken:string)=>request<void>(`/api/versions/${id}${params({impactToken})}`,{method:'DELETE'},async()=>undefined)
-export const listExamples=(filters:{query?:string;studyType?:string;sourceKind?:string;limit?:number}={})=>
-  request<{engineResourceSnapshot:string;examples:ExampleSummary[];nextCursor:null}>(`/api/examples${params(filters)}`)
+export const listExamples=(filters:{query?:string;studyType?:string}={})=>
+  request<{engineResourceSnapshot:string;tree:ExampleTreeNode[]}>(`/api/examples${params(filters)}`)
 export const getExample=(id:string)=>request<ExampleDetail>(`/api/examples/${id}`)
 export const applyExample=(sessionId:string,exampleId:string,engineResourceSnapshot:string,clientImportId:string,draft?:{id:string;revision:number}|null)=>request<{ok:boolean;modelImport:ModelImport}>(`/api/sessions/${sessionId}/draft/example`,{method:'POST',body:JSON.stringify({exampleId,engineResourceSnapshot,clientImportId,expectedDraftId:draft?Number(draft.id):null,expectedDraftRevision:draft?.revision??null})})
 export const searchHistory=async(query:string)=>(await request<{items:HistoryHit[]}>(`/api/history/search${params({query})}`)).items
