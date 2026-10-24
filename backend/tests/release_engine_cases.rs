@@ -24,11 +24,11 @@ struct ReleaseReport {
     engine_contract: String,
     engine_resource_snapshot: String,
     binary_sha256: String,
-    discovered_examples: usize,
-    importable_examples: usize,
-    non_importable_examples: Vec<NonImportableExample>,
-    root_rss_examples: usize,
     bundle_examples: usize,
+    importable_examples: usize,
+    non_importable_examples: usize,
+    non_importable_details: Vec<NonImportableExample>,
+    discovered_study_types: Vec<String>,
     contract_checks: ContractChecks,
     representative_runs: Vec<RunReport>,
 }
@@ -37,7 +37,6 @@ struct ReleaseReport {
 #[serde(rename_all = "camelCase")]
 struct NonImportableExample {
     example_id: String,
-    source_kind: String,
     diagnostics: Vec<String>,
 }
 
@@ -277,21 +276,19 @@ async fn verify_expr_df(
 
 fn representative_examples(examples: &[EngineExample]) -> Vec<&EngineExample> {
     let mut selected = Vec::new();
-    let mut ids = std::collections::HashSet::new();
-    for (source_kind, study_type) in [
-        ("rss", Some("power_flow")),
-        ("rss", Some("short_circuit")),
-        ("rss", Some("qsts")),
-        ("rssbundle", Some("harmonic")),
-        ("rssbundle", Some("open")),
+    for study_type in [
+        "execution_plan",
+        "static_power_flow",
+        "fault_study",
+        "harmonic",
     ] {
         if let Some(example) = examples.iter().find(|example| {
             example.importable
-                && example.source_kind == source_kind
-                && study_type.is_none_or(|study| example.study_type == study)
-                && !ids.contains(&example.id)
+                && example
+                    .manifest
+                    .as_ref()
+                    .is_some_and(|manifest| manifest.study.kind == study_type)
         }) {
-            ids.insert(example.id.clone());
             selected.push(example);
         }
     }
@@ -305,30 +302,15 @@ fn prepare_run_tree(
 ) -> (PathBuf, PathBuf, RunMode) {
     let tree = root.join(format!("run-{}", example.id));
     std::fs::create_dir_all(&tree).unwrap();
-    if example.source_kind == "rssbundle" {
-        let bundle = tree.join("case.rssbundle");
-        for file in &example.files {
-            copy_file(
-                &snapshot.engine_root.join(&file.source_path),
-                &bundle.join(&file.virtual_path),
-                &file.sha256,
-            );
-        }
-        (tree, "case.rssbundle".into(), RunMode::Bundle)
-    } else {
-        for file in &example.files {
-            copy_file(
-                &snapshot.engine_root.join(&file.source_path),
-                &tree.join(&file.source_path),
-                &file.sha256,
-            );
-        }
-        (
-            tree,
-            PathBuf::from(format!("sparrowzz/dss/{}", example.entry_path)),
-            RunMode::Rss,
-        )
+    let bundle = tree.join("case.rssbundle");
+    for file in &example.files {
+        copy_file(
+            &snapshot.engine_root.join(&file.source_path),
+            &bundle.join(&file.virtual_path),
+            &file.sha256,
+        );
     }
+    (tree, "case.rssbundle".into(), RunMode::Bundle)
 }
 
 async fn run_representative(
@@ -411,20 +393,27 @@ async fn real_engine_imports_all_examples_and_runs_representative_studies() {
     let temp = tempfile::tempdir().unwrap();
     let (snapshot, _) = EngineResourceRegistry::publish(snapshot, temp.path())
         .unwrap_or_else(|error| panic!("release_engine_publish_invalid:{}", error.code()));
-    let root_rss_examples = snapshot
-        .examples
-        .iter()
-        .filter(|example| example.source_kind == "rss")
-        .count();
-    let bundle_examples = snapshot
-        .examples
-        .iter()
-        .filter(|example| example.source_kind == "rssbundle")
-        .count();
-    assert!(root_rss_examples > 0, "release_engine_root_rss_empty");
+    let bundle_examples = snapshot.examples.len();
     assert!(bundle_examples > 0, "release_engine_bundle_empty");
+    assert!(
+        snapshot
+            .examples
+            .iter()
+            .all(|example| example.source_kind == "rssbundle"),
+        "release_engine_non_bundle_example_discovered"
+    );
+    let importable_examples = snapshot
+        .examples
+        .iter()
+        .filter(|example| example.importable)
+        .count();
+    let non_importable_examples = bundle_examples - importable_examples;
+    assert!(importable_examples > 0, "release_engine_importable_empty");
     let importable = import_all_examples(&snapshot, &temp.path().join("imports"));
-    assert!(importable > 0, "release_engine_importable_empty");
+    assert_eq!(
+        importable, importable_examples,
+        "release_engine_importable_inventory_incomplete"
+    );
     let (static_model_import, single_solve_model_import) =
         verify_model_import_profiles(&engine, temp.path()).await;
     let contract_checks = verify_expr_df(
@@ -436,28 +425,23 @@ async fn real_engine_imports_all_examples_and_runs_representative_studies() {
     .await;
 
     let cases = representative_examples(&snapshot.examples);
-    assert!(
-        cases.iter().any(|example| example.source_kind == "rss"),
-        "release_engine_importable_root_rss_missing"
-    );
-    assert!(
-        cases
-            .iter()
-            .any(|example| example.source_kind == "rssbundle"),
-        "release_engine_importable_bundle_missing"
-    );
+    let discovered_study_types = snapshot
+        .examples
+        .iter()
+        .filter_map(|example| {
+            example
+                .manifest
+                .as_ref()
+                .map(|manifest| manifest.study.kind.clone())
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
     let mut representative_runs = Vec::new();
     for example in cases {
-        representative_runs.push(
-            run_representative(
-                &engine,
-                &snapshot,
-                example,
-                &example.study_type,
-                temp.path(),
-            )
-            .await,
-        );
+        let study_type = &example.manifest.as_ref().unwrap().study.kind;
+        representative_runs
+            .push(run_representative(&engine, &snapshot, example, study_type, temp.path()).await);
     }
 
     let report = ReleaseReport {
@@ -465,20 +449,19 @@ async fn real_engine_imports_all_examples_and_runs_representative_studies() {
         engine_contract: snapshot.contract_version.clone(),
         engine_resource_snapshot: snapshot.id.clone(),
         binary_sha256,
-        discovered_examples: snapshot.examples.len(),
-        importable_examples: importable,
-        non_importable_examples: snapshot
+        bundle_examples,
+        importable_examples,
+        non_importable_examples,
+        non_importable_details: snapshot
             .examples
             .iter()
             .filter(|example| !example.importable)
             .map(|example| NonImportableExample {
                 example_id: example.id.clone(),
-                source_kind: example.source_kind.clone(),
                 diagnostics: example.diagnostics.clone(),
             })
             .collect(),
-        root_rss_examples,
-        bundle_examples,
+        discovered_study_types,
         contract_checks,
         representative_runs,
     };

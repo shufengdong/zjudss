@@ -290,8 +290,20 @@
     - runner: playwright
       file: integration-tests/e2e/bundle-examples.spec.ts
       name: case application uses the fixed action and creates only a mutable draft
-  assertions: [catalog and detail are readable, apply does not publish or run]
-  fixtures: [modelizable example]
+    - runner: rust
+      file: backend/tests/case_import.rs
+      name: case_catalog_preserves_directories_and_includes_invalid_leaves
+    - runner: rust
+      file: backend/tests/case_import.rs
+      name: case_detail_exposes_normalized_manifest_without_source_paths
+    - runner: rust
+      file: backend/tests/case_import.rs
+      name: applying_a_case_uses_model_import_and_changes_only_the_mutable_draft
+    - runner: rust
+      file: backend/tests/workspace_tools.rs
+      name: example_tools_return_manifest_metadata_and_never_physical_paths
+  assertions: [rssbundle directories and invalid leaves remain visible, manifest metadata and relative paths are readable without physical paths, only declared files enter import confirmation, apply creates a draft without publishing or running]
+  fixtures: [nested rssbundle categories, valid manifest-backed example, invalid manifest sibling, undeclared bundle file]
   contracts:
     - "route:GET /api/examples"
     - "route:GET /api/examples/{id}"
@@ -514,8 +526,8 @@
     - runner: release
       file: scripts/test-release-engine
       name: real_engine_imports_all_examples_and_runs_representative_studies
-  assertions: [process commands are controlled, current resources are published immutably, limits fail closed, binary replacement takes effect on the next call]
-  fixtures: [fake process engine, dynamic eig-rs resource tree, current real eig-rs]
+  assertions: [process commands are controlled, current resources are published immutably, limits fail closed, binary replacement takes effect on the next call, release gate discovers only rssbundle cases and runs one representative for every present supported study kind]
+  fixtures: [fake process engine, dynamic rssbundle resource tree, current real eig-rs rssbundle catalog]
   contracts:
     - "tool:search_engine_docs"
     - "tool:read_engine_doc_section"
