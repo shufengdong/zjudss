@@ -54,6 +54,7 @@ test('an empty account bootstraps a session before message, upload, and example 
     response.url().endsWith('/api/sessions') && response.request().method() === 'POST', { timeout: 10_000 })
   await page.getByRole('button', { name: '打开“未命名”的会话操作' }).click()
   await page.getByRole('button', { name: '删除“未命名”' }).click()
+  await page.getByRole('button', { name: '确认删除' }).click()
   expect((await deleted).status()).toBe(204)
   const replacementResponse = await replacement
   expect(replacementResponse.status()).toBe(201)
@@ -152,6 +153,7 @@ test('session CRUD renders optimistic user, tool-call, and assistant messages', 
 
   await page.getByRole('button', { name: '打开“切换目标”的会话操作' }).click()
   await page.getByRole('button', { name: '删除“切换目标”' }).click()
+  await page.getByRole('button', { name: '确认删除' }).click()
   await expect(page.getByRole('button', { name: '打开会话“切换目标”' })).toHaveCount(0)
   expect((await messages(api, created.id)).messages.map((item) => item.type)).toEqual(
     expect.arrayContaining(['user', 'tool-call', 'assistant']),

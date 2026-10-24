@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { Session, SessionStatus } from '../types'
 import { MoreIcon, PanelLeftIcon, PencilIcon, PlusIcon, TrashIcon } from './icons'
 
@@ -51,6 +51,16 @@ export default function Sidebar({
   const [menuId, setMenuId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
+  const [pendingDelete, setPendingDelete] = useState<Session | null>(null)
+
+  useEffect(() => {
+    if (!pendingDelete) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPendingDelete(null)
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [pendingDelete])
 
   const groups = useMemo(() => {
     const order: Group[] = ['今天', '昨天', '更早']
@@ -73,6 +83,7 @@ export default function Sidebar({
   }
 
   return (
+    <>
     <aside
       className={`${collapsed ? 'w-0' : 'w-[260px]'} h-full shrink-0 overflow-hidden border-r border-slate-200 bg-slate-100/70 transition-[width] duration-200`}
     >
@@ -183,7 +194,7 @@ export default function Sidebar({
                             aria-label={`删除“${s.title || '未命名'}”`}
                             onClick={() => {
                               setMenuId(null)
-                              onDelete(s.id)
+                              setPendingDelete(s)
                             }}
                             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50"
                           >
@@ -202,5 +213,47 @@ export default function Sidebar({
         {footer}
       </div>
     </aside>
+    {pendingDelete && (
+      <div
+        className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setPendingDelete(null)
+        }}
+      >
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-session-title"
+          className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+        >
+          <h2 id="delete-session-title" className="text-base font-semibold text-slate-900">删除会话</h2>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            确定删除“{pendingDelete.title || '未命名'}”吗？该会话的聊天记录、模型、脚本、仿真运行和结果都会被删除，且无法恢复。
+          </p>
+          <div className="mt-6 flex justify-end gap-2">
+            <button
+              type="button"
+              autoFocus
+              onClick={() => setPendingDelete(null)}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const id = pendingDelete.id
+                setPendingDelete(null)
+                onDelete(id)
+              }}
+              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+            >
+              确认删除
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   )
 }

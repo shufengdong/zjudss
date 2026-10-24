@@ -351,7 +351,7 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
 }
 
 #[tokio::test]
-async fn analysis_views_and_run_comparisons_use_snapshots_and_allow_whole_session_cleanup() {
+async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outputs() {
     let app = TestApp::spawn().await;
     let (user, cookie, baseline_run_id, source_id) = create_completed_run(&app).await;
     let baseline = app
