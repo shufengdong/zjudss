@@ -61,6 +61,7 @@ impl CaseImportService {
 
     pub fn is_modelizable(example: &EngineExample) -> bool {
         example.importable
+            && example.manifest.is_some()
             && example
                 .files
                 .iter()
@@ -88,13 +89,22 @@ impl CaseImportService {
         if !Self::is_modelizable(example) {
             return Err(CaseImportError::NotModelizable);
         }
-        let mut files = Vec::with_capacity(example.files.len());
-        for (index, source) in example.files.iter().enumerate() {
+        let manifest = example
+            .manifest
+            .as_ref()
+            .ok_or(CaseImportError::NotModelizable)?;
+        let mut verified = Vec::with_capacity(example.files.len());
+        for source in &example.files {
             let path = safe_snapshot_file(&self.snapshot.engine_root, &source.source_path)?;
             let bytes = std::fs::read(path).map_err(CaseImportError::Io)?;
             if format!("{:x}", Sha256::digest(&bytes)) != source.sha256 {
                 return Err(CaseImportError::SourceChanged);
             }
+            verified.push((source, bytes));
+        }
+
+        let mut files = Vec::with_capacity(verified.len());
+        for (index, (source, bytes)) in verified.into_iter().enumerate() {
             let staged = self
                 .model_imports
                 .artifact_store()
@@ -119,17 +129,30 @@ impl CaseImportService {
                 staged,
             });
         }
-        self.model_imports.accept_case(
-            user,
-            session_id,
-            client_import_id,
-            expected_draft,
-            UploadBatch { client_batch_id: "case".into(), files },
-            serde_json::json!({
-                "exampleId":example.id,"title":example.title,"engineResourceSnapshot":self.snapshot.id,
-                "sourceTreeHash":example.tree_hash,"fileCount":example.file_count
-            }),
-        ).await.map_err(Into::into)
+        self.model_imports
+            .accept_case(
+                user,
+                session_id,
+                client_import_id,
+                expected_draft,
+                UploadBatch {
+                    client_batch_id: "case".into(),
+                    files,
+                },
+                serde_json::json!({
+                    "exampleId": example.id,
+                    "title": example.title,
+                    "categoryPath": example.category_path,
+                    "bundlePath": example.bundle_path,
+                    "engineResourceSnapshot": self.snapshot.id,
+                    "manifestSchemaVersion": manifest.schema_version,
+                    "sourceTreeHash": manifest.source.tree_sha256,
+                    "caseTreeHash": example.tree_hash,
+                    "fileCount": example.files.len(),
+                }),
+            )
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn process(
