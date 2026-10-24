@@ -8,6 +8,9 @@ CSV、Excel 或 Parquet DataFrame；随后通过自然语言完成模型确认�
 TypeScript、Vite 和 ECharts。仿真及派生分析结果统一保存为 Snappy Parquet，数据库只保存元数据、
 血缘和 artifact 引用。
 
+后端目录仍为 `backend/`，其中 Cargo package 与 library crate 均命名为 `zjudss`；Rust 二进制、
+集成测试及外部调用统一通过 `zjudss::` 引用库接口。
+
 ## 已实现能力
 
 - 单 RSS、rssbundle、CSV、Excel、Parquet 和分批追加上传；DataFrame 类型按列名推断。

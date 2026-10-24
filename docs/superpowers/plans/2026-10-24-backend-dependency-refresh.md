@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** Completed on 2026-10-24.
+
 **Goal:** Upgrade backend direct dependencies to current stable releases, remove dependencies that are provably unused, and preserve all V3 behavior.
 
 **Architecture:** Treat `Cargo.toml` as the direct-dependency contract and `Cargo.lock` as its reproducible resolution. Audit usage across library, binaries, tests, and feature-gated code before deletion; limit Rust source changes to compatibility fixes required by dependency upgrades.
@@ -12,7 +14,7 @@
 
 ## Global Constraints
 
-- Preserve the existing uncommitted package rename from `backend` to `zjudss`.
+- Keep the Cargo package and library crate consistently named `zjudss`; `backend/` remains only the repository directory.
 - Preserve REST/SSE contracts, database schema, Agent tools, adapter-only tensoreval execution, and Snappy Parquet results.
 - Do not remove a dependency used by any library, binary, test, or enabled feature target.
 - Do not perform unrelated refactoring or intentionally raise the MSRV.
@@ -39,15 +41,15 @@
 - Consumes: the current manifest, lockfile, package rename, and all Cargo targets.
 - Produces: a list of outdated direct dependencies, actual use sites, feature ownership, and deletion candidates.
 
-- [ ] **Step 1: Record current resolution and available direct upgrades**
+- [x] **Step 1: Record current resolution and available direct upgrades**
 
 Run Cargo metadata/tree and registry-aware update checks without modifying source files. Compare direct dependencies as a coordinated group, especially Arrow/Parquet, Diesel/migrations, and rig/reqwest.
 
-- [ ] **Step 2: Check direct dependency use across every target**
+- [x] **Step 2: Check direct dependency use across every target**
 
 Search production, binary, test, and feature-gated sources, then run an all-target/all-feature compile with the unused-crate lint as corroborating evidence. Treat lint results per target to avoid false positives.
 
-- [ ] **Step 3: Run the pre-upgrade test baseline**
+- [x] **Step 3: Run the pre-upgrade test baseline**
 
 Run: `cargo test --features e2e-test`
 
@@ -64,19 +66,19 @@ Expected: PASS, or a clearly documented pre-existing/environmental failure befor
 - Consumes: Task 1's upgrade and usage map.
 - Produces: a consistent current direct-dependency set and any minimal API compatibility changes.
 
-- [ ] **Step 1: Update direct dependency requirements**
+- [x] **Step 1: Update direct dependency requirements**
 
 Upgrade direct crates to current stable releases supported by the current toolchain. Keep related crates on compatible versions and preserve deliberately restricted features such as ZIP `default-features = false`.
 
-- [ ] **Step 2: Regenerate and inspect the lockfile**
+- [x] **Step 2: Regenerate and inspect the lockfile**
 
 Resolve the graph, inspect version duplication and feature changes, and confirm that the package remains named `zjudss`.
 
-- [ ] **Step 3: Remove proven-unused direct dependencies**
+- [x] **Step 3: Remove proven-unused direct dependencies**
 
 Delete only candidates with no required target use. Re-run `cargo check --all-targets --all-features` after each logical removal and restore any dependency whose absence breaks an intended target.
 
-- [ ] **Step 4: Apply minimal compatibility fixes**
+- [x] **Step 4: Apply minimal compatibility fixes**
 
 Change only call sites made invalid by upgraded public APIs. Do not change application behavior or public contracts.
 
@@ -89,24 +91,32 @@ Change only call sites made invalid by upgraded public APIs. Do not change appli
 - Consumes: the upgraded manifest, lockfile, and compatibility changes.
 - Produces: evidence that formatting, compilation, tests, and dependency constraints pass.
 
-- [ ] **Step 1: Check formatting**
+- [x] **Step 1: Check formatting**
 
 Run: `cargo fmt --all -- --check`
 
 Expected: exit 0.
 
-- [ ] **Step 2: Compile every target and feature combination**
+- [x] **Step 2: Compile every target and feature combination**
 
 Run: `cargo check --all-targets --all-features`
 
 Expected: exit 0 with no missing or incompatible dependencies.
 
-- [ ] **Step 3: Run the required backend suite**
+- [x] **Step 3: Run the required backend suite**
 
 Run: `cargo test --features e2e-test`
 
 Expected: exit 0 and all tests pass.
 
-- [ ] **Step 4: Review the final diff**
+- [x] **Step 4: Review the final diff**
 
 Confirm that changes are limited to dependency declarations, lock resolution, necessary compatibility fixes, and these design/plan records; report any environment-only test exclusions explicitly.
+
+## Result
+
+- Upgraded `argon2`, `sha2`, `tokio`, and `zip`; added the directly used `getrandom` and `hex` crates.
+- Removed unused direct `reqwest`, `schemars`, and `rand_core` dependencies.
+- Unified the Cargo package and library crate as `zjudss`, including all production, binary, and test imports.
+- `cargo fmt --all -- --check`, `cargo check --all-targets --all-features`, and
+  `cargo test --features e2e-test` completed successfully with no public-contract changes.

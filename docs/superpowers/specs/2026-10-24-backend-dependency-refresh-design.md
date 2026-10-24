@@ -6,7 +6,7 @@
 
 ## Scope and constraints
 
-- 保留用户已将 package 从 `backend` 重命名为 `zjudss` 的未提交修改。
+- Cargo package 与 library crate 统一命名为 `zjudss`；`backend/` 仅保留为仓库目录名。
 - 允许必要的依赖主版本升级，并只做由升级直接要求的兼容性修改。
 - 只有在源码、测试及 feature target 均不需要某个直接依赖时才删除它；仅在测试中使用的依赖保留在 `dev-dependencies`。
 - 不改变 REST/SSE 合同、数据库 schema、Agent 工具、tensoreval adapter 边界或 Parquet 结果链路。
@@ -24,3 +24,11 @@
 - `Cargo.lock` 与 manifest 一致，且不存在无意引入的重复旧版本或默认 feature 扩张。
 - `cargo fmt --all -- --check`、全 target 编译和 `cargo test --features e2e-test` 通过。
 - 现有公共行为、稳定错误码和功能目录不发生变化，因此无需更新 API、数据库或前端设计文档。
+
+## Implemented result
+
+- 升级 `argon2` 至 `0.6.0`、`sha2` 至 `0.11.1`、`tokio` 至 `1.54.1`、`zip` 至 `9.1.0`。
+- 以直接使用的 `getrandom 0.4.3` 和 `hex 0.4.3` 替代旧的随机数及十六进制辅助调用。
+- 删除未直接使用的 `reqwest`、`schemars` 和 `rand_core`；保留所有实际使用的运行时与测试依赖。
+- 将 package、library crate 及全部当前 Rust 调用点统一为 `zjudss` / `zjudss::`。
+- 格式、全 target/all feature 编译和 `e2e-test` 测试套件均通过；公共合同未改变。

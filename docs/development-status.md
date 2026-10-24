@@ -20,11 +20,20 @@
 
 ## Runtime contracts
 
+- 后端 Cargo package 与 library crate 均为 `zjudss`；`backend/` 只是仓库目录名，Rust 调用点使用
+  `zjudss::`。
 - Agent bundle：`v3.0.0`，目录 `backend/resources/agent/v3`。
 - Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `TENSOREVAL_CWD` 动态发现并验证
   docs/catalog 与 `sparrowzz/dss/rssbundle` manifest，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
 - 公共合同：41 条路由、9 类消息、16 个工具、6 个 skills、8 个上传来源、6 类视图。
 - 模型表：adapter 固定输出 21 张规范 DataFrame，包含合法的零行表。
+
+## Backend dependency baseline
+
+2026-10-24 完成后端直接依赖刷新：`argon2 0.6.0`、`sha2 0.11.1`、`tokio 1.54.1` 和
+`zip 9.1.0`；新增直接使用的 `getrandom 0.4.3`、`hex 0.4.3`，移除未直接使用的 `reqwest`、
+`schemars` 与 `rand_core`。ZIP 继续关闭默认 feature，仅启用 `deflate`；Arrow 与 Parquet 保持
+`60.0.0` 对齐。升级只包含必要的 API 兼容修改，不改变 REST/SSE、数据库、Agent 工具或引擎边界。
 
 ## Hard boundaries
 
@@ -50,3 +59,6 @@ Markdown、单篇 4 MiB、文档合计 64 MiB、2,048 个案例、每案例 10,0
 Vitest 覆盖公共类型、state、workspace、脚本卡、运行与数据工作台。Playwright 覆盖真实浏览器到
 Vite/Axum/SQLite/CAS 的身份、导入、分层案例目录与窄屏详情、显式运行、派生血缘、删除、恢复、恶意 ZIP、配额和无障碍。
 最终命令与真实 DeepSeek/tensoreval 候选门禁见部署文档。
+
+依赖刷新和 crate 重命名已通过 `cargo fmt --all -- --check`、`cargo check --all-targets --all-features`
+及 `cargo test --features e2e-test`。
