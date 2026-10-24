@@ -71,4 +71,80 @@ describe('messageReducer', () => {
 
     expect(state.messages.map((message) => message.id)).toEqual(['1', '2'])
   })
+
+  it('uses a result message to finish stale progress from an earlier server version', () => {
+    let state = messageReducer(initialMessageState, { type: 'select-session', sessionId: 's1' })
+    state = messageReducer(state, {
+      type: 'snapshot',
+      sessionId: 's1',
+      messages: [
+        {
+          ...base,
+          id: '10',
+          type: 'progress',
+          operation: { kind: 'run', id: '7' },
+          stages: [
+            { key: 'prepare', label: '准备输入', status: 'done' },
+            { key: 'run', label: '执行脚本', status: 'done' },
+            { key: 'completed', label: '收集结果', status: 'running' },
+          ],
+        },
+        {
+          ...base,
+          id: '11',
+          type: 'result',
+          runId: '7',
+          title: '运行结果',
+          outputs: [],
+        },
+      ],
+    })
+
+    const progress = state.messages.find((message) => message.type === 'progress')
+    expect(progress).toMatchObject({
+      type: 'progress',
+      stages: [
+        { key: 'prepare', status: 'done' },
+        { key: 'run', status: 'done' },
+        { key: 'completed', status: 'done' },
+      ],
+    })
+  })
+
+  it('does not overwrite an explicit failed progress stage with a result message', () => {
+    let state = messageReducer(initialMessageState, { type: 'select-session', sessionId: 's1' })
+    state = messageReducer(state, {
+      type: 'snapshot',
+      sessionId: 's1',
+      messages: [
+        {
+          ...base,
+          id: '20',
+          type: 'progress',
+          operation: { kind: 'analysis', id: '9' },
+          stages: [
+            { key: 'run', label: '执行分析', status: 'failed' },
+            { key: 'present', label: '发布结果', status: 'pending' },
+          ],
+        },
+        {
+          ...base,
+          id: '21',
+          type: 'result',
+          analysisRunId: '9',
+          title: '分析结果',
+          outputs: [],
+        },
+      ],
+    })
+
+    const progress = state.messages.find((message) => message.type === 'progress')
+    expect(progress).toMatchObject({
+      type: 'progress',
+      stages: [
+        { key: 'run', status: 'failed' },
+        { key: 'present', status: 'pending' },
+      ],
+    })
+  })
 })

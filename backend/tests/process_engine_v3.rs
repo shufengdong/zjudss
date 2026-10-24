@@ -9,8 +9,8 @@ use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use zjudss::adapters::{
-    ENGINE_CONTRACT_VERSION, EngineCapabilities, EngineConfig, NamedInput, OutputLimits, RunMode,
-    RunSpec, build_command, validate_outputs,
+    ENGINE_CONTRACT_VERSION, EngineCapabilities, EngineConfig, ImportInspectSpec, ImportProfile,
+    ImportSpec, NamedInput, OutputLimits, RunMode, RunSpec, build_command, validate_outputs,
 };
 use zjudss::adapters::{ProcessEngine, SimEngine};
 use zjudss::storage::ParquetInspector;
@@ -75,6 +75,36 @@ fn spec(root: &Path, input_tree: &Path, mode: RunMode) -> RunSpec {
         result_dir: root.join(format!("result-{mode:?}")),
         timeout: Duration::from_secs(5),
     }
+}
+
+fn model_entry_wrappers(root: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(root)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with(".zjudss-model-entry-") && name.ends_with(".dss")
+                })
+        })
+        .collect()
+}
+
+fn model_import_scripts(root: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(root)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with(".zjudss-model-import-") && name.ends_with(".rss")
+                })
+        })
+        .collect()
 }
 
 #[cfg(unix)]
@@ -473,6 +503,256 @@ async fn process_engine_accepts_binary_replacement_and_rejects_only_a_missing_bi
         .await
         .unwrap_err();
     assert_eq!(error.code, "engine_binary_unavailable");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn process_engine_import_uses_input_root_wrapper_for_nested_entry() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _probe_guard = ENGINE_PROBE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let root = tempfile::tempdir().unwrap();
+    let binary = root.path().join("engine");
+    write_probe_engine(&binary, None);
+    let config = EngineConfig::probe(binary.clone(), Duration::from_secs(2)).unwrap();
+    let engine = ProcessEngine::new(config);
+    drop(_probe_guard);
+
+    let input = root.path().join("input");
+    std::fs::create_dir_all(input.join("nested")).unwrap();
+    std::fs::write(input.join("nested/master.dss"), "Redirect linecodes.dss\n").unwrap();
+    std::fs::write(
+        input.join("nested/linecodes.dss"),
+        "Redirect ../shared.dss\n",
+    )
+    .unwrap();
+    std::fs::write(input.join("shared.dss"), "Solve\n").unwrap();
+    write_parquet(&input.join("probe.parquet"), 1, Compression::SNAPPY);
+
+    let tables = format!(
+        "{} solution load_shape shape_assignment storage_controller switch_control tcc_curve fuse recloser relay monitor energy_meter fault para diagnostics events",
+        zjudss::adapters::STATIC_MODEL_TABLES[..20].join(" ")
+    );
+    std::fs::write(
+        &binary,
+        format!(
+            r#"#!/bin/sh
+result_dir=''
+script=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --result-dir) shift; result_dir="$1" ;;
+    --output-format|--input) shift ;;
+    --df) ;;
+    *) script="$1" ;;
+  esac
+  shift
+done
+set -- .zjudss-model-entry-*.dss
+[ "$#" -eq 1 ] && [ -f "$1" ] || exit 21
+grep -Fqx 'Redirect "nested/master.dss"' "$1" || exit 22
+grep -Fq "\"$1\"" "$script" || exit 23
+mkdir -p "$result_dir"
+for name in {tables}; do cp probe.parquet "$result_dir/$name.parquet"; done
+"#
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let inspection = engine
+        .inspect_model_import(ImportInspectSpec {
+            input_tree: input.clone(),
+            timeout: Duration::from_secs(1),
+        })
+        .await
+        .unwrap();
+    std::fs::write(
+        input.join(".zjudss-model-entry.dss"),
+        "New Circuit.UserOwned\n",
+    )
+    .unwrap();
+    let imported = engine
+        .import_model(ImportSpec {
+            input_tree: input.clone(),
+            entry_candidate_id: inspection.entry_candidates[0].id.clone(),
+            result_dir: root.path().join("out"),
+            timeout: Duration::from_secs(2),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(imported.profile, ImportProfile::SingleSolveExecution);
+    assert!(model_entry_wrappers(&input).is_empty());
+    assert!(model_import_scripts(&input).is_empty());
+    assert_eq!(
+        std::fs::read_to_string(input.join(".zjudss-model-entry.dss")).unwrap(),
+        "New Circuit.UserOwned\n"
+    );
+
+    std::fs::write(
+        &binary,
+        "#!/bin/sh\nset -- .zjudss-model-entry-*.dss\n[ \"$#\" -eq 1 ] && [ -f \"$1\" ] || exit 21\nexit 24\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let error = engine
+        .import_model(ImportSpec {
+            input_tree: input.clone(),
+            entry_candidate_id: inspection.entry_candidates[0].id.clone(),
+            result_dir: root.path().join("failed-out"),
+            timeout: Duration::from_secs(2),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "engine_error");
+    assert!(model_entry_wrappers(&input).is_empty());
+    assert!(model_import_scripts(&input).is_empty());
+
+    for (directory, file_name) in [("quote", "bad\"name.dss"), ("control", "bad\nname.dss")] {
+        let unsafe_input = root.path().join(format!("unsafe-{directory}"));
+        std::fs::create_dir(&unsafe_input).unwrap();
+        std::fs::write(unsafe_input.join(file_name), "New Circuit.Bad\n").unwrap();
+        let unsafe_inspection = engine
+            .inspect_model_import(ImportInspectSpec {
+                input_tree: unsafe_input.clone(),
+                timeout: Duration::from_secs(1),
+            })
+            .await
+            .unwrap();
+        let error = engine
+            .import_model(ImportSpec {
+                input_tree: unsafe_input.clone(),
+                entry_candidate_id: unsafe_inspection.entry_candidates[0].id.clone(),
+                result_dir: root.path().join(format!("unsafe-{directory}-out")),
+                timeout: Duration::from_secs(2),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "input_path_invalid");
+        assert!(model_entry_wrappers(&unsafe_input).is_empty());
+        assert!(model_import_scripts(&unsafe_input).is_empty());
+    }
+
+    std::fs::write(&binary, "#!/bin/sh\nwhile :; do sleep 1; done\n").unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let cancelled_engine = engine.clone();
+    let cancelled_input = input.clone();
+    let cancelled_candidate = inspection.entry_candidates[0].id.clone();
+    let cancelled_result_dir = root.path().join("cancelled-out");
+    let task = tokio::spawn(async move {
+        cancelled_engine
+            .import_model(ImportSpec {
+                input_tree: cancelled_input,
+                entry_candidate_id: cancelled_candidate,
+                result_dir: cancelled_result_dir,
+                timeout: Duration::from_secs(30),
+            })
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while model_entry_wrappers(&input).is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(model_entry_wrappers(&input).is_empty());
+    assert!(model_import_scripts(&input).is_empty());
+
+    std::fs::create_dir(input.join("second")).unwrap();
+    std::fs::write(
+        input.join("second/master.dss"),
+        "New Circuit.Second\nSolve\n",
+    )
+    .unwrap();
+    let concurrent_inspection = engine
+        .inspect_model_import(ImportInspectSpec {
+            input_tree: input.clone(),
+            timeout: Duration::from_secs(1),
+        })
+        .await
+        .unwrap();
+    let first_candidate = concurrent_inspection
+        .entry_candidates
+        .iter()
+        .find(|candidate| candidate.display_path == "nested/master.dss")
+        .unwrap()
+        .id
+        .clone();
+    let second_candidate = concurrent_inspection
+        .entry_candidates
+        .iter()
+        .find(|candidate| candidate.display_path == "second/master.dss")
+        .unwrap()
+        .id
+        .clone();
+    std::fs::write(
+        &binary,
+        format!(
+            r#"#!/bin/sh
+result_dir=''
+script=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --result-dir) shift; result_dir="$1" ;;
+    --output-format|--input) shift ;;
+    --df) ;;
+    *) script="$1" ;;
+  esac
+  shift
+done
+case "$result_dir" in
+  *concurrent-a) peer="${{result_dir%concurrent-a}}concurrent-b.started"; expected='nested/master.dss' ;;
+  *concurrent-b) peer="${{result_dir%concurrent-b}}concurrent-a.started"; expected='second/master.dss' ;;
+  *) exit 31 ;;
+esac
+touch "$result_dir.started"
+while [ ! -f "$peer" ]; do sleep 0.01; done
+wrapper=$(sed -n 's/.*("\([^"]*\)").*/\1/p' "$script")
+[ -n "$wrapper" ] || exit 32
+grep -Fqx "Redirect \"$expected\"" "$wrapper" || exit 33
+mkdir -p "$result_dir"
+for name in {tables}; do cp probe.parquet "$result_dir/$name.parquet"; done
+"#
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let first_engine = engine.clone();
+    let first_input = input.clone();
+    let first_result = root.path().join("concurrent-a");
+    let first = tokio::spawn(async move {
+        first_engine
+            .import_model(ImportSpec {
+                input_tree: first_input,
+                entry_candidate_id: first_candidate,
+                result_dir: first_result,
+                timeout: Duration::from_secs(2),
+            })
+            .await
+    });
+    let second_engine = engine.clone();
+    let second_input = input.clone();
+    let second_result = root.path().join("concurrent-b");
+    let second = tokio::spawn(async move {
+        second_engine
+            .import_model(ImportSpec {
+                input_tree: second_input,
+                entry_candidate_id: second_candidate,
+                result_dir: second_result,
+                timeout: Duration::from_secs(2),
+            })
+            .await
+    });
+    first.await.unwrap().unwrap();
+    second.await.unwrap().unwrap();
+    assert!(model_entry_wrappers(&input).is_empty());
+    assert!(model_import_scripts(&input).is_empty());
 }
 
 #[cfg(unix)]

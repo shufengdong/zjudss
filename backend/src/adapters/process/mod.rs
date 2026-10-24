@@ -4,6 +4,7 @@ mod output;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
+use std::{fs::OpenOptions, io::Write};
 
 use async_trait::async_trait;
 use tokio::process::Command;
@@ -44,6 +45,39 @@ impl EngineConfig {
 #[derive(Debug, Clone)]
 pub struct ProcessEngine {
     config: EngineConfig,
+}
+
+struct RemoveFileGuard {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl RemoveFileGuard {
+    fn new(path: PathBuf) -> Self {
+        Self { path, armed: true }
+    }
+
+    fn cleanup(mut self) -> std::io::Result<()> {
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => {
+                self.armed = false;
+                Ok(())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.armed = false;
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl Drop for RemoveFileGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 }
 
 impl ProcessEngine {
@@ -204,39 +238,115 @@ impl SimEngine for ProcessEngine {
                 "DSS 入口不是 UTF-8",
             )
         })?;
-        let script_name = ".zjudss-model-import.rss";
-        let outputs = output_names.join(", ");
-        let entry_literal = serde_json::to_string(&entry.replace('\\', "/")).map_err(|error| {
+        let entry = entry.replace('\\', "/");
+        if entry
+            .chars()
+            .any(|character| character == '"' || character.is_control())
+        {
+            return Err(AdapterError::new(
+                "input_path_invalid",
+                ErrorCategory::Model,
+                "DSS 入口包含不安全字符",
+            ));
+        }
+        let entry_literal = format!("\"{entry}\"");
+        let mut wrapper_nonce = [0_u8; 16];
+        getrandom::fill(&mut wrapper_nonce).map_err(|error| {
             AdapterError::new(
                 "model_import_script_failed",
                 ErrorCategory::Internal,
                 error.to_string(),
             )
         })?;
-        std::fs::write(
-            spec.input_tree.join(script_name),
-            format!("[{outputs}] = {function}({entry_literal});\n"),
-        )
-        .map_err(|error| {
+        let nonce = hex::encode(wrapper_nonce);
+        let wrapper_name = format!(".zjudss-model-entry-{nonce}.dss");
+        let wrapper_path = spec.input_tree.join(&wrapper_name);
+        let mut wrapper = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&wrapper_path)
+            .map_err(|error| {
+                AdapterError::new(
+                    "model_import_script_failed",
+                    ErrorCategory::Io,
+                    error.to_string(),
+                )
+            })?;
+        wrapper
+            .write_all(format!("Redirect {entry_literal}\n").as_bytes())
+            .map_err(|error| {
+                let _ = std::fs::remove_file(&wrapper_path);
+                AdapterError::new(
+                    "model_import_script_failed",
+                    ErrorCategory::Io,
+                    error.to_string(),
+                )
+            })?;
+        drop(wrapper);
+        let wrapper_guard = RemoveFileGuard::new(wrapper_path);
+        let script_name = format!(".zjudss-model-import-{nonce}.rss");
+        let script_path = spec.input_tree.join(&script_name);
+        let outputs = output_names.join(", ");
+        let wrapper_literal = serde_json::to_string(&wrapper_name).map_err(|error| {
             AdapterError::new(
                 "model_import_script_failed",
-                ErrorCategory::Io,
+                ErrorCategory::Internal,
                 error.to_string(),
             )
         })?;
-        let output = self
+        let mut script = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&script_path)
+            .map_err(|error| {
+                AdapterError::new(
+                    "model_import_script_failed",
+                    ErrorCategory::Io,
+                    error.to_string(),
+                )
+            })?;
+        let script_guard = RemoveFileGuard::new(script_path);
+        script
+            .write_all(format!("[{outputs}] = {function}({wrapper_literal});\n").as_bytes())
+            .map_err(|error| {
+                AdapterError::new(
+                    "model_import_script_failed",
+                    ErrorCategory::Io,
+                    error.to_string(),
+                )
+            })?;
+        drop(script);
+        let executed = self
             .execute(
                 RunSpec {
                     mode: RunMode::Dataframe,
                     input_tree: spec.input_tree,
-                    script_path: PathBuf::from(script_name),
+                    script_path: PathBuf::from(&script_name),
                     named_inputs: Vec::new(),
                     result_dir: spec.result_dir,
                     timeout: spec.timeout,
                 },
                 &[RunMode::Dataframe],
             )
-            .await?;
+            .await;
+        let cleanup = script_guard
+            .cleanup()
+            .and_then(|()| wrapper_guard.cleanup());
+        let output = match (executed, cleanup) {
+            (Ok(output), Ok(())) => output,
+            (Ok(_), Err(error)) => {
+                return Err(AdapterError::new(
+                    "model_import_script_failed",
+                    ErrorCategory::Io,
+                    error.to_string(),
+                ));
+            }
+            (Err(error), Ok(())) => return Err(error),
+            (Err(mut error), Err(cleanup_error)) => {
+                error.message = format!("{}; 导入临时文件清理失败: {cleanup_error}", error.message);
+                return Err(error);
+            }
+        };
         let datasets = if profile == ImportProfile::SingleSolveExecution {
             let model_names = STATIC_MODEL_TABLES
                 .into_iter()

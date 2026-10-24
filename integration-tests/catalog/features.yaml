@@ -152,7 +152,10 @@
     - runner: playwright
       file: integration-tests/e2e/session-recovery.spec.ts
       name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions: [messages append only, the first user message updates the visible session title without refresh, every public message type has a renderer]
+    - runner: vitest
+      file: frontend/src/state/messageReducer.test.ts
+      name: uses a result message to finish stale progress from an earlier server version
+  assertions: [messages append only, the first user message updates the visible session title without refresh, every public message type has a renderer, terminal results reconcile stale progress snapshots]
   fixtures: [scripted agent]
   contracts:
     - "route:GET /api/sessions/{id}/messages"
@@ -235,7 +238,22 @@
     - runner: playwright
       file: integration-tests/e2e/bundle-examples.spec.ts
       name: single-Solve bundles become drafts while repeated Solve and specialist lifecycles fail without mutation
-  assertions: [imports persist candidates, supported lifecycles become drafts, unsupported lifecycles do not mutate, discard releases resources]
+    - runner: rust
+      file: backend/tests/model_import_adapter.rs
+      name: include_graph_allows_parent_segments_that_stay_inside_source_tree
+    - runner: rust
+      file: backend/tests/model_import_adapter.rs
+      name: include_graph_rejects_parent_segments_that_escape_source_tree
+    - runner: rust
+      file: backend/tests/model_import_adapter.rs
+      name: include_graph_rejects_absolute_dependency_paths
+    - runner: rust
+      file: backend/tests/model_import_adapter.rs
+      name: include_graph_reports_missing_normalized_dependency
+    - runner: rust
+      file: backend/tests/process_engine_v3.rs
+      name: process_engine_import_uses_input_root_wrapper_for_nested_entry
+  assertions: [imports persist candidates, supported lifecycles become drafts, unsupported lifecycles do not mutate, safe normalized DSS includes stay within the private input tree, unsafe or missing DSS includes remain structured failures, discard releases resources]
   fixtures: [DSS source, single-Solve bundle, unsupported lifecycle bundles, malicious archives]
   contracts:
     - "route:POST /api/sessions/{id}/model-imports"
@@ -366,7 +384,10 @@
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
       name: one result can be deleted without deleting its run or sibling result
-  assertions: [run binds script and active version, run and result lists remain readable]
+    - runner: rust
+      file: backend/tests/simulation_runs.rs
+      name: successful_run_publishes_a_terminal_done_progress_event
+  assertions: [run binds script and active version, run and result lists remain readable, successful run progress has no running stage]
   fixtures: [published model, valid RSS script]
   contracts:
     - "route:POST /api/scripts/{id}/runs"
@@ -384,7 +405,10 @@
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
       name: one result can be deleted without deleting its run or sibling result
-  assertions: [metadata rows and download are readable, deleting one result keeps siblings and run]
+    - runner: rust
+      file: backend/src/application/datasets.rs
+      name: utf8_view_values_are_returned_as_json_strings
+  assertions: [metadata rows and download are readable, Arrow Utf8View values page as JSON strings, deleting one result keeps siblings and run]
   fixtures: [multi-result run]
   contracts:
     - "route:GET /api/datasets/{id}"

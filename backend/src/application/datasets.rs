@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use arrow_array::{
     Array, BooleanArray, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array,
-    LargeStringArray, StringArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array,
+    LargeStringArray, StringArray, StringViewArray, UInt8Array, UInt16Array, UInt32Array,
+    UInt64Array,
 };
 use arrow_schema::DataType;
 use serde::{Deserialize, Serialize};
@@ -495,6 +496,13 @@ fn value(a: &dyn Array, row: usize, d: &mut BTreeMap<String, u64>) -> Result<Val
                 .value(row)
                 .into(),
         )),
+        DataType::Utf8View => Ok(Value::String(
+            a.as_any()
+                .downcast_ref::<StringViewArray>()
+                .unwrap()
+                .value(row)
+                .into(),
+        )),
         DataType::Boolean => Ok(Value::Bool(
             a.as_any()
                 .downcast_ref::<BooleanArray>()
@@ -560,5 +568,32 @@ fn value(a: &dyn Array, row: usize, d: &mut BTreeMap<String, u64>) -> Result<Val
             }
         }
         other => Err(DatasetError::Storage(format!("不支持的数据类型 {other}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_array::StringViewArray;
+
+    #[test]
+    fn utf8_view_values_are_returned_as_json_strings() {
+        let array = StringViewArray::from(vec![
+            Some("bus-1"),
+            None,
+            Some("a string longer than twelve bytes"),
+        ]);
+        let mut diagnostics = BTreeMap::new();
+
+        assert_eq!(
+            value(&array, 0, &mut diagnostics).unwrap(),
+            Value::String("bus-1".into())
+        );
+        assert_eq!(value(&array, 1, &mut diagnostics).unwrap(), Value::Null);
+        assert_eq!(
+            value(&array, 2, &mut diagnostics).unwrap(),
+            Value::String("a string longer than twelve bytes".into())
+        );
+        assert_eq!(diagnostics.get("missingValues"), Some(&1));
     }
 }

@@ -419,7 +419,11 @@ fn run_stages(active: &str) -> Vec<Stage> {
         key: key.into(),
         label: label.into(),
         status: if key == active {
-            StageStatus::Running
+            if active == "completed" {
+                StageStatus::Done
+            } else {
+                StageStatus::Running
+            }
         } else if active == "completed" || active == "run" && key == "prepare" {
             StageStatus::Done
         } else {

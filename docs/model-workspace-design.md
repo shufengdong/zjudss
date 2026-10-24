@@ -9,6 +9,12 @@ bundle、ZIP 和表格文件只是导入来源；adapter 解析后返回 DataFra
 draft、创建或复制 draft、按 `tableName` 整表覆盖、revision 增加一次并转移 artifact 引用。放弃、失败和
 应用完成都释放不再需要的 staging 来源。
 
+DSS `Redirect`/`Compile` 依赖相对当前文件进行词法规范化。允许使用 `.`，也允许规范化后仍位于本次私有
+输入树内的 `..`；绝对路径、平台前缀和任何越过输入树根的父目录引用返回 `input_path_invalid`。规范化后的
+目标仍必须存在于本次导入树中，否则返回 `missing_dependency`。调用引擎 import profile 时，adapter 在私有
+输入树根创建并在调用后清理每次导入唯一的 DSS wrapper 与 RSS 脚本，使 tensoreval 的 acquisition root 与
+上述已验证边界一致；无法安全表示在 wrapper 中的双引号或控制字符入口返回 `input_path_invalid`。
+
 draft 可随时变化，不是版本。只有用户点击“生成版本”才能冻结内容；发布计算按表名排序的规范 content hash，
 写 publish receipt，清空 draft 并自动激活。相同存活内容去重复用；删除后的相同内容可获得新版本 ID。
 

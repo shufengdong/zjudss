@@ -326,21 +326,33 @@ fn dependencies(root: &Path, relative: &Path) -> Result<Vec<PathBuf>, AdapterErr
         let value = rest
             .trim()
             .trim_matches(|character| matches!(character, '"' | '\'' | '(' | ')'));
-        let dependency = parent.join(value);
-        if dependency.is_absolute()
-            || dependency
-                .components()
-                .any(|component| !matches!(component, Component::Normal(_)))
-        {
-            return Err(AdapterError::new(
+        let dependency = normalize_dependency(&parent.join(value)).ok_or_else(|| {
+            AdapterError::new(
                 "input_path_invalid",
                 ErrorCategory::Model,
                 "DSS include 路径不安全",
-            ));
-        }
+            )
+        })?;
         output.insert(dependency);
     }
     Ok(output.into_iter().collect())
+}
+
+fn normalize_dependency(path: &Path) -> Option<PathBuf> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return None;
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    Some(normalized)
 }
 
 fn candidate_id(relative: &Path) -> String {

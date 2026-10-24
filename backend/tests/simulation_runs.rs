@@ -268,6 +268,57 @@ async fn failed_run_publishes_a_terminal_failed_progress_event() {
 }
 
 #[tokio::test]
+async fn successful_run_publishes_a_terminal_done_progress_event() {
+    let app = TestApp::spawn().await;
+    let (user, cookie, session_id, version_id, script_id) = setup(&app).await;
+    let response = post_run(
+        &app,
+        &cookie,
+        &script_id,
+        &version_id,
+        "successful-progress",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    let run_id = value["run"]["id"].as_str().unwrap().parse::<i32>().unwrap();
+
+    let progress = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let messages = app
+                .state
+                .message_repo
+                .list_by_session(&user.id, session_id)
+                .await
+                .unwrap();
+            let progress = messages
+                .iter()
+                .filter(|message| message.run_id == Some(run_id) && message.kind == "progress")
+                .map(|message| {
+                    serde_json::from_str::<Value>(message.payload_json.as_deref().unwrap()).unwrap()
+                })
+                .collect::<Vec<_>>();
+            if progress.len() == 3 {
+                break progress;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    assert!(
+        progress.last().unwrap()["stages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|stage| stage["status"] == "done")
+    );
+}
+
+#[tokio::test]
 async fn only_explicit_click_route_creates_idempotent_frozen_runs_and_results() {
     let app = TestApp::spawn().await;
     let (user, cookie, session_id, version_id, script_id) = setup(&app).await;

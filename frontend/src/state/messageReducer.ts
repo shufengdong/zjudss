@@ -58,6 +58,32 @@ function messageOrder(message: Message): number {
   return Number.isSafeInteger(parsed) ? parsed : Number.MAX_SAFE_INTEGER
 }
 
+function reconcileCompletedProgress(messages: Message[]): Message[] {
+  const completedRuns = new Set<string>()
+  const completedAnalyses = new Set<string>()
+  for (const message of messages) {
+    if (message.type !== 'result') continue
+    if (message.runId) completedRuns.add(message.runId)
+    if (message.analysisRunId) completedAnalyses.add(message.analysisRunId)
+  }
+  return messages.map((message) => {
+    if (
+      message.type !== 'progress' ||
+      (message.operation.kind === 'run' && !completedRuns.has(message.operation.id)) ||
+      (message.operation.kind === 'analysis' && !completedAnalyses.has(message.operation.id)) ||
+      message.operation.kind === 'ingestion' ||
+      message.stages.some((stage) => stage.status === 'failed') ||
+      message.stages.every((stage) => stage.status === 'done')
+    ) {
+      return message
+    }
+    return {
+      ...message,
+      stages: message.stages.map((stage) => ({ ...stage, status: 'done' as const })),
+    }
+  })
+}
+
 export function mergeMessage(messages: Message[], incoming: Message): Message[] {
   if (incoming.type === 'user') {
     const optimistic = messages.findIndex(
@@ -69,10 +95,14 @@ export function mergeMessage(messages: Message[], incoming: Message): Message[] 
       return next.sort((left, right) => messageOrder(left) - messageOrder(right))
     }
   }
-  if (messages.some((message) => message.id === incoming.id)) return messages
+  if (messages.some((message) => message.id === incoming.id)) {
+    return reconcileCompletedProgress(messages)
+  }
   const next = messages.filter((message) => !sameAggregate(message, incoming))
   next.push(incoming)
-  return next.sort((left, right) => messageOrder(left) - messageOrder(right))
+  return reconcileCompletedProgress(
+    next.sort((left, right) => messageOrder(left) - messageOrder(right)),
+  )
 }
 
 export function messageReducer(state: MessageState, action: MessageAction): MessageState {

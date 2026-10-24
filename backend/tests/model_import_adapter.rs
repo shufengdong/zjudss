@@ -43,6 +43,114 @@ async fn include_graph_returns_stable_virtual_root_candidates() {
 }
 
 #[tokio::test]
+async fn include_graph_allows_parent_segments_that_stay_inside_source_tree() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("nested")).unwrap();
+    std::fs::write(
+        root.path().join("nested/master.dss"),
+        "Redirect linecodes.dss\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join("nested/linecodes.dss"),
+        "Redirect ../shared.dss\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join("shared.dss"),
+        "New LineCode.Shared\nSolve\n",
+    )
+    .unwrap();
+
+    let inspection = StubEngine
+        .inspect_model_import(ImportInspectSpec {
+            input_tree: root.path().to_path_buf(),
+            timeout: Duration::from_secs(1),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(inspection.entry_candidates.len(), 1);
+    assert_eq!(
+        inspection.entry_candidates[0].display_path,
+        "nested/master.dss"
+    );
+
+    let imported = StubEngine
+        .import_model(ImportSpec {
+            input_tree: root.path().to_path_buf(),
+            entry_candidate_id: inspection.entry_candidates[0].id.clone(),
+            result_dir: root.path().join("out"),
+            timeout: Duration::from_secs(1),
+        })
+        .await
+        .unwrap();
+    assert_eq!(imported.profile, ImportProfile::SingleSolveExecution);
+}
+
+#[tokio::test]
+async fn include_graph_rejects_parent_segments_that_escape_source_tree() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("nested")).unwrap();
+    std::fs::write(
+        root.path().join("nested/master.dss"),
+        "Redirect ../../outside.dss\n",
+    )
+    .unwrap();
+
+    let error = StubEngine
+        .inspect_model_import(ImportInspectSpec {
+            input_tree: root.path().to_path_buf(),
+            timeout: Duration::from_secs(1),
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "input_path_invalid");
+}
+
+#[tokio::test]
+async fn include_graph_rejects_absolute_dependency_paths() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("master.dss"),
+        "Redirect /tmp/outside.dss\n",
+    )
+    .unwrap();
+
+    let error = StubEngine
+        .inspect_model_import(ImportInspectSpec {
+            input_tree: root.path().to_path_buf(),
+            timeout: Duration::from_secs(1),
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "input_path_invalid");
+}
+
+#[tokio::test]
+async fn include_graph_reports_missing_normalized_dependency() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("nested")).unwrap();
+    std::fs::write(
+        root.path().join("nested/master.dss"),
+        "Redirect ../missing.dss\n",
+    )
+    .unwrap();
+
+    let error = StubEngine
+        .inspect_model_import(ImportInspectSpec {
+            input_tree: root.path().to_path_buf(),
+            timeout: Duration::from_secs(1),
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "missing_dependency");
+}
+
+#[tokio::test]
 async fn static_import_emits_all_canonical_snappy_tables_including_zero_rows() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("master.dss"), "New Circuit.Demo\n").unwrap();
