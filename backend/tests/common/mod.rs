@@ -3,17 +3,17 @@
 use std::collections::{BTreeMap, HashSet};
 
 use axum::Router;
-use backend::adapters::{SimEngine, StubEngine};
-use backend::agent::knowledge::AgentKnowledge;
-use backend::agent::{AgentFactory, DeepSeekAgentFactory, LlmConfig};
-use backend::application::{AppState, RunScheduler};
-use backend::auth::{AuthService, CurrentUser, UserId};
-use backend::catalog::SchemaCatalog;
-use backend::config::RuntimeConfig;
-use backend::db::{self, DbPool};
-use backend::engine_resources::EngineResourceRegistry;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+use zjudss::adapters::{SimEngine, StubEngine};
+use zjudss::agent::knowledge::AgentKnowledge;
+use zjudss::agent::{AgentFactory, DeepSeekAgentFactory, LlmConfig};
+use zjudss::application::{AppState, RunScheduler};
+use zjudss::auth::{AuthService, CurrentUser, UserId};
+use zjudss::catalog::SchemaCatalog;
+use zjudss::config::RuntimeConfig;
+use zjudss::db::{self, DbPool};
+use zjudss::engine_resources::EngineResourceRegistry;
 
 pub struct TestApp {
     pub router: Router,
@@ -29,13 +29,13 @@ pub struct CountRow {
     pub count: i64,
 }
 
-pub fn seed_test_users(pool: &DbPool, csv_bytes: &[u8]) -> backend::auth::UserSeedSummary {
+pub fn seed_test_users(pool: &DbPool, csv_bytes: &[u8]) -> zjudss::auth::UserSeedSummary {
     let mut conn = pool.get().expect("checkout database for user seed");
-    backend::auth::seed_users(
+    zjudss::auth::seed_users(
         &mut conn,
         csv_bytes,
-        backend::application::now_ms(),
-        backend::application::StorageLimits::default(),
+        zjudss::application::now_ms(),
+        zjudss::application::StorageLimits::default(),
     )
     .expect("seed test users")
 }
@@ -169,8 +169,8 @@ impl TestApp {
         let bundle_source = b"new circuit.e2e basekv=10\n";
         std::fs::write(bundle.join("main.rss"), bundle_main).unwrap();
         std::fs::write(bundle.join("dss/model.dss"), bundle_source).unwrap();
-        let main_hash = format!("{:x}", Sha256::digest(bundle_main));
-        let source_hash = format!("{:x}", Sha256::digest(bundle_source));
+        let main_hash = hex::encode(Sha256::digest(bundle_main));
+        let source_hash = hex::encode(Sha256::digest(bundle_source));
         let manifest = serde_json::json!({
             "schema_version": 1,
             "artifact": "mems.dss-rss-bundle",
@@ -243,19 +243,19 @@ impl TestApp {
             config.data_dir.clone(),
             auth,
             scheduler,
-            backend::application::StorageLimits::default(),
+            zjudss::application::StorageLimits::default(),
             catalog,
             engine_snapshot,
             config.upload_single_file_limit_bytes,
             config.upload_batch_limit_bytes,
-            backend::ingestion::ArchiveLimits {
+            zjudss::ingestion::ArchiveLimits {
                 max_entries: config.archive_max_entries,
                 max_expanded_bytes: config.archive_max_expanded_bytes,
                 max_compression_ratio: config.archive_max_compression_ratio,
                 max_file_bytes: config.upload_single_file_limit_bytes,
             },
         );
-        let router = backend::build_router(state.clone());
+        let router = zjudss::build_router(state.clone());
 
         Self {
             router,

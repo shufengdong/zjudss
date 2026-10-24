@@ -1,12 +1,10 @@
-use std::fmt::Write as _;
 use std::time::Duration;
 
 use argon2::Argon2;
-use argon2::password_hash::{PasswordHash, PasswordVerifier};
+use argon2::password_hash::{PasswordVerifier, phc::PasswordHash};
 use axum::http::{HeaderMap, header};
 use cookie::{Cookie, SameSite, time::Duration as CookieDuration};
 use diesel::prelude::*;
-use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 
@@ -270,15 +268,11 @@ fn read_token(headers: &HeaderMap) -> Option<String> {
 }
 
 fn token_hash(token: &str) -> String {
-    format!("{:x}", Sha256::digest(token.as_bytes()))
+    hex::encode(Sha256::digest(token.as_bytes()))
 }
 
 fn random_token() -> String {
     let mut bytes = [0_u8; 32];
-    OsRng.fill_bytes(&mut bytes);
-    let mut token = String::with_capacity(64);
-    for byte in bytes {
-        write!(&mut token, "{byte:02x}").expect("write to string");
-    }
-    token
+    getrandom::fill(&mut bytes).expect("operating system random source unavailable");
+    hex::encode(bytes)
 }

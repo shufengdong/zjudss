@@ -1,10 +1,10 @@
 use std::io::Write;
 
-use backend::ingestion::{
-    ArchiveExtractor, ArchiveLimits, BundleValidator, ExtractedTree, RssInspector,
-};
 use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
+use zjudss::ingestion::{
+    ArchiveExtractor, ArchiveLimits, BundleValidator, ExtractedTree, RssInspector,
+};
 
 fn zip_file(entries: &[(&str, &[u8], Option<u32>)]) -> (tempfile::TempDir, std::path::PathBuf) {
     let root = tempfile::tempdir().unwrap();
@@ -118,7 +118,7 @@ fn zip_and_directory_bundle_have_the_same_canonical_manifest() {
     let model = b"New Circuit.demo";
     std::fs::write(directory.join("main.rss"), entry).unwrap();
     std::fs::write(directory.join("dss/model.dss"), model).unwrap();
-    let hash = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
+    let hash = |bytes: &[u8]| hex::encode(Sha256::digest(bytes));
     let manifest = serde_json::to_vec(&serde_json::json!({
         "entry":"main.rss",
         "files":[

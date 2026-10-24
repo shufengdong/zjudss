@@ -4,9 +4,9 @@ use std::io::Cursor;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use backend::application::{ArtifactError, ArtifactMetadata, StorageLimits};
-use backend::storage::StageLimits;
 use tower::ServiceExt;
+use zjudss::application::{ArtifactError, ArtifactMetadata, StorageLimits};
+use zjudss::storage::StageLimits;
 
 use common::TestApp;
 
@@ -161,7 +161,7 @@ async fn object_paths_stay_inside_data_dir_and_gc_removes_unreferenced_blobs() {
 fn staging_enforces_stream_limit_and_cleans_partial_file() {
     let root = tempfile::tempdir().expect("temp root");
     let store =
-        backend::storage::ArtifactStore::new(root.path().to_path_buf()).expect("artifact store");
+        zjudss::storage::ArtifactStore::new(root.path().to_path_buf()).expect("artifact store");
     let error = store
         .stage(Cursor::new(vec![7_u8; 9]), StageLimits { max_bytes: 8 })
         .expect_err("stream must stop at limit");

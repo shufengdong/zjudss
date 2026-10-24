@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use arrow_array::{ArrayRef, Float64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
-use backend::catalog::{SchemaCatalog, infer_table, infer_tables};
-use backend::ingestion::{ColumnSchema, TableSchema, TabularFormat, TabularInspector};
 use parquet::arrow::ArrowWriter;
 use serde_json::json;
+use zjudss::catalog::{SchemaCatalog, infer_table, infer_tables};
+use zjudss::ingestion::{ColumnSchema, TableSchema, TabularFormat, TabularInspector};
 
 fn catalog() -> SchemaCatalog {
     SchemaCatalog::from_value("test-v1", &json!({

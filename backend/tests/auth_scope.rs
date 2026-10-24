@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
-use backend::auth::UserId;
 use common::TestApp;
+use zjudss::auth::UserId;
 
 #[derive(QueryableByName)]
 struct AuthRow {
@@ -85,7 +85,7 @@ async fn login_sets_persistent_opaque_cookie_and_me_returns_user() {
     assert!(!set_cookie.contains("Secure"));
     let raw_token = cookie.strip_prefix("zjudss_session=").expect("cookie name");
     assert!(!body.to_string().contains(raw_token));
-    let expected_hash = format!("{:x}", Sha256::digest(raw_token.as_bytes()));
+    let expected_hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
     let mut conn = app.pool.get().expect("database");
     let row = diesel::sql_query(
         "SELECT token_hash,user_id,expires_at_ms FROM auth_sessions WHERE user_id='alice'",
@@ -95,7 +95,7 @@ async fn login_sets_persistent_opaque_cookie_and_me_returns_user() {
     assert_eq!(row.token_hash, expected_hash);
     assert_ne!(row.token_hash, raw_token);
     assert_eq!(row.user_id, "alice");
-    assert!(row.expires_at_ms > backend::application::now_ms());
+    assert!(row.expires_at_ms > zjudss::application::now_ms());
     drop(conn);
     let response = app
         .router
@@ -149,7 +149,7 @@ async fn expiring_session_renews_and_expired_session_is_deleted() {
     let app = TestApp::spawn().await;
     let (cookie, _, _) = login(&app, "alice", "alice").await;
     let raw = cookie.strip_prefix("zjudss_session=").unwrap();
-    let hash = format!("{:x}", Sha256::digest(raw.as_bytes()));
+    let hash = hex::encode(Sha256::digest(raw.as_bytes()));
     let fresh = app
         .router
         .clone()
@@ -158,7 +158,7 @@ async fn expiring_session_renews_and_expired_session_is_deleted() {
         .expect("fresh response");
     assert!(fresh.headers().get(header::SET_COOKIE).is_none());
     let mut conn = app.pool.get().expect("database");
-    let near = backend::application::now_ms() + 86_400_000;
+    let near = zjudss::application::now_ms() + 86_400_000;
     diesel::sql_query("UPDATE auth_sessions SET expires_at_ms=? WHERE token_hash=?")
         .bind::<BigInt, _>(near)
         .bind::<Text, _>(&hash)

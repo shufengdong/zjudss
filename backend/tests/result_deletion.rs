@@ -4,17 +4,17 @@ use std::io::Cursor;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use backend::application::{
-    AnalysisInput, AnalysisRequest, CreateRunRequest, CreateScriptRequest, PublishDraftRequest,
-    ScriptSource, UploadBatch, UploadFile,
-};
-use backend::storage::StageLimits;
 use common::TestApp;
 use diesel::prelude::*;
 use serde_json::{Value, json};
 use tower::ServiceExt;
+use zjudss::application::{
+    AnalysisInput, AnalysisRequest, CreateRunRequest, CreateScriptRequest, PublishDraftRequest,
+    ScriptSource, UploadBatch, UploadFile,
+};
+use zjudss::storage::StageLimits;
 
-async fn create_completed_run(app: &TestApp) -> (backend::auth::CurrentUser, String, i32, i32) {
+async fn create_completed_run(app: &TestApp) -> (zjudss::auth::CurrentUser, String, i32, i32) {
     let user = common::test_user("alice@example.com");
     let cookie = app.login_cookie("alice@example.com").await;
     let session = app
@@ -331,13 +331,13 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
     let new_analysis = app
         .state
         .analysis_service
-        .run(backend::application::AnalysisRequest {
+        .run(zjudss::application::AnalysisRequest {
             principal: user,
             session_id: run.session_id,
             request_message_id: None,
             intent: json!({}),
             script: "result = source".into(),
-            inputs: vec![backend::application::AnalysisInput {
+            inputs: vec![zjudss::application::AnalysisInput {
                 dataset_id: source_id,
                 alias: "source".into(),
             }],

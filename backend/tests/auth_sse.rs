@@ -4,13 +4,13 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use backend::application::now_ms;
-use backend::auth::UserId;
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Text};
 use futures::StreamExt;
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
+use zjudss::application::now_ms;
+use zjudss::auth::UserId;
 
 use common::TestApp;
 
@@ -26,7 +26,7 @@ fn token_hash(cookie: &str) -> String {
     let token = cookie
         .strip_prefix("zjudss_session=")
         .expect("session cookie");
-    format!("{:x}", Sha256::digest(token.as_bytes()))
+    hex::encode(Sha256::digest(token.as_bytes()))
 }
 
 fn session_times(app: &TestApp, hash: &str) -> SessionTimes {

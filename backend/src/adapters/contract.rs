@@ -324,5 +324,5 @@ pub(crate) fn binary_sha256(path: &Path) -> Result<String, AdapterError> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex::encode(hasher.finalize()))
 }

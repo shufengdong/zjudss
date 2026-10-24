@@ -7,5 +7,5 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    backend::testing::run_e2e_server(backend::testing::E2eConfig::from_env()?).await
+    zjudss::testing::run_e2e_server(zjudss::testing::E2eConfig::from_env()?).await
 }

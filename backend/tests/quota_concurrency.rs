@@ -2,9 +2,9 @@ mod common;
 
 use std::io::Cursor;
 
-use backend::application::{ArtifactError, ArtifactMetadata, StorageLimits};
-use backend::storage::StageLimits;
 use diesel::prelude::*;
+use zjudss::application::{ArtifactError, ArtifactMetadata, StorageLimits};
+use zjudss::storage::StageLimits;
 
 use common::TestApp;
 
@@ -73,9 +73,9 @@ async fn concurrent_same_hash_commits_charge_once_and_preserve_refs_at_quota() {
     assert_eq!(summary.logical_bytes, 12);
     assert!(summary.is_warning);
     let mut conn = app.pool.get().unwrap();
-    let refs: i64 = backend::db::schema::storage_scope_artifacts::table
+    let refs: i64 = zjudss::db::schema::storage_scope_artifacts::table
         .find((scope.id, first.id))
-        .select(backend::db::schema::storage_scope_artifacts::ref_count)
+        .select(zjudss::db::schema::storage_scope_artifacts::ref_count)
         .first(&mut conn)
         .unwrap();
     assert_eq!(refs, 2);

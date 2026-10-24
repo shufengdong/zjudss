@@ -70,7 +70,7 @@ impl ExtractedTree {
                     relative_path: relative.clone(),
                     path,
                     size_bytes: metadata.len(),
-                    sha256: format!("{:x}", Sha256::digest(&bytes)),
+                    sha256: hex::encode(Sha256::digest(&bytes)),
                 },
             );
         }
@@ -217,7 +217,7 @@ fn extract_inner(
                     relative_path: relative.clone(),
                     path: output,
                     size_bytes: written,
-                    sha256: format!("{:x}", hasher.finalize()),
+                    sha256: hex::encode(hasher.finalize()),
                 },
             )
             .is_some()

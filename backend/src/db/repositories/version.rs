@@ -390,7 +390,7 @@ impl VersionRepo {
                 assert_deletable(conn, &version)?;
                 let impact = deletion_impact(conn, version_id)?;
                 let impact_json = serde_json::to_string(&impact).map_err(|error| VersionRepoError::Repository(RepoError::Storage(error.to_string())))?;
-                let impact_hash = format!("{:x}", Sha256::digest(impact_json.as_bytes()));
+                let impact_hash = hex::encode(Sha256::digest(impact_json.as_bytes()));
                 diesel::sql_query("DELETE FROM version_deletion_previews WHERE expires_at_ms<?1 OR (user_id=?2 AND version_id=?3)")
                     .bind::<BigInt,_>(now_ms).bind::<Text,_>(&user).bind::<Integer,_>(version_id).execute(conn)?;
                 diesel::sql_query("INSERT INTO version_deletion_previews(token_hash,user_id,version_id,impact_hash,impact_json,expires_at_ms,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7)")
@@ -420,7 +420,7 @@ impl VersionRepo {
                 assert_deletable(conn, &version)?;
                 let impact = deletion_impact(conn, version_id)?;
                 let impact_json = serde_json::to_string(&impact).map_err(|error| VersionRepoError::Repository(RepoError::Storage(error.to_string())))?;
-                let actual_hash = format!("{:x}", Sha256::digest(impact_json.as_bytes()));
+                let actual_hash = hex::encode(Sha256::digest(impact_json.as_bytes()));
                 if actual_hash != preview.impact_hash { return Err(VersionRepoError::ImpactChanged); }
                 #[derive(QueryableByName)] struct ArtifactId { #[diesel(sql_type=Integer)] artifact_id:i32 }
                 let mut release = diesel::sql_query("SELECT artifact_id FROM model_dataframes WHERE version_id=?1 ORDER BY id")
@@ -587,7 +587,7 @@ fn content_hash(frames: &[DraftDataframe]) -> String {
         hasher.update(frame.row_count.to_string().as_bytes());
         hasher.update(b"\0");
     }
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 fn canonical_json(value: &serde_json::Value) -> String {

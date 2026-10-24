@@ -344,7 +344,7 @@ fn dependencies(root: &Path, relative: &Path) -> Result<Vec<PathBuf>, AdapterErr
 }
 
 fn candidate_id(relative: &Path) -> String {
-    let digest = format!("{:x}", Sha256::digest(portable(relative).as_bytes()));
+    let digest = hex::encode(Sha256::digest(portable(relative).as_bytes()));
     digest[..24].to_string()
 }
 

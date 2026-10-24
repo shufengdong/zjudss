@@ -1,9 +1,9 @@
 mod common;
-use backend::{
+use common::TestApp;
+use zjudss::{
     auth::CurrentUser,
     db::{models::NewMessage, repositories::SearchFilters},
 };
-use common::TestApp;
 fn p(key: &str) -> CurrentUser {
     common::test_user(key)
 }

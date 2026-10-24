@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
-use backend::agent::knowledge::AgentKnowledge;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use zjudss::agent::knowledge::AgentKnowledge;
 
 fn hash(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
+    hex::encode(Sha256::digest(value.as_bytes()))
 }
 
 fn fixture(

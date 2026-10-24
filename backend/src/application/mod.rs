@@ -157,8 +157,8 @@ impl AppState {
         let source_bytes = b"new circuit.e2e basekv=10\n";
         std::fs::write(bundle.join("main.rss"), main_bytes).expect("write e2e main");
         std::fs::write(bundle.join("dss/model.dss"), source_bytes).expect("write e2e model");
-        let main_hash = format!("{:x}", Sha256::digest(main_bytes));
-        let source_hash = format!("{:x}", Sha256::digest(source_bytes));
+        let main_hash = hex::encode(Sha256::digest(main_bytes));
+        let source_hash = hex::encode(Sha256::digest(source_bytes));
         let manifest = ExampleManifest {
             schema_version: 1,
             artifact: "mems.dss-rss-bundle".into(),
@@ -192,7 +192,7 @@ impl AppState {
         };
         let manifest_bytes = serde_json::to_vec_pretty(&manifest).expect("serialize e2e manifest");
         std::fs::write(bundle.join("manifest.json"), &manifest_bytes).expect("write e2e manifest");
-        let manifest_hash = format!("{:x}", Sha256::digest(&manifest_bytes));
+        let manifest_hash = hex::encode(Sha256::digest(&manifest_bytes));
         let invalid_relative = "sparrowzz/dss/rssbundle/E2E/Demo/Broken.rssbundle";
         let invalid_bytes = b"{";
         std::fs::create_dir_all(engine_root.join(invalid_relative))
@@ -202,7 +202,7 @@ impl AppState {
             invalid_bytes,
         )
         .expect("write invalid e2e manifest");
-        let invalid_hash = format!("{:x}", Sha256::digest(invalid_bytes));
+        let invalid_hash = hex::encode(Sha256::digest(invalid_bytes));
         // macOS 的临时目录常以 /var 暴露、canonicalize 后变为 /private/var；
         // 快照根必须规范化，否则案例导入的越界检查会误判合法 fixture。
         let engine_root = engine_root

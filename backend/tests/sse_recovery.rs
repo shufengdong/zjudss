@@ -4,12 +4,12 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::Request;
-use backend::application::{EventWriter, now_ms};
-use backend::auth::UserId;
-use backend::db::models::NewMessage;
-use backend::db::repositories::RepoError;
 use futures::StreamExt;
 use tower::ServiceExt;
+use zjudss::application::{EventWriter, now_ms};
+use zjudss::auth::UserId;
+use zjudss::db::models::NewMessage;
+use zjudss::db::repositories::RepoError;
 
 use common::TestApp;
 

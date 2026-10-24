@@ -6,17 +6,17 @@ use std::time::Duration;
 
 use arrow_array::{Float64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
-use backend::adapters::{
-    ENGINE_CONTRACT_VERSION, EngineConfig, ImportInspectSpec, ImportProfile, ImportSpec,
-    NamedInput, ProcessEngine, RunMode, RunSpec, SimEngine,
-};
-use backend::application::CaseImportService;
-use backend::engine_resources::{EngineExample, EngineResourceRegistry};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use zjudss::adapters::{
+    ENGINE_CONTRACT_VERSION, EngineConfig, ImportInspectSpec, ImportProfile, ImportSpec,
+    NamedInput, ProcessEngine, RunMode, RunSpec, SimEngine,
+};
+use zjudss::application::CaseImportService;
+use zjudss::engine_resources::{EngineExample, EngineResourceRegistry};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,7 +95,7 @@ fn required_path(name: &str) -> PathBuf {
 fn copy_file(source: &Path, target: &Path, expected_hash: &str) {
     let bytes = std::fs::read(source).expect("read snapshot example file");
     assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
+        hex::encode(Sha256::digest(&bytes)),
         expected_hash,
         "release_engine_example_hash_mismatch"
     );
@@ -104,7 +104,7 @@ fn copy_file(source: &Path, target: &Path, expected_hash: &str) {
 }
 
 fn import_all_examples(
-    snapshot: &backend::engine_resources::EngineResourceSnapshot,
+    snapshot: &zjudss::engine_resources::EngineResourceSnapshot,
     root: &Path,
 ) -> usize {
     let mut imported = 0;
@@ -302,7 +302,7 @@ fn representative_examples(examples: &[EngineExample]) -> Vec<&EngineExample> {
 }
 
 fn prepare_run_tree(
-    snapshot: &backend::engine_resources::EngineResourceSnapshot,
+    snapshot: &zjudss::engine_resources::EngineResourceSnapshot,
     example: &EngineExample,
     root: &Path,
 ) -> (PathBuf, PathBuf, RunMode) {
@@ -321,7 +321,7 @@ fn prepare_run_tree(
 
 async fn run_representative(
     engine: &ProcessEngine,
-    snapshot: &backend::engine_resources::EngineResourceSnapshot,
+    snapshot: &zjudss::engine_resources::EngineResourceSnapshot,
     example: &EngineExample,
     study_type: &str,
     root: &Path,

@@ -5,12 +5,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use backend::application::{RunScheduler, SchedulerError};
-use backend::auth::UserId;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 use tower::ServiceExt;
+use zjudss::application::{RunScheduler, SchedulerError};
+use zjudss::auth::UserId;
 
 use common::TestApp;
 

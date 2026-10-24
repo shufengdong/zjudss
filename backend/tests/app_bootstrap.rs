@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use backend::config::RuntimeConfig;
 use diesel::RunQueryDsl;
 use tower::ServiceExt;
+use zjudss::config::RuntimeConfig;
 
 use common::TestApp;
 

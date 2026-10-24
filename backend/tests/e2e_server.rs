@@ -7,11 +7,11 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use backend::testing::{
-    ControlState, E2eConfig, ScenarioEngine, ScriptedAgentFactory, control_router,
-};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tower::ServiceExt;
+use zjudss::testing::{
+    ControlState, E2eConfig, ScenarioEngine, ScriptedAgentFactory, control_router,
+};
 
 use common::TestApp;
 

@@ -347,7 +347,7 @@ pub(crate) fn load_examples(
             manifest: Some(manifest),
             file_count: files.len(),
             size_bytes: total,
-            tree_hash: format!("{:x}", tree.finalize()),
+            tree_hash: hex::encode(tree.finalize()),
             importable: diagnostics.is_empty(),
             diagnostics,
             files,
@@ -377,13 +377,13 @@ fn invalid_example(
         manifest: None,
         file_count: 1,
         size_bytes: bytes.len() as u64,
-        tree_hash: format!("{:x}", tree.finalize()),
+        tree_hash: hex::encode(tree.finalize()),
         importable: false,
         diagnostics: vec![diagnostic.to_string()],
         files: vec![ExampleSourceFile {
             virtual_path: "manifest.json".to_string(),
             source_path: manifest_source,
-            sha256: format!("{:x}", Sha256::digest(bytes)),
+            sha256: hex::encode(Sha256::digest(bytes)),
             role: "manifest".to_string(),
         }],
     }
@@ -426,7 +426,7 @@ fn safe_relative(path: &str) -> bool {
 }
 
 fn verify_loaded_hash(bytes: &[u8], expected: &str) -> Result<(), EngineResourceError> {
-    let actual = format!("{:x}", Sha256::digest(bytes));
+    let actual = hex::encode(Sha256::digest(bytes));
     if actual == expected {
         Ok(())
     } else {
@@ -439,9 +439,6 @@ fn verify_loaded_hash(bytes: &[u8], expected: &str) -> Result<(), EngineResource
 
 fn example_id(kind: &str, path: &str) -> String {
     let normalized = path.replace('\\', "/").to_ascii_lowercase();
-    let hash = format!(
-        "{:x}",
-        Sha256::digest(format!("{kind}:{normalized}").as_bytes())
-    );
+    let hash = hex::encode(Sha256::digest(format!("{kind}:{normalized}").as_bytes()));
     format!("ex_{}", &hash[..26])
 }

@@ -1,11 +1,10 @@
 use std::collections::HashSet;
 use std::fmt;
 
-use argon2::password_hash::{PasswordHasher, SaltString};
+use argon2::password_hash::PasswordHasher;
 use argon2::{Algorithm, Argon2, Params, Version};
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
-use rand_core::OsRng;
 use sha2::{Digest, Sha256};
 
 use crate::application::StorageLimits;
@@ -79,7 +78,7 @@ pub fn seed_users(
     limits: StorageLimits,
 ) -> Result<UserSeedSummary, UserSeedError> {
     let rows = parse(csv_bytes)?;
-    let seed_sha256 = format!("{:x}", Sha256::digest(csv_bytes));
+    let seed_sha256 = hex::encode(Sha256::digest(csv_bytes));
     let existing = schema::users::table.count().get_result::<i64>(conn)?;
     if existing > 0 {
         let saved = schema::system_metadata::table
@@ -130,9 +129,8 @@ pub fn seed_users(
                 .filter(schema::storage_scopes::scope_key.eq(&row.id))
                 .select(schema::storage_scopes::id)
                 .first::<i32>(conn)?;
-            let salt = SaltString::generate(&mut OsRng);
             let password_hash = argon2
-                .hash_password(row.id.as_bytes(), &salt)
+                .hash_password(row.id.as_bytes())
                 .map_err(UserSeedError::database)?
                 .to_string();
             diesel::insert_into(schema::users::table)

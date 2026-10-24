@@ -121,13 +121,13 @@ fn push_section(
     sections.push(DocSection {
         doc_id: doc_id.to_string(),
         section_id: stable_id("sec", identity.as_bytes()),
-        hash: format!("{:x}", Sha256::digest(content.as_bytes())),
+        hash: hex::encode(Sha256::digest(content.as_bytes())),
         title: title.to_string(),
         content: content.trim().to_string(),
     });
 }
 
 fn stable_id(prefix: &str, bytes: &[u8]) -> String {
-    let hash = format!("{:x}", Sha256::digest(bytes));
+    let hash = hex::encode(Sha256::digest(bytes));
     format!("{prefix}_{}", &hash[..20])
 }

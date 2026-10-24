@@ -6,12 +6,12 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use backend::application::{EventWriter, now_ms};
-use backend::auth::{CurrentUser, UserId};
-use backend::testing::{
+use tower::ServiceExt;
+use zjudss::application::{EventWriter, now_ms};
+use zjudss::auth::{CurrentUser, UserId};
+use zjudss::testing::{
     FaultInjector, FaultPoint, ScriptScenario, ScriptTurn, ScriptedAgentFactory,
 };
-use tower::ServiceExt;
 
 use common::TestApp;
 

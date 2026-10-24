@@ -2,11 +2,11 @@ use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
 use tempfile::TempDir;
 
-fn database() -> (TempDir, backend::db::DbPool) {
+fn database() -> (TempDir, zjudss::db::DbPool) {
     let root = tempfile::tempdir().expect("temp database directory");
     let url = format!("sqlite://{}", root.path().join("v3.db").display());
-    let pool = backend::db::establish_pool(&url).expect("create pool");
-    backend::db::run_migrations(&mut pool.get().expect("checkout")).expect("run initial migration");
+    let pool = zjudss::db::establish_pool(&url).expect("create pool");
+    zjudss::db::run_migrations(&mut pool.get().expect("checkout")).expect("run initial migration");
     (root, pool)
 }
 

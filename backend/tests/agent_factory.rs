@@ -5,11 +5,11 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use backend::agent::{AgentBuildRequest, AgentFactory, DeepSeekAgentFactory, LlmConfig, LlmError};
 use rig::AgentBuilder;
 use rig::test_utils::MockCompletionModel;
 use rig::tool::server::ToolServer;
 use tower::ServiceExt;
+use zjudss::agent::{AgentBuildRequest, AgentFactory, DeepSeekAgentFactory, LlmConfig, LlmError};
 
 use common::TestApp;
 
@@ -115,7 +115,7 @@ async fn chat_builds_one_agent_per_user_message() {
     let builds = factory.builds.lock().unwrap();
     assert_eq!(builds.len(), 2);
     for (tool_count, prompt) in builds.iter() {
-        assert_eq!(*tool_count, backend::tools::registered_tool_names().len());
+        assert_eq!(*tool_count, zjudss::tools::registered_tool_names().len());
         assert!(prompt.contains("# Skill index"));
         assert!(prompt.contains("model-intake"));
         assert!(prompt.contains("# Engine resources"));

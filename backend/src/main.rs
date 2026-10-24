@@ -1,12 +1,12 @@
-use backend::agent::knowledge::AgentKnowledge;
-use backend::agent::{DeepSeekAgentFactory, LlmConfig};
-use backend::application::{AppState, RunScheduler, StorageLimits};
-use backend::auth::{AuthService, INIT_USERS_CSV, seed_users};
-use backend::catalog::SchemaCatalog;
-use backend::config::RuntimeConfig;
-use backend::engine_resources::EngineResourceRegistry;
-use backend::ingestion::ArchiveLimits;
-use backend::{adapters, build_router, db};
+use zjudss::agent::knowledge::AgentKnowledge;
+use zjudss::agent::{DeepSeekAgentFactory, LlmConfig};
+use zjudss::application::{AppState, RunScheduler, StorageLimits};
+use zjudss::auth::{AuthService, INIT_USERS_CSV, seed_users};
+use zjudss::catalog::SchemaCatalog;
+use zjudss::config::RuntimeConfig;
+use zjudss::engine_resources::EngineResourceRegistry;
+use zjudss::ingestion::ArchiveLimits;
+use zjudss::{adapters, build_router, db};
 
 #[tokio::main]
 async fn main() {
@@ -26,7 +26,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let mut conn = pool.get()?;
             db::run_migrations(&mut conn)?;
         }
-        backend::db::repositories::HistoryRepo::new(pool)
+        zjudss::db::repositories::HistoryRepo::new(pool)
             .rebuild()
             .await?;
         eprintln!("[history] search index rebuilt");
@@ -79,11 +79,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     {
         let mut conn = pool.get()?;
         db::run_migrations(&mut conn)?;
-        db::recover_interrupted_runs(&mut conn, backend::application::now_ms())?;
+        db::recover_interrupted_runs(&mut conn, zjudss::application::now_ms())?;
         let seeded = seed_users(
             &mut conn,
             INIT_USERS_CSV,
-            backend::application::now_ms(),
+            zjudss::application::now_ms(),
             storage_limits,
         )?;
         eprintln!(
@@ -101,7 +101,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         runtime.session_ttl,
         runtime.session_cookie_secure,
     );
-    auth.cleanup_expired(backend::application::now_ms(), 10_000)
+    auth.cleanup_expired(zjudss::application::now_ms(), 10_000)
         .map_err(|_| std::io::Error::other("无法清理过期认证会话"))?;
     let scheduler = RunScheduler::new(
         runtime.agent_max_concurrent_runs,

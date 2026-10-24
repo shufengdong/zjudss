@@ -1,18 +1,18 @@
 mod common;
 
-use backend::adapters::StubEngine;
-use backend::application::EventWriter;
-use backend::application::{PublishDraftRequest, UploadBatch, UploadFile};
-use backend::auth::CurrentUser;
-use backend::db::models::DraftRef;
-use backend::storage::StageLimits;
-use backend::tools::{self, ToolServices};
 use common::TestApp;
 use rig::tool::{Tool, ToolContext};
 use std::collections::BTreeSet;
 use std::io::Cursor;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
+use zjudss::adapters::StubEngine;
+use zjudss::application::EventWriter;
+use zjudss::application::{PublishDraftRequest, UploadBatch, UploadFile};
+use zjudss::auth::CurrentUser;
+use zjudss::db::models::DraftRef;
+use zjudss::storage::StageLimits;
+use zjudss::tools::{self, ToolServices};
 
 fn tool_services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
     Arc::new(ToolServices {

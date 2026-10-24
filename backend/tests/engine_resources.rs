@@ -1,14 +1,14 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use backend::engine_resources::{
-    EngineResourceRegistry, ResourceLimits, SUPPORTED_CATALOG_SCHEMA_VERSIONS,
-};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use zjudss::engine_resources::{
+    EngineResourceRegistry, ResourceLimits, SUPPORTED_CATALOG_SCHEMA_VERSIONS,
+};
 
 fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 struct Fixture {
@@ -22,7 +22,7 @@ impl Fixture {
     fn bundle_root(&self) -> PathBuf {
         self.dss().join("rssbundle/Grid/123Bus/demo.rssbundle")
     }
-    fn load(&self) -> backend::engine_resources::EngineResourceSnapshot {
+    fn load(&self) -> zjudss::engine_resources::EngineResourceSnapshot {
         EngineResourceRegistry::load(&self.cwd, &HashSet::new()).unwrap()
     }
 }

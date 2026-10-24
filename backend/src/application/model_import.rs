@@ -791,14 +791,13 @@ fn source_hash(batch: &UploadBatch) -> String {
         })
         .collect::<Vec<_>>();
     values.sort();
-    format!("{:x}", Sha256::digest(values.join("\0").as_bytes()))
+    hex::encode(Sha256::digest(values.join("\0").as_bytes()))
 }
 
 fn candidate_id(client_file_id: &str, sha256: &str) -> String {
-    let digest = format!(
-        "{:x}",
-        Sha256::digest(format!("{client_file_id}\0{sha256}").as_bytes())
-    );
+    let digest = hex::encode(Sha256::digest(
+        format!("{client_file_id}\0{sha256}").as_bytes(),
+    ));
     digest[..24].to_string()
 }
 

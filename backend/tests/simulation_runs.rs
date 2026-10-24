@@ -2,19 +2,19 @@ mod common;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use backend::application::{
-    CreateScriptRequest, PublishDraftRequest, ScriptSource, UploadBatch, UploadFile,
-};
-use backend::storage::StageLimits;
 use common::TestApp;
 use serde_json::{Value, json};
 use std::io::Cursor;
 use tower::ServiceExt;
+use zjudss::application::{
+    CreateScriptRequest, PublishDraftRequest, ScriptSource, UploadBatch, UploadFile,
+};
+use zjudss::storage::StageLimits;
 
 #[cfg(feature = "e2e-test")]
-use backend::testing::{EngineScenario, ScenarioEngine};
+use zjudss::testing::{EngineScenario, ScenarioEngine};
 
-async fn setup(app: &TestApp) -> (backend::auth::CurrentUser, String, i32, String, String) {
+async fn setup(app: &TestApp) -> (zjudss::auth::CurrentUser, String, i32, String, String) {
     let user = common::test_user("alice@example.com");
     let cookie = app.login_cookie("alice@example.com").await;
     let session = app

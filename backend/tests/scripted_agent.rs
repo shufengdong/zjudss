@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use backend::testing::{ScriptScenario, ScriptTurn, ScriptedAgentFactory};
 use serde_json::{Value, json};
 use tower::ServiceExt;
+use zjudss::testing::{ScriptScenario, ScriptTurn, ScriptedAgentFactory};
 
 use common::TestApp;
 

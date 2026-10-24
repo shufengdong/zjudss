@@ -2,12 +2,12 @@ mod common;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use backend::application::{UploadBatch, UploadFile};
-use backend::storage::StageLimits;
 use diesel::RunQueryDsl;
 use diesel::connection::SimpleConnection;
 use std::io::Cursor;
 use tower::ServiceExt;
+use zjudss::application::{UploadBatch, UploadFile};
+use zjudss::storage::StageLimits;
 
 use common::TestApp;
 
@@ -434,7 +434,7 @@ async fn service_restart_fails_processing_import_but_keeps_persisted_candidates(
         "UPDATE model_imports SET status='processing' WHERE id={import_id}"
     ))
     .unwrap();
-    backend::db::recover_interrupted_runs(&mut conn, 99).unwrap();
+    zjudss::db::recover_interrupted_runs(&mut conn, 99).unwrap();
     let recovered = app
         .state
         .model_import_service

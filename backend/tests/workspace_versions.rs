@@ -2,14 +2,14 @@ mod common;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use backend::application::{UploadBatch, UploadFile};
-use backend::auth::CurrentUser;
-use backend::db::models::DraftRef;
-use backend::storage::StageLimits;
 use common::TestApp;
 use serde_json::{Value, json};
 use std::io::Cursor;
 use tower::ServiceExt;
+use zjudss::application::{UploadBatch, UploadFile};
+use zjudss::auth::CurrentUser;
+use zjudss::db::models::DraftRef;
+use zjudss::storage::StageLimits;
 
 async fn import_table(
     app: &TestApp,

@@ -2,10 +2,10 @@ mod common;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use backend::application::{CreateScriptRequest, ScriptSource};
 use common::TestApp;
 use serde_json::Value;
 use tower::ServiceExt;
+use zjudss::application::{CreateScriptRequest, ScriptSource};
 
 #[tokio::test]
 async fn scripts_are_immutable_independent_validated_and_lazy_readable() {

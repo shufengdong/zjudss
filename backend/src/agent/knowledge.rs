@@ -201,7 +201,7 @@ impl AgentKnowledge {
 }
 
 fn verify_hash(code: &'static str, bytes: &[u8], expected: &str) -> Result<(), KnowledgeError> {
-    let actual = format!("{:x}", Sha256::digest(bytes));
+    let actual = hex::encode(Sha256::digest(bytes));
     if actual == expected {
         Ok(())
     } else {

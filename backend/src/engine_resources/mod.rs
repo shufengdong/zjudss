@@ -195,7 +195,7 @@ impl EngineResourceRegistry {
                 identity_part(&mut identity, b"example-file-hash", file.sha256.as_bytes());
             }
         }
-        let id = format!("ers_{}", &format!("{:x}", identity.finalize())[..32]);
+        let id = format!("ers_{}", &hex::encode(identity.finalize())[..32]);
         Ok(EngineResourceSnapshot {
             id,
             contract_version: ENGINE_CONTRACT_VERSION.to_string(),
@@ -368,7 +368,7 @@ fn copy_verified_published_file(
         hasher.update(&buffer[..read]);
         std::io::Write::write_all(&mut output, &buffer[..read]).map_err(EngineResourceError::io)?;
     }
-    if format!("{:x}", hasher.finalize()) != expected_hash {
+    if hex::encode(hasher.finalize()) != expected_hash {
         return Err(EngineResourceError::new(
             "engine_resource_changed_during_scan",
             format!("resource changed: {relative}"),
@@ -450,11 +450,11 @@ pub(crate) fn hash_file(path: &Path) -> Result<String, EngineResourceError> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex::encode(hasher.finalize()))
 }
 
 fn hash_bytes(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 fn identity_part(hasher: &mut Sha256, key: &[u8], value: &[u8]) {
@@ -734,7 +734,7 @@ pub(crate) fn hash_bounded_file_with_size(
             "resource changed while hashing",
         ));
     }
-    Ok((format!("{:x}", hasher.finalize()), size))
+    Ok((hex::encode(hasher.finalize()), size))
 }
 
 pub(crate) fn safe_file(root: &Path, relative: &str) -> Result<PathBuf, EngineResourceError> {

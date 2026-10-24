@@ -1,9 +1,9 @@
-use backend::application::StorageLimits;
-use backend::auth::{INIT_USERS_CSV, seed_users};
-use backend::db;
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Text};
 use tempfile::TempDir;
+use zjudss::application::StorageLimits;
+use zjudss::auth::{INIT_USERS_CSV, seed_users};
+use zjudss::db;
 
 #[derive(QueryableByName)]
 struct CountRow {

@@ -2,13 +2,13 @@ mod common;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use backend::application::{UploadBatch, UploadFile};
-use backend::storage::StageLimits;
 use common::TestApp;
 use diesel::prelude::*;
 use serde_json::{Value, json};
 use std::io::Cursor;
 use tower::ServiceExt;
+use zjudss::application::{UploadBatch, UploadFile};
+use zjudss::storage::StageLimits;
 
 async fn published_version(app: &TestApp, cookie: &str) -> (i32, i32) {
     let user = common::test_user("alice@example.com");

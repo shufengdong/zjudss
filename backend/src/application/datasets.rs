@@ -462,7 +462,7 @@ pub fn schema_json_and_hash(meta: &crate::storage::ParquetMetadata) -> (String, 
         })
         .collect::<Vec<_>>();
     let json = serde_json::to_string(&cols).expect("schema serializable");
-    let hash = format!("{:x}", Sha256::digest(json.as_bytes()));
+    let hash = hex::encode(Sha256::digest(json.as_bytes()));
     (json, hash)
 }
 fn null(diag: &mut BTreeMap<String, u64>, kind: &str) -> Value {

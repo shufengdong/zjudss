@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use backend::{api, build_router, contract_manifest};
+use zjudss::{api, build_router, contract_manifest};
 
 #[test]
 fn production_router_and_manifest_share_one_declaration() {

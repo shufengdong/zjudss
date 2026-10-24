@@ -24,7 +24,7 @@ async fn applying_a_case_uses_model_import_and_changes_only_the_mutable_draft() 
         .engine_snapshot
         .examples
         .iter()
-        .find(|example| backend::application::CaseImportService::is_modelizable(example))
+        .find(|example| zjudss::application::CaseImportService::is_modelizable(example))
         .unwrap();
     let manifest_source = example
         .files
@@ -190,7 +190,7 @@ async fn applying_a_case_rejects_post_publication_mutation_atomically() {
         .engine_snapshot
         .examples
         .iter()
-        .find(|example| backend::application::CaseImportService::is_modelizable(example))
+        .find(|example| zjudss::application::CaseImportService::is_modelizable(example))
         .unwrap();
     let changed = example
         .files
@@ -268,7 +268,7 @@ async fn applying_a_case_rejects_missing_published_file_atomically() {
         .engine_snapshot
         .examples
         .iter()
-        .find(|example| backend::application::CaseImportService::is_modelizable(example))
+        .find(|example| zjudss::application::CaseImportService::is_modelizable(example))
         .unwrap();
     let missing = example
         .files
@@ -533,7 +533,7 @@ async fn case_apply_is_user_scoped() {
         .engine_snapshot
         .examples
         .iter()
-        .find(|example| backend::application::CaseImportService::is_modelizable(example))
+        .find(|example| zjudss::application::CaseImportService::is_modelizable(example))
         .unwrap();
     let response = app.router.clone().oneshot(Request::post(format!("/api/sessions/{}/draft/example", session.id)).header("cookie", bob).header("content-type", "application/json").body(Body::from(json!({"exampleId":example.id,"engineResourceSnapshot":app.state.engine_snapshot.id,"clientImportId":"foreign"}).to_string())).unwrap()).await.unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);

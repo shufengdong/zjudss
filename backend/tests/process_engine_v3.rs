@@ -5,15 +5,15 @@ use std::time::Duration;
 
 use arrow_array::{Float64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
-use backend::adapters::{
-    ENGINE_CONTRACT_VERSION, EngineCapabilities, EngineConfig, NamedInput, OutputLimits, RunMode,
-    RunSpec, build_command, validate_outputs,
-};
-use backend::adapters::{ProcessEngine, SimEngine};
-use backend::storage::ParquetInspector;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
+use zjudss::adapters::{
+    ENGINE_CONTRACT_VERSION, EngineCapabilities, EngineConfig, NamedInput, OutputLimits, RunMode,
+    RunSpec, build_command, validate_outputs,
+};
+use zjudss::adapters::{ProcessEngine, SimEngine};
+use zjudss::storage::ParquetInspector;
 
 #[cfg(unix)]
 static ENGINE_PROBE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -81,10 +81,10 @@ fn spec(root: &Path, input_tree: &Path, mode: RunMode) -> RunSpec {
 fn write_probe_engine(path: &Path, failing_profile: Option<&str>) {
     use std::os::unix::fs::PermissionsExt;
 
-    let tables = backend::adapters::STATIC_MODEL_TABLES.join(" ");
+    let tables = zjudss::adapters::STATIC_MODEL_TABLES.join(" ");
     let execution_tables = format!(
         "{} solution load_shape shape_assignment storage_controller switch_control tcc_curve fuse recloser relay monitor energy_meter fault para diagnostics events",
-        backend::adapters::STATIC_MODEL_TABLES[..20].join(" ")
+        zjudss::adapters::STATIC_MODEL_TABLES[..20].join(" ")
     );
     let failing_profile = failing_profile.unwrap_or("none");
     let source = format!(
@@ -451,7 +451,7 @@ async fn process_engine_accepts_binary_replacement_and_rejects_only_a_missing_bi
     assert!(marker.exists(), "the replacement binary must be executed");
     std::fs::remove_file(&marker).unwrap();
     engine
-        .inspect(backend::adapters::InspectSpec {
+        .inspect(zjudss::adapters::InspectSpec {
             input_tree: input_tree.clone(),
             model_path: "main.rss".into(),
             timeout: Duration::from_secs(1),
@@ -465,7 +465,7 @@ async fn process_engine_accepts_binary_replacement_and_rejects_only_a_missing_bi
 
     std::fs::remove_file(&binary).unwrap();
     let error = engine
-        .inspect(backend::adapters::InspectSpec {
+        .inspect(zjudss::adapters::InspectSpec {
             input_tree,
             model_path: "main.rss".into(),
             timeout: Duration::from_secs(1),

@@ -95,7 +95,7 @@ impl StagingWriter {
         drop(file);
         Ok(StagedArtifact {
             path: self.path.take(),
-            sha256: format!("{:x}", self.hasher.clone().finalize()),
+            sha256: hex::encode(self.hasher.clone().finalize()),
             size_bytes: self.size_bytes,
         })
     }

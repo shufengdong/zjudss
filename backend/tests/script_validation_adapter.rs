@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use backend::adapters::{ScriptValidationSpec, SimEngine, StubEngine};
+use zjudss::adapters::{ScriptValidationSpec, SimEngine, StubEngine};
 
-async fn validate(source: &str) -> backend::adapters::StaticScriptValidation {
+async fn validate(source: &str) -> zjudss::adapters::StaticScriptValidation {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("script.rss"), source).unwrap();
     StubEngine

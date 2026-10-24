@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use backend::adapters::{
+use zjudss::adapters::{
     ImportInspectSpec, ImportProfile, ImportSpec, STATIC_MODEL_TABLES, SimEngine, StubEngine,
 };
 

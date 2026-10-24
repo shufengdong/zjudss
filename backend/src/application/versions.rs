@@ -1,4 +1,3 @@
-use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha256};
 
 use crate::adapters::ENGINE_CONTRACT_VERSION;
@@ -216,7 +215,7 @@ impl VersionService {
         version_id: i32,
     ) -> Result<VersionDeletionPreview, VersionError> {
         let token = random_token();
-        let token_hash = format!("{:x}", Sha256::digest(token.as_bytes()));
+        let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
         let now = now_ms();
         let expires = now + 5 * 60 * 1000;
         let DeletionImpact {
@@ -246,7 +245,7 @@ impl VersionService {
         if impact_token.len() != 64 {
             return Err(VersionError::InvalidImpactToken);
         }
-        let token_hash = format!("{:x}", Sha256::digest(impact_token.as_bytes()));
+        let token_hash = hex::encode(Sha256::digest(impact_token.as_bytes()));
         let result = self
             .repo
             .delete_version(&user.id, version_id, token_hash, now_ms())
@@ -263,11 +262,6 @@ impl VersionService {
 
 fn random_token() -> String {
     let mut bytes = [0_u8; 32];
-    OsRng.fill_bytes(&mut bytes);
-    let mut token = String::with_capacity(64);
-    use std::fmt::Write as _;
-    for byte in bytes {
-        let _ = write!(token, "{byte:02x}");
-    }
-    token
+    getrandom::fill(&mut bytes).expect("operating system random source unavailable");
+    hex::encode(bytes)
 }

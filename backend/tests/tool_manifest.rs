@@ -4,14 +4,14 @@ use std::collections::BTreeSet;
 use std::io::Cursor;
 use std::sync::Arc;
 
-use backend::adapters::StubEngine;
-use backend::agent::knowledge::AgentKnowledge;
-use backend::application::{ArtifactMetadata, EventWriter};
-use backend::auth::CurrentUser;
-use backend::storage::StageLimits;
-use backend::tools::{self, ToolServices};
 use rig::tool::{Tool, ToolContext};
 use tokio::sync::{Mutex, Semaphore};
+use zjudss::adapters::StubEngine;
+use zjudss::agent::knowledge::AgentKnowledge;
+use zjudss::application::{ArtifactMetadata, EventWriter};
+use zjudss::auth::CurrentUser;
+use zjudss::storage::StageLimits;
+use zjudss::tools::{self, ToolServices};
 
 use common::TestApp;
 
