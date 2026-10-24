@@ -26,7 +26,7 @@
 - A source file changes between discovery and publish: startup fails with `engine_resource_changed_during_scan`, and no mixed snapshot is activated (Task 2 test).
 - An existing published snapshot directory is corrupt or incomplete: publish verifies it and fails closed instead of reusing it (Task 2 test).
 - Documentation or examples contain symlinks, path escapes, excessive depth, count, or bytes: global resources fail safely and individual examples receive redacted diagnostics according to ownership (Task 1 tests).
-- The configured executable is replaced after startup: every adapter spawn returns `engine_binary_changed` before execution (Task 3 test).
+- The configured executable is replaced after startup: the next adapter spawn executes the replacement; a missing or non-file path returns `engine_binary_unavailable` (Task 3 test).
 - Current eig-rs changes example counts or has an individually broken example: runtime remains dynamic, public cases stay modelizable-only, and release evidence reports counts without exact-number assertions (Tasks 1 and 4 tests).
 
 ---
@@ -100,11 +100,11 @@
 - Produces: `ProcessEngine::capabilities()` and `ProcessEngine::binary_sha256()` read-only accessors.
 - Consumes: Task 1's registry load takes `resource_features()`; Task 2 startup ordering publishes only after engine preflight succeeds.
 
-- [ ] **Step 1: Write failing adapter tests.** Use executable fixtures that independently fail named Parquet, static import, single-Solve import, and validation probes; verify each stable error. Probe a good fixture, replace its bytes, then assert all direct and shared spawn paths return `engine_binary_changed` without running the replacement.
+- [ ] **Step 1: Write failing adapter tests.** Use executable fixtures that independently fail named Parquet, static import, single-Solve import, and validation probes; verify each stable error. Probe a good fixture, replace its bytes, then assert all direct and shared spawn paths execute the replacement and only reject a missing path.
 
 - [ ] **Step 2: Run focused test and verify RED.** Run `cd backend && cargo test --test process_engine_v3`; expected failure shows inferred import/validation flags and no binary replacement check.
 
-- [ ] **Step 3: Implement functional probes and identity guard.** Keep every command in the adapter, generate bounded private probe trees, validate real Snappy Parquet/model outputs and the static script validator, calculate startup SHA-256, and verify that hash immediately before each process spawn.
+- [ ] **Step 3: Implement functional probes and runtime availability guard.** Keep every command in the adapter, generate bounded private probe trees, validate real Snappy Parquet/model outputs and the static script validator, calculate startup SHA-256 as evidence, and verify only that the configured path remains a regular file before each process spawn.
 
 - [ ] **Step 4: Reorder production startup.** Construct and validate `ProcessEngine` once, pass `resource_features()` to registry loading, publish resources, then inject the same engine instance into `AppState`; log only binary hash and dynamic snapshot metadata, never a commit.
 
@@ -154,7 +154,7 @@
 - Consumes: final runtime/release behavior from Tasks 1–4.
 - Produces: one consistent operator and feature contract for latest configured eig-rs, restart-based snapshot refresh, immutable published sources, and explicit errors.
 
-- [ ] **Step 1: Update authoritative docs and feature traceability.** Remove pinned commit/hash/exact-count language; document dynamic startup discovery, limits, restart semantics, published case tree, binary replacement error, release workflow, and no automatic eig-rs mutation.
+- [ ] **Step 1: Update authoritative docs and feature traceability.** Remove pinned commit/hash/exact-count language; document dynamic startup discovery, limits, resource restart semantics, published case tree, live binary replacement, release workflow, and no automatic eig-rs mutation.
 
 - [ ] **Step 2: Run formatting and backend suite.** Run `cd backend && cargo fmt --all -- --check && cargo test --features e2e-test`; expected all tests pass.
 
@@ -165,4 +165,3 @@
 - [ ] **Step 5: Commit.** Commit documentation/catalog/plan/spec files with message `docs: define dynamic eig-rs release contract`.
 
 - [ ] **Step 6: Request whole-branch review and verify fixes.** Build the review package from the pre-plan base through HEAD, dispatch one fresh reviewer, apply at most one RED→GREEN fix pass for Critical/Important findings, and rerun the complete deterministic suite plus the current real-engine gate.
-

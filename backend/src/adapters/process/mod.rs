@@ -27,17 +27,10 @@ pub struct EngineConfig {
 
 impl EngineConfig {
     pub fn probe(bin: PathBuf, default_timeout: Duration) -> Result<Self, AdapterError> {
-        let before = super::contract::binary_sha256(&bin)?;
+        ensure_binary_available(&bin)?;
         let capabilities = EngineCapabilities::probe(&bin)?;
         capabilities.require_v3()?;
         let binary_sha256 = super::contract::binary_sha256(&bin)?;
-        if before != binary_sha256 {
-            return Err(AdapterError::new(
-                "engine_binary_changed",
-                ErrorCategory::Io,
-                "tensoreval 在启动探测期间发生变化，请重启服务",
-            ));
-        }
         Ok(Self {
             bin,
             binary_sha256,
@@ -86,16 +79,8 @@ impl ProcessEngine {
         &self.config.binary_sha256
     }
 
-    fn verify_binary(&self) -> Result<(), AdapterError> {
-        let current = super::contract::binary_sha256(&self.config.bin)?;
-        if current != self.config.binary_sha256 {
-            return Err(AdapterError::new(
-                "engine_binary_changed",
-                ErrorCategory::Io,
-                "tensoreval 已被替换，请重启服务后重试",
-            ));
-        }
-        Ok(())
+    fn ensure_binary_available(&self) -> Result<(), AdapterError> {
+        ensure_binary_available(&self.config.bin)
     }
 
     async fn execute(
@@ -123,7 +108,7 @@ impl ProcessEngine {
         } else {
             spec.timeout
         };
-        self.verify_binary()?;
+        self.ensure_binary_available()?;
         let mut command = Command::new(&built.program);
         command
             .args(&built.args)
@@ -162,7 +147,7 @@ impl SimEngine for ProcessEngine {
                 "模型相对路径不是 UTF-8",
             )
         })?;
-        self.verify_binary()?;
+        self.ensure_binary_available()?;
         let mut command = Command::new(&self.config.bin);
         command
             .args(["--dss-to-rss", "--check", "--study", "snapshot", model])
@@ -272,6 +257,22 @@ impl SimEngine for ProcessEngine {
                 "tableCount": STATIC_MODEL_TABLES.len()
             }),
         })
+    }
+}
+
+fn ensure_binary_available(path: &std::path::Path) -> Result<(), AdapterError> {
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => Ok(()),
+        Ok(_) => Err(AdapterError::new(
+            "engine_binary_unavailable",
+            ErrorCategory::Io,
+            "TENSOREVAL_BIN 必须指向普通文件",
+        )),
+        Err(error) => Err(AdapterError::new(
+            "engine_binary_unavailable",
+            ErrorCategory::Io,
+            format!("tensoreval 不存在或不可访问: {error}"),
+        )),
     }
 }
 

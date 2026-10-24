@@ -106,9 +106,9 @@ RSS dependency discovery remains a bounded static parser for literal quoted path
 non-importable.
 
 Startup logs and release reports record the computed snapshot ID, catalog schema, discovered/importable/
-non-importable counts, and binary hash. They do not claim an eig-rs commit. `ProcessEngine` stores the
-startup binary hash and checks it before every spawn; replacing the configured executable requires a
-restart and otherwise returns `engine_binary_changed`.
+non-importable counts, and binary hash. They do not claim an eig-rs commit. The hash is observation evidence
+only. Before every spawn, `ProcessEngine` checks only that the configured path is still a regular file;
+replacing the executable takes effect on the next call without a restart.
 
 ## Tests and documentation
 

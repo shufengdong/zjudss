@@ -40,7 +40,8 @@ V3 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axu
 
 引擎资源在启动时从当前 `TENSOREVAL_CWD` 读取并按字节生成 snapshot ID；发布阶段再次校验源 hash，并原子复制
 到 `DATA_DIR/system/engine-resources/<snapshotId>`。案例导入只读取这个不可变发布树。源文件在扫描与发布之间变化、
-已发布目录损坏或 catalog 不兼容都会失败关闭；更新 eig-rs 或替换 binary 后必须重启。
+已发布目录损坏或 catalog 不兼容都会失败关闭。更新文档、catalog 或案例资源后必须重启以发布新 snapshot；
+单独替换 `TENSOREVAL_BIN` 无需重启，下一次 adapter 调用直接执行路径上的当前普通文件。
 
 ## Capacity and trust
 

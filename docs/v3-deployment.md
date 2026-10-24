@@ -17,8 +17,8 @@ checkout、pull、reset、clean、构建或改写配置的 eig-rs 工作树。
 资源会原子发布到 `DATA_DIR/system/engine-resources/<snapshotId>`，运行进程内保持不变；更新 eig-rs 后必须重启。
 限制为 512 篇 Markdown、单篇 4 MiB、文档总计 64 MiB、2,048 个案例、每案例 10,000 文件/2 GiB、依赖深度
 64。超过限制返回 `engine_resource_limit_exceeded`；扫描和发布之间发生变化返回
-`engine_resource_changed_during_scan`。启动后替换 binary 会让每条引擎调用返回 `engine_binary_changed`，重启后
-才会接受新的 binary。
+`engine_resource_changed_during_scan`。启动后可直接替换 binary，后续 adapter 调用使用路径上的当前普通文件；
+文件不存在或不再是普通文件时返回 `engine_binary_unavailable`。替换后的 binary 不会重新执行启动能力探测。
 
 公网由 HTTPS 反向代理提供 TLS，转发 `/api` 和 SSE，并设置：
 

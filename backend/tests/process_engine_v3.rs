@@ -420,7 +420,7 @@ fn capability_probe_exercises_each_model_import_profile() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn process_engine_rejects_binary_replacement_before_every_spawn_path() {
+async fn process_engine_accepts_binary_replacement_and_rejects_only_a_missing_binary() {
     use std::os::unix::fs::PermissionsExt;
 
     let _probe_guard = ENGINE_PROBE_TEST_LOCK
@@ -445,21 +445,34 @@ async fn process_engine_rejects_binary_replacement_before_every_spawn_path() {
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     let (task, input_tree) = tree();
-    let error = engine
+    let _ = engine
         .run_analysis(spec(task.path(), &input_tree, RunMode::Analysis))
-        .await
-        .unwrap_err();
-    assert_eq!(error.code, "engine_binary_changed");
-    let error = engine
+        .await;
+    assert!(marker.exists(), "the replacement binary must be executed");
+    std::fs::remove_file(&marker).unwrap();
+    engine
         .inspect(backend::adapters::InspectSpec {
             input_tree: input_tree.clone(),
             model_path: "main.rss".into(),
             timeout: Duration::from_secs(1),
         })
         .await
+        .unwrap();
+    assert!(
+        marker.exists(),
+        "inspect must also use the replacement binary"
+    );
+
+    std::fs::remove_file(&binary).unwrap();
+    let error = engine
+        .inspect(backend::adapters::InspectSpec {
+            input_tree,
+            model_path: "main.rss".into(),
+            timeout: Duration::from_secs(1),
+        })
+        .await
         .unwrap_err();
-    assert_eq!(error.code, "engine_binary_changed");
-    assert!(!marker.exists());
+    assert_eq!(error.code, "engine_binary_unavailable");
 }
 
 #[cfg(unix)]
