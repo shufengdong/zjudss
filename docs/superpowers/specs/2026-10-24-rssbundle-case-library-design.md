@@ -47,8 +47,8 @@ id                 稳定 example ID
 title              bundle 目录名去掉 .rssbundle
 categoryPath       从 rssbundle 根到 bundle 父目录的目录名数组
 bundlePath         bundle 相对 rssbundle 根的可展示路径
-entryPath          manifest.entry，在 bundle 内的相对路径
-manifest           已验证并规范化的 manifest 摘要
+entryPath          manifest.entry，在 bundle 内的相对路径；manifest 无效时为 null
+manifest           已验证并规范化的 manifest 摘要；manifest 无效时为 null
 files              manifest.json 与 manifest.files 声明文件
 treeHash           manifest 和声明文件内容形成的快照哈希
 importable         是否允许进入模型导入
@@ -141,8 +141,8 @@ manifest 无效时，扫描器创建一个不可导入案例叶节点。诊断�
 `source.entry`；返回结果保留所有匹配案例及其祖先目录。案例规模受启动时的 `max_examples` 限制，因此目录
 接口不再使用会破坏树完整性的默认 20 条截断。`sourceKind` 固定为 `rssbundle`，不再作为有效筛选维度。
 
-`GET /api/examples/{id}` 返回案例摘要、目录路径、完整规范化 manifest 摘要、声明文件角色与哈希、tree hash
-和诊断。它仍不返回文件内容或物理路径。
+`GET /api/examples/{id}` 返回案例摘要、目录路径、规范化 manifest 摘要、声明文件角色与哈希、tree hash
+和诊断。manifest 无法解析或不满足合同时，`manifest` 和 `entryPath` 为 `null`。它仍不返回文件内容或物理路径。
 
 `POST /api/sessions/{sessionId}/draft/example` 请求格式保持不变。后端用 example ID 和
 `engineResourceSnapshot` 锁定资源版本。
