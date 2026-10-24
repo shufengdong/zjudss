@@ -13,7 +13,7 @@ export default function HistorySidebar(props:{
     const timer=setTimeout(()=>void searchHistory(query.trim()).then(v=>{if(live)setHits(v)}).catch(()=>{if(live)setHits([])}),250)
     return()=>{live=false;clearTimeout(timer)}
   },[query])
-  return <div className="relative flex shrink-0">
+  return <div className="relative flex h-full shrink-0">
     <Sidebar {...props} footer={<UserMenu user={props.user} onLogout={props.onLogout}/>}/>
     {!props.collapsed&&<div className="absolute left-3 right-3 top-14 z-30">
       <input aria-label="搜索历史" value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜索历史对话"

@@ -7,6 +7,16 @@ async function expectNoSeriousViolations(page: Page) {
   expect(result.violations.filter(violation => violation.impact === 'serious' || violation.impact === 'critical')).toEqual([])
 }
 
+async function expectUserMenuAtSidebarBottom(page: Page, userName: string) {
+  const menu = page.getByRole('button', { name: new RegExp(userName) })
+  await expect(menu).toBeInViewport()
+  const box = await menu.boundingBox()
+  expect(box).not.toBeNull()
+  const bottomGap = page.viewportSize()!.height - box!.y - box!.height
+  expect(bottomGap).toBeGreaterThanOrEqual(0)
+  expect(bottomGap).toBeLessThanOrEqual(12)
+}
+
 test('desktop three-column workspace completes upload, script, run, and result flows with accessible controls', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'desktop@example.com', tenant: 'grid-ui' })
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -14,6 +24,7 @@ test('desktop three-column workspace completes upload, script, run, and result f
   await expect(page.getByRole('button', { name: '新建仿真' })).toBeVisible()
   await expect(page.getByRole('textbox', { name: '消息' })).toBeVisible()
   await expect(page.getByRole('button', { name: '模型工作区' })).toBeVisible()
+  await expectUserMenuAtSidebarBottom(page, 'Desktop Test')
   const { run } = await uploadScriptAndRun({
     page, api, control, sessionId,
     engine: { kind: 'success', data: [{ name: 'voltage', rows: [['b1', 1]], valueUnit: 'pu' }] },
@@ -32,6 +43,7 @@ test('narrow drawers remain keyboard reachable without horizontal overflow', asy
   await expect(page.getByRole('button', { name: '展开结果面板' })).toBeVisible()
   await page.getByRole('button', { name: '展开历史侧栏' }).click()
   await expect(page.getByRole('textbox', { name: '搜索历史' })).toBeVisible()
+  await expectUserMenuAtSidebarBottom(page, 'Narrow Test')
   await page.getByRole('button', { name: '收起历史侧栏' }).click()
 
   const { run } = await uploadScriptAndRun({
