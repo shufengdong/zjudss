@@ -1,3 +1,4 @@
+import{useState}from'react'
 import type { ToolCallMessage, ToolStatus } from '../../types'
 import { CheckIcon, XIcon } from '../icons'
 
@@ -29,25 +30,25 @@ function StatusIcon({ status }: { status: ToolStatus }) {
 }
 
 export default function ToolCallCard({ message }: { message: ToolCallMessage }) {
+  const[expanded,setExpanded]=useState(false)
   const args = Object.entries(message.args)
     .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
     .join('，')
 
   return (
     <div className="mx-4 my-2 max-w-[78%] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm sm:mx-6">
-      <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2.5">
+      <div className="flex items-center gap-2 px-3 py-2.5">
         <StatusIcon status={message.status} />
-        <span className="font-mono text-xs font-semibold text-slate-700">{message.toolName}</span>
-        <div className="ml-auto">
+        <span className="min-w-0 truncate font-mono text-xs font-semibold text-slate-700">{message.toolName}</span>
+        <button type="button" aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)} className="ml-auto shrink-0 text-xs text-brand-600">{expanded?'收起':'查看详情'}</button>
+        <div className="shrink-0">
           <StatusPill status={message.status} />
         </div>
       </div>
-      <div className="space-y-1 px-3 py-2 text-xs text-slate-500">
-        <div className="truncate font-mono" title={args}>
-          {args}
-        </div>
-        {message.summary && <div className="text-slate-400">{message.summary}</div>}
-      </div>
+      {expanded&&<div className="max-h-64 space-y-2 overflow-auto border-t border-slate-100 px-3 py-2 text-xs text-slate-500">
+        <div className="whitespace-pre-wrap break-all font-mono">{args||'无参数'}</div>
+        {message.summary&&<div className="whitespace-pre-wrap break-words text-slate-400">{message.summary}</div>}
+      </div>}
     </div>
   )
 }
