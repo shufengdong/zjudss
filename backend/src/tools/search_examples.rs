@@ -50,7 +50,11 @@ impl Tool for SearchExamplesTool {
                 (query.is_empty()
                     || e.title.to_lowercase().contains(&query)
                     || e.id.to_lowercase().contains(&query))
-                    && args.study_type.as_ref().is_none_or(|s| s == &e.study_type)
+                    && args.study_type.as_ref().is_none_or(|study_type| {
+                        e.manifest
+                            .as_ref()
+                            .is_some_and(|manifest| study_type == &manifest.study.kind)
+                    })
             })
             .take(50)
             .collect();

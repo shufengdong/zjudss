@@ -52,16 +52,21 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         llm.provider, llm.model
     );
     eprintln!(
-        "[config] agent bundle = {}, engine resources = {} ({}, examples {}/{})",
+        "[config] agent bundle = {}, engine resources = {} ({}, examples discovered={}, importable={}, invalid={})",
         knowledge.manifest.agent_bundle_version,
         engine_resources.id,
         snapshot_path.display(),
+        engine_resources.examples.len(),
         engine_resources
             .examples
             .iter()
             .filter(|example| example.importable)
             .count(),
-        engine_resources.examples.len(),
+        engine_resources
+            .examples
+            .iter()
+            .filter(|example| !example.importable)
+            .count(),
     );
     eprintln!("[config] tensoreval sha256 = {binary_sha256}");
 

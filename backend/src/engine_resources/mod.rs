@@ -10,7 +10,10 @@ use sha2::{Digest, Sha256};
 
 use crate::adapters::ENGINE_CONTRACT_VERSION;
 
-pub use examples::{EngineExample, ExampleSourceFile};
+pub use examples::{
+    EngineExample, ExampleManifest, ExampleManifestFile, ExampleSource, ExampleSourceFile,
+    ExampleStudy,
+};
 pub use knowledge::{DocSearchHit, DocSection, EngineKnowledge};
 use snapshot::SourceFileSpec;
 pub use snapshot::{EngineResourceSnapshot, ResourceLimits};
@@ -60,7 +63,7 @@ impl EngineResourceRegistry {
 
     pub fn load_with_limits(
         tensoreval_cwd: &Path,
-        capabilities: &HashSet<String>,
+        _capabilities: &HashSet<String>,
         limits: ResourceLimits,
     ) -> Result<EngineResourceSnapshot, EngineResourceError> {
         let engine_root = tensoreval_cwd
@@ -114,20 +117,9 @@ impl EngineResourceRegistry {
             documents.insert(relative.clone(), content.as_bytes().to_vec());
             docs.push((relative.clone(), content));
         }
-        let root_rss = discover_root_rss(&dss_root, limits.max_examples, limits.max_example_bytes)?;
-        let bundles = discover_bundle_manifests(
-            &dss_root,
-            limits.max_examples.saturating_sub(root_rss.len()),
-            limits.max_example_bytes,
-        )?;
-        let examples = examples::load_examples(
-            &engine_root,
-            &dss_root,
-            &root_rss,
-            &bundles,
-            capabilities,
-            limits,
-        )?;
+        let bundles =
+            discover_bundle_manifests(&dss_root, limits.max_examples, limits.max_example_bytes)?;
+        let examples = examples::load_examples(&engine_root, &dss_root, &bundles, limits)?;
         let knowledge = EngineKnowledge::from_documents(&docs);
         let mut source_hashes = BTreeMap::new();
         insert_source_hash(
@@ -168,6 +160,16 @@ impl EngineResourceRegistry {
         }
         for example in &examples {
             identity_part(&mut identity, b"example-id", example.id.as_bytes());
+            identity_part(
+                &mut identity,
+                b"example-category",
+                example.category_path.join("/").as_bytes(),
+            );
+            identity_part(
+                &mut identity,
+                b"example-bundle",
+                example.bundle_path.as_bytes(),
+            );
             identity_part(&mut identity, b"example-tree", example.tree_hash.as_bytes());
             identity_part(
                 &mut identity,
@@ -176,6 +178,21 @@ impl EngineResourceRegistry {
             );
             for diagnostic in &example.diagnostics {
                 identity_part(&mut identity, b"diagnostic", diagnostic.as_bytes());
+            }
+            if let Some(manifest) = &example.manifest {
+                let manifest = serde_json::to_vec(manifest).map_err(|error| {
+                    EngineResourceError::new("engine_resource_manifest_invalid", error.to_string())
+                })?;
+                identity_part(&mut identity, b"example-manifest", &manifest);
+            }
+            for file in &example.files {
+                identity_part(
+                    &mut identity,
+                    b"example-file-path",
+                    file.virtual_path.as_bytes(),
+                );
+                identity_part(&mut identity, b"example-file-role", file.role.as_bytes());
+                identity_part(&mut identity, b"example-file-hash", file.sha256.as_bytes());
             }
         }
         let id = format!("ers_{}", &format!("{:x}", identity.finalize())[..32]);
@@ -569,36 +586,6 @@ fn discover_documents(
     Ok(files)
 }
 
-fn discover_root_rss(
-    dss_root: &Path,
-    max_examples: usize,
-    max_example_bytes: u64,
-) -> Result<Vec<SourceFileSpec>, EngineResourceError> {
-    let mut result = Vec::new();
-    for entry in std::fs::read_dir(dss_root).map_err(EngineResourceError::io)? {
-        let entry = entry.map_err(EngineResourceError::io)?;
-        let metadata = std::fs::symlink_metadata(entry.path()).map_err(EngineResourceError::io)?;
-        if metadata.is_file()
-            && entry
-                .path()
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("rss"))
-        {
-            if result.len() >= max_examples {
-                return Err(limit_error("example count"));
-            }
-            let path = entry.path();
-            result.push(SourceFileSpec {
-                path: portable_relative(dss_root, &path)?,
-                sha256: hash_bounded_file(&path, max_example_bytes, "example bytes")?,
-            });
-        }
-    }
-    result.sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(result)
-}
-
 fn discover_bundle_manifests(
     dss_root: &Path,
     max_bundles: usize,
@@ -619,7 +606,7 @@ fn discover_bundle_manifests(
         ));
     }
     let mut files = Vec::new();
-    walk_matching_files(&root, false, max_bundles, is_bundle_manifest, &mut files)?;
+    walk_bundle_manifests(&root, max_bundles, &mut files)?;
     files.sort_by_key(|path| portable_relative(dss_root, path).unwrap_or_default());
     files
         .into_iter()
@@ -630,6 +617,41 @@ fn discover_bundle_manifests(
             })
         })
         .collect()
+}
+
+fn walk_bundle_manifests(
+    root: &Path,
+    max_bundles: usize,
+    manifests: &mut Vec<PathBuf>,
+) -> Result<(), EngineResourceError> {
+    let mut entries = std::fs::read_dir(root)
+        .map_err(EngineResourceError::io)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(EngineResourceError::io)?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path).map_err(EngineResourceError::io)?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            continue;
+        }
+        if path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("rssbundle"))
+        {
+            let manifest = path.join("manifest.json");
+            if manifest.is_file() {
+                if manifests.len() >= max_bundles {
+                    return Err(limit_error("example count"));
+                }
+                manifests.push(manifest);
+            }
+            continue;
+        }
+        walk_bundle_manifests(&path, max_bundles, manifests)?;
+    }
+    Ok(())
 }
 
 fn walk_matching_files(
@@ -668,15 +690,6 @@ fn is_markdown(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
-}
-
-fn is_bundle_manifest(path: &Path) -> bool {
-    path.file_name().and_then(|name| name.to_str()) == Some("manifest.json")
-        && path
-            .parent()
-            .and_then(Path::extension)
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("rssbundle"))
 }
 
 fn hash_bounded_file(

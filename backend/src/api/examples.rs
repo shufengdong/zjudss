@@ -38,10 +38,12 @@ pub async fn list(
                 && (needle.is_empty()
                     || example.title.to_lowercase().contains(&needle)
                     || example.id.to_lowercase().contains(&needle))
-                && query
-                    .study_type
-                    .as_ref()
-                    .is_none_or(|value| value == &example.study_type)
+                && query.study_type.as_ref().is_none_or(|value| {
+                    example
+                        .manifest
+                        .as_ref()
+                        .is_some_and(|manifest| value == &manifest.study.kind)
+                })
                 && query
                     .source_kind
                     .as_ref()
@@ -138,15 +140,23 @@ pub async fn get(
 }
 
 fn summary(example: &crate::engine_resources::EngineExample) -> Value {
+    let study_type = example
+        .manifest
+        .as_ref()
+        .map(|manifest| manifest.study.kind.as_str());
+    let solver = example
+        .manifest
+        .as_ref()
+        .and_then(|manifest| manifest.study.solver.as_deref());
     json!({
         "id": example.id,
         "title": example.title,
-        "description": format!("{} · {} 个文件", example.study_type, example.file_count),
+        "description": format!("{} · {} 个文件", study_type.unwrap_or("unknown"), example.file_count),
         "sourceKind": example.source_kind,
-        "studyType": example.study_type,
-        "solver": example.solver,
-        "tags": [example.study_type, example.source_kind],
-        "requiredFeatures": example.required_features,
+        "studyType": study_type,
+        "solver": solver,
+        "tags": [study_type.unwrap_or("unknown"), example.source_kind.as_str()],
+        "requiredFeatures": [],
         "fileCount": example.file_count,
         "sizeBytes": example.size_bytes,
         "verification": if example.importable { "verified" } else { "invalid" },

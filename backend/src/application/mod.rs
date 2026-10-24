@@ -140,24 +140,74 @@ impl AppState {
     ) -> Self {
         use sha2::{Digest, Sha256};
 
-        use crate::engine_resources::{EngineExample, ExampleSourceFile};
+        use crate::engine_resources::{
+            EngineExample, ExampleManifest, ExampleManifestFile, ExampleSource, ExampleSourceFile,
+            ExampleStudy,
+        };
 
         let engine_root = data_dir
             .parent()
             .unwrap_or(&data_dir)
             .join("engine-fixture");
-        let relative = "sparrowzz/dss/examples/e2e-demo.dss";
-        let source = engine_root.join(relative);
-        std::fs::create_dir_all(source.parent().expect("example parent"))
-            .expect("create e2e example directory");
+        let bundle_path = "E2E/Demo/E2E demo.rssbundle";
+        let bundle_relative = format!("sparrowzz/dss/rssbundle/{bundle_path}");
+        let bundle = engine_root.join(&bundle_relative);
+        std::fs::create_dir_all(bundle.join("dss")).expect("create e2e example directory");
+        let main_bytes = b"model = import_dss(\"dss/model.dss\");\n";
         let source_bytes = b"new circuit.e2e basekv=10\n";
-        std::fs::write(&source, source_bytes).expect("write e2e example");
+        std::fs::write(bundle.join("main.rss"), main_bytes).expect("write e2e main");
+        std::fs::write(bundle.join("dss/model.dss"), source_bytes).expect("write e2e model");
+        let main_hash = format!("{:x}", Sha256::digest(main_bytes));
+        let source_hash = format!("{:x}", Sha256::digest(source_bytes));
+        let manifest = ExampleManifest {
+            schema_version: 1,
+            artifact: "mems.dss-rss-bundle".into(),
+            generator: "zjudss-e2e/1".into(),
+            psa_contract_version: "0.1.0".into(),
+            entry: "main.rss".into(),
+            study: ExampleStudy {
+                kind: "execution_plan".into(),
+                compatibility: "opendss-native".into(),
+                solver: Some("radial".into()),
+                results: vec!["voltage".into()],
+            },
+            source: ExampleSource {
+                entry: "dss/model.dss".into(),
+                root: "dss".into(),
+                tree_sha256: source_hash.clone(),
+            },
+            files: vec![
+                ExampleManifestFile {
+                    path: "dss/model.dss".into(),
+                    role: "dss-entry".into(),
+                    sha256: source_hash.clone(),
+                },
+                ExampleManifestFile {
+                    path: "main.rss".into(),
+                    role: "main-rss".into(),
+                    sha256: main_hash.clone(),
+                },
+            ],
+            inputs: serde_json::json!([]),
+        };
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).expect("serialize e2e manifest");
+        std::fs::write(bundle.join("manifest.json"), &manifest_bytes).expect("write e2e manifest");
+        let manifest_hash = format!("{:x}", Sha256::digest(&manifest_bytes));
+        let invalid_relative = "sparrowzz/dss/rssbundle/E2E/Demo/Broken.rssbundle";
+        let invalid_bytes = b"{";
+        std::fs::create_dir_all(engine_root.join(invalid_relative))
+            .expect("create invalid e2e example directory");
+        std::fs::write(
+            engine_root.join(invalid_relative).join("manifest.json"),
+            invalid_bytes,
+        )
+        .expect("write invalid e2e manifest");
+        let invalid_hash = format!("{:x}", Sha256::digest(invalid_bytes));
         // macOS 的临时目录常以 /var 暴露、canonicalize 后变为 /private/var；
         // 快照根必须规范化，否则案例导入的越界检查会误判合法 fixture。
         let engine_root = engine_root
             .canonicalize()
             .expect("canonicalize e2e engine root");
-        let source_hash = format!("{:x}", Sha256::digest(source_bytes));
         let docs = vec![(
             "docs/e2e-guide.md".to_string(),
             "# E2E guide\nUse deterministic scenarios.".to_string(),
@@ -199,25 +249,63 @@ impl AppState {
                 docs[0].1.as_bytes().to_vec(),
             )]),
             knowledge: EngineKnowledge::from_documents(&docs),
-            examples: vec![EngineExample {
-                id: "e2e-demo".into(),
-                title: "E2E demo".into(),
-                source_kind: "dss".into(),
-                entry_path: "examples/e2e-demo.dss".into(),
-                study_type: "power_flow".into(),
-                solver: None,
-                required_features: vec![],
-                file_count: 1,
-                size_bytes: source_bytes.len() as u64,
-                tree_hash: source_hash.clone(),
-                importable: true,
-                diagnostics: vec![],
-                files: vec![ExampleSourceFile {
-                    virtual_path: relative.into(),
-                    source_path: relative.into(),
-                    sha256: source_hash,
-                }],
-            }],
+            examples: vec![
+                EngineExample {
+                    id: "e2e-demo".into(),
+                    title: "E2E demo".into(),
+                    source_kind: "rssbundle".into(),
+                    category_path: vec!["E2E".into(), "Demo".into()],
+                    bundle_path: bundle_path.into(),
+                    entry_path: Some("main.rss".into()),
+                    manifest: Some(manifest),
+                    file_count: 3,
+                    size_bytes: (manifest_bytes.len() + main_bytes.len() + source_bytes.len())
+                        as u64,
+                    tree_hash: source_hash.clone(),
+                    importable: true,
+                    diagnostics: vec![],
+                    files: vec![
+                        ExampleSourceFile {
+                            virtual_path: "manifest.json".into(),
+                            source_path: format!("{bundle_relative}/manifest.json"),
+                            sha256: manifest_hash,
+                            role: "manifest".into(),
+                        },
+                        ExampleSourceFile {
+                            virtual_path: "dss/model.dss".into(),
+                            source_path: format!("{bundle_relative}/dss/model.dss"),
+                            sha256: source_hash,
+                            role: "dss-entry".into(),
+                        },
+                        ExampleSourceFile {
+                            virtual_path: "main.rss".into(),
+                            source_path: format!("{bundle_relative}/main.rss"),
+                            sha256: main_hash,
+                            role: "main-rss".into(),
+                        },
+                    ],
+                },
+                EngineExample {
+                    id: "e2e-broken".into(),
+                    title: "Broken".into(),
+                    source_kind: "rssbundle".into(),
+                    category_path: vec!["E2E".into(), "Demo".into()],
+                    bundle_path: "E2E/Demo/Broken.rssbundle".into(),
+                    entry_path: None,
+                    manifest: None,
+                    file_count: 1,
+                    size_bytes: invalid_bytes.len() as u64,
+                    tree_hash: invalid_hash.clone(),
+                    importable: false,
+                    diagnostics: vec!["manifest_invalid".into()],
+                    files: vec![ExampleSourceFile {
+                        virtual_path: "manifest.json".into(),
+                        source_path: format!("{invalid_relative}/manifest.json"),
+                        sha256: invalid_hash,
+                        role: "manifest".into(),
+                    }],
+                },
+            ],
             source_hashes: Default::default(),
         });
         Self::new_with_resources_and_agent_factory(
