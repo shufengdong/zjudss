@@ -132,6 +132,74 @@ async fn post_run(
         .unwrap()
 }
 
+#[tokio::test]
+async fn deleting_a_session_with_a_completed_run_removes_its_history_and_storage() {
+    let app = TestApp::spawn().await;
+    let (user, cookie, session_id, version_id, script_id) = setup(&app).await;
+    let response = post_run(&app, &cookie, &script_id, &version_id, "delete-session-run").await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    let run_id = value["run"]["id"].as_str().unwrap().parse::<i32>().unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let run = app.state.run_service.find(&user, run_id).await.unwrap();
+            if matches!(run.status.as_str(), "succeeded" | "failed") {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        app.state
+            .artifact_service
+            .get_usage(user.storage_scope_id)
+            .await
+            .unwrap()
+            .used_artifacts
+            > 0
+    );
+
+    let deleted = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/sessions/{session_id}"))
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let deleted_status = deleted.status();
+    let deleted_body = to_bytes(deleted.into_body(), 1024 * 1024).await.unwrap();
+    assert_eq!(
+        deleted_status,
+        StatusCode::NO_CONTENT,
+        "{}",
+        String::from_utf8_lossy(&deleted_body)
+    );
+    assert!(
+        app.state
+            .session_repo
+            .find(&user.id, session_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let usage = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
+    assert_eq!(usage.used_artifacts, 0);
+    assert_eq!(usage.used_bytes, 0);
+}
+
 #[cfg(feature = "e2e-test")]
 #[tokio::test]
 async fn failed_run_publishes_a_terminal_failed_progress_event() {

@@ -105,12 +105,8 @@ pub async fn delete(
     principal: CurrentUser,
     Path(session_id): Path<i32>,
 ) -> Result<StatusCode, ApiError> {
-    let script_artifacts = state
-        .script_service
-        .session_artifact_ids(&principal, session_id)
-        .await?;
-    state.session_repo.delete(&principal.id, session_id).await?;
-    for artifact_id in script_artifacts {
+    let artifacts = state.session_repo.delete(&principal.id, session_id).await?;
+    for artifact_id in artifacts {
         let _ = state
             .artifact_service
             .release(principal.storage_scope_id, artifact_id)

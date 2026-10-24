@@ -351,7 +351,7 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
 }
 
 #[tokio::test]
-async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outputs() {
+async fn analysis_views_and_run_comparisons_use_snapshots_and_allow_whole_session_cleanup() {
     let app = TestApp::spawn().await;
     let (user, cookie, baseline_run_id, source_id) = create_completed_run(&app).await;
     let baseline = app
@@ -517,4 +517,24 @@ async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outpu
     assert_eq!(stored.candidate_run_id, candidate.id);
     assert_eq!(compatibility["resultName"], "result");
     assert_eq!(outputs.len(), 1);
+
+    assert_eq!(
+        request(
+            &app,
+            &cookie,
+            "DELETE",
+            format!("/api/sessions/{}", baseline.session_id),
+        )
+        .await
+        .status(),
+        StatusCode::NO_CONTENT
+    );
+    let usage = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
+    assert_eq!(usage.used_artifacts, 0);
+    assert_eq!(usage.used_bytes, 0);
 }
