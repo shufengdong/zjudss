@@ -21,7 +21,7 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 | POST | `/api/sessions/{id}/draft/example` | 案例进入模型导入 |
 | GET/POST | `/api/sessions` | 列表/新建会话 |
 | PATCH/DELETE | `/api/sessions/{id}` | 改名/删除整个会话 |
-| GET/POST | `/api/sessions/{id}/messages` | 分页消息/发送消息 |
+| GET/POST | `/api/sessions/{id}/messages` | 分页消息/发送消息；POST 返回权威 `sessionTitle` 供界面立即同步自动标题 |
 | GET | `/api/sessions/{id}/events` | SSE replay + live |
 | GET | `/api/history/search` | 当前用户历史检索 |
 | POST | `/api/sessions/{id}/model-imports` | 上传模型来源 |

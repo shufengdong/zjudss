@@ -114,6 +114,50 @@ async fn response_json(response: axum::response::Response) -> Value {
 }
 
 #[tokio::test]
+async fn first_message_response_contains_the_authoritative_session_title() {
+    let app = TestApp::spawn().await;
+    let cookie = app.login_cookie("instance").await;
+    let created = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/sessions")
+                .header("content-type", "application/json")
+                .header("cookie", &cookie)
+                .body(Body::from(r#"{"title":""}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let session_id = response_json(created).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/sessions/{session_id}/messages"))
+                .header("content-type", "application/json")
+                .header("cookie", cookie)
+                .body(Body::from(r#"{"message":"检查馈线电压"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        response_json(response).await,
+        json!({"ok":true,"sessionTitle":"检查馈线电压"})
+    );
+}
+
+#[tokio::test]
 async fn queue_rejection_has_stable_error_and_does_not_write_message() {
     let scheduler = RunScheduler::new(1, 1, 1);
     let app = TestApp::spawn_with_scheduler(

@@ -133,17 +133,17 @@ export default function Sidebar({
                       />
                     ) : (
                       <div
-                        className={`group flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 transition-colors ${
+                        className={`group flex items-center rounded-lg transition-colors ${
                           selectedId === s.id ? 'bg-white shadow-sm' : 'hover:bg-slate-200/60'
                         }`}
                       >
-                        <div className="min-w-0 flex-1">
-                          <button
-                            type="button"
-                            aria-label={`打开会话“${sessionTitle(s)}”`}
-                            onClick={() => onSelect(s.id)}
-                            className="block w-full truncate text-left text-sm text-slate-700"
-                          >{sessionTitle(s)}</button>
+                        <button
+                          type="button"
+                          aria-label={`打开会话“${sessionTitle(s)}”`}
+                          onClick={() => onSelect(s.id)}
+                          className="min-w-0 flex-1 cursor-pointer select-none px-2 py-2 text-left"
+                        >
+                          <div className="truncate text-sm text-slate-700">{sessionTitle(s)}</div>
                           <div className="mt-0.5 flex items-center gap-1.5">
                             <span
                               className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium leading-none ${STATUS_CONFIG[s.status].cls}`}
@@ -157,7 +157,7 @@ export default function Sidebar({
                             </span>
                             <span className="text-[11px] text-slate-400">{formatTime(s.updatedAt, groupOf(s.updatedAt))}</span>
                           </div>
-                        </div>
+                        </button>
                         <button
                           type="button"
                           aria-label={`打开“${sessionTitle(s)}”的会话操作`}
@@ -165,7 +165,7 @@ export default function Sidebar({
                             e.stopPropagation()
                             setMenuId(menuId === s.id ? null : s.id)
                           }}
-                          className="rounded-md p-1 text-slate-400 opacity-0 transition-opacity hover:bg-slate-200 hover:text-slate-600 group-hover:opacity-100"
+                          className="mr-2 rounded-md p-1 text-slate-400 opacity-0 transition-opacity hover:bg-slate-200 hover:text-slate-600 group-hover:opacity-100"
                           title="更多操作"
                         >
                           <MoreIcon className="h-4 w-4" />

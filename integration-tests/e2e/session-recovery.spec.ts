@@ -36,6 +36,7 @@ test('an empty account bootstraps a session before message, upload, and example 
   })
   await page.getByRole('textbox', { name: '消息' }).fill('检查空账户会话')
   await page.getByRole('button', { name: '发送消息' }).click()
+  await expect(page.getByRole('heading', { name: '检查空账户会话' })).toBeVisible()
   await expect(page.getByText('空账户会话已就绪', { exact: true })).toBeVisible()
 
   await page.locator('input[type=file]').first().setInputFiles(
@@ -52,8 +53,8 @@ test('an empty account bootstraps a session before message, upload, and example 
     response.url().endsWith(`/api/sessions/${created.id}`) && response.request().method() === 'DELETE')
   const replacement = page.waitForResponse((response) =>
     response.url().endsWith('/api/sessions') && response.request().method() === 'POST', { timeout: 10_000 })
-  await page.getByRole('button', { name: '打开“新会话”的会话操作' }).click()
-  await page.getByRole('button', { name: '删除“新会话”' }).click()
+  await page.getByRole('button', { name: '打开“检查空账户会话”的会话操作' }).click()
+  await page.getByRole('button', { name: '删除“检查空账户会话”' }).click()
   await page.getByRole('button', { name: '确认删除' }).click()
   expect((await deleted).status()).toBe(204)
   const replacementResponse = await replacement
@@ -116,7 +117,7 @@ test('session CRUD renders optimistic user, tool-call, and assistant messages', 
   await page.reload()
   await page.getByRole('button', { name: '打开会话“馈线恢复测试”' }).click()
   await expect(page.getByRole('heading', { name: '馈线恢复测试' })).toBeVisible()
-  await page.getByRole('button', { name: '打开会话“切换目标”' }).click()
+  await page.getByRole('button', { name: '打开会话“切换目标”' }).getByText('已完成').click()
   await expect(page.getByRole('heading', { name: '切换目标' })).toBeVisible()
   await page.getByRole('button', { name: '打开会话“馈线恢复测试”' }).click()
 
@@ -178,7 +179,10 @@ test('older history, refresh, restart, and invalid localStorage recover committe
     await expect.poll(async () => (await messages(api, session.id)).messages
       .filter((message: { type: string }) => message.type === 'assistant').length).toBe(index + 1)
   }
-  await expect.poll(async () => (await messages(api, session.id)).messages.length).toBe(52)
+  await expect.poll(async () => (await messages(api, session.id)).messages.reduce<Record<string, number>>((counts, message) => {
+    counts[message.type] = (counts[message.type] ?? 0) + 1
+    return counts
+  }, {})).toEqual({ user: 26, assistant: 26 })
 
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '批量消息 0' })).toBeVisible()

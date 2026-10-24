@@ -252,6 +252,12 @@ pub async fn post_message(
         .session_repo
         .touch(&principal.id, session_id, now)
         .await?;
+    let session_title = state
+        .session_repo
+        .find(&principal.id, session_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("资源不存在"))?
+        .title;
 
     // 4. 后台 agent run：真正的流式驱动（第 3 步）。
     let chat = state.chat(principal);
@@ -276,7 +282,10 @@ pub async fn post_message(
             .await;
     });
 
-    Ok((StatusCode::ACCEPTED, Json(json!({ "ok": true }))))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({ "ok": true, "sessionTitle": session_title })),
+    ))
 }
 
 /// 把落库消息重组为前端消息形状（覆盖全部 6 种类型，经 `AppEvent::from_message`）。

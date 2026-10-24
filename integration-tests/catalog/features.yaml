@@ -152,7 +152,7 @@
     - runner: playwright
       file: integration-tests/e2e/session-recovery.spec.ts
       name: session CRUD renders optimistic user, tool-call, and assistant messages
-  assertions: [messages append only, every public message type has a renderer]
+  assertions: [messages append only, the first user message updates the visible session title without refresh, every public message type has a renderer]
   fixtures: [scripted agent]
   contracts:
     - "route:GET /api/sessions/{id}/messages"

@@ -41,7 +41,7 @@ export const renameSession=(id:string,title:string)=>request<Session>(`/api/sess
 export const deleteSession=async(id:string)=>request<void>(`/api/sessions/${id}`,{method:'DELETE'},async()=>undefined)
 export const listMessages=(id:string,q:{beforeId?:string;aroundId?:string;limit?:number}={})=>
   request<MessagePage<Message>>(`/api/sessions/${id}/messages${params(q)}`)
-export const postMessage=async(id:string,message:string)=>request<{ok:boolean}>(`/api/sessions/${id}/messages`,{method:'POST',body:JSON.stringify({message})})
+export const postMessage=async(id:string,message:string)=>request<{ok:boolean;sessionTitle:string}>(`/api/sessions/${id}/messages`,{method:'POST',body:JSON.stringify({message})})
 export async function uploadModelFiles(sessionId:string,clientImportId:string,files:{id:string;file:File;relativePath?:string}[],draft?:{id:string;revision:number}|null) {
   const form=new FormData(); form.append('clientImportId',clientImportId)
   if(draft){form.append('expectedDraftId',draft.id);form.append('expectedDraftRevision',String(draft.revision))}

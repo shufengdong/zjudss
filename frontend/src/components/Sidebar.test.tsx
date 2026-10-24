@@ -10,19 +10,20 @@ const session = {
 }
 
 function renderSidebar(onDelete = vi.fn()) {
+  const onSelect = vi.fn()
   render(
     <Sidebar
       sessions={[session]}
       selectedId={session.id}
       collapsed={false}
-      onSelect={vi.fn()}
+      onSelect={onSelect}
       onNew={vi.fn()}
       onRename={vi.fn()}
       onDelete={onDelete}
       onToggleCollapse={vi.fn()}
     />,
   )
-  return onDelete
+  return { onDelete, onSelect }
 }
 
 function openDeleteConfirmation() {
@@ -31,6 +32,18 @@ function openDeleteConfirmation() {
 }
 
 describe('Sidebar session deletion', () => {
+  it('selects a session from the whole content area without selecting text', () => {
+    const { onSelect } = renderSidebar()
+
+    const sessionButton = screen.getByRole('button', { name: '打开会话“馈线短路分析”' })
+    expect(sessionButton).toContainElement(screen.getByText('已完成'))
+    expect(sessionButton).toHaveClass('cursor-pointer', 'select-none')
+    fireEvent.click(screen.getByText('已完成'))
+
+    expect(onSelect).toHaveBeenCalledOnce()
+    expect(onSelect).toHaveBeenCalledWith(session.id)
+  })
+
   it('shows a meaningful title for legacy sessions with an empty title', () => {
     render(
       <Sidebar
@@ -49,7 +62,7 @@ describe('Sidebar session deletion', () => {
   })
 
   it('requires explicit confirmation and explains the irreversible impact', () => {
-    const onDelete = renderSidebar()
+    const { onDelete } = renderSidebar()
 
     openDeleteConfirmation()
 
@@ -67,7 +80,7 @@ describe('Sidebar session deletion', () => {
   })
 
   it('closes the confirmation with Escape without deleting', () => {
-    const onDelete = renderSidebar()
+    const { onDelete } = renderSidebar()
     openDeleteConfirmation()
 
     fireEvent.keyDown(document, { key: 'Escape' })
