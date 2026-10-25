@@ -101,4 +101,3 @@
   git add frontend/src/components/workspace/WorkspacePanel.tsx frontend/src/components/workspace/WorkspacePanel.test.tsx docs/frontend-design.md integration-tests/catalog/features.yaml docs/superpowers/specs/2026-10-25-workspace-model-section-collapse-design.md docs/superpowers/plans/2026-10-25-workspace-model-section-collapse.md
   git commit -m "feat: collapse workspace model sections"
   ```
-
