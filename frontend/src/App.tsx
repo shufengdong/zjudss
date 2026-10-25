@@ -1,10 +1,11 @@
 import{useCallback,useEffect,useMemo,useReducer,useRef,useState}from'react'
-import type{Message,MessageHandlers,Session,User}from'./types'
+import type{Message,MessageHandlers,OpenDataFrame,Session,User}from'./types'
 import{ApiError,applyExample,createRun,createScriptText,createSession,deleteSession as deleteSessionApi,getCurrentUser,listRunDatasets,listSessions,logout,postMessage,renameSession as renameSessionApi}from'./api/client'
 import{useSessionFeed}from'./hooks/useSessionFeed';import{useWorkspace}from'./hooks/useWorkspace';import{useModelImports}from'./hooks/useModelImports'
 import{useRunHistory}from'./hooks/useRunHistory';import{useStorageUsage}from'./hooks/useStorageUsage';import{useMediaQuery}from'./hooks/useMediaQuery'
 import HistorySidebar from'./components/history/HistorySidebar';import Composer from'./components/Composer';import UploadQueue from'./components/uploads/UploadQueue'
 import ResultPanel,{type WorkbenchTab}from'./components/ResultPanel';import DatasetWorkbench from'./components/datasets/DatasetWorkbench'
+import ModelDataFrameWorkbench from'./components/model/ModelDataFrameWorkbench'
 import ComparisonView from'./components/comparisons/ComparisonView';import ExampleLibrary from'./components/examples/ExampleLibrary';import MessageItem from'./components/messages/MessageItem'
 import{PanelLeftIcon,PanelRightIcon}from'./components/icons'
 import LoginPage from'./components/auth/LoginPage'
@@ -14,15 +15,15 @@ function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
   const[sessions,setSessions]=useState<Session[]>([]),[selectedId,setSelectedId]=useState<string|null>(null)
   const[sessionLoadState,setSessionLoadState]=useState<'loading'|'ready'|'error'>('loading'),[sessionLoadAttempt,setSessionLoadAttempt]=useState(0)
   const[draft,setDraft]=useState(''),[sidebarCollapsed,setSidebarCollapsed]=useState(false),[panelOpen,setPanelOpen]=useState(true)
-  const[tab,setTab]=useState<WorkbenchTab>('workspace'),[datasetId,setDatasetId]=useState<string|null>(null),[comparisonId,setComparisonId]=useState<string|null>(null)
+  const[tab,setTab]=useState<WorkbenchTab>('workspace'),[openDataFrame,setOpenDataFrame]=useState<OpenDataFrame|null>(null),[comparisonId,setComparisonId]=useState<string|null>(null)
   const[examplesOpen,setExamplesOpen]=useState(false),[toast,setToast]=useState<string|null>(null)
   const isNarrow=useMediaQuery('(max-width:1279px)'),timer=useRef<number|undefined>(undefined)
   const{feed,older,add,remove}=useSessionFeed(selectedId),workspaceState=useWorkspace(selectedId)
   const notify=useCallback((text:string)=>{setToast(text);if(timer.current)clearTimeout(timer.current);timer.current=window.setTimeout(()=>setToast(null),2500)},[])
-  const reloadWorkspace=useCallback(async()=>{if(selectedId)await workspaceState.reload(selectedId)},[selectedId,workspaceState.reload])
+  const reloadWorkspace=useCallback(async()=>selectedId?workspaceState.reload(selectedId):undefined,[selectedId,workspaceState.reload])
   const imports=useModelImports(selectedId,workspaceState.workspace?.draft,reloadWorkspace)
   const runs=useRunHistory(selectedId,feed?.messages.length??0),usage=useStorageUsage(feed?.messages.length??0)
-  const select=useCallback((id:string)=>{setSelectedId(id);setDatasetId(null);setComparisonId(null);if(isNarrow)setSidebarCollapsed(true);localStorage.setItem(preferenceKey(user.id),id)},[user.id,isNarrow])
+  const select=useCallback((id:string)=>{setSelectedId(id);setOpenDataFrame(null);setComparisonId(null);if(isNarrow)setSidebarCollapsed(true);localStorage.setItem(preferenceKey(user.id),id)},[user.id,isNarrow])
   useEffect(()=>{if(isNarrow){setSidebarCollapsed(true);setPanelOpen(false)}},[isNarrow])
   useEffect(()=>{let live=true;setSessionLoadState('loading');void listSessions().then(async list=>{if(!live)return
     const available=list.length===0?[await createSession()]:list;if(!live)return
@@ -45,8 +46,9 @@ function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
   },[selectedId,add,remove,notify])
   const runScript=useCallback(async(script:Extract<Message,{type:'script'}>['script'])=>{const active=workspaceState.workspace?.active;if(!active){notify('请先生成或激活模型版本');return}try{await createRun(script.id,active.id,crypto.randomUUID?.()??`${Date.now()}-${Math.random()}`);notify('运行已提交')}catch(error){if(error instanceof ApiError&&error.code==='active_model_changed')await reloadWorkspace();throw error}},[workspaceState.workspace?.active?.id,notify,reloadWorkspace])
   const createScript=useCallback(async(content:string)=>{if(!selectedId)return;await createScriptText(selectedId,{name:`manual-${Date.now()}.rss`,content});notify('脚本已创建')},[selectedId,notify])
-  const handlers:MessageHandlers=useMemo(()=>({onOpenDataset:setDatasetId,onOpenComparison:setComparisonId,onRunScript:runScript,activeVersionId:workspaceState.workspace?.active?.id??null,notify}),[notify,runScript,workspaceState.workspace?.active?.id])
-  const openRun=async(id:string)=>{try{const datasets=await listRunDatasets(id);if(datasets[0])setDatasetId(datasets[0].id);else notify('该运行暂无结果数据集')}catch(e){notify(e instanceof Error?e.message:'结果加载失败')}}
+  const handlers:MessageHandlers=useMemo(()=>({onOpenDataset:id=>setOpenDataFrame({kind:'result',datasetId:id}),onOpenComparison:setComparisonId,onRunScript:runScript,activeVersionId:workspaceState.workspace?.active?.id??null,notify}),[notify,runScript,workspaceState.workspace?.active?.id])
+  const invalidateDataFrame=useCallback((target:{kind:'model-draft';draftId:string}|{kind:'model-version';versionId:string})=>setOpenDataFrame(current=>{if(!current||current.kind==='result')return current;if(target.kind==='model-draft'&&current.kind==='model-draft'&&current.draftId===target.draftId)return null;if(target.kind==='model-version'&&current.kind==='model-version'&&current.versionId===target.versionId)return null;return current}),[])
+  const openRun=async(id:string)=>{try{const datasets=await listRunDatasets(id);if(datasets[0])setOpenDataFrame({kind:'result',datasetId:datasets[0].id});else notify('该运行暂无结果数据集')}catch(e){notify(e instanceof Error?e.message:'结果加载失败')}}
   if(sessionLoadState!=='ready')return <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 text-center text-sm text-slate-600">
     {sessionLoadState==='loading'?<p>正在准备会话…</p>:<div role="alert" className="rounded-xl border border-red-200 bg-white p-6 shadow-sm"><p className="text-red-700">会话初始化失败，请重试</p><div className="mt-4 flex justify-center gap-2"><button type="button" onClick={()=>setSessionLoadAttempt(value=>value+1)} className="rounded-lg bg-brand-500 px-3 py-1.5 text-white">重试</button><button type="button" onClick={onLogout} className="rounded-lg border px-3 py-1.5">退出登录</button></div></div>}
   </main>
@@ -65,9 +67,9 @@ function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
         <div className="py-4">{feed.messages.map(message=><div key={message.id} data-testid={`message-${message.type}`} data-message-id={message.id}><MessageItem message={message} handlers={handlers}/></div>)}</div>}</div>
     <UploadQueue entries={imports.queue}/><Composer value={draft} onChange={setDraft} onSend={()=>sendText(draft)} uploading={imports.queue.some(e=>e.status==='uploading')} onUploadFiles={files=>void imports.upload(files)} onCreateScript={createScript}/>
     </main>
-    <ResultPanel open={panelOpen} overlay={isNarrow} tab={tab} onTab={setTab} onClose={()=>setPanelOpen(false)} sessionId={selectedId} workspace={workspaceState.workspace} imports={imports.imports} runs={runs} onReload={reloadWorkspace} notify={notify} onRun={id=>void openRun(id)}/>
-    {datasetId&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-2 sm:p-8"><div className="h-full w-full max-w-full overflow-hidden rounded-xl shadow-2xl sm:w-auto"><DatasetWorkbench datasetId={datasetId} onClose={()=>setDatasetId(null)} onDeleted={()=>notify('结果已删除')}/></div></div>}
-    {comparisonId&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"><div className="w-full max-w-2xl rounded-xl bg-white"><button aria-label="关闭比较" onClick={()=>setComparisonId(null)} className="float-right p-4">×</button><ComparisonView id={comparisonId} onDataset={id=>{setComparisonId(null);setDatasetId(id)}}/></div></div>}
+    <ResultPanel open={panelOpen} overlay={isNarrow} tab={tab} onTab={setTab} onClose={()=>setPanelOpen(false)} sessionId={selectedId} workspace={workspaceState.workspace} imports={imports.imports} runs={runs} onReload={reloadWorkspace} notify={notify} onRun={id=>void openRun(id)} onOpenDataFrame={setOpenDataFrame} onInvalidateDataFrame={invalidateDataFrame}/>
+    {openDataFrame&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-0 sm:p-8"><div className="h-full w-full max-w-full overflow-hidden shadow-2xl sm:w-auto sm:rounded-xl">{openDataFrame.kind==='result'?<DatasetWorkbench datasetId={openDataFrame.datasetId} onClose={()=>setOpenDataFrame(null)} onDeleted={()=>{setOpenDataFrame(null);notify('结果已删除')}}/>:<ModelDataFrameWorkbench source={openDataFrame} activeVersionId={workspaceState.workspace?.active?.id} onClose={()=>setOpenDataFrame(null)} onSourceChange={setOpenDataFrame} reloadWorkspace={reloadWorkspace} notify={notify}/>}</div></div>}
+    {comparisonId&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"><div className="w-full max-w-2xl rounded-xl bg-white"><button aria-label="关闭比较" onClick={()=>setComparisonId(null)} className="float-right p-4">×</button><ComparisonView id={comparisonId} onDataset={id=>{setComparisonId(null);setOpenDataFrame({kind:'result',datasetId:id})}}/></div></div>}
     {examplesOpen&&<ExampleLibrary onClose={()=>setExamplesOpen(false)} onUse={(id,name,snapshot)=>{if(!selectedId)return;setExamplesOpen(false);void applyExample(selectedId,id,snapshot,crypto.randomUUID?.()??`${Date.now()}-${Math.random()}`,workspaceState.workspace?.draft).then(value=>{imports.setImports(items=>[value.modelImport,...items]);imports.watch(value.modelImport.id);notify(`案例“${name}”已进入导入确认`) }).catch(error=>notify(error instanceof Error?error.message:'案例导入失败'))}}/>}
     {toast&&<div className="fixed bottom-6 left-1/2 z-[70] -translate-x-1/2 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white">{toast}</div>}
   </div>

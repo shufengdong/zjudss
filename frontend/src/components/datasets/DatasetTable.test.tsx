@@ -1,5 +1,6 @@
 import{render,screen}from'@testing-library/react';import{describe,expect,it,vi}from'vitest';import DatasetTable from'./DatasetTable'
 import{mergePages}from'../../hooks/useDataset'
+import DataFrameTable from'../dataframes/DataFrameTable'
 describe('DatasetTable',()=>{it('uses schema order and renders null explicitly',()=>{
   render(<DatasetTable metadata={{id:'d',runId:'r',analysisRunId:null,name:'result',rowCount:1,sizeBytes:10,columns:[{name:'b',dtype:'Utf8',nullable:true},{name:'a',dtype:'Int64',nullable:false}],views:[],schemaHash:'h',lineage:[]}}
     page={{datasetId:'d',columns:['a','b'],rows:[[7,null]],nextCursor:null,diagnostics:{}}} loading={false} onMore={vi.fn()}/>)
@@ -16,4 +17,8 @@ it('renders only projected columns in their requested order',()=>{
   expect(screen.queryByRole('columnheader',{name:'a'})).not.toBeInTheDocument()
   expect(screen.getByRole('columnheader',{name:'b'})).toBeInTheDocument()
   expect(screen.getByText('shown')).toBeInTheDocument()
+})
+it('shares pagination rendering with model dataframe pages',()=>{
+  render(<DataFrameTable columns={[{name:'id',dtype:'Utf8',nullable:false}]} page={{resourceId:'m1',columns:['id'],rows:[['b1']],nextCursor:'next',diagnostics:{}}} loading={false} onMore={vi.fn()}/>)
+  expect(screen.getByText('b1')).toBeInTheDocument();expect(screen.getByRole('button',{name:'加载更多'})).toBeInTheDocument()
 })})
