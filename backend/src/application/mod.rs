@@ -8,6 +8,7 @@ pub mod artifacts;
 pub mod case_import;
 pub mod chat;
 pub mod comparisons;
+pub(crate) mod dataframe_reader;
 pub mod datasets;
 mod events;
 pub mod history;

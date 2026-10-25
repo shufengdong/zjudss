@@ -1,23 +1,21 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use arrow_array::{
-    Array, ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Float64Array, Int8Array,
-    Int16Array, Int32Array, Int64Array, LargeListArray, LargeListViewArray, LargeStringArray,
-    ListArray, ListViewArray, StringArray, StringViewArray, UInt8Array, UInt16Array, UInt32Array,
-    UInt64Array,
-};
-use arrow_schema::DataType;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::application::ArtifactService;
+use crate::application::dataframe_reader::{
+    DataFrameReadError, DataFrameReadSource, ParquetDataFrameReader, value,
+};
 use crate::auth::CurrentUser;
 use crate::db::repositories::{
     DeleteResultError, LineageRow, RepoError, ResultRepo, ResultViewRow, RunDataset,
 };
 use crate::storage::ParquetInspector;
+
+pub use crate::application::dataframe_reader::DataFrameColumn as DatasetColumn;
 
 #[derive(Debug)]
 pub enum DatasetError {
@@ -50,15 +48,17 @@ impl From<RepoError> for DatasetError {
         }
     }
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DatasetColumn {
-    pub name: String,
-    pub dtype: String,
-    pub nullable: bool,
-    pub unit: Option<String>,
+impl From<DataFrameReadError> for DatasetError {
+    fn from(value: DataFrameReadError) -> Self {
+        match value {
+            DataFrameReadError::NotFound => Self::NotFound,
+            DataFrameReadError::InvalidCursor => Self::InvalidCursor,
+            DataFrameReadError::InvalidPage(message) => Self::InvalidPage(message),
+            DataFrameReadError::Storage(message) => Self::Storage(message),
+        }
+    }
 }
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatasetMetadata {
@@ -130,6 +130,7 @@ pub struct DeletedDatasetDto {
 pub struct DatasetService {
     repo: ResultRepo,
     artifacts: ArtifactService,
+    reader: ParquetDataFrameReader,
     messages: crate::db::repositories::MessageRepo,
     events: crate::application::EventBus,
 }
@@ -140,9 +141,11 @@ impl DatasetService {
         messages: crate::db::repositories::MessageRepo,
         events: crate::application::EventBus,
     ) -> Self {
+        let reader = ParquetDataFrameReader::new(artifacts.clone());
         Self {
             repo,
             artifacts,
+            reader,
             messages,
             events,
         }
@@ -214,20 +217,10 @@ impl DatasetService {
         })
     }
     async fn path(&self, p: &CurrentUser, d: &RunDataset) -> Result<PathBuf, DatasetError> {
-        let scope = self
-            .artifacts
-            .resolve_scope(p.storage_scope_id)
+        self.reader
+            .resolve_path(p, d.artifact_id.ok_or(DatasetError::NotFound)?)
             .await
-            .map_err(|e| DatasetError::Storage(e.to_string()))?;
-        let a = self
-            .artifacts
-            .find_owned(scope.id, d.artifact_id.ok_or(DatasetError::NotFound)?)
-            .await
-            .map_err(|_| DatasetError::NotFound)?;
-        self.artifacts
-            .store()
-            .resolve(&a.storage_path)
-            .map_err(|e| DatasetError::Storage(e.to_string()))
+            .map_err(Into::into)
     }
     pub async fn page(
         &self,
@@ -238,56 +231,28 @@ impl DatasetService {
         columns: &[String],
     ) -> Result<DatasetPage, DatasetError> {
         let d = self.repo.find_live(&p.id, id).await?;
-        let limit = limit.unwrap_or(100);
-        if !(1..=500).contains(&limit) {
-            return Err(DatasetError::InvalidPage("limit 必须在 1..=500".into()));
-        }
-        let offset = match cursor {
-            Some(c) => decode_cursor(c, id, &d.schema_hash)?,
-            None => 0,
-        };
-        let path = self.path(p, &d).await?;
-        let batches = ParquetInspector::projection(&path, columns, offset, limit)
-            .map_err(|e| DatasetError::Storage(e.to_string()))?;
-        let names = if let Some(batch) = batches.first() {
-            batch
-                .schema()
-                .fields()
-                .iter()
-                .map(|f| f.name().clone())
-                .collect()
-        } else if columns.is_empty() {
-            serde_json::from_str::<Vec<DatasetColumn>>(&d.schema_json)
-                .map_err(|e| DatasetError::Storage(e.to_string()))?
-                .into_iter()
-                .map(|c| c.name)
-                .collect()
-        } else {
-            columns.to_vec()
-        };
-        let mut rows = Vec::new();
-        let mut diagnostics = BTreeMap::new();
-        for batch in batches {
-            for row in 0..batch.num_rows() {
-                let mut values = Vec::with_capacity(batch.num_columns());
-                for array in batch.columns() {
-                    values.push(value(array.as_ref(), row, &mut diagnostics)?);
-                }
-                rows.push(values);
-            }
-        }
-        let consumed = rows.len();
-        let next = if (offset + consumed) < usize::try_from(d.row_count).unwrap_or(usize::MAX) {
-            Some(encode_cursor(id, &d.schema_hash, offset + consumed))
-        } else {
-            None
-        };
+        let page = self
+            .reader
+            .page(
+                p,
+                &DataFrameReadSource {
+                    resource_key: format!("dataset:{id}"),
+                    artifact_id: d.artifact_id.ok_or(DatasetError::NotFound)?,
+                    schema_json: d.schema_json,
+                    row_count: d.row_count,
+                    content_hash: d.schema_hash,
+                },
+                limit,
+                cursor,
+                columns,
+            )
+            .await?;
         Ok(DatasetPage {
             dataset_id: id.to_string(),
-            columns: names,
-            rows,
-            next_cursor: next,
-            diagnostics,
+            columns: page.columns,
+            rows: page.rows,
+            next_cursor: page.next_cursor,
+            diagnostics: page.diagnostics,
         })
     }
     pub async fn download(
@@ -296,22 +261,24 @@ impl DatasetService {
         id: i32,
     ) -> Result<DatasetDownload, DatasetError> {
         let d = self.repo.find_live(&p.id, id).await?;
-        let path = self.path(p, &d).await?;
-        let safe = d
-            .result_name
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>();
+        let file = self
+            .reader
+            .download(
+                p,
+                &DataFrameReadSource {
+                    resource_key: format!("dataset:{id}"),
+                    artifact_id: d.artifact_id.ok_or(DatasetError::NotFound)?,
+                    schema_json: d.schema_json,
+                    row_count: d.row_count,
+                    content_hash: d.schema_hash,
+                },
+                format!("{}-{}", d.id, d.result_name),
+            )
+            .await?;
         Ok(DatasetDownload {
-            path,
-            file_name: format!("{}-{}.parquet", d.id, safe),
-            media_type: "application/vnd.apache.parquet",
+            path: file.path,
+            file_name: file.file_name,
+            media_type: file.media_type,
         })
     }
     pub async fn delete(
@@ -428,30 +395,6 @@ fn lineage_dto(value: LineageRow) -> DatasetLineageDto {
             .and_then(|json| serde_json::from_str(&json).ok()),
     }
 }
-fn encode_cursor(id: i32, hash: &str, offset: usize) -> String {
-    hex(format!("v1|{id}|{hash}|0|{offset}").as_bytes())
-}
-fn decode_cursor(s: &str, id: i32, hash: &str) -> Result<usize, DatasetError> {
-    let bytes = unhex(s).ok_or(DatasetError::InvalidCursor)?;
-    let text = String::from_utf8(bytes).map_err(|_| DatasetError::InvalidCursor)?;
-    let p = text.split('|').collect::<Vec<_>>();
-    if p.len() != 5 || p[0] != "v1" || p[1] != id.to_string() || p[2] != hash || p[3] != "0" {
-        return Err(DatasetError::InvalidCursor);
-    }
-    p[4].parse().map_err(|_| DatasetError::InvalidCursor)
-}
-fn hex(v: &[u8]) -> String {
-    v.iter().map(|b| format!("{b:02x}")).collect()
-}
-fn unhex(v: &str) -> Option<Vec<u8>> {
-    if !v.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..v.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&v[i..i + 2], 16).ok())
-        .collect()
-}
 pub fn schema_json_and_hash(meta: &crate::storage::ParquetMetadata) -> (String, String) {
     let cols = meta
         .columns
@@ -466,195 +409,4 @@ pub fn schema_json_and_hash(meta: &crate::storage::ParquetMetadata) -> (String, 
     let json = serde_json::to_string(&cols).expect("schema serializable");
     let hash = hex::encode(Sha256::digest(json.as_bytes()));
     (json, hash)
-}
-fn null(diag: &mut BTreeMap<String, u64>, kind: &str) -> Value {
-    *diag.entry(kind.into()).or_default() += 1;
-    Value::Null
-}
-fn value(a: &dyn Array, row: usize, d: &mut BTreeMap<String, u64>) -> Result<Value, DatasetError> {
-    if a.is_null(row) {
-        return Ok(null(d, "missingValues"));
-    }
-    macro_rules! n {
-        ($t:ty) => {
-            if let Some(x) = a.as_any().downcast_ref::<$t>() {
-                return Ok(Value::from(x.value(row)));
-            }
-        };
-    }
-    match a.data_type() {
-        DataType::Utf8 => Ok(Value::String(
-            a.as_any()
-                .downcast_ref::<StringArray>()
-                .unwrap()
-                .value(row)
-                .into(),
-        )),
-        DataType::LargeUtf8 => Ok(Value::String(
-            a.as_any()
-                .downcast_ref::<LargeStringArray>()
-                .unwrap()
-                .value(row)
-                .into(),
-        )),
-        DataType::Utf8View => Ok(Value::String(
-            a.as_any()
-                .downcast_ref::<StringViewArray>()
-                .unwrap()
-                .value(row)
-                .into(),
-        )),
-        DataType::Boolean => Ok(Value::Bool(
-            a.as_any()
-                .downcast_ref::<BooleanArray>()
-                .unwrap()
-                .value(row),
-        )),
-        DataType::Int8 => {
-            n!(Int8Array);
-            unreachable!()
-        }
-        DataType::Int16 => {
-            n!(Int16Array);
-            unreachable!()
-        }
-        DataType::Int32 => {
-            n!(Int32Array);
-            unreachable!()
-        }
-        DataType::Int64 => {
-            n!(Int64Array);
-            unreachable!()
-        }
-        DataType::UInt8 => {
-            n!(UInt8Array);
-            unreachable!()
-        }
-        DataType::UInt16 => {
-            n!(UInt16Array);
-            unreachable!()
-        }
-        DataType::UInt32 => {
-            n!(UInt32Array);
-            unreachable!()
-        }
-        DataType::UInt64 => {
-            let x = a.as_any().downcast_ref::<UInt64Array>().unwrap().value(row);
-            Ok(serde_json::Number::from_u128(x as u128)
-                .map(Value::Number)
-                .unwrap_or_else(|| null(d, "outOfRangeValues")))
-        }
-        DataType::Float32 => {
-            let x = a
-                .as_any()
-                .downcast_ref::<Float32Array>()
-                .unwrap()
-                .value(row) as f64;
-            if x.is_finite() {
-                Ok(Value::from(x))
-            } else {
-                Ok(null(d, "nonFiniteValues"))
-            }
-        }
-        DataType::Float64 => {
-            let x = a
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .unwrap()
-                .value(row);
-            if x.is_finite() {
-                Ok(Value::from(x))
-            } else {
-                Ok(null(d, "nonFiniteValues"))
-            }
-        }
-        DataType::List(_) => list_value(
-            a.as_any().downcast_ref::<ListArray>().unwrap().value(row),
-            d,
-        ),
-        DataType::LargeList(_) => list_value(
-            a.as_any()
-                .downcast_ref::<LargeListArray>()
-                .unwrap()
-                .value(row),
-            d,
-        ),
-        DataType::ListView(_) => list_value(
-            a.as_any()
-                .downcast_ref::<ListViewArray>()
-                .unwrap()
-                .value(row),
-            d,
-        ),
-        DataType::LargeListView(_) => list_value(
-            a.as_any()
-                .downcast_ref::<LargeListViewArray>()
-                .unwrap()
-                .value(row),
-            d,
-        ),
-        DataType::FixedSizeList(_, _) => list_value(
-            a.as_any()
-                .downcast_ref::<FixedSizeListArray>()
-                .unwrap()
-                .value(row),
-            d,
-        ),
-        other => Err(DatasetError::Storage(format!("不支持的数据类型 {other}"))),
-    }
-}
-
-fn list_value(
-    values: ArrayRef,
-    diagnostics: &mut BTreeMap<String, u64>,
-) -> Result<Value, DatasetError> {
-    (0..values.len())
-        .map(|index| value(values.as_ref(), index, diagnostics))
-        .collect::<Result<Vec<_>, _>>()
-        .map(Value::Array)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use arrow_array::types::Float64Type;
-    use arrow_array::{LargeListArray, StringViewArray};
-
-    #[test]
-    fn utf8_view_values_are_returned_as_json_strings() {
-        let array = StringViewArray::from(vec![
-            Some("bus-1"),
-            None,
-            Some("a string longer than twelve bytes"),
-        ]);
-        let mut diagnostics = BTreeMap::new();
-
-        assert_eq!(
-            value(&array, 0, &mut diagnostics).unwrap(),
-            Value::String("bus-1".into())
-        );
-        assert_eq!(value(&array, 1, &mut diagnostics).unwrap(), Value::Null);
-        assert_eq!(
-            value(&array, 2, &mut diagnostics).unwrap(),
-            Value::String("a string longer than twelve bytes".into())
-        );
-        assert_eq!(diagnostics.get("missingValues"), Some(&1));
-    }
-
-    #[test]
-    fn large_float_lists_are_returned_as_json_arrays() {
-        let array = LargeListArray::from_iter_primitive::<Float64Type, _, _>([
-            Some(vec![Some(1.0), None, Some(f64::NAN)]),
-            None,
-        ]);
-        let mut diagnostics = BTreeMap::new();
-
-        assert_eq!(
-            value(&array, 0, &mut diagnostics).unwrap(),
-            serde_json::json!([1.0, null, null])
-        );
-        assert_eq!(value(&array, 1, &mut diagnostics).unwrap(), Value::Null);
-        assert_eq!(diagnostics.get("missingValues"), Some(&2));
-        assert_eq!(diagnostics.get("nonFiniteValues"), Some(&1));
-    }
 }
