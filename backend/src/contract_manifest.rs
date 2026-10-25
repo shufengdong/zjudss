@@ -44,6 +44,8 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "deletion_impact_changed",
     "invalid_deletion_impact_token",
     "invalid_dataset_page",
+    "invalid_page",
+    "dataframe_read_failed",
     "result_busy",
     "history_error",
     "history_page_invalid",

@@ -12,6 +12,7 @@ pub(crate) mod dataframe_reader;
 pub mod datasets;
 mod events;
 pub mod history;
+pub mod model_dataframes;
 pub mod model_import;
 pub mod model_patch;
 pub mod runs;
@@ -57,6 +58,9 @@ pub use events::{
     VisualizationKind, ms_to_iso, now_ms,
 };
 pub use history::{HistoryError, HistoryService};
+pub use model_dataframes::{
+    DraftReadExpectation, ModelDataFrameReadError, ModelDataFrameReadService,
+};
 pub use model_import::{
     ModelImportError, ModelImportService, ModelImportView, UploadBatch, UploadFile,
 };
@@ -83,6 +87,7 @@ pub struct AppState {
     pub artifact_service: ArtifactService,
     pub version_service: VersionService,
     pub model_import_service: ModelImportService,
+    pub model_dataframe_read_service: ModelDataFrameReadService,
     pub script_service: ScriptService,
     pub run_service: RunService,
     pub case_import_service: CaseImportService,
@@ -483,6 +488,10 @@ impl AppState {
         );
         let version_service =
             VersionService::new(VersionRepo::new(pool.clone()), artifact_service.clone());
+        let model_dataframe_read_service = ModelDataFrameReadService::new(
+            VersionRepo::new(pool.clone()),
+            artifact_service.clone(),
+        );
         let model_import_service = ModelImportService::new(
             ModelImportRepo::new(pool.clone()),
             artifact_service.clone(),
@@ -549,6 +558,7 @@ impl AppState {
             message_repo,
             artifact_service,
             version_service,
+            model_dataframe_read_service,
             model_import_service,
             script_service,
             run_service,

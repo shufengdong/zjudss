@@ -10,14 +10,24 @@ fn production_router_and_manifest_share_one_declaration() {
         .map(|route| (route.method, route.path))
         .collect::<HashSet<_>>();
 
-    assert_eq!(routes.len(), 42);
-    assert_eq!(unique.len(), 42);
+    assert_eq!(routes.len(), 48);
+    assert_eq!(unique.len(), 48);
     assert!(unique.contains(&("GET", "/health")));
     assert!(unique.contains(&("POST", "/api/auth/login")));
     assert!(unique.contains(&("POST", "/api/auth/logout")));
     assert!(unique.contains(&("POST", "/api/sessions/{id}/model-imports")));
     assert!(unique.contains(&("POST", "/api/sessions/{id}/scripts/text")));
     assert!(unique.contains(&("GET", "/api/run-comparisons/{id}")));
+    for path in [
+        "/api/model-dataframes/{id}",
+        "/api/model-dataframes/{id}/rows",
+        "/api/model-dataframes/{id}/download",
+        "/api/draft-dataframes/{id}",
+        "/api/draft-dataframes/{id}/rows",
+        "/api/draft-dataframes/{id}/download",
+    ] {
+        assert!(unique.contains(&("GET", path)), "missing {path}");
+    }
 
     let _ = build_router;
 }
@@ -71,6 +81,12 @@ fn contract_manifest_contains_all_public_enums() {
     );
     assert!(manifest.stable_error_codes.contains(&"agent_queue_full"));
     assert!(manifest.stable_error_codes.contains(&"invalid_credentials"));
+    assert!(manifest.stable_error_codes.contains(&"invalid_page"));
+    assert!(
+        manifest
+            .stable_error_codes
+            .contains(&"dataframe_read_failed")
+    );
     assert!(
         manifest
             .stable_error_codes

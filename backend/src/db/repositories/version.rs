@@ -62,6 +62,48 @@ pub struct VersionDataframeRow {
     pub created_at_ms: i64,
 }
 
+#[derive(QueryableByName, Debug, Clone)]
+pub struct VersionDataFrameReadRow {
+    #[diesel(sql_type = Integer)]
+    pub id: i32,
+    #[diesel(sql_type = Integer)]
+    pub version_id: i32,
+    #[diesel(sql_type = Text)]
+    pub table_name: String,
+    #[diesel(sql_type = Integer)]
+    pub artifact_id: i32,
+    #[diesel(sql_type = Text)]
+    pub schema_json: String,
+    #[diesel(sql_type = BigInt)]
+    pub row_count: i64,
+    #[diesel(sql_type = Text)]
+    pub content_hash: String,
+    #[diesel(sql_type = BigInt)]
+    pub size_bytes: i64,
+}
+
+#[derive(QueryableByName, Debug, Clone)]
+pub struct DraftDataFrameReadRow {
+    #[diesel(sql_type = Integer)]
+    pub id: i32,
+    #[diesel(sql_type = Integer)]
+    pub draft_id: i32,
+    #[diesel(sql_type = BigInt)]
+    pub revision: i64,
+    #[diesel(sql_type = Text)]
+    pub table_name: String,
+    #[diesel(sql_type = Integer)]
+    pub artifact_id: i32,
+    #[diesel(sql_type = Text)]
+    pub schema_json: String,
+    #[diesel(sql_type = BigInt)]
+    pub row_count: i64,
+    #[diesel(sql_type = Text)]
+    pub content_hash: String,
+    #[diesel(sql_type = BigInt)]
+    pub size_bytes: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct DraftSnapshot {
     pub draft: WorkspaceDraft,
@@ -136,6 +178,68 @@ pub struct VersionRepo {
 impl VersionRepo {
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
+    }
+
+    pub async fn find_version_dataframe(
+        &self,
+        user: &UserId,
+        dataframe_id: i32,
+    ) -> Result<VersionDataFrameReadRow, VersionRepoError> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            diesel::sql_query(
+                "SELECT md.id,md.version_id,md.table_name,md.artifact_id,md.schema_json,md.row_count,md.content_hash,a.size_bytes \
+                 FROM model_dataframes md \
+                 JOIN model_versions v ON v.id=md.version_id \
+                 JOIN workspaces w ON w.id=v.workspace_id \
+                 JOIN sessions s ON s.id=w.session_id \
+                 JOIN artifacts a ON a.id=md.artifact_id \
+                 WHERE md.id=?1 AND s.user_id=?2 AND v.deleted_at_ms IS NULL",
+            )
+            .bind::<Integer, _>(dataframe_id)
+            .bind::<Text, _>(user)
+            .get_result::<VersionDataFrameReadRow>(&mut conn)
+            .optional()?
+            .ok_or(VersionRepoError::Repository(RepoError::NotFound))
+        })
+        .await
+        .map_err(|error| VersionRepoError::Repository(RepoError::Join(error)))?
+    }
+
+    pub async fn find_draft_dataframe(
+        &self,
+        user: &UserId,
+        dataframe_id: i32,
+        draft_id: i32,
+        expected_revision: i64,
+    ) -> Result<DraftDataFrameReadRow, VersionRepoError> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            let row = diesel::sql_query(
+                "SELECT dd.id,dd.draft_id,wd.revision,dd.table_name,dd.artifact_id,dd.schema_json,dd.row_count,dd.content_hash,a.size_bytes \
+                 FROM draft_dataframes dd \
+                 JOIN workspace_drafts wd ON wd.id=dd.draft_id \
+                 JOIN workspaces w ON w.id=wd.workspace_id \
+                 JOIN sessions s ON s.id=w.session_id \
+                 JOIN artifacts a ON a.id=dd.artifact_id \
+                 WHERE dd.id=?1 AND s.user_id=?2",
+            )
+            .bind::<Integer, _>(dataframe_id)
+            .bind::<Text, _>(user)
+            .get_result::<DraftDataFrameReadRow>(&mut conn)
+            .optional()?
+            .ok_or(VersionRepoError::Repository(RepoError::NotFound))?;
+            if row.draft_id != draft_id || row.revision != expected_revision {
+                return Err(VersionRepoError::DraftConflict);
+            }
+            Ok(row)
+        })
+        .await
+        .map_err(|error| VersionRepoError::Repository(RepoError::Join(error)))?
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -6,6 +6,7 @@ mod comparisons;
 mod datasets;
 mod events;
 mod examples;
+mod model_dataframes;
 mod model_imports;
 mod runs;
 mod scripts;
@@ -29,6 +30,7 @@ use crate::application::CaseImportError;
 use crate::application::ComparisonError;
 use crate::application::DatasetError;
 use crate::application::HistoryError;
+use crate::application::ModelDataFrameReadError;
 use crate::application::ModelImportError;
 use crate::application::RunError;
 use crate::application::ScriptError;
@@ -353,6 +355,33 @@ impl From<DatasetError> for ApiError {
         }
     }
 }
+impl From<ModelDataFrameReadError> for ApiError {
+    fn from(error: ModelDataFrameReadError) -> Self {
+        match error {
+            ModelDataFrameReadError::NotFound => Self::not_found("资源不存在"),
+            ModelDataFrameReadError::DraftRevisionConflict => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "draft_revision_conflict",
+                details: None,
+            },
+            ModelDataFrameReadError::InvalidPage(_) => Self {
+                status: StatusCode::BAD_REQUEST,
+                message: error.to_string(),
+                code: "invalid_page",
+                details: None,
+            },
+            ModelDataFrameReadError::ReadFailed(_) | ModelDataFrameReadError::Repository(_) => {
+                Self {
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    message: error.to_string(),
+                    code: "dataframe_read_failed",
+                    details: None,
+                }
+            }
+        }
+    }
+}
 impl From<AnalysisError> for ApiError {
     fn from(error: AnalysisError) -> Self {
         match error.code {
@@ -525,6 +554,36 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
     add_route!(
         "/api/datasets/{id}/download",
         get(datasets::download),
+        ["GET"]
+    );
+    add_route!(
+        "/api/model-dataframes/{id}",
+        get(model_dataframes::version_metadata),
+        ["GET"]
+    );
+    add_route!(
+        "/api/model-dataframes/{id}/rows",
+        get(model_dataframes::version_rows),
+        ["GET"]
+    );
+    add_route!(
+        "/api/model-dataframes/{id}/download",
+        get(model_dataframes::version_download),
+        ["GET"]
+    );
+    add_route!(
+        "/api/draft-dataframes/{id}",
+        get(model_dataframes::draft_metadata),
+        ["GET"]
+    );
+    add_route!(
+        "/api/draft-dataframes/{id}/rows",
+        get(model_dataframes::draft_rows),
+        ["GET"]
+    );
+    add_route!(
+        "/api/draft-dataframes/{id}/download",
+        get(model_dataframes::draft_download),
         ["GET"]
     );
     add_route!("/api/analysis-runs/{id}", get(analysis::get), ["GET"]);
