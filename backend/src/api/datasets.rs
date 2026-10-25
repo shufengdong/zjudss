@@ -3,6 +3,7 @@ use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::{Response, StatusCode, header};
 use serde::Deserialize;
+use tokio::io::AsyncReadExt;
 
 use super::ApiError;
 use crate::application::AppState;
@@ -56,7 +57,9 @@ pub async fn download(
     Path(id): Path<i32>,
 ) -> Result<Response<Body>, ApiError> {
     let f = s.dataset_service.download(&p, id).await?;
-    let bytes = tokio::fs::read(f.path)
+    let mut file = tokio::fs::File::from_std(f.file);
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
     Response::builder()

@@ -294,6 +294,9 @@
       file: backend/src/application/dataframe_reader.rs
       name: zero_rows_and_nested_list_values_have_stable_json_pages
     - runner: rust
+      file: backend/tests/artifact_store.rs
+      name: opened_read_survives_release_and_collection_without_persisting_a_reference
+    - runner: rust
       file: backend/src/application/model_dataframes.rs
       name: typed_predicates_match_supported_arrow_scalars_exactly
     - runner: rust
@@ -329,6 +332,9 @@
     - runner: vitest
       file: frontend/src/hooks/useModelDataFrame.test.ts
       name: merges pages and permits only one load-more request at a time
+    - runner: vitest
+      file: frontend/src/hooks/useModelDataFrame.test.ts
+      name: rejects a page from another model resource instead of mixing rows
     - runner: vitest
       file: frontend/src/hooks/useModelDataFrame.test.ts
       name: resets on source or projection changes and ignores late responses

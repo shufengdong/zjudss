@@ -12,6 +12,7 @@ export function mergeModelDataFramePages(
   next: ModelDataFramePage,
 ): ModelDataFramePage {
   if (!current) return next
+  if (current.resourceId !== next.resourceId) throw new Error('模型表分页资源不一致')
   return { ...next, rows: [...current.rows, ...next.rows] }
 }
 

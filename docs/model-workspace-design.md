@@ -26,7 +26,9 @@ Snappy Parquet。版本表不可变，因此打开后即使 active 指针变化�
 禁止把变化前后的行合并为一页。跨用户、已删除和不存在资源统一 404。
 
 结果数据集与模型表共用内部 `ParquetDataFrameReader` 的 artifact 所有权检查、投影、分页、cursor 和
-Arrow-to-JSON 解码，但使用独立 DTO 与权限。模型表读取不创建 `result_datasets`，不增加 artifact 引用，也不
+Arrow-to-JSON 解码，但使用独立 DTO 与权限。ArtifactService 用进程内读写门闩把所有权校验和文件打开与
+release/GC 串行化，reader 向上只传已打开句柄；并发删除不能在校验与打开之间移除 blob，读取也不会持久增加
+artifact 引用。模型表读取不创建 `result_datasets`，不增加 artifact 引用，也不
 暴露结果删除、分析、视图或图表能力；数据库 schema 无需变化。
 
 ## Case library

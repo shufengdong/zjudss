@@ -105,14 +105,23 @@ impl ParquetInspector {
         offset: usize,
         limit: usize,
     ) -> Result<Vec<RecordBatch>, ParquetError> {
+        let file = std::fs::File::open(path)
+            .map_err(|e| ParquetError::new("parquet_read_failed", e.to_string()))?;
+        Self::projection_file(file, columns, offset, limit)
+    }
+
+    pub fn projection_file(
+        file: std::fs::File,
+        columns: &[String],
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<RecordBatch>, ParquetError> {
         if limit == 0 || limit > 100_000 {
             return Err(ParquetError::new(
                 "parquet_page_invalid",
                 "limit 必须在 1..=100000",
             ));
         }
-        let file = std::fs::File::open(path)
-            .map_err(|e| ParquetError::new("parquet_read_failed", e.to_string()))?;
         let mut builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .map_err(|e| ParquetError::new("parquet_footer_invalid", e.to_string()))?;
         if !columns.is_empty() {

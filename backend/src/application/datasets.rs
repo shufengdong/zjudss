@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::fs::File;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -104,7 +104,7 @@ pub struct DatasetPage {
     pub diagnostics: BTreeMap<String, u64>,
 }
 pub struct DatasetDownload {
-    pub path: PathBuf,
+    pub file: File,
     pub file_name: String,
     pub media_type: &'static str,
 }
@@ -216,9 +216,9 @@ impl DatasetService {
             lineage,
         })
     }
-    async fn path(&self, p: &CurrentUser, d: &RunDataset) -> Result<PathBuf, DatasetError> {
+    async fn file(&self, p: &CurrentUser, d: &RunDataset) -> Result<File, DatasetError> {
         self.reader
-            .resolve_path(p, d.artifact_id.ok_or(DatasetError::NotFound)?)
+            .open_owned(p, d.artifact_id.ok_or(DatasetError::NotFound)?)
             .await
             .map_err(Into::into)
     }
@@ -276,7 +276,7 @@ impl DatasetService {
             )
             .await?;
         Ok(DatasetDownload {
-            path: file.path,
+            file: file.file,
             file_name: file.file_name,
             media_type: file.media_type,
         })
@@ -338,9 +338,10 @@ impl DatasetService {
                 crate::application::visualization::VisualizationBudgets::default(),
             )
             .map_err(|e| DatasetError::InvalidPage(e.to_string()))?;
-        let path = self.path(p, &d).await?;
-        let batches = ParquetInspector::projection(&path, &plan.columns, 0, d.row_count as usize)
-            .map_err(|e| DatasetError::Storage(e.to_string()))?;
+        let file = self.file(p, &d).await?;
+        let batches =
+            ParquetInspector::projection_file(file, &plan.columns, 0, d.row_count as usize)
+                .map_err(|e| DatasetError::Storage(e.to_string()))?;
         let names = batches
             .first()
             .map(|b| {

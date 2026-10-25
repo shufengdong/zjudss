@@ -64,7 +64,8 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 模型版本表路由只依赖不可变的 `modelDataframeId`。草稿表的三个路由都必须提交 `draftId` 与
 `expectedDraftRevision`；任一草稿表变化后，旧 revision 返回 `409 draft_revision_conflict`。rows 支持
 `limit=1..500`、资源绑定的 opaque cursor 和逗号分隔的 `columns` 投影，响应为
-`{resourceId,columns,rows,nextCursor,diagnostics}`。元数据包含 scope、ownerId、revision（仅草稿）、表名、
+`{resourceId,columns,rows,nextCursor,diagnostics}`。版本页的 `resourceId` 为 `model-dataframe:{id}`，草稿页为
+`draft-dataframe:{id}:revision:{revision}`；前端不得合并不同 resourceId 的页面。元数据包含 scope、ownerId、revision（仅草稿）、表名、
 行数、大小、列 schema、schema hash 与 content hash。download 返回原始 Snappy Parquet。读取不会激活版本、
 推进草稿、增加 artifact 引用或创建结果数据集；不存在、已删除或跨用户资源统一返回 404。
 

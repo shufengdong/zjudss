@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::fs::File;
 
 use arrow_array::{
     Array, ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Float64Array, Int8Array,
@@ -42,7 +42,7 @@ pub(crate) struct DataFramePageCore {
 }
 
 pub(crate) struct DataFrameDownload {
-    pub path: PathBuf,
+    pub file: File,
     pub file_name: String,
     pub media_type: &'static str,
 }
@@ -78,25 +78,23 @@ impl ParquetDataFrameReader {
         Self { artifacts }
     }
 
-    pub(crate) async fn resolve_path(
+    pub(crate) async fn open_owned(
         &self,
         principal: &CurrentUser,
         artifact_id: i32,
-    ) -> Result<PathBuf, DataFrameReadError> {
+    ) -> Result<File, DataFrameReadError> {
         let scope = self
             .artifacts
             .resolve_scope(principal.storage_scope_id)
             .await
             .map_err(|error| DataFrameReadError::Storage(error.to_string()))?;
-        let artifact = self
-            .artifacts
-            .find_owned(scope.id, artifact_id)
-            .await
-            .map_err(|_| DataFrameReadError::NotFound)?;
         self.artifacts
-            .store()
-            .resolve(&artifact.storage_path)
-            .map_err(|error| DataFrameReadError::Storage(error.to_string()))
+            .open_owned(scope.id, artifact_id)
+            .await
+            .map_err(|error| match error {
+                crate::application::ArtifactError::NotFound => DataFrameReadError::NotFound,
+                other => DataFrameReadError::Storage(other.to_string()),
+            })
     }
 
     pub(crate) async fn page(
@@ -114,8 +112,8 @@ impl ParquetDataFrameReader {
             Some(cursor) => decode_cursor(cursor, &source.resource_key, &source.content_hash)?,
             None => 0,
         };
-        let path = self.resolve_path(principal, source.artifact_id).await?;
-        let batches = ParquetInspector::projection(&path, columns, offset, limit)
+        let file = self.open_owned(principal, source.artifact_id).await?;
+        let batches = ParquetInspector::projection_file(file, columns, offset, limit)
             .map_err(|error| DataFrameReadError::Storage(error.to_string()))?;
         let names = if let Some(batch) = batches.first() {
             batch
@@ -165,7 +163,7 @@ impl ParquetDataFrameReader {
         file_name: String,
     ) -> Result<DataFrameDownload, DataFrameReadError> {
         Ok(DataFrameDownload {
-            path: self.resolve_path(principal, source.artifact_id).await?,
+            file: self.open_owned(principal, source.artifact_id).await?,
             file_name: safe_parquet_file_name(&file_name),
             media_type: "application/vnd.apache.parquet",
         })

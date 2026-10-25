@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, downloadModelDataFrame, getModelDataFrame, getModelDataFrameRows } from '../api/client'
 import type { ModelDataFrameMetadata, ModelDataFramePage, ModelDataFrameSource } from '../types'
-import { useModelDataFrame } from './useModelDataFrame'
+import { mergeModelDataFramePages, useModelDataFrame } from './useModelDataFrame'
 
 vi.mock('../api/client', async importOriginal => {
   const original = await importOriginal<typeof import('../api/client')>()
@@ -42,6 +42,13 @@ describe('useModelDataFrame', () => {
     expect(getModelDataFrameRows).toHaveBeenCalledTimes(2)
     await act(async () => { more.resolve(page('a', [['two']], null)); await Promise.all([first, second]) })
     expect(result.current.page?.rows).toEqual([['one'], ['two']])
+  })
+
+  it('rejects a page from another model resource instead of mixing rows', () => {
+    const current = page('draft-dataframe:1:revision:1', [[1]], 'next')
+    const next = page('draft-dataframe:1:revision:2', [[2]], null)
+
+    expect(() => mergeModelDataFramePages(current, next)).toThrow('模型表分页资源不一致')
   })
 
   it('resets on source or projection changes and ignores late responses', async () => {

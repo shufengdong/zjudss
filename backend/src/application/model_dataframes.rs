@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
-use std::path::PathBuf;
 
 use arrow_array::{
     Array, ArrayRef, BooleanArray, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array,
@@ -98,7 +97,7 @@ pub struct ModelDataFrameQueryResult {
 }
 
 pub struct ModelDataFrameDownload {
-    pub path: PathBuf,
+    pub file: File,
     pub file_name: String,
     pub media_type: &'static str,
 }
@@ -216,7 +215,7 @@ impl ModelDataFrameReadService {
             .page(user, &version_source(&row), limit, cursor, columns)
             .await?;
         Ok(ModelDataFramePage {
-            resource_id: dataframe_id.to_string(),
+            resource_id: format!("model-dataframe:{dataframe_id}"),
             columns: page.columns,
             rows: page.rows,
             next_cursor: page.next_cursor,
@@ -243,7 +242,7 @@ impl ModelDataFrameReadService {
             )
             .await?;
         Ok(ModelDataFrameDownload {
-            path: file.path,
+            file: file.file,
             file_name: file.file_name,
             media_type: file.media_type,
         })
@@ -274,7 +273,10 @@ impl ModelDataFrameReadService {
             .page(user, &draft_source(&row), limit, cursor, columns)
             .await?;
         Ok(ModelDataFramePage {
-            resource_id: dataframe_id.to_string(),
+            resource_id: format!(
+                "draft-dataframe:{dataframe_id}:revision:{}",
+                expectation.expected_revision
+            ),
             columns: page.columns,
             rows: page.rows,
             next_cursor: page.next_cursor,
@@ -301,7 +303,7 @@ impl ModelDataFrameReadService {
             )
             .await?;
         Ok(ModelDataFrameDownload {
-            path: file.path,
+            file: file.file,
             file_name: file.file_name,
             media_type: file.media_type,
         })
@@ -399,8 +401,8 @@ impl ModelDataFrameReadService {
             }
         };
         validate_registered_columns(&source.schema_json, &query.columns, &query.equals)?;
-        let path = self.reader.resolve_path(user, source.artifact_id).await?;
-        let (rows, match_count) = scan_query(&path, &query)?;
+        let file = self.reader.open_owned(user, source.artifact_id).await?;
+        let (rows, match_count) = scan_query(file, &query)?;
         let result = ModelDataFrameQueryResult {
             columns: query.columns,
             truncated: match_count > rows.len() as u64,
@@ -482,11 +484,9 @@ enum TypedPredicate {
 }
 
 fn scan_query(
-    path: &std::path::Path,
+    file: File,
     query: &ModelDataFrameQuery,
 ) -> Result<(Vec<Vec<Value>>, u64), ModelDataFrameReadError> {
-    let file =
-        File::open(path).map_err(|error| ModelDataFrameReadError::ReadFailed(error.to_string()))?;
     let mut builder = ParquetRecordBatchReaderBuilder::try_new(file)
         .map_err(|error| ModelDataFrameReadError::ReadFailed(error.to_string()))?;
     let schema = builder.schema().clone();

@@ -222,6 +222,11 @@ impl ArtifactStore {
         Ok(self.data_dir.join(relative))
     }
 
+    pub(crate) fn open(&self, relative_path: &str) -> Result<File, StorageError> {
+        File::open(self.resolve(relative_path)?)
+            .map_err(|error| StorageError::new("artifact_read_failed", error.to_string()))
+    }
+
     pub(crate) fn publish(
         &self,
         staged: &mut StagedArtifact,

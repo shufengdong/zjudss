@@ -1,6 +1,6 @@
 mod common;
 
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
@@ -154,6 +154,42 @@ async fn object_paths_stay_inside_data_dir_and_gc_removes_unreferenced_blobs() {
     let report = service.collect_unreferenced().await.expect("collect");
     assert_eq!(report.removed_artifacts, 1);
     assert!(!path.exists());
+    assert_eq!(service.get_usage(scope.id).await.unwrap().used_artifacts, 0);
+}
+
+#[tokio::test]
+async fn opened_read_survives_release_and_collection_without_persisting_a_reference() {
+    let app = TestApp::spawn().await;
+    let service = &app.state.artifact_service;
+    let scope = service.resolve_scope(2).await.expect("read scope");
+    let artifact = service
+        .commit(
+            scope.id,
+            service
+                .store()
+                .stage(Cursor::new(b"stable read"), StageLimits::default())
+                .expect("stage"),
+            metadata("read.bin"),
+        )
+        .await
+        .expect("commit");
+
+    let mut opened = service
+        .open_owned(scope.id, artifact.id)
+        .await
+        .expect("open owned artifact");
+    service
+        .release(scope.id, artifact.id)
+        .await
+        .expect("release reference");
+    let report = service.collect_unreferenced().await.expect("collect");
+    assert_eq!(report.removed_artifacts, 1);
+
+    let mut bytes = Vec::new();
+    opened
+        .read_to_end(&mut bytes)
+        .expect("read opened artifact");
+    assert_eq!(bytes, b"stable read");
     assert_eq!(service.get_usage(scope.id).await.unwrap().used_artifacts, 0);
 }
 

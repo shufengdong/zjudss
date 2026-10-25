@@ -264,8 +264,14 @@ test('active draft and historical model tables are readable without changing lif
   const firstVersionView = await (await api.get(`/api/versions/${firstVersion}`)).json()
   const activeDataframeId = firstVersionView.tables[0].id
   const activeRows = await (await api.get(`/api/model-dataframes/${activeDataframeId}/rows`)).json()
+  expect(activeRows.resourceId).toBe(`model-dataframe:${activeDataframeId}`)
   expect(activeRows.rows).toEqual([['b1', '10.0', 'north']])
   expect((await api.get(`/api/model-dataframes/${activeDataframeId}/download`)).status()).toBe(200)
+  const draftDataframeId = draft.tables.find((table: any) => table.tableName === 'bus').id
+  const draftRows = await (await api.get(
+    `/api/draft-dataframes/${draftDataframeId}/rows?draftId=${draft.id}&expectedDraftRevision=${draft.revision}`,
+  )).json()
+  expect(draftRows.resourceId).toBe(`draft-dataframe:${draftDataframeId}:revision:${draft.revision}`)
   const draftSection = page.getByRole('heading', { name: '可变草稿' }).locator('xpath=../..')
   await draftSection.getByRole('button', { name: '查看 bus' }).click()
   await expect(page.getByRole('dialog', { name: '可变草稿 · 修订 1 · bus' })).toBeVisible()

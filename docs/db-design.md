@@ -37,7 +37,8 @@ content hash、脚本 artifact/hash、engine contract、Agent bundle/skills。�
 模型表只读查询从 `model_dataframes -> model_versions -> workspaces -> sessions` 或
 `draft_dataframes -> workspace_drafts -> workspaces -> sessions` 验证所有权。草稿查询还比较调用方提交的
 draft ID 和 revision：只有已确认属于当前用户的资源才可返回 revision 冲突，外部 ID 仍为 404。读取仅解析
-现有 artifact，不更新 active 指针、draft revision、artifact 引用或任何业务表；本功能不增加 migration。
+现有 artifact，不更新 active 指针、draft revision、artifact 引用或任何业务表；所有权校验与打开文件在
+ArtifactService 的 read gate 内完成，release/GC 使用 write gate，避免已校验读取与并发回收竞争。本功能不增加 migration。
 
 ## Artifact references
 

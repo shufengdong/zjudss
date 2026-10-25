@@ -203,7 +203,10 @@ async fn version_dataframe_metadata_rows_projection_cursor_and_download_are_read
     .await;
     assert_eq!(response.status(), StatusCode::OK);
     let first = json_body(response).await;
-    assert_eq!(first["resourceId"], dataframe_id);
+    assert_eq!(
+        first["resourceId"],
+        format!("model-dataframe:{dataframe_id}")
+    );
     assert_eq!(first["columns"], json!(["name"]));
     assert_eq!(first["rows"], json!([["alpha"], ["beta"]]));
     let cursor = first["nextCursor"].as_str().unwrap();
@@ -334,6 +337,21 @@ async fn draft_reads_require_exact_owner_id_and_revision_across_metadata_rows_an
     .await;
     let view = workspace(&app, &cookie, session.id).await;
     let dataframe_id = view["draft"]["tables"][0]["id"].as_str().unwrap();
+
+    let rows = request(
+        &app,
+        &cookie,
+        &format!(
+            "/api/draft-dataframes/{dataframe_id}/rows?draftId={}&expectedDraftRevision={}",
+            draft.id, draft.revision
+        ),
+    )
+    .await;
+    assert_eq!(rows.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(rows).await["resourceId"],
+        format!("draft-dataframe:{dataframe_id}:revision:{}", draft.revision)
+    );
 
     for suffix in ["", "/rows", "/download"] {
         let response = request(

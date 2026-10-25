@@ -3,6 +3,7 @@ use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::{Response, StatusCode, header};
 use serde::Deserialize;
+use tokio::io::AsyncReadExt;
 
 use super::ApiError;
 use crate::application::{AppState, DraftReadExpectation};
@@ -148,7 +149,10 @@ fn parse_columns(columns: Option<&str>) -> Vec<String> {
 async fn download_response(
     file: crate::application::model_dataframes::ModelDataFrameDownload,
 ) -> Result<Response<Body>, ApiError> {
-    let bytes = tokio::fs::read(file.path)
+    let mut source = tokio::fs::File::from_std(file.file);
+    let mut bytes = Vec::new();
+    source
+        .read_to_end(&mut bytes)
         .await
         .map_err(|error| ApiError::internal(error.to_string()))?;
     Response::builder()

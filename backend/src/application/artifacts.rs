@@ -1,3 +1,8 @@
+use std::fs::File;
+use std::sync::Arc;
+
+use tokio::sync::RwLock;
+
 use crate::application::now_ms;
 use crate::db::models::{Artifact, StorageScope};
 use crate::db::repositories::{ArtifactDraft, ArtifactRepo, RepoError, StorageScopeRepo};
@@ -102,6 +107,7 @@ pub struct ArtifactService {
     store: ArtifactStore,
     artifacts: ArtifactRepo,
     scopes: StorageScopeRepo,
+    access_gate: Arc<RwLock<()>>,
 }
 
 impl ArtifactService {
@@ -110,6 +116,7 @@ impl ArtifactService {
             store,
             artifacts,
             scopes,
+            access_gate: Arc::new(RwLock::new(())),
         }
     }
 
@@ -184,6 +191,12 @@ impl ArtifactService {
             .map_err(Into::into)
     }
 
+    pub async fn open_owned(&self, scope_id: i32, artifact_id: i32) -> Result<File, ArtifactError> {
+        let _guard = self.access_gate.read().await;
+        let artifact = self.find_owned(scope_id, artifact_id).await?;
+        self.store.open(&artifact.storage_path).map_err(Into::into)
+    }
+
     pub async fn set_limits(
         &self,
         scope_id: i32,
@@ -196,6 +209,7 @@ impl ArtifactService {
     }
 
     pub async fn release(&self, scope_id: i32, artifact_id: i32) -> Result<(), ArtifactError> {
+        let _guard = self.access_gate.write().await;
         self.artifacts
             .release(scope_id, artifact_id, now_ms())
             .await
@@ -203,6 +217,7 @@ impl ArtifactService {
     }
 
     pub async fn collect_unreferenced(&self) -> Result<GcReport, ArtifactError> {
+        let _guard = self.access_gate.write().await;
         let mut report = GcReport {
             removed_artifacts: 0,
             failed_blobs: 0,
