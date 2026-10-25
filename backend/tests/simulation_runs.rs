@@ -350,12 +350,14 @@ async fn only_explicit_click_route_creates_idempotent_frozen_runs_and_results() 
     let run_id = value["run"]["id"].as_str().unwrap().to_string();
     assert_eq!(value["run"]["modelVersionId"], version_id);
     assert_eq!(value["run"]["scriptResourceId"], script_id);
+    assert_eq!(value["run"]["scriptName"], "flow.rss");
     let retry = post_run(&app, &cookie, &script_id, &version_id, "click-one").await;
     assert_eq!(retry.status(), StatusCode::OK);
     let retry: Value =
         serde_json::from_slice(&to_bytes(retry.into_body(), 1024 * 1024).await.unwrap()).unwrap();
     assert_eq!(retry["run"]["id"], run_id);
     assert_eq!(retry["replayed"], true);
+    assert_eq!(retry["run"]["scriptName"], "flow.rss");
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let run = app
@@ -381,6 +383,32 @@ async fn only_explicit_click_route_creates_idempotent_frozen_runs_and_results() 
     assert_eq!(run.status, "succeeded", "{:?}", run.error_json);
     assert_eq!(run.model_content_hash.len(), 64);
     assert_eq!(run.script_content_hash.len(), 64);
+    for path in [
+        format!("/api/sessions/{session_id}/runs"),
+        format!("/api/runs/{run_id}"),
+    ] {
+        let response = app
+            .router
+            .clone()
+            .oneshot(
+                Request::get(path)
+                    .header("cookie", &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+                .unwrap();
+        let run = body
+            .get("runs")
+            .and_then(Value::as_array)
+            .and_then(|runs| runs.first())
+            .unwrap_or(&body);
+        assert_eq!(run["scriptName"], "flow.rss");
+    }
     assert_eq!(
         app.state
             .run_service

@@ -67,7 +67,7 @@ pub use model_import::{
     ModelImportError, ModelImportService, ModelImportView, UploadBatch, UploadFile,
 };
 pub use model_patch::{ModelChange, ModelMutationError, ModelPatch, ModelPatchService};
-pub use runs::{CreateRunRequest, RunError, RunService, RunSubmission};
+pub use runs::{CreateRunRequest, RunError, RunService, RunSubmission, RunSummary};
 pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
 pub use scripts::{
     CreateScriptRequest, ScriptDetail, ScriptError, ScriptService, ScriptServiceDependencies,

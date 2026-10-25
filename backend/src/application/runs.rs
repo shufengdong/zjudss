@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -24,7 +25,14 @@ pub struct CreateRunRequest {
 #[derive(Debug, Clone)]
 pub struct RunSubmission {
     pub run: SimulationRun,
+    pub script_name: String,
     pub replayed: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct RunSummary {
+    pub run: SimulationRun,
+    pub script_name: String,
 }
 
 #[derive(Debug)]
@@ -174,6 +182,7 @@ impl RunService {
         }
         Ok(RunSubmission {
             run: created.run,
+            script_name: script.name,
             replayed: created.replayed,
         })
     }
@@ -190,6 +199,16 @@ impl RunService {
     pub async fn find(&self, user: &CurrentUser, id: i32) -> Result<SimulationRun, RunError> {
         self.repo.find(&user.id, id).await.map_err(Into::into)
     }
+
+    pub async fn find_summary(&self, user: &CurrentUser, id: i32) -> Result<RunSummary, RunError> {
+        let run = self.find(user, id).await?;
+        let script = self.scripts.find(&user.id, run.script_resource_id).await?;
+        Ok(RunSummary {
+            run,
+            script_name: script.name,
+        })
+    }
+
     pub async fn list(
         &self,
         user: &CurrentUser,
@@ -200,6 +219,31 @@ impl RunService {
             .list(&user.id, session_id, limit)
             .await
             .map_err(Into::into)
+    }
+
+    pub async fn list_summaries(
+        &self,
+        user: &CurrentUser,
+        session_id: i32,
+        limit: i64,
+    ) -> Result<Vec<RunSummary>, RunError> {
+        let runs = self.list(user, session_id, limit).await?;
+        let script_names = self
+            .scripts
+            .list(&user.id, session_id)
+            .await?
+            .into_iter()
+            .map(|script| (script.id, script.name))
+            .collect::<BTreeMap<_, _>>();
+        runs.into_iter()
+            .map(|run| {
+                let script_name = script_names
+                    .get(&run.script_resource_id)
+                    .cloned()
+                    .ok_or(RunError::NotFound)?;
+                Ok(RunSummary { run, script_name })
+            })
+            .collect()
     }
     pub async fn datasets(&self, user: &CurrentUser, id: i32) -> Result<Vec<RunDataset>, RunError> {
         self.repo.datasets(&user.id, id).await.map_err(Into::into)
