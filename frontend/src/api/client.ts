@@ -1,7 +1,8 @@
 import type {
   AnalysisRun, DatasetMetadata, DatasetPage, DatasetViewData, ExampleDetail, ExampleTreeNode,
   HistoryHit, Message, MessagePage, ModelImport, ModelVersion, RunComparison, ScriptDetail,
-  ScriptSummary, Session, SimulationRun, StorageUsage, User, VersionDeletionPreview, Workspace,
+  ModelDataFrameMetadata, ModelDataFramePage, ModelDataFrameSource, ScriptSummary, Session,
+  SimulationRun, StorageUsage, User, VersionDeletionPreview, Workspace,
 } from '../types'
 import { emitAuthenticationRequired } from '../state/auth'
 
@@ -82,4 +83,43 @@ export const getStorageUsage=()=>request<StorageUsage>('/api/storage-usage')
 export async function downloadDataset(id:string,name='dataset'){
   const res=await fetch(`/api/datasets/${id}/download`); if(!res.ok){const error=await errorFrom(res);if(res.status===401)emitAuthenticationRequired();throw error}
   return {blob:await res.blob(),filename:`${name}.parquet`}
+}
+
+const modelDataFramePath = (source:ModelDataFrameSource, suffix='') => {
+  const draft = source.kind === 'model-draft'
+  const base = draft ? `/api/draft-dataframes/${source.dataframeId}` : `/api/model-dataframes/${source.dataframeId}`
+  return `${base}${suffix}`
+}
+const modelDraftQuery = (source:ModelDataFrameSource) => source.kind === 'model-draft'
+  ? { draftId: source.draftId, expectedDraftRevision: source.revision }
+  : {}
+
+export const getModelDataFrame = (
+  source:ModelDataFrameSource,
+  signal?:AbortSignal,
+) => request<ModelDataFrameMetadata>(
+  `${modelDataFramePath(source)}${params(modelDraftQuery(source))}`,
+  { signal },
+)
+
+export const getModelDataFrameRows = (
+  source:ModelDataFrameSource,
+  query:{cursor?:string;limit?:number;columns?:string}={},
+  signal?:AbortSignal,
+) => request<ModelDataFramePage>(
+  `${modelDataFramePath(source, '/rows')}${params({ ...modelDraftQuery(source), ...query })}`,
+  { signal },
+)
+
+export async function downloadModelDataFrame(source:ModelDataFrameSource, signal?:AbortSignal) {
+  const url = `${modelDataFramePath(source, '/download')}${params(modelDraftQuery(source))}`
+  const res = await fetch(url, { signal })
+  if (!res.ok) {
+    const error = await errorFrom(res)
+    if (res.status === 401) emitAuthenticationRequired()
+    throw error
+  }
+  const disposition = res.headers.get('content-disposition') ?? ''
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? `${source.tableName}.parquet`
+  return { blob: await res.blob(), filename }
 }
