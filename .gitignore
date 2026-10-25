@@ -22,6 +22,7 @@ frontend/vitest.config.d.ts
 
 # 环境变量（含密钥，不提交；.env.example 作为模板提交）
 .env
+backend/resources/init_users.csv
 
 # SQLite（运行时生成的数据库与 WAL/SHM 文件）
 *.db
