@@ -292,7 +292,8 @@ fn fault(
             }
         }
     }
-    let ideal_sources = facts.fault_source_equivalent_count < facts.voltage_source_count;
+    let ideal_sources =
+        facts.fault_source_equivalent_count < facts.voltage_source_count + facts.generator_count;
     if ideal_sources && allow_ideal_sources.is_none() {
         missing_parameters.push(missing(
             "allowIdealSources",
@@ -1039,6 +1040,34 @@ mod tests {
                 "函数 ds_radial_pf 的 results 包含重复名称: bus_phase".into()
             )
         );
+    }
+
+    #[test]
+    fn catalog_loads_governed_studies_from_the_real_dsa_function_section() {
+        let catalog = StudyFunctionCatalog::from_value(&json!({
+            "schema_version": 2,
+            "frame_functions": [
+                {"names": ["select"], "arity": 2}
+            ],
+            "dsa_functions": [
+                {"names": ["ds_dss_plan"], "allowed_arities": [1, 2]},
+                {
+                    "names": ["ds_radial_pf", "ds_newton_raphson_pf"],
+                    "complete_arity": 21,
+                    "default_result": "bus_voltage",
+                    "results": ["bus_voltage", "bus_phase", "summary"]
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(catalog.get("ds_radial_pf").unwrap().arity, 21);
+        assert_eq!(
+            catalog.get("ds_newton_raphson_pf").unwrap().default_result,
+            "bus_voltage"
+        );
+        assert!(catalog.get("select").is_none());
+        assert!(catalog.get("ds_dss_plan").is_none());
     }
 
     #[test]

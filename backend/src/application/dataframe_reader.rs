@@ -4,10 +4,11 @@ use std::fs::File;
 use arrow_array::{
     Array, ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Float64Array, Int8Array,
     Int16Array, Int32Array, Int64Array, LargeListArray, LargeListViewArray, LargeStringArray,
-    ListArray, ListViewArray, StringArray, StringViewArray, UInt8Array, UInt16Array, UInt32Array,
-    UInt64Array,
+    ListArray, ListViewArray, RecordBatch, StringArray, StringViewArray, UInt8Array, UInt16Array,
+    UInt32Array, UInt64Array,
 };
 use arrow_schema::DataType;
+use parquet::arrow::{ProjectionMask, arrow_reader::ParquetRecordBatchReaderBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -154,6 +155,65 @@ impl ParquetDataFrameReader {
             next_cursor,
             diagnostics,
         })
+    }
+
+    /// Scans every row of an owned Parquet artifact with a narrow projection.
+    ///
+    /// Unlike the public page API this primitive has no presentation row limit: the caller must
+    /// aggregate inside `visit` and may not return raw model rows to the Agent boundary.
+    pub(crate) async fn scan_projected<T, F>(
+        &self,
+        principal: &CurrentUser,
+        source: &DataFrameReadSource,
+        columns: &[String],
+        mut state: T,
+        mut visit: F,
+    ) -> Result<T, DataFrameReadError>
+    where
+        T: Send + 'static,
+        F: FnMut(&RecordBatch, &mut T) -> Result<(), DataFrameReadError> + Send + 'static,
+    {
+        let available = schema_columns(&source.schema_json)?;
+        let mut seen = BTreeSet::new();
+        for column in columns {
+            if !available.contains(column) {
+                return Err(DataFrameReadError::Storage(format!(
+                    "模型 schema 缺少列: {column}"
+                )));
+            }
+            if !seen.insert(column) {
+                return Err(DataFrameReadError::Storage(format!("投影列重复: {column}")));
+            }
+        }
+        let file = self.open_owned(principal, source.artifact_id).await?;
+        let columns = columns.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let mut builder = ParquetRecordBatchReaderBuilder::try_new(file)
+                .map_err(|error| DataFrameReadError::Storage(error.to_string()))?;
+            if !columns.is_empty() {
+                for column in &columns {
+                    builder.schema().index_of(column).map_err(|_| {
+                        DataFrameReadError::Storage(format!("Parquet 缺少列: {column}"))
+                    })?;
+                }
+                let projection = ProjectionMask::columns(
+                    builder.parquet_schema(),
+                    columns.iter().map(String::as_str),
+                );
+                builder = builder.with_projection(projection);
+            }
+            let reader = builder
+                .build()
+                .map_err(|error| DataFrameReadError::Storage(error.to_string()))?;
+            for batch in reader {
+                let batch =
+                    batch.map_err(|error| DataFrameReadError::Storage(error.to_string()))?;
+                visit(&batch, &mut state)?;
+            }
+            Ok(state)
+        })
+        .await
+        .map_err(|error| DataFrameReadError::Storage(error.to_string()))?
     }
 
     pub(crate) async fn download(

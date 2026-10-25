@@ -290,10 +290,26 @@ pub struct StudyFunctionCatalog {
 
 impl StudyFunctionCatalog {
     pub fn from_value(value: &Value) -> Result<Self, StudyPlanningError> {
-        let entries = value
-            .get("frame_functions")
-            .and_then(Value::as_array)
-            .ok_or_else(|| StudyPlanningError::InvalidCatalog("缺少 frame_functions".into()))?;
+        const GOVERNED: &[&str] = &[
+            "ds_radial_pf",
+            "ds_newton_raphson_pf",
+            "ds_radial_qsts",
+            "ds_newton_raphson_qsts",
+            "ds_fault_study",
+            "ds_harmonic_study",
+            "ds_motor_dynamics",
+        ];
+        let mut entries = Vec::new();
+        for section in ["frame_functions", "dsa_functions"] {
+            if let Some(values) = value.get(section).and_then(Value::as_array) {
+                entries.extend(values);
+            }
+        }
+        if entries.is_empty() {
+            return Err(StudyPlanningError::InvalidCatalog(
+                "缺少 frame_functions/dsa_functions".into(),
+            ));
+        }
         let mut functions = BTreeMap::new();
         for entry in entries {
             let names = entry
@@ -308,6 +324,13 @@ impl StudyFunctionCatalog {
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let names = names
+                .into_iter()
+                .filter(|name| GOVERNED.contains(name))
+                .collect::<Vec<_>>();
+            if names.is_empty() {
+                continue;
+            }
             let arity = entry
                 .get("complete_arity")
                 .or_else(|| entry.get("arity"))
@@ -389,6 +412,7 @@ pub struct StudyPlan {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StudyPlanningError {
+    NotFound,
     InvalidCatalog(String),
     ModelReadFailed(String),
 }
@@ -396,6 +420,7 @@ pub enum StudyPlanningError {
 impl StudyPlanningError {
     pub fn code(&self) -> &'static str {
         match self {
+            Self::NotFound => "not_found",
             Self::InvalidCatalog(_) => "study_catalog_invalid",
             Self::ModelReadFailed(_) => "study_model_read_failed",
         }
@@ -405,6 +430,7 @@ impl StudyPlanningError {
 impl std::fmt::Display for StudyPlanningError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::NotFound => write!(formatter, "资源不存在"),
             Self::InvalidCatalog(message) => write!(formatter, "研究函数目录无效: {message}"),
             Self::ModelReadFailed(message) => write!(formatter, "研究模型读取失败: {message}"),
         }

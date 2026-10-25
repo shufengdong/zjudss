@@ -72,6 +72,7 @@ pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
 pub use scripts::{
     CreateScriptRequest, ScriptDetail, ScriptError, ScriptService, ScriptSource, ScriptSummary,
 };
+pub use study_planning::StudyPlanningService;
 pub use versions::{
     ActivateVersionRequest, PublishDraftRequest, PublishedVersion, VersionDeletionPreview,
     VersionError, VersionService,
@@ -98,6 +99,7 @@ pub struct AppState {
     pub analysis_service: AnalysisService,
     pub comparison_service: ComparisonService,
     pub history_service: HistoryService,
+    pub study_planning_service: StudyPlanningService,
     pub engine_snapshot: Arc<EngineResourceSnapshot>,
     pub agent_knowledge: Arc<AgentKnowledge>,
     pub events: EventBus,
@@ -554,6 +556,11 @@ impl AppState {
             events.clone(),
         );
         let history_service = HistoryService::new(HistoryRepo::new(pool.clone()));
+        let study_planning_service = StudyPlanningService::new(
+            VersionRepo::new(pool.clone()),
+            artifact_service.clone(),
+            engine_snapshot.clone(),
+        );
         Self {
             pool,
             session_repo,
@@ -570,6 +577,7 @@ impl AppState {
             analysis_service,
             comparison_service,
             history_service,
+            study_planning_service,
             engine_snapshot,
             agent_knowledge,
             events,
