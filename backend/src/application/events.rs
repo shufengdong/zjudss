@@ -126,6 +126,31 @@ pub struct ResultOutputRef {
     pub views: Vec<DatasetViewRef>,
 }
 
+impl ResultOutputRef {
+    pub(crate) fn from_dataset(dataset: &crate::db::repositories::RunDataset) -> Self {
+        let columns: Vec<crate::application::datasets::DatasetColumn> =
+            serde_json::from_str(&dataset.schema_json).unwrap_or_default();
+        Self {
+            dataset_id: dataset.id.to_string(),
+            name: dataset.result_name.clone(),
+            row_count: dataset.row_count,
+            columns: columns
+                .into_iter()
+                .map(|column| ResultColumn {
+                    name: column.name,
+                    dtype: column.dtype,
+                    nullable: column.nullable,
+                    unit: column.unit,
+                })
+                .collect(),
+            preview_rows: None,
+            preview_truncated: dataset.row_count > 0,
+            default_view_id: None,
+            views: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecognizedTable {
@@ -685,26 +710,23 @@ impl EventWriter {
 }
 
 /// 按 session 隔离的事件总线（每条 session 一条 broadcast 通道）。
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct EventBus {
     senders: Arc<Mutex<HashMap<i32, broadcast::Sender<AppEvent>>>>,
 }
 
 impl EventBus {
     pub fn new() -> Self {
-        Self {
-            senders: Arc::new(Mutex::new(HashMap::new())),
-        }
+        Self::default()
     }
 
     /// 订阅某 session 的事件流（懒创建通道）。
     pub fn subscribe(&self, session_id: i32) -> broadcast::Receiver<AppEvent> {
         let mut senders = self.senders.lock().unwrap();
-        if !senders.contains_key(&session_id) {
-            let (tx, _rx) = broadcast::channel(256);
-            senders.insert(session_id, tx);
-        }
-        senders.get(&session_id).unwrap().subscribe()
+        senders
+            .entry(session_id)
+            .or_insert_with(|| broadcast::channel(256).0)
+            .subscribe()
     }
 
     /// 发布一个事件；无订阅者时丢弃。
@@ -725,6 +747,40 @@ impl EventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn result_output_ref_uses_the_shared_dataset_mapping() {
+        let dataset = crate::db::repositories::RunDataset {
+            id: 7,
+            run_id: Some(2),
+            analysis_run_id: None,
+            artifact_id: Some(3),
+            result_name: "voltage".into(),
+            schema_json: serde_json::json!([{
+                "name": "v_mag",
+                "dtype": "Float64",
+                "nullable": false,
+                "unit": "pu"
+            }])
+            .to_string(),
+            schema_hash: "schema".into(),
+            row_count: 12,
+            size_bytes: 128,
+            created_at_ms: 1,
+            deleted_at_ms: None,
+            tombstone_json: None,
+        };
+
+        let output = ResultOutputRef::from_dataset(&dataset);
+
+        assert_eq!(output.dataset_id, "7");
+        assert_eq!(output.name, "voltage");
+        assert_eq!(output.row_count, 12);
+        assert_eq!(output.columns[0].name, "v_mag");
+        assert_eq!(output.columns[0].unit.as_deref(), Some("pu"));
+        assert!(output.preview_truncated);
+        assert!(output.views.is_empty());
+    }
 
     /// 锁住消息类型及关键 camelCase 字段，与前端权威类型一致。
     #[test]

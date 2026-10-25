@@ -70,3 +70,33 @@ impl From<diesel::result::Error> for RepoError {
 }
 
 pub type RepoResult<T> = Result<T, RepoError>;
+
+pub(super) struct StateTransition {
+    pub status: &'static str,
+    pub stage: String,
+    pub error: Option<String>,
+    pub started_at_ms: Option<i64>,
+    pub finished_at_ms: Option<i64>,
+}
+
+impl StateTransition {
+    pub fn running(stage: &str, now_ms: i64) -> Self {
+        Self {
+            status: "running",
+            stage: stage.to_string(),
+            error: None,
+            started_at_ms: Some(now_ms),
+            finished_at_ms: None,
+        }
+    }
+
+    pub fn failed(stage: &str, error: String, now_ms: i64) -> Self {
+        Self {
+            status: "failed",
+            stage: stage.to_string(),
+            error: Some(error),
+            started_at_ms: None,
+            finished_at_ms: Some(now_ms),
+        }
+    }
+}

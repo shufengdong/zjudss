@@ -50,7 +50,7 @@ pub struct AdapterError {
     pub category: ErrorCategory,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub diagnostics: Option<serde_json::Value>,
+    pub diagnostics: Option<Box<serde_json::Value>>,
 }
 impl AdapterError {
     pub fn new(
@@ -66,7 +66,7 @@ impl AdapterError {
         }
     }
     pub fn with_diagnostics(mut self, diagnostics: serde_json::Value) -> Self {
-        self.diagnostics = Some(diagnostics);
+        self.diagnostics = Some(Box::new(diagnostics));
         self
     }
 }
@@ -130,14 +130,14 @@ impl RunSpec {
                 "result-dir 必须是绝对 staging 路径",
             ));
         }
-        if let Ok(metadata) = std::fs::symlink_metadata(&self.result_dir) {
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                return Err(AdapterError::new(
-                    "result_dir_invalid",
-                    ErrorCategory::Io,
-                    "result-dir 必须是普通 staging 目录",
-                ));
-            }
+        if let Ok(metadata) = std::fs::symlink_metadata(&self.result_dir)
+            && (metadata.file_type().is_symlink() || !metadata.is_dir())
+        {
+            return Err(AdapterError::new(
+                "result_dir_invalid",
+                ErrorCategory::Io,
+                "result-dir 必须是普通 staging 目录",
+            ));
         }
         if self.mode == RunMode::Bundle && !self.named_inputs.is_empty() {
             return Err(AdapterError::new(
@@ -274,4 +274,26 @@ pub fn resolve_data_dir() -> PathBuf {
 
 pub fn engine_from_env() -> Result<std::sync::Arc<dyn SimEngine>, AdapterError> {
     Ok(std::sync::Arc::new(ProcessEngine::from_env()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AdapterError, ErrorCategory};
+
+    #[test]
+    fn adapter_error_keeps_diagnostics_without_inflating_every_result() {
+        let error = AdapterError::new("engine_failed", ErrorCategory::Solver, "求解失败")
+            .with_diagnostics(serde_json::json!({"iteration": 3}));
+
+        assert!(std::mem::size_of::<AdapterError>() <= 104);
+        assert_eq!(
+            serde_json::to_value(error).unwrap(),
+            serde_json::json!({
+                "code": "engine_failed",
+                "category": "solver",
+                "message": "求解失败",
+                "diagnostics": {"iteration": 3}
+            })
+        );
+    }
 }

@@ -35,6 +35,19 @@
 `schemars` 与 `rand_core`。ZIP 继续关闭默认 feature，仅启用 `deflate`；Arrow 与 Parquet 保持
 `60.0.0` 对齐。升级只包含必要的 API 兼容修改，不改变 REST/SSE、数据库、Agent 工具或引擎边界。
 
+## Backend maintainability baseline
+
+后端以 `cargo fmt` 和全 target、全 feature 的零警告 Clippy 作为提交门槛。当前公共实现已收敛以下重复逻辑：
+
+- Parquet artifact 元数据由 `ArtifactMetadata::parquet()` 统一创建；
+- 仿真、分析与比较事件中的数据集引用由 `ResultOutputRef::from_dataset()` 统一映射；
+- 仿真和分析仓储共用内部 `StateTransition` 表达 running/failed 状态字段；
+- `RunService` 使用具名依赖结构装配，避免依赖顺序错误；
+- 历史搜索的 SQL、结果映射和索引重建步骤集中定义，仓储异步边界保持可读。
+
+领域错误类型仍保留在 adapter、repository 和各 application service 内，避免把不同边界的稳定错误码合并成
+一个含糊的全局错误。上述整理不改变 REST/SSE、数据库 schema、Agent 工具或引擎合同。
+
 ## Hard boundaries
 
 所有 tensoreval 调用必须经过 adapter；所有 repository 查询带 `UserId`；所有结果使用 Snappy Parquet；浏览器与
@@ -60,5 +73,5 @@ Vitest 覆盖公共类型、state、workspace、脚本卡、运行与数据工�
 Vite/Axum/SQLite/CAS 的身份、导入、分层案例目录与窄屏详情、显式运行、派生血缘、删除、恢复、恶意 ZIP、配额和无障碍。
 最终命令与真实 DeepSeek/tensoreval 候选门禁见部署文档。
 
-依赖刷新和 crate 重命名已通过 `cargo fmt --all -- --check`、`cargo check --all-targets --all-features`
-及 `cargo test --features e2e-test`。
+当前后端基线通过 `cargo fmt --all -- --check`、
+`cargo clippy --all-targets --all-features -- -D warnings` 及 `cargo test --features e2e-test`。

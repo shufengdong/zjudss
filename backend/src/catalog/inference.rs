@@ -154,13 +154,13 @@ fn score(
     let confidence = required_coverage * 0.75 + optional_coverage * 0.15 + stable_coverage * 0.10;
     let mut type_conflicts = Vec::new();
     for (name, expected) in frame.required.iter().chain(frame.optional.iter()) {
-        if let Some(column) = columns.get(name) {
-            if !dtype_compatible(&column.dtype, expected) {
-                type_conflicts.push(format!(
-                    "{}: expected {}, got {}",
-                    column.name, expected, column.dtype
-                ));
-            }
+        if let Some(column) = columns.get(name)
+            && !dtype_compatible(&column.dtype, expected)
+        {
+            type_conflicts.push(format!(
+                "{}: expected {}, got {}",
+                column.name, expected, column.dtype
+            ));
         }
     }
     CandidateScore {

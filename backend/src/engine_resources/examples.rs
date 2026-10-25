@@ -49,7 +49,7 @@ impl EngineExample {
             || contains(&self.bundle_path)
             || manifest.is_some_and(|manifest| {
                 contains(&manifest.study.kind)
-                    || manifest.study.solver.as_deref().is_some_and(&contains)
+                    || manifest.study.solver.as_deref().is_some_and(contains)
                     || contains(&manifest.study.compatibility)
                     || manifest.study.results.iter().any(|result| contains(result))
                     || contains(&manifest.source.entry)

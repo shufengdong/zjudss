@@ -78,8 +78,10 @@ fn archive_rejects_escape_symlink_duplicate_and_limits_without_partial_tree() {
     );
 
     let (root, path) = zip_file(&[("a", b"1", None), ("b", b"2", None)]);
-    let mut limits = ArchiveLimits::default();
-    limits.max_entries = 1;
+    let limits = ArchiveLimits {
+        max_entries: 1,
+        ..ArchiveLimits::default()
+    };
     assert_eq!(
         ArchiveExtractor::extract(&path, &root.path().join("out"), limits)
             .unwrap_err()
@@ -88,8 +90,10 @@ fn archive_rejects_escape_symlink_duplicate_and_limits_without_partial_tree() {
     );
 
     let (root, path) = zip_file(&[("large", b"1234", None)]);
-    let mut limits = ArchiveLimits::default();
-    limits.max_expanded_bytes = 3;
+    let limits = ArchiveLimits {
+        max_expanded_bytes: 3,
+        ..ArchiveLimits::default()
+    };
     assert_eq!(
         ArchiveExtractor::extract(&path, &root.path().join("out"), limits)
             .unwrap_err()
@@ -99,8 +103,10 @@ fn archive_rejects_escape_symlink_duplicate_and_limits_without_partial_tree() {
 
     let repetitive = vec![0_u8; 32 * 1024];
     let (root, path) = zip_file(&[("bomb", &repetitive, None)]);
-    let mut limits = ArchiveLimits::default();
-    limits.max_compression_ratio = 2;
+    let limits = ArchiveLimits {
+        max_compression_ratio: 2,
+        ..ArchiveLimits::default()
+    };
     assert_eq!(
         ArchiveExtractor::extract(&path, &root.path().join("out"), limits)
             .unwrap_err()

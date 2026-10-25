@@ -497,16 +497,16 @@ impl AppState {
             message_repo.clone(),
             events.clone(),
         );
-        let run_service = RunService::new(
-            RunRepo::new(pool.clone()),
-            ScriptRepo::new(pool.clone()),
-            artifact_service.clone(),
-            engine.clone(),
-            scheduler.clone(),
-            message_repo.clone(),
-            events.clone(),
-            data_dir.clone(),
-        );
+        let run_service = RunService::new(runs::RunServiceDependencies {
+            repo: RunRepo::new(pool.clone()),
+            scripts: ScriptRepo::new(pool.clone()),
+            artifacts: artifact_service.clone(),
+            engine: engine.clone(),
+            scheduler: scheduler.clone(),
+            messages: message_repo.clone(),
+            events: events.clone(),
+            data_dir: data_dir.clone(),
+        });
         let case_import_service = CaseImportService::new(
             engine_snapshot.clone(),
             model_import_service.clone(),

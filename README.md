@@ -16,7 +16,7 @@ TypeScript、Vite 和 ECharts。仿真及派生分析结果统一保存为 Snapp
 - 单 RSS、rssbundle、CSV、Excel、Parquet 和分批追加上传；DataFrame 类型按列名推断。
 - active/draft 模型工作区、不可变版本、错误文件重传、替换、移除、激活和回退。
 - 内置案例搜索与导入；案例导入后可继续用自然语言修改参数并重跑。
-- 22 个 Agent 工具，以及按需加载的领域技能和引擎文档检索。
+- 16 个 Agent 工具，以及按需加载的领域技能和引擎文档检索。
 - 原生 Parquet 仿真结果、自然语言结果分析、分页表格、六类受控 ECharts 视图和任务比较。
 - 固定用户登录、侧栏用户菜单、会话历史、全文搜索、可恢复 SSE、身份隔离、存储配额和并发调度。
 - 功能目录驱动的 Rust、Vitest、Playwright 和真实 DeepSeek/tensoreval 发布验收。
@@ -32,7 +32,7 @@ zjudss/
 │       ├── api/           # REST/SSE handler 与 DTO
 │       ├── application/   # 会话、调度、工作区、分析等业务编排
 │       ├── agent/         # DeepSeek agent 与按需知识加载
-│       ├── tools/         # 22 个受控 Agent 工具
+│       ├── tools/         # 16 个受控 Agent 工具
 │       ├── adapters/      # tensoreval 唯一调用边界
 │       └── db/            # SQLite repository
 ├── frontend/              # React 工作台、历史、上传、表格和图表
@@ -90,6 +90,7 @@ npm run dev       # http://localhost:5173，/api 代理到 127.0.0.1:8080
 ```bash
 cd backend
 cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
 cargo test --features e2e-test
 
 cd ../frontend

@@ -1,9 +1,10 @@
 //! 工具层：把仿真内核能力（模型检查 / 时序仿真）封装成 rig 的有状态工具。
 //!
-//! 每个工具实例携带绑定到当前 session 的共享服务（引擎适配器 + 事件写入器 + 任务仓储
-//! + 限流信号量），**每请求构建一套**（architecture §5 / §10 #2）。工具只通过
-//! `adapters::SimEngine` 调用内核，AGENTS.md 硬约束（内核地址/鉴权/错误码收敛在适配器内）
-//! 由此落实。
+//! 每个工具实例携带绑定到当前 session 的共享服务（引擎适配器、事件写入器、任务仓储
+//! 和限流信号量），**每请求构建一套**（architecture §5 / §10 #2）。
+//!
+//! 工具只通过 `adapters::SimEngine` 调用内核。内核地址、鉴权和错误码翻译均由适配器
+//! 收敛，以落实 AGENTS.md 的边界约束。
 
 pub mod compare_simulations;
 pub mod create_dataset_view;

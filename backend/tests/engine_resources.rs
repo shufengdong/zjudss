@@ -368,7 +368,9 @@ fn malformed_manifest_is_an_isolated_invalid_leaf() {
 
 #[test]
 fn all_resource_limits_fail_with_one_stable_code() {
-    let cases: Vec<Box<dyn Fn(&Fixture) -> ResourceLimits>> = vec![
+    type LimitCase = Box<dyn Fn(&Fixture) -> ResourceLimits>;
+
+    let cases: Vec<LimitCase> = vec![
         Box::new(|fixture| {
             std::fs::write(fixture.dss().join("docs/second.md"), "second").unwrap();
             ResourceLimits {

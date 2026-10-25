@@ -19,6 +19,7 @@
 # 后端
 cd backend
 cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
 cargo test --features e2e-test
 cargo run --release
 

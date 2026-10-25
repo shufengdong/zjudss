@@ -184,15 +184,11 @@ impl ChatService {
             match item {
                 // 文本段结束 → assistant（§4：StreamAssistantItem → assistant）。
                 MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::End {
-                    content,
+                    content: AssistantContent::Text(text),
                     ..
-                })) => {
-                    if let AssistantContent::Text(text) = content {
-                        if !text.text.trim().is_empty() {
-                            if writer.assistant(&text.text).await.is_ok() {
-                                outcome.assistant_emitted = true;
-                            }
-                        }
+                })) if !text.text.trim().is_empty() => {
+                    if writer.assistant(&text.text).await.is_ok() {
+                        outcome.assistant_emitted = true;
                     }
                 }
                 // 工具调用已提交 → tool-call(running)（§4）。

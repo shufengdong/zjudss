@@ -126,14 +126,7 @@ impl ModelPatchService {
             .map_err(|error| ModelMutationError::new("artifact_error", error.to_string()))?;
         let committed = self
             .artifacts
-            .commit(
-                scope.id,
-                staged,
-                ArtifactMetadata {
-                    format: "parquet".into(),
-                    media_type: Some("application/vnd.apache.parquet".into()),
-                },
-            )
+            .commit(scope.id, staged, ArtifactMetadata::parquet())
             .await
             .map_err(|error| ModelMutationError::new("artifact_error", error.to_string()))?;
         let committed_path = self

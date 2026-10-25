@@ -24,6 +24,15 @@ pub struct ArtifactMetadata {
     pub media_type: Option<String>,
 }
 
+impl ArtifactMetadata {
+    pub(crate) fn parquet() -> Self {
+        Self {
+            format: "parquet".into(),
+            media_type: Some("application/vnd.apache.parquet".into()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactRef {
     pub id: i32,
@@ -227,5 +236,21 @@ impl ArtifactService {
             }
         }
         Ok(report)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ArtifactMetadata;
+
+    #[test]
+    fn parquet_metadata_is_canonical() {
+        let metadata = ArtifactMetadata::parquet();
+
+        assert_eq!(metadata.format, "parquet");
+        assert_eq!(
+            metadata.media_type.as_deref(),
+            Some("application/vnd.apache.parquet")
+        );
     }
 }

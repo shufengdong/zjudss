@@ -13,7 +13,7 @@ use crate::agent::knowledge::AgentKnowledge;
 use crate::application::visualization::{VisualizationBudgets, VisualizationValidator};
 use crate::application::{
     ArtifactMetadata, ArtifactService, DatasetViewRef, EventBus, EventWriter, OperationKind,
-    OperationRef, ResultColumn, ResultOutputRef, Stage, StageStatus, VisualizationKind, now_ms,
+    OperationRef, ResultOutputRef, Stage, StageStatus, VisualizationKind, now_ms,
 };
 use crate::auth::CurrentUser;
 use crate::db::models::{
@@ -353,14 +353,7 @@ impl AnalysisService {
                 })?;
             let artifact = match self
                 .artifacts
-                .commit(
-                    scope_id,
-                    staged,
-                    ArtifactMetadata {
-                        format: "parquet".into(),
-                        media_type: Some("application/vnd.apache.parquet".into()),
-                    },
-                )
+                .commit(scope_id, staged, ArtifactMetadata::parquet())
                 .await
             {
                 Ok(artifact) => artifact,
@@ -496,14 +489,7 @@ impl AnalysisService {
             })?;
         let materialized = self
             .artifacts
-            .commit(
-                scope.id,
-                staged,
-                ArtifactMetadata {
-                    format: "parquet".into(),
-                    media_type: Some("application/vnd.apache.parquet".into()),
-                },
-            )
+            .commit(scope.id, staged, ArtifactMetadata::parquet())
             .await
             .map_err(|error| {
                 AnalysisError::new("view_materialization_failed", error.to_string())
@@ -669,44 +655,28 @@ impl AnalysisService {
         principal: &CurrentUser,
         dataset: &RunDataset,
     ) -> Result<ResultOutputRef, AnalysisError> {
-        let columns: Vec<crate::application::datasets::DatasetColumn> =
-            serde_json::from_str(&dataset.schema_json).unwrap_or_default();
         let views = self
             .results
             .views(&principal.id, dataset.id)
             .await
             .map_err(|error| AnalysisError::new("dataset_view_read_failed", error.to_string()))?;
-        Ok(ResultOutputRef {
-            dataset_id: dataset.id.to_string(),
-            name: dataset.result_name.clone(),
-            row_count: dataset.row_count,
-            columns: columns
-                .into_iter()
-                .map(|column| ResultColumn {
-                    name: column.name,
-                    dtype: column.dtype,
-                    nullable: column.nullable,
-                    unit: column.unit,
+        let mut output = ResultOutputRef::from_dataset(dataset);
+        output.default_view_id = views
+            .iter()
+            .find(|view| view.is_default)
+            .map(|view| view.id.to_string());
+        output.views = views
+            .into_iter()
+            .filter_map(|view| {
+                view_kind(&view.kind).map(|kind| DatasetViewRef {
+                    id: view.id.to_string(),
+                    name: view.name,
+                    kind,
+                    is_default: view.is_default,
                 })
-                .collect(),
-            preview_rows: None,
-            preview_truncated: dataset.row_count > 0,
-            default_view_id: views
-                .iter()
-                .find(|view| view.is_default)
-                .map(|view| view.id.to_string()),
-            views: views
-                .into_iter()
-                .filter_map(|view| {
-                    view_kind(&view.kind).map(|kind| DatasetViewRef {
-                        id: view.id.to_string(),
-                        name: view.name,
-                        kind,
-                        is_default: view.is_default,
-                    })
-                })
-                .collect(),
-        })
+            })
+            .collect();
+        Ok(output)
     }
 }
 

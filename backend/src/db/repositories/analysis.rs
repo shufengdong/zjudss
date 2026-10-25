@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 
-use super::{RepoError, RepoResult, RunDataset};
+use super::{RepoError, RepoResult, RunDataset, StateTransition};
 use crate::auth::UserId;
 use crate::db::models::{
     DatasetView, NewDatasetView, NewResultAnalysisRun, NewResultDataset, ResultAnalysisInput,
@@ -57,7 +57,7 @@ impl AnalysisRepo {
     }
 
     pub async fn set_stage(&self, user: &UserId, id: i32, stage: &str, now: i64) -> RepoResult<()> {
-        self.update(user, id, "running", stage, None, Some(now), None)
+        self.update(user, id, StateTransition::running(stage, now))
             .await
     }
 
@@ -142,36 +142,37 @@ impl AnalysisRepo {
         error: String,
         now: i64,
     ) -> RepoResult<()> {
-        self.update(user, id, "failed", stage, Some(error), None, Some(now))
+        self.update(user, id, StateTransition::failed(stage, error, now))
             .await
     }
 
-    async fn update(
-        &self,
-        user: &UserId,
-        id: i32,
-        status: &str,
-        stage: &str,
-        error: Option<String>,
-        started: Option<i64>,
-        finished: Option<i64>,
-    ) -> RepoResult<()> {
+    async fn update(&self, user: &UserId, id: i32, transition: StateTransition) -> RepoResult<()> {
         let pool = self.pool.clone();
         let user = user.0.clone();
-        let status = status.to_string();
-        let stage = stage.to_string();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            let changed = diesel::sql_query("UPDATE result_analysis_runs SET status=?1,stage=?2,error_json=?3,started_at_ms=COALESCE(started_at_ms,?4),finished_at_ms=?5 WHERE id=?6 AND session_id IN(SELECT id FROM sessions WHERE user_id=?7)")
-                .bind::<diesel::sql_types::Text,_>(status)
-                .bind::<diesel::sql_types::Text,_>(stage)
-                .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>,_>(error)
-                .bind::<diesel::sql_types::Nullable<diesel::sql_types::BigInt>,_>(started)
-                .bind::<diesel::sql_types::Nullable<diesel::sql_types::BigInt>,_>(finished)
-                .bind::<diesel::sql_types::Integer,_>(id)
-                .bind::<diesel::sql_types::Text,_>(user)
-                .execute(&mut conn)?;
-            if changed == 1 { Ok(()) } else { Err(RepoError::NotFound) }
+            let changed = diesel::sql_query(
+                "UPDATE result_analysis_runs SET status=?1,stage=?2,error_json=?3,\
+                 started_at_ms=COALESCE(started_at_ms,?4),finished_at_ms=?5 \
+                 WHERE id=?6 AND session_id IN(SELECT id FROM sessions WHERE user_id=?7)",
+            )
+            .bind::<diesel::sql_types::Text, _>(transition.status)
+            .bind::<diesel::sql_types::Text, _>(transition.stage)
+            .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(transition.error)
+            .bind::<diesel::sql_types::Nullable<diesel::sql_types::BigInt>, _>(
+                transition.started_at_ms,
+            )
+            .bind::<diesel::sql_types::Nullable<diesel::sql_types::BigInt>, _>(
+                transition.finished_at_ms,
+            )
+            .bind::<diesel::sql_types::Integer, _>(id)
+            .bind::<diesel::sql_types::Text, _>(user)
+            .execute(&mut conn)?;
+            if changed == 1 {
+                Ok(())
+            } else {
+                Err(RepoError::NotFound)
+            }
         })
         .await
         .map_err(RepoError::Join)?

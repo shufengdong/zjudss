@@ -11,8 +11,7 @@ use crate::storage::{ParquetInspector, StageLimits};
 
 use super::{
     ArtifactError, ArtifactMetadata, ArtifactService, EventBus, EventWriter, MessageRepo,
-    OperationKind, OperationRef, ResultColumn, ResultOutputRef, RunScheduler, Stage, StageStatus,
-    now_ms,
+    OperationKind, OperationRef, ResultOutputRef, RunScheduler, Stage, StageStatus, now_ms,
 };
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -97,17 +96,30 @@ pub struct RunService {
     events: EventBus,
     data_dir: PathBuf,
 }
+
+pub(crate) struct RunServiceDependencies {
+    pub repo: RunRepo,
+    pub scripts: ScriptRepo,
+    pub artifacts: ArtifactService,
+    pub engine: Arc<dyn SimEngine>,
+    pub scheduler: RunScheduler,
+    pub messages: MessageRepo,
+    pub events: EventBus,
+    pub data_dir: PathBuf,
+}
+
 impl RunService {
-    pub fn new(
-        repo: RunRepo,
-        scripts: ScriptRepo,
-        artifacts: ArtifactService,
-        engine: Arc<dyn SimEngine>,
-        scheduler: RunScheduler,
-        messages: MessageRepo,
-        events: EventBus,
-        data_dir: PathBuf,
-    ) -> Self {
+    pub(crate) fn new(dependencies: RunServiceDependencies) -> Self {
+        let RunServiceDependencies {
+            repo,
+            scripts,
+            artifacts,
+            engine,
+            scheduler,
+            messages,
+            events,
+            data_dir,
+        } = dependencies;
         Self {
             repo,
             scripts,
@@ -220,24 +232,24 @@ impl RunService {
                     now_ms(),
                 )
                 .await;
-            if failed.is_ok() {
-                if let Some(run) = run {
-                    let writer = EventWriter::new(
-                        user.id.clone(),
-                        run.session_id,
-                        self.messages.clone(),
-                        self.events.clone(),
-                    );
-                    let _ = writer
-                        .progress(
-                            OperationRef {
-                                kind: OperationKind::Run,
-                                id: id.to_string(),
-                            },
-                            run_failed_stages(&failed_stage),
-                        )
-                        .await;
-                }
+            if failed.is_ok()
+                && let Some(run) = run
+            {
+                let writer = EventWriter::new(
+                    user.id.clone(),
+                    run.session_id,
+                    self.messages.clone(),
+                    self.events.clone(),
+                );
+                let _ = writer
+                    .progress(
+                        OperationRef {
+                            kind: OperationKind::Run,
+                            id: id.to_string(),
+                        },
+                        run_failed_stages(&failed_stage),
+                    )
+                    .await;
             }
         }
     }
@@ -340,14 +352,7 @@ impl RunService {
                 .map_err(ArtifactError::from)?;
             let artifact = match self
                 .artifacts
-                .commit(
-                    user.storage_scope_id,
-                    staged,
-                    ArtifactMetadata {
-                        format: "parquet".into(),
-                        media_type: Some("application/vnd.apache.parquet".into()),
-                    },
-                )
+                .commit(user.storage_scope_id, staged, ArtifactMetadata::parquet())
                 .await
             {
                 Ok(v) => v,
@@ -446,24 +451,5 @@ fn run_failed_stages(active: &str) -> Vec<Stage> {
 }
 
 fn run_output_ref(dataset: &RunDataset) -> ResultOutputRef {
-    let columns: Vec<crate::application::datasets::DatasetColumn> =
-        serde_json::from_str(&dataset.schema_json).unwrap_or_default();
-    ResultOutputRef {
-        dataset_id: dataset.id.to_string(),
-        name: dataset.result_name.clone(),
-        row_count: dataset.row_count,
-        columns: columns
-            .into_iter()
-            .map(|column| ResultColumn {
-                name: column.name,
-                dtype: column.dtype,
-                nullable: column.nullable,
-                unit: column.unit,
-            })
-            .collect(),
-        preview_rows: None,
-        preview_truncated: dataset.row_count > 0,
-        default_view_id: None,
-        views: vec![],
-    }
+    ResultOutputRef::from_dataset(dataset)
 }

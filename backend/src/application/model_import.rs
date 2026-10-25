@@ -450,14 +450,7 @@ impl ModelImportService {
                     .map_err(ArtifactError::from)?;
                 let artifact = self
                     .artifacts
-                    .commit(
-                        scope.id,
-                        staged,
-                        ArtifactMetadata {
-                            format: "parquet".into(),
-                            media_type: Some("application/vnd.apache.parquet".into()),
-                        },
-                    )
+                    .commit(scope.id, staged, ArtifactMetadata::parquet())
                     .await?;
                 normalized.push(NewModelImportCandidate {
                     import_id: record.import.id,
@@ -633,14 +626,7 @@ impl ModelImportService {
                 .map_err(ArtifactError::from)?;
             let artifact = self
                 .artifacts
-                .commit(
-                    scope.id,
-                    staged,
-                    ArtifactMetadata {
-                        format: "parquet".into(),
-                        media_type: Some("application/vnd.apache.parquet".into()),
-                    },
-                )
+                .commit(scope.id, staged, ArtifactMetadata::parquet())
                 .await?;
             candidates.push(NewModelImportCandidate {
                 import_id: record.import.id,

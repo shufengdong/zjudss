@@ -3,8 +3,7 @@ use std::collections::HashMap;
 use serde_json::{Value, json};
 
 use crate::application::{
-    AnalysisInput, AnalysisRequest, AnalysisService, EventBus, EventWriter, ResultColumn,
-    ResultOutputRef, now_ms,
+    AnalysisInput, AnalysisRequest, AnalysisService, EventBus, EventWriter, ResultOutputRef, now_ms,
 };
 use crate::auth::CurrentUser;
 use crate::db::models::{NewRunComparison, RunComparison};
@@ -239,19 +238,19 @@ fn compatible_pair(
             {
                 continue;
             }
-            if let Some(other) = candidate_by_name.get(column.name.as_str()) {
-                if other.dtype == column.dtype {
-                    if other.unit != column.unit {
-                        return Err(ComparisonError::new(
-                            "comparison_incompatible",
-                            "同名数值列单位不兼容",
-                        ));
-                    }
-                    values.push(
-                        json!({"column":column.name,"dtype":column.dtype,"unit":column.unit}),
-                    );
-                }
+            let Some(other) = candidate_by_name.get(column.name.as_str()) else {
+                continue;
+            };
+            if other.dtype != column.dtype {
+                continue;
             }
+            if other.unit != column.unit {
+                return Err(ComparisonError::new(
+                    "comparison_incompatible",
+                    "同名数值列单位不兼容",
+                ));
+            }
+            values.push(json!({"column":column.name,"dtype":column.dtype,"unit":column.unit}));
         }
         if values.is_empty() {
             continue;
@@ -305,24 +304,5 @@ fn comparison_script(compatibility: &Value) -> String {
 }
 
 fn result_ref(dataset: &RunDataset) -> ResultOutputRef {
-    let columns: Vec<crate::application::datasets::DatasetColumn> =
-        serde_json::from_str(&dataset.schema_json).unwrap_or_default();
-    ResultOutputRef {
-        dataset_id: dataset.id.to_string(),
-        name: dataset.result_name.clone(),
-        row_count: dataset.row_count,
-        columns: columns
-            .into_iter()
-            .map(|column| ResultColumn {
-                name: column.name,
-                dtype: column.dtype,
-                nullable: column.nullable,
-                unit: column.unit,
-            })
-            .collect(),
-        preview_rows: None,
-        preview_truncated: dataset.row_count > 0,
-        default_view_id: None,
-        views: vec![],
-    }
+    ResultOutputRef::from_dataset(dataset)
 }

@@ -42,7 +42,7 @@ async fn injected_event_commit_failure_publishes_nothing_and_keeps_history_reada
     );
     writer.assistant("已发布历史").await.unwrap();
     let mut subscriber = app.state.events.subscribe(session.id);
-    FaultInjector::default().fail_next(FaultPoint::EventCommit);
+    FaultInjector.fail_next(FaultPoint::EventCommit);
     assert!(writer.assistant("不得发布").await.is_err());
     assert!(subscriber.try_recv().is_err());
     let history = app

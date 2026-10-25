@@ -50,6 +50,21 @@ V3 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axu
 `manifest.files` 全部哈希，再按该清单进入普通模型导入确认；bundle 内未声明文件不会被读取或暂存。HTTP、前端与
 Agent 工具共享同一规范目录和 manifest 解释结果，并且都不返回物理路径。
 
+## Backend code organization
+
+`api` 只处理 HTTP/SSE、认证提取与 DTO；`application` 编排用例；`db/repositories` 封装带用户作用域的
+持久化；`adapters` 是 tensoreval 唯一边界。跨用例重复出现的数据形状在所属层集中构造：Parquet artifact
+元数据属于 application artifact 服务，结果事件引用属于事件模型，运行/分析状态迁移属于 repository 内部。
+服务依赖通过具名结构在 `AppState` 组合根装配，避免构造参数顺序承载隐含语义。
+
+错误类型按边界保留：adapter 错误携带稳定 code、category、用户可读 message 和可选诊断；repository 错误
+表达存储与并发语义；application service 再转换为业务错误；API 最后映射为公开状态码和错误体。可选的大型诊断
+在 adapter 错误内使用间接存储，使常见 `Result<T, AdapterError>` 保持紧凑，同时保持 JSON 合同不变。
+
+repository 的异步请求路径把 Diesel 同步 SQLite 操作封装在 `spawn_blocking` 内；启动迁移、恢复与用户 seed
+在开始监听 HTTP 前同步完成。历史搜索的 LIKE/FTS 查询和索引重建语句集中定义，运行与分析仓储共用状态迁移
+值对象，但各自保留独立事务与表级 SQL。
+
 ## Capacity and trust
 
 Agent 调度默认实例 8、每用户 2、每会话 1、等待 32；引擎进程默认 4。artifact 配额按固定用户的可信

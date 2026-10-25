@@ -63,25 +63,23 @@ impl RunScheduler {
         let session = semaphore_for(&self.inner.sessions, (scope.clone(), session_id), 1);
 
         // 已有等待者时，新请求也进入公平 semaphore 队列，避免持续到来的请求插队。
-        if self.waiting_count() == 0 {
-            if let Ok(owner_permit) = owner.clone().try_acquire_owned() {
-                if let Ok(session_permit) = session.clone().try_acquire_owned() {
-                    if let Ok(global_permit) = self.inner.global.clone().try_acquire_owned() {
-                        self.inner.active.fetch_add(1, Ordering::SeqCst);
-                        return Ok(RunTicket {
-                            inner: self.inner.clone(),
-                            owner,
-                            session,
-                            admission: Some(Admission::Active(ActiveAdmission {
-                                _owner: owner_permit,
-                                _session: session_permit,
-                                _global: global_permit,
-                                _counter: ActiveCounter::new(self.inner.clone()),
-                            })),
-                        });
-                    }
-                }
-            }
+        if self.waiting_count() == 0
+            && let Ok(owner_permit) = owner.clone().try_acquire_owned()
+            && let Ok(session_permit) = session.clone().try_acquire_owned()
+            && let Ok(global_permit) = self.inner.global.clone().try_acquire_owned()
+        {
+            self.inner.active.fetch_add(1, Ordering::SeqCst);
+            return Ok(RunTicket {
+                inner: self.inner.clone(),
+                owner,
+                session,
+                admission: Some(Admission::Active(ActiveAdmission {
+                    _owner: owner_permit,
+                    _session: session_permit,
+                    _global: global_permit,
+                    _counter: ActiveCounter::new(self.inner.clone()),
+                })),
+            });
         }
 
         reserve_waiting(&self.inner)?;
