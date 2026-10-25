@@ -48,6 +48,7 @@ export async function createReadySession(page: Page, api: APIRequestContext, tit
   await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
   await page.getByRole('button', { name: '确认合并' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.revision).toBe(1)
+  await page.getByRole('button', { name: /^展开可变草稿/ }).click()
   await page.getByRole('button', { name: '生成版本' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).active?.id).toBeTruthy()
   const workspace = await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()

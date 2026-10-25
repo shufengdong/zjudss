@@ -51,7 +51,7 @@ describe('model dataframe requests', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: '11' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ resourceId: '11' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(new Blob(['parquet']), {
+      .mockResolvedValueOnce(new Response('parquet', {
         status: 200,
         headers: { 'content-disposition': 'attachment; filename="model-v7-bus.parquet"' },
       }))
@@ -70,7 +70,7 @@ describe('model dataframe requests', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: '12' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ resourceId: '12' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(new Blob(['parquet']), { status: 200 }))
+      .mockResolvedValueOnce(new Response('parquet', { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
     await getModelDataFrame(draft)
     await getModelDataFrameRows(draft, { limit: 2, columns: 'id' })

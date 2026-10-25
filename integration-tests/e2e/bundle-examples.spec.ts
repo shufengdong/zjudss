@@ -21,11 +21,13 @@ test('directory and ZIP bundles publish equivalent immutable model content',asyn
   const direct=await createSessionFromPage(page,'目录 bundle')
   await upload(page,resolve(fixtures,'bundle/demo.rssbundle'),true)
   await expect.poll(async()=>(await workspace(api,direct)).draft?.tables?.length).toBe(21)
+  await page.getByRole('button',{name:/^展开可变草稿/}).click()
   await page.getByRole('button',{name:'生成版本'}).click()
   const directHash=(await workspace(api,direct)).active.contentHash
   const zipped=await createSessionFromPage(page,'ZIP bundle')
   await upload(page,resolve(fixtures,'bundle/demo.zip'))
   await expect.poll(async()=>(await workspace(api,zipped)).draft?.tables?.length).toBe(21)
+  await page.getByRole('button',{name:/^展开可变草稿/}).click()
   await page.getByRole('button',{name:'生成版本'}).click()
   const zippedVersion=(await workspace(api,zipped)).active
   expect(zippedVersion.contentHash).toBe(directHash)
@@ -38,7 +40,7 @@ test('single-Solve bundles become drafts while repeated Solve and specialist lif
   const accepted=await workspace(api,session)
   expect(accepted.draft.tables).toHaveLength(21)
   const identity={id:accepted.draft.id,revision:accepted.draft.revision,tables:accepted.draft.tables.map((table:any)=>table.contentHash)}
-  await expect(page.getByText(`修订 ${accepted.draft.revision}`,{exact:true})).toBeVisible()
+  await expect(page.getByRole('button',{name:/^展开可变草稿/})).toContainText(`修订 ${accepted.draft.revision}`)
 
   for(const name of ['unsupported-multi-solve.rssbundle','unsupported-specialist.rssbundle']){
     const responsePromise=page.waitForResponse(isCreateImport)

@@ -17,6 +17,10 @@ Composer 固定按钮支持文件和目录：`.rss` 逐个创建脚本；DSS/bun
 发布并自动激活。激活历史版本遇到 draft 时使用明确确认框放弃草稿。版本删除先读取影响预览，再提交一次性
 impact token。前端不把这些固定动作伪装成聊天消息。
 
+当前 active 和可变 draft 默认各自收起，摘要分别显示版本或修订号、表格数量和总行数；两个区块独立展开，
+同一会话内 workspace 刷新保留用户选择，切换会话时恢复默认收起。不存在 active 或 draft 时继续显示原空状态，
+不提供无意义的展开按钮。
+
 active、draft 和展开后的历史版本按表显示“查看”按钮。按钮以 `OpenDataFrame` 判别联合打开只读
 `ModelDataFrameWorkbench`：版本源保存 `dataframeId + versionId + tableName`，草稿源额外保存
 `draftId + revision`。工作台显示元数据、列选择、cursor 分页、“加载更多”和 Parquet 下载，不出现结果删除、

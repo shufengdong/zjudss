@@ -47,7 +47,8 @@ test('responsive narrow drawers and model tables remain keyboard reachable witho
   await page.getByRole('button', { name: '收起历史侧栏' }).click()
 
   await page.getByRole('button', { name: '展开结果面板' }).click()
-  await page.getByRole('heading', { name: '当前模型' }).locator('..').getByRole('button', { name: '查看 bus' }).click()
+  await page.getByRole('button', { name: /^展开当前模型/ }).click()
+  await page.getByRole('button', { name: '查看 bus' }).click()
   await expect(page.getByRole('dialog', { name: /当前模型 · 版本 .* · bus/ })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await expectNoSeriousViolations(page)

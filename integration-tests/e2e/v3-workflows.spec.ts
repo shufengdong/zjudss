@@ -196,12 +196,12 @@ test('CSV imports merge by whole table, stale runs are rejected, and history act
   await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
   await page.getByRole('button', { name: '确认合并' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.tables?.length).toBe(2)
-  await expect(page.getByText('修订 1', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^收起可变草稿/ })).toContainText('修订 1')
   await page.locator('input[type=file]').first().setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/multi.xlsx'))
   await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
   await page.getByRole('button', { name: '确认合并' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.tables?.some((table: any) => table.tableName === 'Loads')).toBe(true)
-  await expect(page.getByText('修订 2', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: /^收起可变草稿/ })).toContainText('修订 2')
   await page.getByRole('button', { name: '生成版本' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/versions`)).json()).versions.length).toBe(2)
   const versions = (await (await api.get(`/api/sessions/${sessionId}/versions`)).json()).versions
@@ -243,7 +243,8 @@ test('active draft and historical model tables are readable without changing lif
     await page.getByRole('button', { name: '展开结果面板' }).click()
   }
 
-  const activeSection = page.getByRole('heading', { name: '当前模型' }).locator('..')
+  await page.getByRole('button', { name: /^展开当前模型/ }).click()
+  const activeSection = page.getByRole('button', { name: /^收起当前模型/ }).locator('xpath=../..')
   await activeSection.getByRole('button', { name: '查看 bus' }).click()
   await expect(page.getByRole('dialog', { name: `当前模型 · 版本 ${firstVersion} · bus` })).toBeVisible()
   await expect(page.getByRole('cell', { name: 'b1' })).toBeVisible()
@@ -272,7 +273,7 @@ test('active draft and historical model tables are readable without changing lif
     `/api/draft-dataframes/${draftDataframeId}/rows?draftId=${draft.id}&expectedDraftRevision=${draft.revision}`,
   )).json()
   expect(draftRows.resourceId).toBe(`draft-dataframe:${draftDataframeId}:revision:${draft.revision}`)
-  const draftSection = page.getByRole('heading', { name: '可变草稿' }).locator('xpath=../..')
+  const draftSection = page.getByRole('button', { name: /^收起可变草稿/ }).locator('xpath=../..')
   await draftSection.getByRole('button', { name: '查看 bus' }).click()
   await expect(page.getByRole('dialog', { name: '可变草稿 · 修订 1 · bus' })).toBeVisible()
   await expect(page.getByRole('cell', { name: 'b100' })).toBeVisible()

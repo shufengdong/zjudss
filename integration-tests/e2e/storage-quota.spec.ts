@@ -11,6 +11,7 @@ test('warning and hard quota are visible while a rejected model import leaves us
   await input.setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/bus.csv'))
   await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
   await page.getByRole('button', { name: '确认合并' }).click()
+  await page.getByRole('button', { name: /^展开可变草稿/ }).click()
   await page.getByRole('button', { name: '生成版本' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).active?.id).toBeTruthy()
   const committedUsage = await (await api.get('/api/storage-usage')).json()

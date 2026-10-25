@@ -358,6 +358,12 @@
       name: opens every active and draft table through named buttons
     - runner: vitest
       file: frontend/src/components/workspace/WorkspacePanel.test.tsx
+      name: collapses active and draft by default with independent summaries
+    - runner: vitest
+      file: frontend/src/components/workspace/WorkspacePanel.test.tsx
+      name: preserves expansion during refresh but resets it after a session switch
+    - runner: vitest
+      file: frontend/src/components/workspace/WorkspacePanel.test.tsx
       name: expands historical versions for viewing without activation
     - runner: vitest
       file: frontend/src/api/client.test.ts
