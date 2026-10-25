@@ -42,15 +42,25 @@ zjudss/
 └── AGENTS.md              # 仓库开发约束
 ```
 
-## 启动
+## 首次安装与启动
 
-后端生产路径不会回退到 stub。请先准备与固定资源合同匹配的 `tensoreval` 可执行文件和只读引擎资源
-目录，再填写配置：
+### 前置条件
+
+- Rust 工具链（`cargo`）与 Node.js（`npm`）。
+- 相邻仓库 `eig-rs`：已构建的 `tensoreval` 可执行文件，以及只读资源树 `eig-rs/sparrowzz`。
+  `tensoreval` 的构建方式以 eig-rs 自身 README 为准，通常是在 eig-rs 目录执行 `cargo build --release`
+  得到 `target/release/tensoreval`。
+
+### 后端
+
+后端生产路径不会回退到 stub，必须显式配置上述资源。首次启动会从空库执行唯一 initial migration，并按
+编译期嵌入的 `backend/resources/init_users.csv` 播种固定用户（初始密码 = ID），无需单独初始化数据库：
 
 ```bash
 cd backend
 cp .env.example .env
 # 必填：DEEPSEEK_API_KEY、TENSOREVAL_BIN、SPARROWZZ_DIR
+# 可选：AGENT_BUNDLE_VERSION（缺省 v3.0.0）、DATABASE_URL、DATA_DIR 等
 cargo run --release
 ```
 
@@ -58,13 +68,18 @@ cargo run --release
 catalog、案例及其依赖。从仓库根看相邻开发树通常是 `../eig-rs/sparrowzz`；从 `backend/` 启动时对应
 `../../eig-rs/sparrowzz`。当前相邻仓库不会被自动选中，必须显式配置。
 
-启动前端：
+启动成功后日志会依次打印 `[db] ready at sqlite://backend.db`、`[auth] users = …, seed = …` 和
+`[http] listening on http://127.0.0.1:8080`。
+
+### 前端
 
 ```bash
 cd frontend
 npm ci
 npm run dev       # http://localhost:5173，/api 代理到 127.0.0.1:8080
 ```
+
+生产部署改为 `npm run build`，由静态服务托管 `dist` 并把 `/api` 与 SSE 代理到后端。
 
 固定用户初始密码与 ID 相同，只适用于当前明确接受风险的第三版。公网 HTTPS 必须设置
 `SESSION_COOKIE_SECURE=true`。完整变量、空库重置、artifact 布局和发布门禁见
