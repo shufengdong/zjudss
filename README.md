@@ -56,6 +56,8 @@ zjudss/
 后端生产路径不会回退到 stub，必须显式配置上述资源。首次启动会从空库执行唯一 initial migration，并按
 编译期嵌入的 `backend/resources/init_users.csv` 播种固定用户（初始密码 = ID），无需单独初始化数据库：
 
+构建前需将项目外的真实用户 CSV 复制到上述编译输入位置；`integration-tests/fixtures/init_users.csv` 仅用于测试。
+
 ```bash
 cd backend
 cp .env.example .env
@@ -84,6 +86,8 @@ npm run dev       # http://localhost:5173，/api 代理到 127.0.0.1:8080
 固定用户初始密码与 ID 相同，只适用于当前明确接受风险的第三版。公网 HTTPS 必须设置
 `SESSION_COOKIE_SECURE=true`。完整变量、空库重置、artifact 布局和发布门禁见
 [V3 部署与发布验收](docs/v3-deployment.md)。
+
+在当前开发机执行 `./scripts/deploy`，本地编译后通过 SSH 更新 DellServer；也可传入其他 SSH 主机。
 
 ## 验证
 

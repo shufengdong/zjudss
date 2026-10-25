@@ -4,6 +4,9 @@
   layers: [database, api]
   lanes: [pr]
   tests:
+    - runner: rust
+      file: backend/tests/app_bootstrap.rs
+      name: bind_address_accepts_custom_ports_and_rejects_invalid_values
     - runner: playwright
       file: integration-tests/e2e/session-recovery.spec.ts
       name: session CRUD renders optimistic user, tool-call, and assistant messages
@@ -28,7 +31,7 @@
     - runner: rust
       file: backend/tests/result_deletion.rs
       name: analysis_views_and_run_comparisons_use_snapshots_and_materialized_outputs
-  assertions: [health is reachable, V3 constraints and stable failures are exercised]
+  assertions: [health is reachable, HTTP bind address accepts configured IPv4 and IPv6 ports and rejects malformed values, V3 constraints and stable failures are exercised]
   fixtures: [empty temporary database]
   contracts:
     - "route:GET /health"

@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs::OpenOptions;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -10,6 +11,7 @@ const MIB: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
+    pub bind_addr: SocketAddr,
     pub database_url: String,
     pub data_dir: PathBuf,
     pub sparrowzz_dir: PathBuf,
@@ -75,6 +77,10 @@ impl RuntimeConfig {
         test_sparrowzz_dir: Option<PathBuf>,
     ) -> Result<Self, ConfigError> {
         let get = |name: &str| values.get(name).map(String::as_str);
+        let bind_addr = get("BIND_ADDR")
+            .unwrap_or("127.0.0.1:8080")
+            .parse()
+            .map_err(|_| ConfigError::new("config_invalid_value", "BIND_ADDR 必须是 IP:端口"))?;
 
         let database_url = get("DATABASE_URL")
             .unwrap_or("sqlite://backend.db")
@@ -107,6 +113,7 @@ impl RuntimeConfig {
         let session_cookie_secure = parse_bool(get("SESSION_COOKIE_SECURE").unwrap_or("false"))?;
 
         Ok(Self {
+            bind_addr,
             database_url,
             data_dir,
             sparrowzz_dir,

@@ -128,7 +128,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         },
     );
 
-    let addr = "127.0.0.1:8080";
+    let addr = runtime.bind_addr;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     eprintln!("[http] listening on http://{addr}");
     axum::serve(listener, build_router(state)).await?;

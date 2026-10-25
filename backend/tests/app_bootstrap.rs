@@ -21,6 +21,7 @@ fn config_defaults_are_safe() {
             .expect("parse defaults");
 
     assert_eq!(config.database_url, "sqlite://backend.db");
+    assert_eq!(config.bind_addr.to_string(), "127.0.0.1:8080");
     assert_eq!(config.data_dir, root.path().join("data"));
     assert_eq!(config.sparrowzz_dir, sparrowzz_dir);
     assert_eq!(
@@ -40,6 +41,23 @@ fn config_defaults_are_safe() {
     assert_eq!(config.owner_storage_limit_bytes, 20 * 1024 * 1024 * 1024);
     assert_eq!(config.storage_warning_ratio, 0.8);
     assert_eq!(config.agent_bundle_version, "v3.1.0");
+}
+
+#[test]
+fn bind_address_accepts_custom_ports_and_rejects_invalid_values() {
+    let root = tempfile::tempdir().expect("create config root");
+    for address in ["127.0.0.1:809", "[::1]:809"] {
+        let values = BTreeMap::from([("BIND_ADDR".to_string(), address.to_string())]);
+        let config = RuntimeConfig::from_values(root.path(), values, Some(root.path().into()))
+            .expect("accept custom bind address");
+        assert_eq!(config.bind_addr.to_string(), address);
+    }
+    for address in ["", "localhost:809", "127.0.0.1:65536", "127.0.0.1"] {
+        let values = BTreeMap::from([("BIND_ADDR".to_string(), address.to_string())]);
+        let error = RuntimeConfig::from_values(root.path(), values, Some(root.path().into()))
+            .expect_err("reject invalid bind address");
+        assert_eq!(error.code(), "config_invalid_value");
+    }
 }
 
 #[test]

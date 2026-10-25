@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# Build on this Linux x86_64 machine, then update the existing SSH deployment.
+set -euo pipefail
+if [[ ${1:-} == --help ]]; then
+  echo 'Usage: scripts/deploy [SSH_HOST] (default: DellServer)'
+  echo 'Optional environment: DEPLOY_DIR, SERVICE, HEALTH_URL, HEALTH_TIMEOUT, VITE_BASE_PATH, VITE_API_BASE_PATH'
+  exit 0
+fi
+(($# <= 1)) || { echo 'Usage: scripts/deploy [SSH_HOST]' >&2; exit 1; }
+project=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+deploy_host=${1:-DellServer}
+deploy_dir=${DEPLOY_DIR:-/home/sgoolweb/zjudss}
+service=${SERVICE:-zjudss.service}
+health=${HEALTH_URL:-http://127.0.0.1:809/health}
+timeout=${HEALTH_TIMEOUT:-60}
+[[ $deploy_host != -* && $deploy_dir == /* && $deploy_dir != / && $timeout =~ ^[1-9][0-9]*$ ]]
+[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo 'Build on Linux x86_64.' >&2; exit 1; }
+[[ -s $project/backend/resources/init_users.csv ]] || { echo 'Missing backend/resources/init_users.csv' >&2; exit 1; }
+umask 077
+work=$(mktemp -d)
+remote_stage='' activating=0
+cleanup() {
+  local status=$? command
+  trap - EXIT
+  if [[ -n $remote_stage ]] && (( !activating )); then
+    printf -v command 'rm -rf -- %q' "$remote_stage"
+    ssh "$deploy_host" "$command" || true
+  fi
+  rm -rf -- "$work"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# This device has the SQLite runtime library but may lack its development symlink.
+if [[ ! -e /usr/lib/x86_64-linux-gnu/libsqlite3.so && -e /usr/lib/x86_64-linux-gnu/libsqlite3.so.0 ]]; then
+  ln -s /usr/lib/x86_64-linux-gnu/libsqlite3.so.0 "$work/libsqlite3.so"
+  export LIBRARY_PATH="$work${LIBRARY_PATH:+:$LIBRARY_PATH}"
+fi
+(cd "$project/backend"; cargo build --release --locked --bin zjudss --target-dir "$project/backend/target")
+(cd "$project/frontend"; npm ci; VITE_BASE_PATH=${VITE_BASE_PATH:-/zjudss/} VITE_API_BASE_PATH=${VITE_API_BASE_PATH:-/zjudss/api} npm run build)
+install -m 755 "$project/backend/target/release/zjudss" "$work/zjudss"
+cp -a "$project/frontend/dist" "$work/www"
+chmod -R a+rX "$work/www"
+printf -v command 'set -e; test -f %q/zjudss; test -d %q/www; umask 077; mktemp -d -- %q/.upload.XXXXXX' "$deploy_dir" "$deploy_dir" "$deploy_dir"
+remote_stage=$(ssh "$deploy_host" "$command")
+[[ $remote_stage == "$deploy_dir"/.upload.* ]] || { remote_stage=''; echo 'Unexpected SSH upload directory.' >&2; exit 1; }
+printf -v command 'tar -xzf - -C %q --no-same-owner --same-permissions' "$remote_stage"
+tar -czf - -C "$work" zjudss www | ssh "$deploy_host" "$command"
+activation=$(cat <<'REMOTE'
+set -euo pipefail
+root=$(realpath -e -- "$1"); stage=$2; service=$3; health=$4; timeout=$5
+control=(sudo systemctl)
+if ((EUID == 0)); then control=(systemctl); fi
+stopped=0
+healthy() {
+  local deadline=$((SECONDS + timeout))
+  while ((SECONDS < deadline)); do
+    if [[ $(curl -fsS --max-time 2 "$health" 2>/dev/null) == ok ]] && "${control[@]}" is-active --quiet "$service"; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if ((status && stopped)); then
+    "${control[@]}" stop "$service" || true
+    if [[ -f $stage/old-zjudss ]]; then mv -f -- "$stage/old-zjudss" "$root/zjudss"; fi
+    if [[ -d $stage/old-www ]]; then rm -rf -- "$root/www"; mv -- "$stage/old-www" "$root/www"; fi
+    if ! "${control[@]}" start "$service" || ! healthy; then
+      echo "Recovery failed; inspect service logs and $stage" >&2
+      exit "$status"
+    fi
+    echo 'Previous program and frontend restored; persistent data retained.' >&2
+  fi
+  rm -rf -- "$stage"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+[[ $root != / && -f $root/zjudss && ! -L $root/zjudss && -d $root/www && ! -L $root/www ]]
+exec 9< "$root"
+flock -n 9 || { echo 'Another deployment is running.' >&2; exit 1; }
+if ((EUID != 0)); then sudo -v; fi
+stopped=1
+"${control[@]}" stop "$service"
+mv -- "$root/zjudss" "$stage/old-zjudss"
+mv -- "$stage/zjudss" "$root/zjudss"
+mv -- "$root/www" "$stage/old-www"
+mv -- "$stage/www" "$root/www"
+"${control[@]}" start "$service"
+healthy || { echo 'New service failed its health check.' >&2; exit 1; }
+stopped=0
+echo 'Deployment complete.'
+REMOTE
+)
+printf -v command 'bash -c %q -- %q %q %q %q %q' "$activation" "$deploy_dir" "$remote_stage" "$service" "$health" "$timeout"
+activating=1
+ssh -t "$deploy_host" "$command"
