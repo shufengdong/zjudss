@@ -33,6 +33,7 @@ async fn scripts_are_immutable_independent_validated_and_lazy_readable() {
                 source: ScriptSource::Upload,
                 agent_bundle_version: None,
                 agent_skill_refs: vec![],
+                study_plan: None,
             },
         )
         .await
@@ -49,6 +50,7 @@ async fn scripts_are_immutable_independent_validated_and_lazy_readable() {
                 source: ScriptSource::Upload,
                 agent_bundle_version: None,
                 agent_skill_refs: vec![],
+                study_plan: None,
             },
         )
         .await
@@ -80,6 +82,7 @@ async fn scripts_are_immutable_independent_validated_and_lazy_readable() {
                 source: ScriptSource::Agent,
                 agent_bundle_version: Some("test".into()),
                 agent_skill_refs: vec![serde_json::json!({"id":"rss-generation"})],
+                study_plan: None,
             },
         )
         .await
@@ -121,6 +124,65 @@ async fn scripts_are_immutable_independent_validated_and_lazy_readable() {
                     .contains("output_29")
             })
     );
+}
+
+#[tokio::test]
+async fn generic_agent_and_manual_or_uploaded_study_scripts_remain_compatible() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "script proof compatibility", 1)
+        .await
+        .unwrap();
+    let cases = [
+        (
+            "generic-agent.rss",
+            "result = bus",
+            ScriptSource::Agent,
+            Some("test".to_string()),
+        ),
+        (
+            "manual-study.rss",
+            "voltage = ds_radial_pf(bus)",
+            ScriptSource::Manual,
+            None,
+        ),
+        (
+            "uploaded-study.rss",
+            "voltage = ds_radial_pf(bus)",
+            ScriptSource::Upload,
+            None,
+        ),
+    ];
+
+    for (name, content, source, bundle) in cases {
+        let summary = app
+            .state
+            .script_service
+            .create(
+                &user,
+                session.id,
+                CreateScriptRequest {
+                    name: name.into(),
+                    content: content.into(),
+                    source,
+                    agent_bundle_version: bundle,
+                    agent_skill_refs: vec![],
+                    study_plan: None,
+                },
+            )
+            .await
+            .unwrap();
+        let detail = app
+            .state
+            .script_service
+            .detail(&user, summary.id.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(detail.content, content);
+    }
 }
 
 #[tokio::test]
@@ -258,6 +320,7 @@ async fn script_resources_disappear_only_with_the_whole_session() {
                 source: ScriptSource::Upload,
                 agent_bundle_version: None,
                 agent_skill_refs: vec![],
+                study_plan: None,
             },
         )
         .await

@@ -70,7 +70,8 @@ pub use model_patch::{ModelChange, ModelMutationError, ModelPatch, ModelPatchSer
 pub use runs::{CreateRunRequest, RunError, RunService, RunSubmission};
 pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
 pub use scripts::{
-    CreateScriptRequest, ScriptDetail, ScriptError, ScriptService, ScriptSource, ScriptSummary,
+    CreateScriptRequest, ScriptDetail, ScriptError, ScriptService, ScriptServiceDependencies,
+    ScriptSource, ScriptSummary,
 };
 pub use study_planning::StudyPlanningService;
 pub use versions::{
@@ -503,14 +504,16 @@ impl AppState {
             data_dir.clone(),
             archive_limits,
         );
-        let script_service = ScriptService::new(
-            ScriptRepo::new(pool.clone()),
-            artifact_service.clone(),
-            engine.clone(),
-            data_dir.clone(),
-            message_repo.clone(),
-            events.clone(),
-        );
+        let script_service = ScriptService::new(scripts::ScriptServiceDependencies {
+            repo: ScriptRepo::new(pool.clone()),
+            artifacts: artifact_service.clone(),
+            engine: engine.clone(),
+            data_dir: data_dir.clone(),
+            messages: message_repo.clone(),
+            events: events.clone(),
+            versions: VersionRepo::new(pool.clone()),
+            engine_snapshot_id: engine_snapshot.id.clone(),
+        });
         let run_service = RunService::new(runs::RunServiceDependencies {
             repo: RunRepo::new(pool.clone()),
             scripts: ScriptRepo::new(pool.clone()),

@@ -4,6 +4,16 @@ use std::time::Duration;
 
 use super::{AdapterError, ErrorCategory, STATIC_MODEL_TABLES, validate_tree_file};
 
+pub const GOVERNED_STUDY_FUNCTIONS: [&str; 7] = [
+    "ds_radial_pf",
+    "ds_newton_raphson_pf",
+    "ds_radial_qsts",
+    "ds_newton_raphson_qsts",
+    "ds_fault_study",
+    "ds_harmonic_study",
+    "ds_motor_dynamics",
+];
+
 #[derive(Debug, Clone)]
 pub struct ScriptValidationSpec {
     pub input_tree: PathBuf,
@@ -17,6 +27,7 @@ pub struct StaticScriptValidation {
     pub valid: bool,
     pub required_aliases: Vec<String>,
     pub outputs: Vec<String>,
+    pub called_functions: Vec<String>,
     pub diagnostics: serde_json::Value,
 }
 
@@ -29,13 +40,24 @@ pub(crate) fn validate_script_source(
             AdapterError::new("script_read_failed", ErrorCategory::Io, error.to_string())
         })?;
     let lower = source.to_ascii_lowercase();
+    let callable_source = strip_comments_and_strings(&source).to_ascii_lowercase();
+    let called_functions = GOVERNED_STUDY_FUNCTIONS
+        .into_iter()
+        .filter(|name| contains_call(&callable_source, name))
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
     if lower.contains("import_")
         || lower.contains("read(")
         || lower.contains("http://")
         || lower.contains("https://")
         || lower.contains("file://")
     {
-        return Ok(invalid("script_external_dependency_rejected"));
+        return Ok(invalid(
+            "script_external_dependency_rejected",
+            called_functions,
+        ));
     }
 
     let mut outputs = BTreeSet::new();
@@ -48,12 +70,12 @@ pub(crate) fn validate_script_source(
         };
         for name in names {
             if !outputs.insert(name.to_string()) {
-                return Ok(invalid("script_output_duplicate"));
+                return Ok(invalid("script_output_duplicate", called_functions));
             }
         }
     }
     if outputs.is_empty() {
-        return Ok(invalid("script_output_required"));
+        return Ok(invalid("script_output_required", called_functions));
     }
 
     let mut required_aliases = STATIC_MODEL_TABLES
@@ -67,15 +89,17 @@ pub(crate) fn validate_script_source(
         valid: true,
         required_aliases,
         outputs: outputs.into_iter().collect(),
+        called_functions,
         diagnostics: serde_json::json!({"code":"ok","validator":"adapter-v3"}),
     })
 }
 
-fn invalid(code: &str) -> StaticScriptValidation {
+fn invalid(code: &str, called_functions: Vec<String>) -> StaticScriptValidation {
     StaticScriptValidation {
         valid: false,
         required_aliases: Vec::new(),
         outputs: Vec::new(),
+        called_functions,
         diagnostics: serde_json::json!({"code":code}),
     }
 }
@@ -116,4 +140,74 @@ fn contains_identifier(source: &str, needle: &str) -> bool {
         !before.is_some_and(|character| character.is_ascii_alphanumeric() || character == '_')
             && !after.is_some_and(|character| character.is_ascii_alphanumeric() || character == '_')
     })
+}
+
+fn contains_call(source: &str, name: &str) -> bool {
+    source.match_indices(name).any(|(index, _)| {
+        let before = source[..index].chars().next_back();
+        let after_name = &source[index + name.len()..];
+        let identifier_boundary =
+            !before.is_some_and(|character| character.is_ascii_alphanumeric() || character == '_');
+        identifier_boundary && after_name.trim_start().starts_with('(')
+    })
+}
+
+fn strip_comments_and_strings(source: &str) -> String {
+    #[derive(Clone, Copy)]
+    enum State {
+        Code,
+        SingleQuoted,
+        DoubleQuoted,
+        LineComment,
+    }
+
+    let characters = source.chars().collect::<Vec<_>>();
+    let mut output = String::with_capacity(source.len());
+    let mut state = State::Code;
+    let mut escaped = false;
+    let mut index = 0;
+    while index < characters.len() {
+        let character = characters[index];
+        match state {
+            State::Code if character == '#' => {
+                state = State::LineComment;
+                output.push(' ');
+            }
+            State::Code if character == '/' && characters.get(index + 1).copied() == Some('/') => {
+                state = State::LineComment;
+                output.push_str("  ");
+                index += 1;
+            }
+            State::Code if character == '\'' => {
+                state = State::SingleQuoted;
+                escaped = false;
+                output.push(' ');
+            }
+            State::Code if character == '"' => {
+                state = State::DoubleQuoted;
+                escaped = false;
+                output.push(' ');
+            }
+            State::Code => output.push(character),
+            State::LineComment if character == '\n' => {
+                state = State::Code;
+                output.push('\n');
+            }
+            State::LineComment => output.push(' '),
+            State::SingleQuoted | State::DoubleQuoted => {
+                let closing = matches!(state, State::SingleQuoted) && character == '\''
+                    || matches!(state, State::DoubleQuoted) && character == '"';
+                if closing && !escaped {
+                    state = State::Code;
+                }
+                escaped = character == '\\' && !escaped;
+                if character != '\\' {
+                    escaped = false;
+                }
+                output.push(if character == '\n' { '\n' } else { ' ' });
+            }
+        }
+        index += 1;
+    }
+    output
 }

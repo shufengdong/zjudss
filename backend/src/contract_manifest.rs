@@ -93,6 +93,13 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "table_not_found",
     "unit_incompatible",
     "workspace_error",
+    "skill_required",
+    "study_catalog_invalid",
+    "study_model_read_failed",
+    "study_plan_required",
+    "study_plan_not_found",
+    "study_plan_stale",
+    "study_plan_function_mismatch",
 ];
 
 #[derive(Debug, Serialize)]

@@ -202,6 +202,12 @@ impl From<ScriptError> for ApiError {
             },
             ScriptError::Repository(error) => Self::internal(error.to_string()),
             ScriptError::Io(error) => Self::internal(error.to_string()),
+            ScriptError::StudyPlan { code, message } => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message,
+                code,
+                details: None,
+            },
         }
     }
 }

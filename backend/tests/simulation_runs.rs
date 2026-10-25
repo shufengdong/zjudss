@@ -97,6 +97,7 @@ async fn setup(app: &TestApp) -> (zjudss::auth::CurrentUser, String, i32, String
                 source: ScriptSource::Upload,
                 agent_bundle_version: None,
                 agent_skill_refs: vec![],
+                study_plan: None,
             },
         )
         .await

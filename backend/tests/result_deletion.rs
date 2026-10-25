@@ -97,6 +97,7 @@ async fn create_completed_run(app: &TestApp) -> (zjudss::auth::CurrentUser, Stri
                 source: ScriptSource::Upload,
                 agent_bundle_version: None,
                 agent_skill_refs: vec![],
+                study_plan: None,
             },
         )
         .await

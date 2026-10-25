@@ -73,6 +73,7 @@ pub async fn upload(
                 source: ScriptSource::Upload,
                 agent_bundle_version: None,
                 agent_skill_refs: vec![],
+                study_plan: None,
             },
         )
         .await?;
@@ -96,6 +97,7 @@ pub async fn create_text(
                 source: ScriptSource::Manual,
                 agent_bundle_version: None,
                 agent_skill_refs: vec![],
+                study_plan: None,
             },
         )
         .await?;

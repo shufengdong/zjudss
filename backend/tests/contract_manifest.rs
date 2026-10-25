@@ -103,4 +103,18 @@ fn contract_manifest_contains_all_public_enums() {
             .stable_error_codes
             .contains(&"history_search_unavailable")
     );
+    for code in [
+        "skill_required",
+        "study_catalog_invalid",
+        "study_model_read_failed",
+        "study_plan_required",
+        "study_plan_not_found",
+        "study_plan_stale",
+        "study_plan_function_mismatch",
+    ] {
+        assert!(
+            manifest.stable_error_codes.contains(&code),
+            "missing {code}"
+        );
+    }
 }

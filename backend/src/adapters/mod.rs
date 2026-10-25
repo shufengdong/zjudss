@@ -20,7 +20,7 @@ pub use import::{
 pub use process::{
     EngineCommand, EngineConfig, OutputLimits, ProcessEngine, build_command, validate_outputs,
 };
-pub use script::{ScriptValidationSpec, StaticScriptValidation};
+pub use script::{GOVERNED_STUDY_FUNCTIONS, ScriptValidationSpec, StaticScriptValidation};
 pub use stub::StubEngine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]

@@ -1,6 +1,8 @@
 mod common;
 
 use common::TestApp;
+use diesel::RunQueryDsl;
+use diesel::sql_types::Text;
 use rig::tool::{Tool, ToolContext};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
@@ -288,6 +290,233 @@ async fn plan_study_issues_ready_ids_only_and_keeps_them_request_local() {
             .await
             .get(plan_id)
             .is_none()
+    );
+}
+
+#[tokio::test]
+async fn create_script_requires_a_matching_fresh_plan_for_governed_agent_calls() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "bound study script", 1)
+        .await
+        .unwrap();
+    let bus = apply_csv(
+        &app,
+        session.id,
+        "proof-bus",
+        "bus.csv",
+        b"id\nsource\nb1\n",
+        None,
+    )
+    .await;
+    let line = apply_csv(
+        &app,
+        session.id,
+        "proof-line",
+        "line.csv",
+        b"name,bus_from,bus_to\nl1,source,b1\n",
+        Some(bus),
+    )
+    .await;
+    let source = apply_csv(
+        &app,
+        session.id,
+        "proof-source",
+        "voltage_source.csv",
+        b"name,bus\nsource,source\n",
+        Some(line),
+    )
+    .await;
+    app.state
+        .version_service
+        .publish(
+            &user,
+            session.id,
+            PublishDraftRequest {
+                expected_draft_id: source.id,
+                expected_draft_revision: source.revision,
+                client_publish_id: "publish-proof-model".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let services = tool_services_for_session(&app, user.clone(), session.id);
+    {
+        let mut skills = services.loaded_skills.lock().await;
+        skills.insert("study-planning".into());
+        skills.insert("rss-generation".into());
+    }
+    let mut context = ToolContext::new();
+    let planned = tools::plan_study::PlanStudyTool::new(services.clone())
+        .call(
+            &mut context,
+            tools::plan_study::Args {
+                request: StudyRequest::StaticPowerFlow {
+                    solver_preference: Default::default(),
+                    requested_results: vec![],
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let plan_id = planned["studyPlanId"].as_str().unwrap().to_string();
+    let usage_before = app
+        .state
+        .artifact_service
+        .usage_for(user.storage_scope_id)
+        .await
+        .unwrap();
+
+    let missing = tools::create_script::CreateScriptTool::new(services.clone())
+        .call(
+            &mut context,
+            tools::create_script::Args {
+                name: "missing.rss".into(),
+                content: "voltage = ds_radial_pf(bus);".into(),
+                study_plan_id: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(missing.code, "study_plan_required");
+
+    let unknown = tools::create_script::CreateScriptTool::new(services.clone())
+        .call(
+            &mut context,
+            tools::create_script::Args {
+                name: "unknown.rss".into(),
+                content: "voltage = ds_radial_pf(bus);".into(),
+                study_plan_id: Some("study-plan:unknown".into()),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(unknown.code, "study_plan_not_found");
+
+    let mismatch = tools::create_script::CreateScriptTool::new(services.clone())
+        .call(
+            &mut context,
+            tools::create_script::Args {
+                name: "mismatch.rss".into(),
+                content: "voltage = ds_newton_raphson_pf(bus);".into(),
+                study_plan_id: Some(plan_id.clone()),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(mismatch.code, "study_plan_function_mismatch");
+    assert!(
+        app.state
+            .script_service
+            .list(&user, session.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let usage_after_rejections = app
+        .state
+        .artifact_service
+        .usage_for(user.storage_scope_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        usage_after_rejections.artifact_count,
+        usage_before.artifact_count
+    );
+
+    let created = tools::create_script::CreateScriptTool::new(services.clone())
+        .call(
+            &mut context,
+            tools::create_script::Args {
+                name: "ready.rss".into(),
+                content: "voltage = ds_radial_pf(bus);".into(),
+                study_plan_id: Some(plan_id.clone()),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(created["sourceKind"], "agent");
+
+    #[derive(diesel::QueryableByName)]
+    struct SkillRefs {
+        #[diesel(sql_type = Text)]
+        agent_skill_refs_json: String,
+    }
+    let refs = {
+        let mut connection = app.pool.get().unwrap();
+        diesel::sql_query(
+            "SELECT agent_skill_refs_json FROM script_resources ORDER BY id DESC LIMIT 1",
+        )
+        .get_result::<SkillRefs>(&mut connection)
+        .unwrap()
+    };
+    let refs: serde_json::Value = serde_json::from_str(&refs.agent_skill_refs_json).unwrap();
+    assert!(
+        refs.as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["id"] == "study-planning")
+    );
+    assert!(
+        refs.as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["id"] == "rss-generation")
+    );
+    let proof = refs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["kind"] == "study-plan")
+        .unwrap();
+    assert_eq!(proof["function"], "ds_radial_pf");
+    assert_eq!(proof["engineSnapshotId"], app.state.engine_snapshot.id);
+
+    let changed = apply_csv(
+        &app,
+        session.id,
+        "proof-bus-changed",
+        "bus.csv",
+        b"id\nsource\nb1\nb2\n",
+        None,
+    )
+    .await;
+    app.state
+        .version_service
+        .publish(
+            &user,
+            session.id,
+            PublishDraftRequest {
+                expected_draft_id: changed.id,
+                expected_draft_revision: changed.revision,
+                client_publish_id: "publish-changed-proof-model".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let stale = tools::create_script::CreateScriptTool::new(services)
+        .call(
+            &mut context,
+            tools::create_script::Args {
+                name: "stale.rss".into(),
+                content: "voltage = ds_radial_pf(bus);".into(),
+                study_plan_id: Some(plan_id),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(stale.code, "study_plan_stale");
+    assert_eq!(
+        app.state
+            .script_service
+            .list(&user, session.id)
+            .await
+            .unwrap()
+            .len(),
+        1
     );
 }
 

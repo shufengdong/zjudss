@@ -2,11 +2,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::adapters::{ScriptValidationSpec, SimEngine};
+use crate::application::study_planning::ReadyStudyPlan;
 use crate::auth::CurrentUser;
 use crate::db::models::{NewScriptResource, ScriptResource};
-use crate::db::repositories::{RepoError, ScriptRepo};
+use crate::db::repositories::{RepoError, ScriptRepo, VersionRepo};
 use crate::storage::StageLimits;
 
 use super::{
@@ -17,7 +19,7 @@ use super::{
 const SCRIPT_PREVIEW_LINES: usize = 20;
 const SCRIPT_MAX_BYTES: u64 = 2 * 1024 * 1024;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScriptSource {
     Upload,
     Agent,
@@ -40,6 +42,7 @@ pub struct CreateScriptRequest {
     pub source: ScriptSource,
     pub agent_bundle_version: Option<String>,
     pub agent_skill_refs: Vec<Value>,
+    pub study_plan: Option<ReadyStudyPlan>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -77,7 +80,25 @@ pub enum ScriptError {
     Adapter(crate::adapters::AdapterError),
     Repository(RepoError),
     Io(std::io::Error),
+    StudyPlan { code: &'static str, message: String },
 }
+
+impl ScriptError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::StudyPlan { code, .. } => code,
+            _ => "script_error",
+        }
+    }
+
+    fn study_plan(code: &'static str, message: impl Into<String>) -> Self {
+        Self::StudyPlan {
+            code,
+            message: message.into(),
+        }
+    }
+}
+
 impl std::fmt::Display for ScriptError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -87,6 +108,7 @@ impl std::fmt::Display for ScriptError {
             Self::Adapter(v) => write!(f, "{v}"),
             Self::Repository(v) => write!(f, "{v}"),
             Self::Io(v) => write!(f, "{v}"),
+            Self::StudyPlan { message, .. } => write!(f, "{message}"),
         }
     }
 }
@@ -119,24 +141,32 @@ pub struct ScriptService {
     data_dir: PathBuf,
     messages: MessageRepo,
     events: EventBus,
+    versions: VersionRepo,
+    engine_snapshot_id: String,
+}
+
+pub struct ScriptServiceDependencies {
+    pub repo: ScriptRepo,
+    pub artifacts: ArtifactService,
+    pub engine: Arc<dyn SimEngine>,
+    pub data_dir: PathBuf,
+    pub messages: MessageRepo,
+    pub events: EventBus,
+    pub versions: VersionRepo,
+    pub engine_snapshot_id: String,
 }
 
 impl ScriptService {
-    pub fn new(
-        repo: ScriptRepo,
-        artifacts: ArtifactService,
-        engine: Arc<dyn SimEngine>,
-        data_dir: PathBuf,
-        messages: MessageRepo,
-        events: EventBus,
-    ) -> Self {
+    pub fn new(dependencies: ScriptServiceDependencies) -> Self {
         Self {
-            repo,
-            artifacts,
-            engine,
-            data_dir,
-            messages,
-            events,
+            repo: dependencies.repo,
+            artifacts: dependencies.artifacts,
+            engine: dependencies.engine,
+            data_dir: dependencies.data_dir,
+            messages: dependencies.messages,
+            events: dependencies.events,
+            versions: dependencies.versions,
+            engine_snapshot_id: dependencies.engine_snapshot_id,
         }
     }
 
@@ -177,6 +207,71 @@ impl ScriptService {
             .await;
         let _ = std::fs::remove_dir_all(validation_root);
         let validation = validation?;
+        let mut agent_skill_refs = request.agent_skill_refs;
+        if request.source == ScriptSource::Agent && !validation.called_functions.is_empty() {
+            let plan = request.study_plan.as_ref().ok_or_else(|| {
+                ScriptError::study_plan(
+                    "study_plan_required",
+                    "受管研究脚本必须提供本次请求生成的 studyPlanId",
+                )
+            })?;
+            if validation.called_functions.len() != 1
+                || validation.called_functions.first() != Some(&plan.function)
+            {
+                return Err(ScriptError::study_plan(
+                    "study_plan_function_mismatch",
+                    "脚本调用的受管研究函数与 ready plan 不一致",
+                ));
+            }
+            if plan.engine_snapshot_id != self.engine_snapshot_id {
+                return Err(ScriptError::study_plan(
+                    "study_plan_stale",
+                    "引擎资源快照已变化，请重新规划研究",
+                ));
+            }
+            let workspace = self
+                .versions
+                .workspace(&user.id, session_id, now_ms())
+                .await
+                .map_err(|error| {
+                    ScriptError::Repository(match error {
+                        crate::db::repositories::VersionRepoError::Repository(error) => error,
+                        _ => RepoError::InvalidState("workspace state changed".into()),
+                    })
+                })?;
+            let active_matches = workspace.active.as_ref().is_some_and(|active| {
+                active.version.id == plan.model_version_id
+                    && active.version.content_hash == plan.model_content_hash
+            });
+            if !active_matches {
+                return Err(ScriptError::study_plan(
+                    "study_plan_stale",
+                    "active 模型已变化，请重新规划研究",
+                ));
+            }
+            if !agent_skill_refs
+                .iter()
+                .any(|reference| reference["id"] == "study-planning")
+            {
+                agent_skill_refs.push(serde_json::json!({"id":"study-planning"}));
+            }
+            if !agent_skill_refs
+                .iter()
+                .any(|reference| reference["id"] == "rss-generation")
+            {
+                agent_skill_refs.push(serde_json::json!({"id":"rss-generation"}));
+            }
+            let plan_json = crate::application::canonical_json(
+                &serde_json::to_value(plan).expect("ReadyStudyPlan serializes"),
+            );
+            agent_skill_refs.push(serde_json::json!({
+                "kind": "study-plan",
+                "sha256": hex::encode(Sha256::digest(plan_json.as_bytes())),
+                "modelContentHash": plan.model_content_hash,
+                "engineSnapshotId": plan.engine_snapshot_id,
+                "function": plan.function,
+            }));
+        }
         let staged = self
             .artifacts
             .store()
@@ -213,7 +308,7 @@ impl ScriptService {
             outputs_json: serde_json::to_string(&validation.outputs).unwrap(),
             diagnostics_json: validation.diagnostics.to_string(),
             agent_bundle_version: request.agent_bundle_version,
-            agent_skill_refs_json: serde_json::to_string(&request.agent_skill_refs).unwrap(),
+            agent_skill_refs_json: serde_json::to_string(&agent_skill_refs).unwrap(),
             created_at_ms: now_ms(),
         };
         let script = match self.repo.create(&user.id, record).await {

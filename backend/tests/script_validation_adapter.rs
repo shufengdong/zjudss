@@ -36,6 +36,7 @@ async fn static_validation_extracts_required_aliases_and_named_outputs_without_a
         ]
     );
     assert_eq!(result.outputs, ["summary", "voltage"]);
+    assert_eq!(result.called_functions, ["ds_radial_pf"]);
 }
 
 #[tokio::test]
@@ -55,6 +56,25 @@ async fn static_validation_accepts_the_eig_rs_single_result_destructuring_form()
     assert!(result.valid);
     assert_eq!(result.outputs, ["voltage"]);
     assert_eq!(result.required_aliases, expected_aliases);
+    assert_eq!(result.called_functions, ["ds_radial_pf"]);
+}
+
+#[tokio::test]
+async fn governed_call_detection_ignores_comments_strings_and_identifier_suffixes() {
+    let result = validate(
+        "# ds_fault_study(bus)\n\
+         note = \"ds_harmonic_study(bus)\";\n\
+         custom = my_ds_motor_dynamics(bus);\n\
+         fault = ds_fault_study(bus);\n\
+         voltage = ds_newton_raphson_pf(bus); // ds_radial_qsts(bus)\n",
+    )
+    .await;
+
+    assert!(result.valid);
+    assert_eq!(
+        result.called_functions,
+        ["ds_fault_study", "ds_newton_raphson_pf"]
+    );
 }
 
 #[tokio::test]
@@ -71,6 +91,7 @@ async fn static_validation_rejects_imports_paths_urls_and_external_reads() {
             result.diagnostics["code"],
             "script_external_dependency_rejected"
         );
+        assert!(result.called_functions.is_empty());
     }
 }
 
@@ -79,4 +100,5 @@ async fn static_validation_requires_a_named_dataframe_output() {
     let result = validate("print(1);").await;
     assert!(!result.valid);
     assert_eq!(result.diagnostics["code"], "script_output_required");
+    assert!(result.called_functions.is_empty());
 }
