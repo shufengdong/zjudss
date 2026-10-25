@@ -1,5 +1,5 @@
 {
-  "bundleVersion": "v3.0.0",
+  "bundleVersion": "v3.1.0",
   "skills": [
     {
       "id": "model-intake",
@@ -11,7 +11,9 @@
         "mapping"
       ],
       "requiredTools": [
-        "inspect_workspace"
+        "inspect_workspace",
+        "read_model_dataframe",
+        "modify_model"
       ],
       "engineContractVersion": "tensoreval-parquet-v3",
       "sources": [
@@ -19,7 +21,7 @@
         "docs/dss_to_rss.md"
       ],
       "path": "skills/model-intake.md",
-      "sha256": "57352e51821073c80a10cedd4840d03addc10dd529c6a6a94ef80581bb8edcbf"
+      "sha256": "9260edc27b685f34aa9fb8db5a97ab1d088a7968e1c95ae77aa86513286136c6"
     },
     {
       "id": "study-planning",

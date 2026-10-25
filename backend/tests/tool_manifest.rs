@@ -34,6 +34,7 @@ fn services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
         scope: principal.id.clone(),
         principal,
         model_patch: app.state.model_patch_service.clone(),
+        model_dataframes: app.state.model_dataframe_read_service.clone(),
         scripts: app.state.script_service.clone(),
         versions: app.state.version_service.clone(),
         runs: app.state.run_service.clone(),
@@ -50,7 +51,7 @@ fn services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
 
 #[test]
 fn manifest_allowed_tools_equal_runtime_registry() {
-    let mut manifest = AgentKnowledge::load_embedded("v3.0.0")
+    let mut manifest = AgentKnowledge::load_embedded("v3.1.0")
         .unwrap()
         .manifest
         .allowed_tools;
@@ -63,11 +64,11 @@ fn manifest_allowed_tools_equal_runtime_registry() {
 
     assert_eq!(
         runtime.len(),
-        16,
-        "runtime registry must contain 16 unique tools"
+        17,
+        "runtime registry must contain 17 unique tools"
     );
     runtime.dedup();
-    assert_eq!(runtime.len(), 16, "runtime tool names must be unique");
+    assert_eq!(runtime.len(), 17, "runtime tool names must be unique");
     assert_eq!(
         manifest, runtime,
         "manifest and runtime tool registries must be bidirectionally equal"

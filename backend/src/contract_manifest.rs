@@ -46,6 +46,9 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "invalid_dataset_page",
     "invalid_page",
     "dataframe_read_failed",
+    "model_scope_unavailable",
+    "invalid_model_query",
+    "model_query_output_too_large",
     "result_busy",
     "history_error",
     "history_page_invalid",
@@ -105,7 +108,7 @@ pub struct ContractManifest {
 }
 
 pub fn contract_manifest() -> Result<ContractManifest, KnowledgeError> {
-    let knowledge = AgentKnowledge::load_embedded("v3.0.0")?;
+    let knowledge = AgentKnowledge::load_embedded("v3.1.0")?;
     let mut skill_ids = knowledge
         .skill_index()
         .map(|skill| skill.id.clone())

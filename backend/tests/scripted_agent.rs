@@ -122,7 +122,7 @@ async fn scripted_tool_call_runs_registered_tool_and_persists_events() {
     );
     let trace = factory.trace();
     assert_eq!(trace[0].scenario_id, "storage");
-    assert_eq!(trace[0].tool_names.len(), 16);
+    assert_eq!(trace[0].tool_names.len(), 17);
     assert!(trace[0].system_prompt.contains("# Engine resources"));
     assert_eq!(trace[0].calls.len(), 2);
 }

@@ -365,6 +365,25 @@ impl From<ModelDataFrameReadError> for ApiError {
                 code: "draft_revision_conflict",
                 details: None,
             },
+            ModelDataFrameReadError::ModelScopeUnavailable => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "model_scope_unavailable",
+                details: None,
+            },
+            ModelDataFrameReadError::TableNotFound => Self::not_found("表不存在"),
+            ModelDataFrameReadError::InvalidModelQuery(_) => Self {
+                status: StatusCode::BAD_REQUEST,
+                message: error.to_string(),
+                code: "invalid_model_query",
+                details: None,
+            },
+            ModelDataFrameReadError::ModelQueryOutputTooLarge => Self {
+                status: StatusCode::PAYLOAD_TOO_LARGE,
+                message: error.to_string(),
+                code: "model_query_output_too_large",
+                details: None,
+            },
             ModelDataFrameReadError::InvalidPage(_) => Self {
                 status: StatusCode::BAD_REQUEST,
                 message: error.to_string(),

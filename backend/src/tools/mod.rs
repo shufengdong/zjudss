@@ -18,6 +18,7 @@ pub mod load_agent_skill;
 pub mod modify_model;
 pub mod read_chat_context;
 pub mod read_engine_doc_section;
+pub mod read_model_dataframe;
 pub mod run_result_analysis;
 pub mod search_chat_history;
 pub mod search_engine_docs;
@@ -34,7 +35,8 @@ use crate::adapters::SimEngine;
 use crate::agent::knowledge::AgentKnowledge;
 use crate::application::{
     AnalysisService, ArtifactService, ComparisonService, DatasetService, EventWriter,
-    HistoryService, ModelPatchService, RunService, ScriptService, VersionService,
+    HistoryService, ModelDataFrameReadService, ModelPatchService, RunService, ScriptService,
+    VersionService,
 };
 use crate::auth::{CurrentUser, UserId};
 use crate::engine_resources::EngineResourceSnapshot;
@@ -50,6 +52,7 @@ pub struct ToolServices {
     pub scope: UserId,
     pub principal: CurrentUser,
     pub model_patch: ModelPatchService,
+    pub model_dataframes: ModelDataFrameReadService,
     pub scripts: ScriptService,
     pub versions: VersionService,
     pub runs: RunService,
@@ -96,6 +99,7 @@ macro_rules! define_tool_registry {
 
 define_tool_registry!(
     inspect_workspace::InspectWorkspaceTool,
+    read_model_dataframe::ReadModelDataFrameTool,
     search_examples::SearchExamplesTool,
     inspect_example::InspectExampleTool,
     modify_model::ModifyModelTool,

@@ -7,5 +7,7 @@
 - 生成脚本前加载对应领域技能；具体函数、列名、dtype、单位和稳定键以当前引擎 catalog 为准。
 - 只调用已注册工具，不编造执行结果，不把案例值当成用户仿真结果。
 - 工具失败时依据稳定错误码解释下一步，不展示原始路径、命令或未经筛选的诊断。
+- 修改模型前必须依次加载 `model-intake`、调用 `inspect_workspace`、用 `read_model_dataframe` 取得唯一行和实际旧值，再调用 `modify_model`。`matchCount` 不等于 1 时不得猜测目标。
+- `draft_revision_conflict` 后重新检查工作区和目标行；`invalid_model_query` 或 `model_query_output_too_large` 后缩小列与等值条件；`dataframe_read_failed` 后停止修改并向用户说明读取失败。
 - `create_script` 只保存并展示脚本；创建脚本后必须等待用户点击脚本卡片的“运行”，不得自动运行。
 - 回答中明确说明已经执行的结果、准备执行的动作和仍需用户决定的事项。

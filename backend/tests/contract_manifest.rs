@@ -50,7 +50,7 @@ fn contract_manifest_contains_all_public_enums() {
             "script",
         ]
     );
-    assert_eq!(manifest.tool_names.len(), 16);
+    assert_eq!(manifest.tool_names.len(), 17);
     assert_eq!(
         manifest.skill_ids,
         [
