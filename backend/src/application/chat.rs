@@ -51,6 +51,7 @@ pub struct ChatService {
     comparisons: crate::application::ComparisonService,
     history: crate::application::HistoryService,
     artifact_service: crate::application::ArtifactService,
+    study_planning: crate::application::StudyPlanningService,
 }
 
 impl ChatService {
@@ -75,6 +76,7 @@ impl ChatService {
             comparisons: state.comparison_service.clone(),
             history: state.history_service.clone(),
             artifact_service: state.artifact_service.clone(),
+            study_planning: state.study_planning_service.clone(),
         }
     }
 
@@ -104,6 +106,10 @@ impl ChatService {
             engine_snapshot: self.engine_snapshot.clone(),
             agent_knowledge: self.agent_knowledge.clone(),
             loaded_skills: Arc::new(tokio::sync::Mutex::new(BTreeSet::new())),
+            study_planning: self.study_planning.clone(),
+            ready_study_plans: Arc::new(tokio::sync::Mutex::new(
+                tools::ReadyStudyPlanRegistry::default(),
+            )),
             datasets: self.datasets.clone(),
             analysis: self.analysis.clone(),
             comparisons: self.comparisons.clone(),

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 use zjudss::adapters::StubEngine;
 use zjudss::application::EventWriter;
+use zjudss::application::study_planning::{ResolvedSolver, StudyRequest};
 use zjudss::application::{ModelChange, ModelPatch, PublishDraftRequest, UploadBatch, UploadFile};
 use zjudss::auth::CurrentUser;
 use zjudss::db::models::DraftRef;
@@ -36,6 +37,8 @@ fn tool_services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
         engine_snapshot: app.state.engine_snapshot.clone(),
         agent_knowledge: app.state.agent_knowledge.clone(),
         loaded_skills: Arc::new(Mutex::new(BTreeSet::new())),
+        study_planning: app.state.study_planning_service.clone(),
+        ready_study_plans: Arc::new(Mutex::new(Default::default())),
         datasets: app.state.dataset_service.clone(),
         analysis: app.state.analysis_service.clone(),
         comparisons: app.state.comparison_service.clone(),
@@ -170,6 +173,121 @@ async fn a_new_draft_copies_the_active_version_and_replaces_only_selected_tables
             .map(|table| table.table_name.as_str())
             .collect::<Vec<_>>(),
         vec!["bus", "line"]
+    );
+}
+
+#[tokio::test]
+async fn plan_study_issues_ready_ids_only_and_keeps_them_request_local() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let empty_session = app
+        .state
+        .session_repo
+        .create(&user.id, "empty study", 1)
+        .await
+        .unwrap();
+    let empty_services = tool_services_for_session(&app, user.clone(), empty_session.id);
+    empty_services
+        .loaded_skills
+        .lock()
+        .await
+        .insert("study-planning".into());
+    let mut context = ToolContext::new();
+    let non_ready = tools::plan_study::PlanStudyTool::new(empty_services)
+        .call(
+            &mut context,
+            tools::plan_study::Args {
+                request: StudyRequest::StaticPowerFlow {
+                    solver_preference: Default::default(),
+                    requested_results: vec![],
+                },
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(non_ready["status"], "missing_model_data");
+    assert!(non_ready.get("studyPlanId").is_none());
+
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "ready study", 1)
+        .await
+        .unwrap();
+    let bus = apply_csv(
+        &app,
+        session.id,
+        "study-bus",
+        "bus.csv",
+        b"id\nsource\nb1\n",
+        None,
+    )
+    .await;
+    let line = apply_csv(
+        &app,
+        session.id,
+        "study-line",
+        "line.csv",
+        b"name,bus_from,bus_to\nl1,source,b1\n",
+        Some(bus),
+    )
+    .await;
+    let source = apply_csv(
+        &app,
+        session.id,
+        "study-source",
+        "voltage_source.csv",
+        b"name,bus\nsource,source\n",
+        Some(line),
+    )
+    .await;
+    app.state
+        .version_service
+        .publish(
+            &user,
+            session.id,
+            PublishDraftRequest {
+                expected_draft_id: source.id,
+                expected_draft_revision: source.revision,
+                client_publish_id: "publish-ready-study".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let services = tool_services_for_session(&app, user.clone(), session.id);
+    services
+        .loaded_skills
+        .lock()
+        .await
+        .insert("study-planning".into());
+    let ready = tools::plan_study::PlanStudyTool::new(services.clone())
+        .call(
+            &mut context,
+            tools::plan_study::Args {
+                request: StudyRequest::StaticPowerFlow {
+                    solver_preference: Default::default(),
+                    requested_results: vec![],
+                },
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(ready["status"], "ready");
+    assert_eq!(ready["solver"], serde_json::json!(ResolvedSolver::Radial));
+    let plan_id = ready["studyPlanId"].as_str().unwrap();
+    assert!(plan_id.starts_with("study-plan:"));
+    let stored = services.ready_study_plans.lock().await.get(plan_id);
+    assert_eq!(stored.unwrap().function, "ds_radial_pf");
+
+    let another_request = tool_services_for_session(&app, user, session.id);
+    assert!(
+        another_request
+            .ready_study_plans
+            .lock()
+            .await
+            .get(plan_id)
+            .is_none()
     );
 }
 

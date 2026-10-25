@@ -41,6 +41,8 @@ fn services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
         engine_snapshot: app.state.engine_snapshot.clone(),
         agent_knowledge: app.state.agent_knowledge.clone(),
         loaded_skills: Arc::new(Mutex::new(BTreeSet::new())),
+        study_planning: app.state.study_planning_service.clone(),
+        ready_study_plans: Arc::new(Mutex::new(Default::default())),
         datasets: app.state.dataset_service.clone(),
         analysis: app.state.analysis_service.clone(),
         comparisons: app.state.comparison_service.clone(),
@@ -64,14 +66,40 @@ fn manifest_allowed_tools_equal_runtime_registry() {
 
     assert_eq!(
         runtime.len(),
-        17,
-        "runtime registry must contain 17 unique tools"
+        18,
+        "runtime registry must contain 18 unique tools"
     );
     runtime.dedup();
-    assert_eq!(runtime.len(), 17, "runtime tool names must be unique");
+    assert_eq!(runtime.len(), 18, "runtime tool names must be unique");
     assert_eq!(
         manifest, runtime,
         "manifest and runtime tool registries must be bidirectionally equal"
+    );
+}
+
+#[tokio::test]
+async fn registered_tools_preserve_domain_error_feedback_and_metadata() {
+    let app = TestApp::spawn().await;
+    let registered = tools::build_tools(services(&app, principal("alice")));
+    let planner = registered
+        .iter()
+        .find(|tool| tool.name() == "plan_study")
+        .expect("plan_study registered");
+    let result = planner
+        .execute(
+            r#"{"request":{"studyType":"static_power_flow"}}"#.into(),
+            &mut ToolContext::new(),
+        )
+        .await;
+    let error = result.error().expect("missing skill should fail");
+
+    assert_eq!(error.code(), Some("skill_required"));
+    assert_eq!(error.retryable(), Some(false));
+    assert_ne!(error.model_feedback(), Some("the tool failed"));
+    assert!(
+        error
+            .model_feedback()
+            .is_some_and(|feedback| feedback.contains("skill_required"))
     );
 }
 

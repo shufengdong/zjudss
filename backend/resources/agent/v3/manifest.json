@@ -6,6 +6,7 @@
   "allowedTools": [
     "inspect_workspace",
     "read_model_dataframe",
+    "plan_study",
     "search_examples",
     "inspect_example",
     "modify_model",
