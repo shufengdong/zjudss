@@ -1,5 +1,5 @@
 import type { Message } from '../types'
-import { ApiError, getCurrentUser } from './client'
+import { ApiError, apiUrl, getCurrentUser } from './client'
 
 export interface SseControlEvent {
   type: 'resync-required'
@@ -22,7 +22,7 @@ export interface EventCallbacks {
  * opened，再读取 REST 快照，期间到达的事件交给 reducer 缓存和去重。
  */
 export function subscribeEvents(sessionId: string, callbacks: EventCallbacks): EventSubscription {
-  const source = new EventSource(`/api/sessions/${sessionId}/events`)
+  const source = new EventSource(apiUrl(`/api/sessions/${sessionId}/events`))
   let opened = false
   let probing = false
   let stopped = false

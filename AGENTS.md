@@ -37,7 +37,7 @@ cd ..
 ```
 
 生产启动必须配置 `TENSOREVAL_BIN`、`SPARROWZZ_DIR` 和 LLM secret；不会自动回退到测试 stub。具体配置
-见 `backend/.env.example`。候选发布的真实依赖门禁见 `docs/v3-deployment.md`。
+见 `docs/v3-deployment.md`。候选发布的真实依赖门禁也见该文档。
 
 ## 项目结构与权威来源
 

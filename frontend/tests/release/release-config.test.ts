@@ -10,7 +10,7 @@ describe('release Playwright configuration', () => {
       ? releaseConfig.webServer
       : [releaseConfig.webServer]
 
-    expect(servers[0]?.command).toBe('cargo run --quiet --bin backend')
+    expect(servers[0]?.command).toBe('cargo run --quiet --bin zjudss')
   })
 
   test('records test IDs and immutable agent and engine identities', () => {

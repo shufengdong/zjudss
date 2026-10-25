@@ -9,6 +9,7 @@ migration。`backend/resources/init_users.csv` 必须为 `ID,NAME`；初始密�
 ## Required configuration
 
 生产必须配置 `DATABASE_URL`、持久化 `DATA_DIR`、`TENSOREVAL_BIN`、`SPARROWZZ_DIR` 和 DeepSeek secret。
+监听地址由 `BIND_ADDR` 设置，默认 `127.0.0.1:8080`，DellServer 使用 `127.0.0.1:809`。
 binary 必须支持命名 Parquet input、`--result-dir`、`--output-format parquet`、两种模型 import profile 与脚本
 校验；资源目录必须包含受支持 schema 的 catalog、可安全读取的文档与案例。启动从当前目录动态计算资源
 snapshot，不固定 eig-rs/sparrowzz commit、binary SHA、资源 hash 或案例数量。生产没有 stub 回退，也不会自动
@@ -50,6 +51,32 @@ npm run build
 默认限制：Agent 实例/用户/session 为 8/2/1，等待 32，引擎进程 4；单文件/批次 50/500 MiB；每用户
 20,000 artifacts / 20 GiB，80% 告警；数据页最大 500。
 
+## DellServer 部署
+
+访问地址 https://sgool.zju.edu.cn/zjudss/，文件仅放在 /home/sgoolweb 下，systemd unit 除外：
+
+- /home/sgoolweb/zjudss/：zjudss、tensoreval、sparrowzz/ 和运行配置 .env；启动后生成 app.db 与 data/。
+- /home/sgoolweb/zjudss/www/：前端 index.html 和 assets/。
+- /etc/systemd/system/zjudss.service：安装仓库 deploy/zjudss.service，使用 sgoolweb 账号运行。
+
+后端目录需要 sgoolweb 可读写，.env 权限为 0600，由 systemd 加载；引擎路径必须指向上述实际文件。
+不保留 bin/、engine/、current、releases、构建信息、校验摘要、更新配置或更新脚本。
+Nginx 由管理员维护：静态根为 /home/sgoolweb/zjudss/www/，/zjudss/api/ 转发到 http://127.0.0.1:809/api/，
+SSE 关闭缓冲。前端构建使用 VITE_BASE_PATH=/zjudss/、VITE_API_BASE_PATH=/zjudss/api。
+
+安装 unit 后执行 systemctl daemon-reload 与 systemctl enable --now zjudss.service。
+809 属于低位端口，unit 通过 CAP_NET_BIND_SERVICE 允许 sgoolweb 绑定；.env 中的同名设置会覆盖 unit 的 Environment。
+启动会通过 adapter 验证 tensoreval 的 Parquet、导入和脚本校验能力；不兼容时应更新引擎。
+
+后续在当前 Linux x86_64 开发机运行 `./scripts/deploy`，默认连接 SSH 别名 DellServer；
+也可用 `./scripts/deploy 用户@主机` 指定目标。脚本本地执行 Cargo release、npm ci 和前端构建，
+只经 SSH 上传 zjudss 与 www/，沿用远端 .env、tensoreval、sparrowzz/、数据库和 data/。
+上传完成后通过 SSH 终端执行 sudo 停服、替换和启动；健康检查失败恢复旧程序与前端，持久化数据不回退。
+临时上传目录会在正常完成或成功回退后清理。无需在目标机保存更新脚本、配置或构建工具。
+编译前准备真实 backend/resources/init_users.csv；本机与目标机需兼容 CPU、glibc 和 SQLite 运行库。
+可通过 DEPLOY_DIR、SERVICE、HEALTH_URL、HEALTH_TIMEOUT、VITE_BASE_PATH 和 VITE_API_BASE_PATH 覆盖默认值。
+普通 CI 继续使用测试 CSV；真实依赖发布门禁使用 INIT_USERS_CSV Secret。
+
 ## Deterministic gate
 
 ```bash
@@ -69,7 +96,7 @@ git diff --check
 
 ## Candidate real-dependency gate
 
-受保护环境只提供 `DEEPSEEK_API_KEY`。workflow 每次检出 eig-rs 默认分支（含 submodule），构建当前
+受保护环境提供 `DEEPSEEK_API_KEY` 与仓库级 `INIT_USERS_CSV`。workflow 每次检出 eig-rs 默认分支（含 submodule），构建当前
 `tensoreval`，设置 `TENSOREVAL_BIN/SPARROWZZ_DIR` 并运行：
 
 ```bash

@@ -1,0 +1,23 @@
+[Unit]
+Description=ZJU DSS V3
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=sgoolweb
+Group=sgoolweb
+WorkingDirectory=/home/sgoolweb/zjudss
+EnvironmentFile=/home/sgoolweb/zjudss/.env
+Environment=DATABASE_URL=sqlite://app.db DATA_DIR=data SESSION_COOKIE_SECURE=true
+Environment=BIND_ADDR=127.0.0.1:809 TENSOREVAL_BIN=/home/sgoolweb/zjudss/tensoreval SPARROWZZ_DIR=/home/sgoolweb/zjudss/sparrowzz
+ExecStart=/home/sgoolweb/zjudss/zjudss
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

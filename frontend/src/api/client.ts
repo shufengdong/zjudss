@@ -5,6 +5,9 @@ import type {
   SimulationRun, StorageUsage, User, VersionDeletionPreview, Workspace,
 } from '../types'
 import { emitAuthenticationRequired } from '../state/auth'
+import { normalizeApiBasePath } from '../../api-config'
+
+export const apiUrl = (path: string) => `${normalizeApiBasePath(import.meta.env.VITE_API_BASE_PATH)}${path.slice(4)}`
 
 export class ApiError extends Error {
   constructor(public status:number, message:string, public code?:string, public details?:unknown) {
@@ -20,7 +23,7 @@ async function errorFrom(res:Response) {
 export async function request<T>(url:string,init:RequestInit={},parse:(r:Response)=>Promise<T>=(r)=>r.json() as Promise<T>,reportAuthentication=true):Promise<T>{
   const headers=new Headers(init.headers)
   if(init.body!==undefined&&!(init.body instanceof FormData)&&!headers.has('Content-Type')) headers.set('Content-Type','application/json')
-  const res=await fetch(url,{...init,headers})
+  const res=await fetch(apiUrl(url),{...init,headers})
   if(!res.ok) {
     const error=await errorFrom(res)
     if(reportAuthentication&&res.status===401) emitAuthenticationRequired()
@@ -81,7 +84,7 @@ export const getComparison=(id:string)=>request<RunComparison>(`/api/run-compari
 export const deleteDataset=(id:string)=>request<{datasetId:string;tombstone:unknown}>(`/api/datasets/${id}`,{method:'DELETE'})
 export const getStorageUsage=()=>request<StorageUsage>('/api/storage-usage')
 export async function downloadDataset(id:string,name='dataset'){
-  const res=await fetch(`/api/datasets/${id}/download`); if(!res.ok){const error=await errorFrom(res);if(res.status===401)emitAuthenticationRequired();throw error}
+  const res=await fetch(apiUrl(`/api/datasets/${id}/download`)); if(!res.ok){const error=await errorFrom(res);if(res.status===401)emitAuthenticationRequired();throw error}
   return {blob:await res.blob(),filename:`${name}.parquet`}
 }
 
@@ -113,7 +116,7 @@ export const getModelDataFrameRows = (
 
 export async function downloadModelDataFrame(source:ModelDataFrameSource, signal?:AbortSignal) {
   const url = `${modelDataFramePath(source, '/download')}${params(modelDraftQuery(source))}`
-  const res = await fetch(url, { signal })
+  const res = await fetch(apiUrl(url), { signal })
   if (!res.ok) {
     const error = await errorFrom(res)
     if (res.status === 401) emitAuthenticationRequired()
