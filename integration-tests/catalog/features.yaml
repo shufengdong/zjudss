@@ -40,7 +40,6 @@
     - "error:storage_quota_exceeded"
     - "error:upload_too_large"
     - "error:idempotency_conflict"
-    - "error:draft_revision_conflict"
     - "error:model_import_unsupported"
     - "error:model_import_resolution_required"
     - "error:invalid_script"
@@ -100,7 +99,6 @@
     - "error:artifact_error"
     - "error:old_value_mismatch"
     - "error:row_not_unique"
-    - "error:table_not_found"
     - "error:unit_incompatible"
     - "error:workspace_error"
 
@@ -280,6 +278,114 @@
     - "tool:inspect_workspace"
     - "tool:modify_model"
 
+- id: MODEL-DATAFRAME-READ-001
+  source: docs/integration-testing-design.md#coverage-matrix
+  title: Active draft and historical model DataFrames are readable without lifecycle mutation
+  layers: [repository, api, application, agent, browser]
+  lanes: [pr]
+  tests:
+    - runner: rust
+      file: backend/src/application/dataframe_reader.rs
+      name: cursor_is_bound_to_resource_kind_identity_hash_and_revision
+    - runner: rust
+      file: backend/src/application/dataframe_reader.rs
+      name: projection_rejects_unknown_and_duplicate_columns
+    - runner: rust
+      file: backend/src/application/dataframe_reader.rs
+      name: zero_rows_and_nested_list_values_have_stable_json_pages
+    - runner: rust
+      file: backend/src/application/model_dataframes.rs
+      name: typed_predicates_match_supported_arrow_scalars_exactly
+    - runner: rust
+      file: backend/src/application/model_dataframes.rs
+      name: typed_predicates_reject_lossy_or_complex_values
+    - runner: rust
+      file: backend/src/application/model_dataframes.rs
+      name: query_shape_enforces_column_filter_and_limit_bounds
+    - runner: rust
+      file: backend/tests/model_dataframe_reads.rs
+      name: version_dataframe_metadata_rows_projection_cursor_and_download_are_read_only
+    - runner: rust
+      file: backend/tests/model_dataframe_reads.rs
+      name: historical_version_dataframe_is_readable_without_activation_and_deleted_version_is_not
+    - runner: rust
+      file: backend/tests/model_dataframe_reads.rs
+      name: draft_reads_require_exact_owner_id_and_revision_across_metadata_rows_and_download
+    - runner: rust
+      file: backend/tests/model_dataframe_reads.rs
+      name: model_dataframe_ids_are_private_and_missing_or_foreign_ids_are_indistinguishable
+    - runner: rust
+      file: backend/tests/workspace_tools.rs
+      name: read_model_dataframe_reads_active_and_exact_draft_without_paths
+    - runner: rust
+      file: backend/tests/workspace_tools.rs
+      name: read_model_dataframe_reports_exact_match_count_beyond_return_limit
+    - runner: rust
+      file: backend/tests/workspace_tools.rs
+      name: read_model_dataframe_rejects_stale_draft_complex_predicates_and_oversized_output
+    - runner: rust
+      file: backend/tests/workspace_tools.rs
+      name: agent_reads_unique_old_value_before_modify_model_advances_only_the_draft
+    - runner: vitest
+      file: frontend/src/hooks/useModelDataFrame.test.ts
+      name: merges pages and permits only one load-more request at a time
+    - runner: vitest
+      file: frontend/src/hooks/useModelDataFrame.test.ts
+      name: resets on source or projection changes and ignores late responses
+    - runner: vitest
+      file: frontend/src/hooks/useModelDataFrame.test.ts
+      name: retains loaded rows and exposes conflict after a stale draft response
+    - runner: vitest
+      file: frontend/src/hooks/useModelDataFrame.test.ts
+      name: ignores an earlier reload generation and delegates download for the current source
+    - runner: vitest
+      file: frontend/src/components/model/ModelDataFrameWorkbench.test.tsx
+      name: shows a read-only table workbench without result-only controls
+    - runner: vitest
+      file: frontend/src/components/model/ModelDataFrameWorkbench.test.tsx
+      name: reloads the workspace and relocates the same draft table after conflict
+    - runner: vitest
+      file: frontend/src/components/model/ModelDataFrameWorkbench.test.tsx
+      name: closes with a notice when the conflicted draft table disappeared
+    - runner: vitest
+      file: frontend/src/components/workspace/WorkspacePanel.test.tsx
+      name: opens every active and draft table through named buttons
+    - runner: vitest
+      file: frontend/src/components/workspace/WorkspacePanel.test.tsx
+      name: expands historical versions for viewing without activation
+    - runner: vitest
+      file: frontend/src/api/client.test.ts
+      name: uses the version dataframe id without draft query fields
+    - runner: vitest
+      file: frontend/src/api/client.test.ts
+      name: always sends the exact draft identity and revision
+    - runner: playwright
+      file: integration-tests/e2e/v3-workflows.spec.ts
+      name: active draft and historical model tables are readable without changing lifecycle state
+    - runner: playwright
+      file: integration-tests/e2e/auth-isolation.spec.ts
+      name: two users cannot enumerate or guess each other session, message, SSE, run, or dataset resources
+    - runner: playwright
+      file: integration-tests/e2e/responsive-accessibility.spec.ts
+      name: responsive narrow drawers and model tables remain keyboard reachable without horizontal overflow
+  assertions: [model rows are read-only and user-scoped, historical reads do not activate versions, draft reads bind the exact revision, paging and projection preserve resource identity, agent predicates and output are bounded]
+  fixtures: [published and historical model versions, mutable draft, zero-row and list-valued Parquet tables, two fixed users]
+  contracts:
+    - "route:GET /api/model-dataframes/{id}"
+    - "route:GET /api/model-dataframes/{id}/rows"
+    - "route:GET /api/model-dataframes/{id}/download"
+    - "route:GET /api/draft-dataframes/{id}"
+    - "route:GET /api/draft-dataframes/{id}/rows"
+    - "route:GET /api/draft-dataframes/{id}/download"
+    - "tool:read_model_dataframe"
+    - "error:draft_revision_conflict"
+    - "error:table_not_found"
+    - "error:invalid_page"
+    - "error:dataframe_read_failed"
+    - "error:model_scope_unavailable"
+    - "error:invalid_model_query"
+    - "error:model_query_output_too_large"
+
 - id: VERSION-001
   source: docs/integration-testing-design.md#coverage-matrix
   title: Version publication activation and impact-checked deletion are explicit
@@ -410,7 +516,7 @@
       file: integration-tests/e2e/v3-workflows.spec.ts
       name: one result can be deleted without deleting its run or sibling result
     - runner: rust
-      file: backend/src/application/datasets.rs
+      file: backend/src/application/dataframe_reader.rs
       name: utf8_view_values_are_returned_as_json_strings
   assertions: [metadata rows and download are readable, dataset details remain centered across content widths, Arrow Utf8View values page as JSON strings, deleting one result keeps siblings and run]
   fixtures: [multi-result run]
@@ -514,7 +620,7 @@
   tests:
     - runner: playwright
       file: integration-tests/e2e/responsive-accessibility.spec.ts
-      name: narrow drawers remain keyboard reachable without horizontal overflow
+      name: responsive narrow drawers and model tables remain keyboard reachable without horizontal overflow
   assertions: [drawers are keyboard reachable, page has no horizontal overflow]
   fixtures: [narrow viewport]
 

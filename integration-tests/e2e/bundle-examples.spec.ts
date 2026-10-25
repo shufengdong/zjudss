@@ -38,6 +38,7 @@ test('single-Solve bundles become drafts while repeated Solve and specialist lif
   const accepted=await workspace(api,session)
   expect(accepted.draft.tables).toHaveLength(21)
   const identity={id:accepted.draft.id,revision:accepted.draft.revision,tables:accepted.draft.tables.map((table:any)=>table.contentHash)}
+  await expect(page.getByText(`修订 ${accepted.draft.revision}`,{exact:true})).toBeVisible()
 
   for(const name of ['unsupported-multi-solve.rssbundle','unsupported-specialist.rssbundle']){
     const responsePromise=page.waitForResponse(isCreateImport)

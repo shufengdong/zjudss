@@ -14,19 +14,21 @@
 | 脚本 | complete | 上传/Agent 创建、静态校验、预览/全文/复制、无编辑删除 |
 | 运行 | complete | 仅按钮创建、active race、冻结快照、私有输入树、多 Parquet 结果 |
 | 结果与派生 | complete | 单结果删除、分析、物化视图、比较、tombstone 血缘 |
-| 前端 | complete | 三列/窄屏、运行记录、数据表/图表、登录用户菜单 |
-| Agent V3 | complete | 16 工具、6 skills、按需引擎知识、无运行/发布/删除权 |
+| 前端 | complete | 三列/窄屏、运行记录、结果数据表/图表、active/draft/历史模型表只读工作台、登录用户菜单 |
+| Agent V3 | complete | 17 工具、6 skills、模型行读取、按需引擎知识、无运行/发布/删除权 |
 | 发布门禁 | complete | deterministic Rust/Vitest/build/Playwright/coverage；真实依赖另行执行 |
 
 ## Runtime contracts
 
 - 后端 Cargo package 与 library crate 均为 `zjudss`；`backend/` 只是仓库目录名，Rust 调用点使用
   `zjudss::`。
-- Agent bundle：`v3.0.0`，目录 `backend/resources/agent/v3`。
+- Agent bundle：`v3.1.0`，目录 `backend/resources/agent/v3`。
 - Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `SPARROWZZ_DIR` 动态发现并验证
   `dss/docs/catalog` 与 `dss/rssbundle` manifest，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
-- 公共合同：41 条路由、9 类消息、16 个工具、6 个 skills、8 个上传来源、6 类视图。
+- 公共合同：48 条路由、9 类消息、17 个工具、6 个 skills、8 个上传来源、6 类视图。
 - 模型表：adapter 固定输出 21 张规范 DataFrame，包含合法的零行表。
+- 模型表读取：active、准确 draft revision 和历史版本均支持元数据、分页投影与 Parquet 下载；Agent 可通过
+  有界等值查询读取实际行后再修改，读取不改变模型生命周期。
 
 ## Backend dependency baseline
 
@@ -50,7 +52,7 @@
 
 ## Hard boundaries
 
-所有 tensoreval 调用必须经过 adapter；所有 repository 查询带 `UserId`；所有结果使用 Snappy Parquet；浏览器与
+所有 tensoreval 调用必须经过 adapter；所有 repository 查询带 `UserId`；所有模型和结果正文使用 Snappy Parquet；浏览器与
 LLM 不接触物理路径。脚本创建不运行，模型修改不发布，案例应用不发布，单条聊天消息不可删除，只能删除整个
 会话。运行记录本身不可删除；历史版本删除和单结果删除使用各自明确规则。
 
@@ -68,8 +70,8 @@ Markdown、单篇 4 MiB、文档合计 64 MiB、2,048 个案例、每案例 10,0
 
 ## Verification
 
-后端全量测试覆盖 schema、adapter、导入、版本、脚本、运行、删除、派生、比较、认证、恢复和配额。前端
-Vitest 覆盖公共类型、state、workspace、脚本卡、运行与数据工作台。Playwright 覆盖真实浏览器到
+后端全量测试覆盖 schema、adapter、导入、版本、模型表读取、脚本、运行、删除、派生、比较、认证、恢复和配额。前端
+Vitest 覆盖公共类型、state、workspace、模型表、脚本卡、运行与数据工作台。Playwright 覆盖真实浏览器到
 Vite/Axum/SQLite/CAS 的身份、导入、分层案例目录与窄屏详情、显式运行、派生血缘、删除、恢复、恶意 ZIP、配额和无障碍。
 最终命令与真实 DeepSeek/tensoreval 候选门禁见部署文档。
 

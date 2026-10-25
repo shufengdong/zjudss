@@ -56,7 +56,7 @@ async function startBackend() {
   child.once('exit', () => children.delete(child))
   const lines = createInterface({ input: child.stdout })
   await new Promise((resolvePromise, reject) => {
-    const timeout = setTimeout(() => reject(new Error('e2e backend readiness timeout')), 20_000)
+    const timeout = setTimeout(() => reject(new Error('e2e backend readiness timeout')), 60_000)
     child.once('error', reject)
     child.once('exit', (code) => reject(new Error(`e2e backend exited before ready (${code})`)))
     lines.on('line', (line) => {

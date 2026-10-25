@@ -36,7 +36,7 @@ describe('WorkspacePanel',()=>{
     vi.mocked(listVersions).mockResolvedValue([version])
     const open=vi.fn()
     render(<WorkspacePanel sessionId="s" workspace={{id:'w',sessionId:'s',active:null,draft:null,activeModelImports:[]}} imports={[]} onReload={vi.fn()} notify={vi.fn()} onOpenDataFrame={open}/>)
-    const expand=await screen.findByRole('button',{name:'展开版本 v9 的表'})
+    const expand=await screen.findByRole('button',{name:'版本 v9 · 1 表'})
     fireEvent.click(expand)
     const view=await screen.findByRole('button',{name:'查看 line'})
     fireEvent.click(view)

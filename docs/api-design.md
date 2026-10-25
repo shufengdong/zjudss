@@ -31,6 +31,12 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 | POST | `/api/sessions/{id}/scripts/text` | 以文本创建脚本 |
 | GET | `/api/scripts/{id}` | 懒加载脚本全文 |
 | GET | `/api/sessions/{id}/workspace` | active、draft、导入状态 |
+| GET | `/api/model-dataframes/{id}` | 已发布版本表的只读元数据 |
+| GET | `/api/model-dataframes/{id}/rows` | 已发布版本表的 cursor 分页与列投影 |
+| GET | `/api/model-dataframes/{id}/download` | 下载已发布版本表的 Parquet |
+| GET | `/api/draft-dataframes/{id}` | 指定草稿 revision 的只读表元数据 |
+| GET | `/api/draft-dataframes/{id}/rows` | 指定草稿 revision 的 cursor 分页与列投影 |
+| GET | `/api/draft-dataframes/{id}/download` | 下载指定草稿 revision 的 Parquet |
 | GET/POST | `/api/sessions/{id}/versions` | 历史/显式生成版本 |
 | GET/DELETE | `/api/versions/{id}` | 详情/带 impact token 删除 |
 | POST | `/api/versions/{id}/activate` | 激活历史版本；草稿需确认放弃 |
@@ -54,6 +60,13 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 
 发布请求携带 `expectedDraftId`、`expectedDraftRevision`、`clientPublishId`。成功冻结版本、清空草稿并自动激活。
 激活历史版本只移动 active 指针；存在草稿时必须提交 `discardDraft=true` 以及准确 expected draft。
+
+模型版本表路由只依赖不可变的 `modelDataframeId`。草稿表的三个路由都必须提交 `draftId` 与
+`expectedDraftRevision`；任一草稿表变化后，旧 revision 返回 `409 draft_revision_conflict`。rows 支持
+`limit=1..500`、资源绑定的 opaque cursor 和逗号分隔的 `columns` 投影，响应为
+`{resourceId,columns,rows,nextCursor,diagnostics}`。元数据包含 scope、ownerId、revision（仅草稿）、表名、
+行数、大小、列 schema、schema hash 与 content hash。download 返回原始 Snappy Parquet。读取不会激活版本、
+推进草稿、增加 artifact 引用或创建结果数据集；不存在、已删除或跨用户资源统一返回 404。
 
 ## Example catalog
 
@@ -85,6 +98,6 @@ active，重新检查脚本静态有效性和所需 DataFrame alias，再异步�
 `comparison`、`script`。运行关联字段统一为 `runId`。成功的 `create_script` tool-call 和 `script` 消息是脚本生成的持久成功事实；
 后续模型收尾失败不追加通用 Agent 失败，缺少 assistant 收尾时由服务端补充检查并点击“运行”的提示。
 
-主要稳定错误包括认证/隔离、配额与上传、导入与草稿冲突、脚本校验/兼容、active race、运行队列、版本删除
+主要稳定错误包括认证/隔离、配额与上传、导入与草稿冲突、模型表分页/读取/受控查询、脚本校验/兼容、active race、运行队列、版本删除
 影响变化、结果 busy、分析/比较/视图校验、历史索引不可用、engine snapshot/contract 不匹配。权威枚举由
 `cargo run --bin contract-manifest` 产生，并由功能目录逐项覆盖。

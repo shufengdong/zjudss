@@ -34,6 +34,11 @@ content hash、脚本 artifact/hash、engine contract、Agent bundle/skills。�
 所有 repository 查询显式接收 `UserId`，通过 session 连接验证所有权。错误 ID 与跨用户 ID 都返回
 `RepoError::NotFound`。storage scope ID 只来自认证 principal，不接收客户端值。
 
+模型表只读查询从 `model_dataframes -> model_versions -> workspaces -> sessions` 或
+`draft_dataframes -> workspace_drafts -> workspaces -> sessions` 验证所有权。草稿查询还比较调用方提交的
+draft ID 和 revision：只有已确认属于当前用户的资源才可返回 revision 冲突，外部 ID 仍为 404。读取仅解析
+现有 artifact，不更新 active 指针、draft revision、artifact 引用或任何业务表；本功能不增加 migration。
+
 ## Artifact references
 
 commit 在一个 immediate transaction 中检查配额、去重并增加引用；发布 blob 使用原子 rename。导入 apply、

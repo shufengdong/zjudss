@@ -1,4 +1,5 @@
 import type { APIRequestContext } from '@playwright/test'
+import { resolve } from 'node:path'
 import { test, expect } from './fixtures'
 import { directApi, resetBackend } from './helpers/server'
 import { createReadySession, uploadScriptAndRun } from './helpers/journeys'
@@ -31,6 +32,19 @@ test('two users cannot enumerate or guess each other session, message, SSE, run,
   const aliceDatasets = (await (await alice.api.get(`/api/runs/${run.id}/datasets`)).json()).datasets
   expect(aliceDatasets).toHaveLength(1)
   const datasetId = aliceDatasets[0].id as string
+  await alice.page.locator('input[type=file]').first().setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/load.csv'))
+  if (!await alice.page.getByRole('button', { name: '确认合并' }).isVisible() && await alice.page.getByRole('button', { name: '展开结果面板' }).isVisible()) {
+    await alice.page.getByRole('button', { name: '展开结果面板' }).click()
+  }
+  await alice.page.getByRole('button', { name: '确认合并' }).click()
+  await expect.poll(async () => {
+    const value = await (await alice.api.get(`/api/sessions/${aliceSessionId}/workspace`)).json()
+    return Boolean(value.draft)
+  }).toBe(true)
+  const workspace = await (await alice.api.get(`/api/sessions/${aliceSessionId}/workspace`)).json()
+  const versionDataframeId = workspace.active.tables[0].id as string
+  const draftDataframeId = workspace.draft.tables[0].id as string
+  const draftQuery = `draftId=${workspace.draft.id}&expectedDraftRevision=${workspace.draft.revision}`
 
   const hiddenPaths = [
     `/api/sessions/${aliceSessionId}/messages`,
@@ -45,6 +59,21 @@ test('two users cannot enumerate or guess each other session, message, SSE, run,
   for (const path of hiddenPaths) {
     const hidden = await bob.api.get(path)
     expect(hidden.status(), path).toBe(404)
+  }
+
+  for (const [foreignPath, missingPath] of [
+    [`/api/model-dataframes/${versionDataframeId}`, '/api/model-dataframes/2147483647'],
+    [`/api/model-dataframes/${versionDataframeId}/rows`, '/api/model-dataframes/2147483647/rows'],
+    [`/api/model-dataframes/${versionDataframeId}/download`, '/api/model-dataframes/2147483647/download'],
+    [`/api/draft-dataframes/${draftDataframeId}?${draftQuery}`, `/api/draft-dataframes/2147483647?${draftQuery}`],
+    [`/api/draft-dataframes/${draftDataframeId}/rows?${draftQuery}`, `/api/draft-dataframes/2147483647/rows?${draftQuery}`],
+    [`/api/draft-dataframes/${draftDataframeId}/download?${draftQuery}`, `/api/draft-dataframes/2147483647/download?${draftQuery}`],
+  ]) {
+    const foreign = await bob.api.get(foreignPath)
+    const missing = await alice.api.get(missingPath)
+    expect(foreign.status(), foreignPath).toBe(404)
+    expect(missing.status(), missingPath).toBe(404)
+    expect(await foreign.json()).toEqual(await missing.json())
   }
 
   const history = await bob.api.get('/api/history/search?query=Alice%20私有会话')

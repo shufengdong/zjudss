@@ -35,7 +35,7 @@ test('desktop three-column workspace completes upload, script, run, and result f
   await expectNoSeriousViolations(page)
 })
 
-test('narrow drawers remain keyboard reachable without horizontal overflow', async ({ appPage, control }) => {
+test('responsive narrow drawers and model tables remain keyboard reachable without horizontal overflow', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'narrow@example.com', tenant: 'grid-ui' })
   await page.setViewportSize({ width: 390, height: 844 })
   const { sessionId } = await createReadySession(page, api, '窄屏工作台')
@@ -45,6 +45,14 @@ test('narrow drawers remain keyboard reachable without horizontal overflow', asy
   await expect(page.getByRole('textbox', { name: '搜索历史' })).toBeVisible()
   await expectUserMenuAtSidebarBottom(page, 'Narrow Test')
   await page.getByRole('button', { name: '收起历史侧栏' }).click()
+
+  await page.getByRole('button', { name: '展开结果面板' }).click()
+  await page.getByRole('heading', { name: '当前模型' }).locator('..').getByRole('button', { name: '查看 bus' }).click()
+  await expect(page.getByRole('dialog', { name: /当前模型 · 版本 .* · bus/ })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await expectNoSeriousViolations(page)
+  await page.getByRole('button', { name: '关闭模型表' }).click()
+  await page.getByRole('button', { name: '关闭结果面板' }).click()
 
   const { run } = await uploadScriptAndRun({
     page, api, control, sessionId,

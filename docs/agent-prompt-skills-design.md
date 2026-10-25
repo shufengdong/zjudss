@@ -2,7 +2,7 @@
 
 ## Bundle
 
-生产 bundle 位于 `backend/resources/agent/v3/`，版本 `v3.0.0`。manifest 固定 system prompt、skill index、
+生产 bundle 位于 `backend/resources/agent/v3/`，版本 `v3.1.0`。manifest 固定 system prompt、skill index、
 engine contract、允许工具和文件 SHA-256；启动时完整验证。Agent prompt 只常驻策略，不常驻整套引擎文档。
 
 ## Skills
@@ -13,10 +13,11 @@ engine contract、允许工具和文件 SHA-256；启动时完整验证。Agent 
 
 ## Tool authority
 
-允许工具共 16 个：
+允许工具共 17 个：
 
 ```text
-inspect_workspace       search_examples          inspect_example
+inspect_workspace       read_model_dataframe     search_examples
+inspect_example
 modify_model            create_script            list_result_datasets
 run_result_analysis     create_dataset_view      compare_simulations
 list_simulation_history search_chat_history      read_chat_context
@@ -29,11 +30,18 @@ Agent 可以检查工作区、修改 draft、创建脚本、读取运行/结果�
 成功即表示本轮脚本生成任务完成，但不代表仿真发生。`create_script` 成功后如果后续模型收尾失败，服务端发出确定性的检查/运行提示，
 不再用通用 Agent 失败消息覆盖已持久化的脚本成功。
 
+模型修改遵循 `inspect_workspace -> read_model_dataframe -> modify_model`。`read_model_dataframe` 只在加载
+`model-intake` skill 后可用，scope 只能是 active 或携带准确 expected draft 的 draft；查询只允许表名、最多
+32 个输出列、最多 8 个标量等值条件和 `1..=100` 行。服务端完整扫描得到准确 `matchCount`，序列化结果上限为
+64 KiB。Agent 必须确认目标唯一并使用读取到的旧值，不能猜测 row key 或把截断结果当作唯一匹配。
+
 ## Stable arguments
 
 工具只接收 session 上下文内的稳定资源 ID、expected draft、受控 patch/spec 和文本。禁止路径、URL、SQL、
 shell 命令和任意图表 option。`modify_model` 使用 `tableName + rowKey + changes + expectedDraft`；
-`create_script` 使用 `name + content`；比较使用两个 run ID。
+`read_model_dataframe` 使用 `scope + tableName + columns + equals + limit + expectedDraft?`；
+`create_script` 使用 `name + content`；比较使用两个 run ID。模型范围不存在、查询无效、输出过大、草稿 revision
+冲突和表不存在分别使用稳定错误码，工具响应不包含 artifact 路径。
 
 ## Engine knowledge
 

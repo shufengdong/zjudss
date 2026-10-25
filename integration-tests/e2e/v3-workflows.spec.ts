@@ -24,6 +24,13 @@ test('model import stays a draft until publish and a script runs only after its 
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(longScript)
   expect((await (await api.get(`/api/sessions/${sessionId}/runs`)).json()).runs).toHaveLength(0)
 
+  const manualResponse = await api.post(`/api/sessions/${sessionId}/scripts/text`, {
+    data: { name: 'manual-script.rss', content: 'result = 1\n' },
+  })
+  expect(manualResponse.status()).toBe(201)
+  const scripts = (await (await api.get(`/api/sessions/${sessionId}/scripts`)).json()).scripts
+  expect(scripts.map((script: any) => script.name)).toContain('manual-script.rss')
+
   await control.enqueueEngine({ kind: 'success', data: [
     { name: 'voltage', rows: [['bus-1', 1.01], ['bus-2', 0.99]], valueUnit: 'pu' },
     { name: 'loss', rows: [['total', 2.5]], valueUnit: 'kW' },
@@ -227,4 +234,64 @@ test('CSV imports merge by whole table, stale runs are rejected, and history act
   expect((await api.get(`/api/versions/${firstVersion}`)).status()).toBe(404)
   expect((await api.get(`/api/runs/${firstRun.id}`)).status()).toBe(404)
   expect((await api.get(`/api/datasets/${firstDataset.id}`)).status()).toBe(404)
+})
+
+test('active draft and historical model tables are readable without changing lifecycle state', async ({ appPage }) => {
+  const { page, api } = await appPage({ subject: 'rss-replace@example.com' })
+  const { sessionId, versionId: firstVersion } = await createReadySession(page, api, '模型表只读查看')
+  if (await page.getByRole('button', { name: '展开结果面板' }).isVisible()) {
+    await page.getByRole('button', { name: '展开结果面板' }).click()
+  }
+
+  const activeSection = page.getByRole('heading', { name: '当前模型' }).locator('..')
+  await activeSection.getByRole('button', { name: '查看 bus' }).click()
+  await expect(page.getByRole('dialog', { name: `当前模型 · 版本 ${firstVersion} · bus` })).toBeVisible()
+  await expect(page.getByRole('cell', { name: 'b1' })).toBeVisible()
+  await page.getByRole('button', { name: '关闭模型表' }).click()
+
+  const csv = ['id,kv,zone', ...Array.from({ length: 101 }, (_, index) => `b${index + 1},${10 + index},zone-${index + 1}`)].join('\n') + '\n'
+  await page.locator('input[type=file]').first().setInputFiles({
+    name: 'bus.csv', mimeType: 'text/csv', buffer: Buffer.from(csv),
+  })
+  await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
+  await page.getByRole('button', { name: '确认合并' }).click()
+  let draft: any
+  await expect.poll(async () => {
+    draft = (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft
+    return draft?.revision
+  }).toBe(1)
+
+  const firstVersionView = await (await api.get(`/api/versions/${firstVersion}`)).json()
+  const activeDataframeId = firstVersionView.tables[0].id
+  const activeRows = await (await api.get(`/api/model-dataframes/${activeDataframeId}/rows`)).json()
+  expect(activeRows.rows).toEqual([['b1', '10.0', 'north']])
+  expect((await api.get(`/api/model-dataframes/${activeDataframeId}/download`)).status()).toBe(200)
+  const draftSection = page.getByRole('heading', { name: '可变草稿' }).locator('xpath=../..')
+  await draftSection.getByRole('button', { name: '查看 bus' }).click()
+  await expect(page.getByRole('dialog', { name: '可变草稿 · 修订 1 · bus' })).toBeVisible()
+  await expect(page.getByRole('cell', { name: 'b100' })).toBeVisible()
+  await page.getByRole('button', { name: '选择列' }).click()
+  await page.getByRole('checkbox', { name: '显示列 zone' }).uncheck()
+  await expect(page.getByRole('columnheader', { name: 'zone' })).toHaveCount(0)
+  await page.getByRole('button', { name: '加载更多' }).click()
+  await expect(page.getByRole('cell', { name: 'b101' })).toBeVisible()
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: '下载 Parquet' }).click()
+  expect((await download).suggestedFilename()).toContain('bus.parquet')
+  await page.getByRole('button', { name: '关闭模型表' }).click()
+
+  await page.getByRole('button', { name: '生成版本' }).click()
+  let secondVersion = ''
+  await expect.poll(async () => {
+    const workspace = await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()
+    secondVersion = workspace.active?.id
+    return workspace.draft === null && secondVersion !== firstVersion
+  }).toBe(true)
+  await page.getByRole('button', { name: `版本 ${firstVersion} · 1 表` }).click()
+  const historyEntry = page.getByRole('button', { name: `版本 ${firstVersion} · 1 表` }).locator('xpath=../..')
+  await historyEntry.getByRole('button', { name: '查看 bus' }).click()
+  await expect(page.getByRole('dialog', { name: `历史版本 · 版本 ${firstVersion} · bus` })).toBeVisible()
+  await expect(page.getByRole('cell', { name: 'b1' })).toBeVisible()
+  expect((await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).active.id).toBe(secondVersion)
+  expect((await (await api.get(`/api/sessions/${sessionId}/runs`)).json()).runs).toEqual([])
 })

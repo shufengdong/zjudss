@@ -17,6 +17,14 @@ Composer 固定按钮支持文件和目录：`.rss` 逐个创建脚本；DSS/bun
 发布并自动激活。激活历史版本遇到 draft 时使用明确确认框放弃草稿。版本删除先读取影响预览，再提交一次性
 impact token。前端不把这些固定动作伪装成聊天消息。
 
+active、draft 和展开后的历史版本按表显示“查看”按钮。按钮以 `OpenDataFrame` 判别联合打开只读
+`ModelDataFrameWorkbench`：版本源保存 `dataframeId + versionId + tableName`，草稿源额外保存
+`draftId + revision`。工作台显示元数据、列选择、cursor 分页、“加载更多”和 Parquet 下载，不出现结果删除、
+图表、分析或物化视图操作。历史表无需激活即可查看，打开表和下载都不改变 active、draft 或运行记录。
+
+草稿 revision 冲突时保留已显示的旧行，刷新 workspace，并按相同表名定位新草稿表；仍存在时用户可重新加载，
+已消失时关闭工作台并显示说明。切换会话、数据源或列投影会建立新的请求代次，迟到响应不能覆盖当前表。
+
 ## Example library
 
 “案例库”是高频固定入口。界面消费后端 rssbundle 目录树：顶层分类默认展开，嵌套目录可用带
@@ -54,4 +62,5 @@ SSE resync 触发有界重载。
 ## Accessibility
 
 交互元素使用原生 button/input、可辨别名称和 focus 顺序；modal/drawer 有遮罩关闭控件。桌面和 390px
-viewport 都由 Playwright + axe 检查 serious/critical violations。
+viewport 都由 Playwright + axe 检查 serious/critical violations。模型版本历史展开按钮以可见版本名称作为
+accessible name，并通过 `aria-expanded` 暴露状态；窄屏模型表工作台不得造成页面横向溢出。

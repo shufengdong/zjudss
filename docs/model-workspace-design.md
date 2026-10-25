@@ -18,6 +18,17 @@ DSS `Redirect`/`Compile` 依赖相对当前文件进行词法规范化。允许�
 draft 可随时变化，不是版本。只有用户点击“生成版本”才能冻结内容；发布计算按表名排序的规范 content hash，
 写 publish receipt，清空 draft 并自动激活。相同存活内容去重复用；删除后的相同内容可获得新版本 ID。
 
+## Model DataFrame reads
+
+active、历史版本和草稿中的模型表都可以按稳定 DataFrame ID 只读查看元数据、分页行、列投影并下载原始
+Snappy Parquet。版本表不可变，因此打开后即使 active 指针变化仍指向同一内容；历史版本无需激活即可读取。
+草稿读取必须携带准确的 `draftId + expectedDraftRevision`，cursor 也绑定资源种类、ID、content hash 和 revision，
+禁止把变化前后的行合并为一页。跨用户、已删除和不存在资源统一 404。
+
+结果数据集与模型表共用内部 `ParquetDataFrameReader` 的 artifact 所有权检查、投影、分页、cursor 和
+Arrow-to-JSON 解码，但使用独立 DTO 与权限。模型表读取不创建 `result_datasets`，不增加 artifact 引用，也不
+暴露结果删除、分析、视图或图表能力；数据库 schema 无需变化。
+
 ## Case library
 
 案例列表只展示可模型化来源。“使用案例”固定按钮以 engine resource snapshot 和稳定 example ID 创建普通
@@ -28,6 +39,11 @@ ModelImport；随后展示相同候选与覆盖预览，必须再次“确认合
 Agent `modify_model` 只对 draft 中的一张 DataFrame 按唯一 `rowKey` 修改。请求必须包含 table name、旧值、
 新值、单位和 expected draft；服务端校验单位维度、类型、唯一行与旧值，写新 Parquet artifact 并推进 revision。
 若当前没有 draft，会从 active copy-on-reference 建立。修改成功后仍需用户点击“生成版本”。
+
+Agent 在修改前先用 `inspect_workspace` 确定 active/draft 范围，再用 `read_model_dataframe` 按表名、投影列和最多
+8 个标量等值条件读取。工具最多返回 32 列、100 行和 64 KiB JSON，并扫描整表给出准确 `matchCount`；只有
+唯一目标行及旧值明确后才调用 `modify_model`。字符串、布尔、整数和有限浮点按 Arrow 类型严格比较，null、
+数组、对象和复杂列不能作为等值谓词。
 
 ## Script lifecycle
 

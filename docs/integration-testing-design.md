@@ -15,16 +15,17 @@
 测试符号、断言、fixture 和可选公共合同。每个 manifest route/message/tool/skill/upload/view/error 必须恰好出现
 一次；注册表枚举测试不能单独证明行为。PR 路由合同还必须由关联 Playwright 用例产生 2xx/3xx 请求证据。
 
-覆盖范围包括 BOOT、AUTH、SESSION、MESSAGE、SSE、SCHED、UPLOAD、MODEL-IMPORT、WORKSPACE、VERSION、
+覆盖范围包括 BOOT、AUTH、SESSION、MESSAGE、SSE、SCHED、UPLOAD、MODEL-IMPORT、WORKSPACE、MODEL-DATAFRAME-READ、VERSION、
 EXAMPLE、AGENT、SCRIPT、RUN、DATASET、ANALYSIS、VIEW、COMPARE、HISTORY、STORAGE、UI、RECOVERY、ENGINE。
 
 ## Deterministic journeys
 
 浏览器套件验证固定用户登录/退出/重置；空账户自动建立会话后的发送、上传和案例应用，以及初始化失败重试和删除最后会话后的替代会话；会话 CRUD、分页和 SSE；
 DSS/bundle/ZIP/表格导入；案例确认；draft
-发布、active race、历史激活和版本删除；脚本预览/全文/复制与 Agent 只创建；按钮运行、多结果与单结果删除；
+发布、active race、历史激活和版本删除；active/draft/历史模型表的只读元数据、分页投影和 Parquet 下载；草稿
+revision 冲突恢复；Agent 对模型行的严格类型等值读取、完整匹配计数和 read-before-modify；脚本预览/全文/复制与 Agent 只创建；按钮运行、多结果与单结果删除；
 运行成功进度终态、Arrow 字符串视图分页和不同宽度数据集详情居中；分析、视图、比较在来源删除后继续读取；
-两用户隔离；重启收敛与 FTS 局部失败；配额、恶意归档和响应式无障碍。
+两用户隔离（包含六个模型表读取端点）；重启收敛与 FTS 局部失败；配额、恶意归档和模型表窄屏响应式无障碍。
 
 应用层 scripted-agent 测试额外覆盖脚本已创建后的 provider 收尾失败不覆盖成功，以及失败的
 `create_script` 不会被误判为成功。
