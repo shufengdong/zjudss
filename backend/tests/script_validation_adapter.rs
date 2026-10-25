@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use zjudss::adapters::{ScriptValidationSpec, SimEngine, StubEngine};
+use zjudss::adapters::{STATIC_MODEL_TABLES, ScriptValidationSpec, SimEngine, StubEngine};
 
 async fn validate(source: &str) -> zjudss::adapters::StaticScriptValidation {
     let root = tempfile::tempdir().unwrap();
@@ -19,8 +19,8 @@ async fn validate(source: &str) -> zjudss::adapters::StaticScriptValidation {
 #[tokio::test]
 async fn static_validation_extracts_required_aliases_and_named_outputs_without_a_model() {
     let result = validate(
-        "voltage = ds_radial_pf(bus, line, linecode, load, transformer, voltage_source);\n\
-         summary = select(col(id), voltage);\n",
+        "[voltage, _, summary] = \
+         ds_radial_pf(bus, line, linecode, load, transformer, voltage_source);\n",
     )
     .await;
     assert!(result.valid);
@@ -36,6 +36,25 @@ async fn static_validation_extracts_required_aliases_and_named_outputs_without_a
         ]
     );
     assert_eq!(result.outputs, ["summary", "voltage"]);
+}
+
+#[tokio::test]
+async fn static_validation_accepts_the_eig_rs_single_result_destructuring_form() {
+    let result = validate(
+        "[voltage] = ds_radial_pf(\n\
+             bus, line, linecode, load, transformer, voltage_source,\n\
+             motor, transformer_winding, transformer_impedance, current_source,\n\
+             generator, ibr, switch, shunt, capacitor, reactor, spectrum,\n\
+             control_profile, xy_curve, storage, para\n\
+         );",
+    )
+    .await;
+    let mut expected_aliases = STATIC_MODEL_TABLES.map(str::to_string).to_vec();
+    expected_aliases.sort();
+
+    assert!(result.valid);
+    assert_eq!(result.outputs, ["voltage"]);
+    assert_eq!(result.required_aliases, expected_aliases);
 }
 
 #[tokio::test]

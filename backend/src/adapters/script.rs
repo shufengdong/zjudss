@@ -43,9 +43,13 @@ pub(crate) fn validate_script_source(
         let Some((left, _right)) = statement.split_once('=') else {
             continue;
         };
-        let name = left.trim();
-        if valid_identifier(name) && !outputs.insert(name.to_string()) {
-            return Ok(invalid("script_output_duplicate"));
+        let Some(names) = output_names(left) else {
+            continue;
+        };
+        for name in names {
+            if !outputs.insert(name.to_string()) {
+                return Ok(invalid("script_output_duplicate"));
+            }
         }
     }
     if outputs.is_empty() {
@@ -82,6 +86,27 @@ fn valid_identifier(value: &str) -> bool {
         .next()
         .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
         && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
+
+fn output_names(binding: &str) -> Option<Vec<&str>> {
+    let binding = binding.trim();
+    if valid_identifier(binding) {
+        return Some(vec![binding]);
+    }
+
+    let slots = binding.strip_prefix('[')?.strip_suffix(']')?;
+    let mut names = Vec::new();
+    for slot in slots.split(',') {
+        let name = slot.trim();
+        if name == "_" {
+            continue;
+        }
+        if !valid_identifier(name) {
+            return None;
+        }
+        names.push(name);
+    }
+    Some(names)
 }
 
 fn contains_identifier(source: &str, needle: &str) -> bool {

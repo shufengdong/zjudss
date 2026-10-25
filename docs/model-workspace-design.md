@@ -32,8 +32,9 @@ Agent `modify_model` 只对 draft 中的一张 DataFrame 按唯一 `rowKey` 修�
 ## Script lifecycle
 
 脚本是 session 下可随时新增的不可编辑资源，可由上传或 Agent `create_script` 创建；没有版本历史和单独删除。
-adapter 静态校验禁止 import、路径、URL 和外部读取，并提取 required aliases/outputs。无 active 时也允许保存，
-全文通过详情 API 读取。用户可复制、修改后以新 `.rss` 再上传。
+adapter 静态校验禁止 import、路径、URL 和外部读取，并提取 required aliases/outputs；输出绑定同时支持
+`result = ...` 和 eig-rs 的 `[result, _, summary] = ...` 解构语法，其中 `_` 只占位、不注册输出。无 active
+时也允许保存，全文通过详情 API 读取。用户可复制、修改后以新 `.rss` 再上传。
 
 ## Run lifecycle
 

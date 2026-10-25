@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use arrow_array::{
-    Array, BooleanArray, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array,
-    LargeStringArray, StringArray, StringViewArray, UInt8Array, UInt16Array, UInt32Array,
+    Array, ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Float64Array, Int8Array,
+    Int16Array, Int32Array, Int64Array, LargeListArray, LargeListViewArray, LargeStringArray,
+    ListArray, ListViewArray, StringArray, StringViewArray, UInt8Array, UInt16Array, UInt32Array,
     UInt64Array,
 };
 use arrow_schema::DataType;
@@ -567,14 +568,57 @@ fn value(a: &dyn Array, row: usize, d: &mut BTreeMap<String, u64>) -> Result<Val
                 Ok(null(d, "nonFiniteValues"))
             }
         }
+        DataType::List(_) => list_value(
+            a.as_any().downcast_ref::<ListArray>().unwrap().value(row),
+            d,
+        ),
+        DataType::LargeList(_) => list_value(
+            a.as_any()
+                .downcast_ref::<LargeListArray>()
+                .unwrap()
+                .value(row),
+            d,
+        ),
+        DataType::ListView(_) => list_value(
+            a.as_any()
+                .downcast_ref::<ListViewArray>()
+                .unwrap()
+                .value(row),
+            d,
+        ),
+        DataType::LargeListView(_) => list_value(
+            a.as_any()
+                .downcast_ref::<LargeListViewArray>()
+                .unwrap()
+                .value(row),
+            d,
+        ),
+        DataType::FixedSizeList(_, _) => list_value(
+            a.as_any()
+                .downcast_ref::<FixedSizeListArray>()
+                .unwrap()
+                .value(row),
+            d,
+        ),
         other => Err(DatasetError::Storage(format!("不支持的数据类型 {other}"))),
     }
+}
+
+fn list_value(
+    values: ArrayRef,
+    diagnostics: &mut BTreeMap<String, u64>,
+) -> Result<Value, DatasetError> {
+    (0..values.len())
+        .map(|index| value(values.as_ref(), index, diagnostics))
+        .collect::<Result<Vec<_>, _>>()
+        .map(Value::Array)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::StringViewArray;
+    use arrow_array::types::Float64Type;
+    use arrow_array::{LargeListArray, StringViewArray};
 
     #[test]
     fn utf8_view_values_are_returned_as_json_strings() {
@@ -595,5 +639,22 @@ mod tests {
             Value::String("a string longer than twelve bytes".into())
         );
         assert_eq!(diagnostics.get("missingValues"), Some(&1));
+    }
+
+    #[test]
+    fn large_float_lists_are_returned_as_json_arrays() {
+        let array = LargeListArray::from_iter_primitive::<Float64Type, _, _>([
+            Some(vec![Some(1.0), None, Some(f64::NAN)]),
+            None,
+        ]);
+        let mut diagnostics = BTreeMap::new();
+
+        assert_eq!(
+            value(&array, 0, &mut diagnostics).unwrap(),
+            serde_json::json!([1.0, null, null])
+        );
+        assert_eq!(value(&array, 1, &mut diagnostics).unwrap(), Value::Null);
+        assert_eq!(diagnostics.get("missingValues"), Some(&2));
+        assert_eq!(diagnostics.get("nonFiniteValues"), Some(&1));
     }
 }
