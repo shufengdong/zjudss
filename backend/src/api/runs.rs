@@ -65,5 +65,53 @@ pub async fn datasets(
 }
 fn run_json(summary: RunSummary) -> Value {
     let RunSummary { run, script_name } = summary;
-    json!({"id":run.id.to_string(),"sessionId":run.session_id.to_string(),"modelVersionId":run.model_version_id.to_string(),"modelContentHash":run.model_content_hash,"scriptResourceId":run.script_resource_id.to_string(),"scriptName":script_name,"scriptArtifactId":run.script_artifact_id.to_string(),"scriptContentHash":run.script_content_hash,"clientRunId":run.client_run_id,"status":run.status,"stage":run.stage,"engineContractVersion":run.engine_contract_version,"agentBundleVersion":run.agent_bundle_version,"agentSkillRefs":serde_json::from_str::<Value>(&run.agent_skill_refs_json).unwrap_or_else(|_|json!([])),"exitCode":run.exit_code,"error":run.error_json.as_deref().and_then(|value|serde_json::from_str::<Value>(value).ok()),"createdAt":ms_to_iso(run.created_at_ms),"startedAt":run.started_at_ms.map(ms_to_iso),"finishedAt":run.finished_at_ms.map(ms_to_iso)})
+    let public_error = public_run_error(&run.status, run.error_json.as_deref());
+    json!({"id":run.id.to_string(),"sessionId":run.session_id.to_string(),"modelVersionId":run.model_version_id.to_string(),"modelContentHash":run.model_content_hash,"scriptResourceId":run.script_resource_id.to_string(),"scriptName":script_name,"scriptArtifactId":run.script_artifact_id.to_string(),"scriptContentHash":run.script_content_hash,"clientRunId":run.client_run_id,"status":run.status,"stage":run.stage,"engineContractVersion":run.engine_contract_version,"agentBundleVersion":run.agent_bundle_version,"agentSkillRefs":serde_json::from_str::<Value>(&run.agent_skill_refs_json).unwrap_or_else(|_|json!([])),"exitCode":run.exit_code,"error":public_error,"createdAt":ms_to_iso(run.created_at_ms),"startedAt":run.started_at_ms.map(ms_to_iso),"finishedAt":run.finished_at_ms.map(ms_to_iso)})
+}
+
+fn public_run_error(status: &str, raw: Option<&str>) -> Option<Value> {
+    if status != "failed" {
+        return None;
+    }
+    let parsed = raw.and_then(|value| serde_json::from_str::<Value>(value).ok());
+    let code = parsed
+        .as_ref()
+        .and_then(|value| value.get("code"))
+        .and_then(Value::as_str);
+    if code == Some("service_restarted") {
+        return Some(json!({"code":"service_restarted","message":"服务重启，运行已中止"}));
+    }
+    let reason = parsed
+        .as_ref()
+        .and_then(|value| value.get("reason"))
+        .and_then(Value::as_str);
+    let message = match reason {
+        Some("model") => "模型或脚本不符合计算要求",
+        Some("solver") => "求解失败或未收敛",
+        Some("timeout") => "计算超时",
+        Some("io") => "计算输入输出不可用",
+        Some("result") => "计算结果校验失败",
+        Some("engine") => "仿真引擎执行失败",
+        Some("internal") => "计算服务发生内部错误",
+        _ => "运行失败，未提供可用原因",
+    };
+    Some(json!({"code":"run_failed","message":message}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::public_run_error;
+    use serde_json::json;
+
+    #[test]
+    fn legacy_run_errors_never_expose_stored_diagnostics() {
+        let raw = r#"{"code":"run_failed","message":"failed at /srv/private/input.rss"}"#;
+        assert_eq!(
+            public_run_error("failed", Some(raw)),
+            Some(json!({
+                "code": "run_failed",
+                "message": "运行失败，未提供可用原因"
+            }))
+        );
+    }
 }

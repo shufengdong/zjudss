@@ -190,7 +190,10 @@ impl ScenarioEngine {
                 "scenario_mismatch",
                 "InspectFailure 只能由 inspect 消费",
             )),
-            EngineScenario::RunFailure => Err(failure("scenario_run_failed", "仿真进程按场景失败")),
+            EngineScenario::RunFailure => Err(failure(
+                "scenario_run_failed",
+                "仿真失败于 /srv/private/runs/secret/input/script.rss",
+            )),
             EngineScenario::Timeout { barrier_id } => {
                 let barrier = self
                     .inner

@@ -101,6 +101,27 @@ test('agent-created script is visible but never auto-runs; the user click starts
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/runs`)).json()).runs[0]?.status).toBe('succeeded')
 })
 
+test('failed run history shows a safe phase and reason without requesting datasets', async ({ appPage, control }) => {
+  const { page, api } = await appPage({ subject: 'studies@example.com' })
+  const { sessionId } = await createReadySession(page, api, '失败运行详情')
+  const datasetRequests: string[] = []
+  page.on('request', request => {
+    if (/\/api\/runs\/[^/]+\/datasets$/.test(new URL(request.url()).pathname)) datasetRequests.push(request.url())
+  })
+  const { run } = await uploadScriptAndRun({
+    page, api, control, sessionId, engine: { kind: 'run_failure' },
+  })
+  expect(run.status).toBe('failed')
+  await page.getByRole('button', { name: '运行记录' }).click()
+  const runHeader = page.getByRole('button', { name: /replacement\.rss.*失败/ })
+  await runHeader.click()
+  const detail = runHeader.locator('xpath=..').getByRole('alert')
+  await expect(detail).toContainText('失败阶段：执行计算')
+  await expect(detail).toContainText('失败原因：仿真引擎执行失败')
+  await expect(detail).not.toContainText('/srv/private')
+  expect(datasetRequests).toEqual([])
+})
+
 test('imports, scripts, runs, results, and deletion remain isolated between users', async ({ loginAs, control }) => {
   const alice = await loginAs('alice@example.com')
   const bob = await loginAs('bob@example.com')

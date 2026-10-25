@@ -1,14 +1,14 @@
 import type { SimulationRun } from '../../types'
 
-const STUDY_TITLES: Record<string, string> = {
-  ds_radial_pf: '静态潮流',
-  ds_newton_raphson_pf: '静态潮流',
-  ds_radial_qsts: '时序潮流',
-  ds_newton_raphson_qsts: '时序潮流',
-  ds_fault_study: '短路计算',
-  ds_harmonic_study: '谐波分析',
-  ds_motor_dynamics: '电机暂态',
-}
+const STUDY_TITLES = new Map<string, string>([
+  ['ds_radial_pf', '静态潮流'],
+  ['ds_newton_raphson_pf', '静态潮流'],
+  ['ds_radial_qsts', '时序潮流'],
+  ['ds_newton_raphson_qsts', '时序潮流'],
+  ['ds_fault_study', '短路计算'],
+  ['ds_harmonic_study', '谐波分析'],
+  ['ds_motor_dynamics', '电机暂态'],
+])
 
 const STATUS_LABELS: Record<SimulationRun['status'], string> = {
   queued: '排队中',
@@ -17,12 +17,16 @@ const STATUS_LABELS: Record<SimulationRun['status'], string> = {
   failed: '失败',
 }
 
-const STAGE_LABELS: Record<string, string> = {
-  prepare: '准备输入',
-  execute: '执行计算',
-  collect: '收集结果',
-  completed: '已完成',
-}
+const STAGE_LABELS = new Map<string, string>([
+  ['queued', '排队等待'],
+  ['prepare', '准备输入'],
+  ['run', '执行计算'],
+  ['execute', '执行计算'],
+  ['collect', '收集结果'],
+  ['completed', '已完成'],
+  ['failed', '未知失败阶段'],
+  ['recovery', '恢复中断'],
+])
 
 function boundedText(value: unknown, limit = 500): string | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined
@@ -46,7 +50,7 @@ export function runTitle(run: SimulationRun): string {
       if (!reference || typeof reference !== 'object' || Array.isArray(reference)) continue
       const candidate = reference as Record<string, unknown>
       if (candidate.kind === 'study-plan' && typeof candidate.function === 'string') {
-        const title = STUDY_TITLES[candidate.function]
+        const title = STUDY_TITLES.get(candidate.function)
         if (title) return title
       }
     }
@@ -55,12 +59,14 @@ export function runTitle(run: SimulationRun): string {
 }
 
 export function runStatusLabel(status: SimulationRun['status']): string {
-  return STATUS_LABELS[status]
+  return Object.prototype.hasOwnProperty.call(STATUS_LABELS, status)
+    ? STATUS_LABELS[status]
+    : '未知状态'
 }
 
 export function runStageLabel(stage: string): string {
   const normalized = stage.trim()
-  return normalized ? (STAGE_LABELS[normalized] ?? normalized) : '未知阶段'
+  return normalized ? (STAGE_LABELS.get(normalized) ?? normalized) : '未知阶段'
 }
 
 export function runDurationMs(run: SimulationRun, nowMs = Date.now()): number | null {
@@ -91,6 +97,11 @@ export function formatBytes(bytes: number): string {
     unit += 1
   }
   return `${decimal(value)} ${units[unit]}`
+}
+
+export function formatTimestamp(value: string | null): string {
+  const milliseconds = timestamp(value)
+  return milliseconds === null ? '—' : new Date(milliseconds).toLocaleString()
 }
 
 export function runFailure(run: SimulationRun): { code?: string; message: string } {

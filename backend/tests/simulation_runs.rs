@@ -227,6 +227,26 @@ async fn failed_run_publishes_a_terminal_failed_progress_event() {
     .await
     .unwrap();
 
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/runs/{run_id}"))
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let failed_run: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert_eq!(failed_run["stage"], "run");
+    assert_eq!(failed_run["error"]["code"], "run_failed");
+    assert_eq!(failed_run["error"]["message"], "仿真引擎执行失败");
+    assert!(!failed_run.to_string().contains("/srv/private"));
+
     let progress = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             let messages = app

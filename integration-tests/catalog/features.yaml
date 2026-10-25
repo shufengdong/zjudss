@@ -536,6 +536,9 @@
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
       name: one result can be deleted without deleting its run or sibling result
+    - runner: playwright
+      file: integration-tests/e2e/v3-workflows.spec.ts
+      name: failed run history shows a safe phase and reason without requesting datasets
     - runner: rust
       file: backend/tests/simulation_runs.rs
       name: successful_run_publishes_a_terminal_done_progress_event

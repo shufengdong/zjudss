@@ -3,6 +3,7 @@ import type { SimulationRun } from '../../types'
 import {
   formatBytes,
   formatDuration,
+  formatTimestamp,
   runDurationMs,
   runFailure,
   runStageLabel,
@@ -37,16 +38,18 @@ describe('run presentation', () => {
     expect(runTitle(run())).toBe('manual-study.rss')
     expect(runTitle(run({ agentSkillRefs: [{ kind: 'study-plan', function: 'unknown' }] }))).toBe('manual-study.rss')
     expect(runTitle(run({ agentSkillRefs: { function: 'ds_fault_study' } }))).toBe('manual-study.rss')
+    expect(runTitle(run({ agentSkillRefs: [{ kind: 'study-plan', function: '__proto__' }] }))).toBe('manual-study.rss')
   })
 
   it('localizes statuses and execution stages without guessing unknown values', () => {
     const statuses: SimulationRun['status'][] = ['queued', 'running', 'succeeded', 'failed']
     expect(['排队中', '运行中', '成功', '失败']).toEqual(statuses.map(runStatusLabel))
-    expect(['准备输入', '执行计算', '收集结果', '已完成']).toEqual(
-      ['prepare', 'execute', 'collect', 'completed'].map(runStageLabel),
+    expect(['排队等待', '准备输入', '执行计算', '收集结果', '已完成', '未知失败阶段', '恢复中断']).toEqual(
+      ['queued', 'prepare', 'run', 'collect', 'completed', 'failed', 'recovery'].map(runStageLabel),
     )
     expect(runStageLabel('engine-step')).toBe('engine-step')
     expect(runStageLabel('')).toBe('未知阶段')
+    expect(runStatusLabel('unexpected' as SimulationRun['status'])).toBe('未知状态')
   })
 
   it('derives terminal, running and queued durations from authoritative timestamps', () => {
@@ -64,6 +67,9 @@ describe('run presentation', () => {
     expect(formatBytes(0)).toBe('0 B')
     expect(formatBytes(1_024)).toBe('1 KiB')
     expect(formatBytes(1_536)).toBe('1.5 KiB')
+    expect(formatTimestamp(null)).toBe('—')
+    expect(formatTimestamp('invalid')).toBe('—')
+    expect(formatTimestamp('2026-01-01T00:00:00Z')).toBe(new Date('2026-01-01T00:00:00Z').toLocaleString())
   })
 
   it('renders only bounded public failure strings and otherwise uses a safe fallback', () => {

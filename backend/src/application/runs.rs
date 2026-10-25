@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::adapters::{ENGINE_CONTRACT_VERSION, NamedInput, RunMode, RunSpec, SimEngine};
+use crate::adapters::{
+    ENGINE_CONTRACT_VERSION, ErrorCategory, NamedInput, RunMode, RunSpec, SimEngine,
+};
 use crate::auth::CurrentUser;
 use crate::db::models::SimulationRun;
 use crate::db::repositories::{
@@ -265,14 +267,14 @@ impl RunService {
                 .map(|run| run.stage.clone())
                 .unwrap_or_else(|| "run".to_string());
             eprintln!("[run] failed id={id}, stage={failed_stage}: {error}");
+            let reason = public_failure_reason(&error);
             let failed = self
                 .repo
                 .fail(
                     &user.id,
                     id,
-                    "failed",
-                    serde_json::json!({"code":"run_failed","message":error.to_string()})
-                        .to_string(),
+                    &failed_stage,
+                    serde_json::json!({"code":"run_failed","reason":reason}).to_string(),
                     now_ms(),
                 )
                 .await;
@@ -457,6 +459,22 @@ impl RunService {
         }
     }
 }
+
+fn public_failure_reason(error: &RunError) -> &'static str {
+    match error {
+        RunError::Adapter(error) => match error.category {
+            ErrorCategory::Model => "model",
+            ErrorCategory::Solver => "solver",
+            ErrorCategory::Timeout => "timeout",
+            ErrorCategory::Io => "io",
+            ErrorCategory::Internal => "engine",
+        },
+        RunError::Invalid(_) => "result",
+        RunError::Artifact(_) | RunError::Io(_) => "io",
+        _ => "internal",
+    }
+}
+
 fn run_stages(active: &str) -> Vec<Stage> {
     [
         ("prepare", "准备输入"),

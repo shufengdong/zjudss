@@ -5,6 +5,7 @@ import type { DatasetMetadata, SimulationRun } from '../../types'
 import {
   formatBytes,
   formatDuration,
+  formatTimestamp,
   runDurationMs,
   runFailure,
   runStageLabel,
@@ -31,6 +32,14 @@ function statusClass(status: SimulationRun['status']): string {
   return 'bg-slate-100 text-slate-600'
 }
 
+function RunTimestamps({ run }: { run: SimulationRun }) {
+  return <div className="mt-2 space-y-1 text-slate-500">
+    <p>创建时间：{formatTimestamp(run.createdAt)}</p>
+    <p>开始时间：{formatTimestamp(run.startedAt)}</p>
+    <p>结束时间：{formatTimestamp(run.finishedAt)}</p>
+  </div>
+}
+
 function RunDetails({ run, detail, now, onRetry, onOpenDataset }: {
   run: SimulationRun
   detail: DatasetDetail
@@ -47,6 +56,7 @@ function RunDetails({ run, detail, now, onRetry, onOpenDataset }: {
       {failure.code && <p className="break-all">错误码：{failure.code}</p>}
       {run.exitCode !== null && <p>退出码：{run.exitCode}</p>}
       <p>耗时：{duration}</p>
+      <RunTimestamps run={run} />
     </div>
   }
   if (run.status === 'queued' || run.status === 'running') {
@@ -54,6 +64,7 @@ function RunDetails({ run, detail, now, onRetry, onOpenDataset }: {
       <p>当前阶段：{runStageLabel(run.stage)}</p>
       <p>{run.status === 'queued' ? '已等待' : '已运行'}：{duration}</p>
       <p className="text-slate-400">计算完成后可查看结果</p>
+      <RunTimestamps run={run} />
     </div>
   }
   if (detail.status === 'loading') {
@@ -80,6 +91,7 @@ function RunDetails({ run, detail, now, onRetry, onOpenDataset }: {
         </ul>
       </>}
     <p className="mt-3 break-words text-slate-400">运行 #{run.id} · 脚本 #{run.scriptResourceId} · Engine {run.engineContractVersion}</p>
+    <RunTimestamps run={run} />
   </div>
 }
 
@@ -129,6 +141,15 @@ export default function RunHistory({ history, datasetRevision, onOpenDataset }: 
   useEffect(() => {
     if (revision.current === datasetRevision) return
     revision.current = datasetRevision
+    for (const runId of Object.keys(generations.current)) {
+      generations.current[runId] += 1
+    }
+    setDetails((current) => Object.fromEntries(
+      Object.entries(current).map(([runId, detail]) => [
+        runId,
+        { ...detail, status: 'idle', data: [], error: null },
+      ]),
+    ))
     for (const run of history.runs) {
       if (run.status === 'succeeded' && expandedRef.current.has(run.id)) loadDatasets(run.id)
     }
@@ -191,7 +212,7 @@ export default function RunHistory({ history, datasetRevision, onOpenDataset }: 
           </span>
           <span className="mt-1 block truncate text-slate-500">{run.scriptName} · 模型版本 {run.modelVersionId}</span>
           <span className="mt-1 flex items-center text-slate-400">
-            <span>耗时 {formatDuration(runDurationMs(run, now))} · {new Date(run.createdAt).toLocaleString()}</span>
+            <span>耗时 {formatDuration(runDurationMs(run, now))} · {formatTimestamp(run.createdAt)}</span>
             <span className="ml-auto pl-2 text-brand-600">{isExpanded ? '收起详情' : '展开详情'}</span>
           </span>
         </button>
