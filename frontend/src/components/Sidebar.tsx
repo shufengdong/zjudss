@@ -12,6 +12,7 @@ interface SidebarProps {
   onDelete: (id: string) => void
   onToggleCollapse: () => void
   footer?: ReactNode
+  search?: ReactNode
 }
 
 type Group = '今天' | '昨天' | '更早'
@@ -49,6 +50,7 @@ export default function Sidebar({
   onDelete,
   onToggleCollapse,
   footer,
+  search,
 }: SidebarProps) {
   const [menuId, setMenuId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -110,6 +112,8 @@ export default function Sidebar({
             <PanelLeftIcon className="h-4 w-4" />
           </button>
         </div>
+
+        {search && <div className="relative px-3 pb-2">{search}</div>}
 
         <div className="flex-1 overflow-y-auto px-2 py-2">
           {groups.map((g) => (
