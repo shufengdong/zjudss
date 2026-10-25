@@ -2,7 +2,7 @@
 set -eu
 
 # real DeepSeek and tensoreval complete the semantic release journey
-for required in DEEPSEEK_API_KEY TENSOREVAL_BIN TENSOREVAL_CWD; do
+for required in DEEPSEEK_API_KEY TENSOREVAL_BIN SPARROWZZ_DIR; do
   eval "value=\${$required:-}"
   if [ -z "$value" ]; then
     echo "release_integration_missing:$required" >&2
@@ -13,8 +13,8 @@ if [ ! -x "$TENSOREVAL_BIN" ]; then
   echo "release_integration_binary_invalid" >&2
   exit 2
 fi
-if [ ! -d "$TENSOREVAL_CWD" ]; then
-  echo "release_integration_cwd_invalid" >&2
+if [ ! -d "$SPARROWZZ_DIR" ]; then
+  echo "release_integration_sparrowzz_dir_invalid" >&2
   exit 2
 fi
 
@@ -36,7 +36,7 @@ sanitize_log() {
   node -e '
     const fs = require("node:fs");
     let text = fs.readFileSync(process.argv[1], "utf8");
-    for (const value of [process.env.DEEPSEEK_API_KEY, process.env.TENSOREVAL_BIN, process.env.TENSOREVAL_CWD, process.env.DATA_DIR, process.cwd()]) {
+    for (const value of [process.env.DEEPSEEK_API_KEY, process.env.TENSOREVAL_BIN, process.env.SPARROWZZ_DIR, process.env.DATA_DIR, process.cwd()]) {
       if (value) text = text.split(value).join("<redacted>");
     }
     text = text.replace(/\/(?:Users|private|tmp)\/[^\s"`]+/g, "<path>");
@@ -59,10 +59,10 @@ trap finish EXIT INT TERM
 "$repo_root/scripts/test-release-engine" >"$raw_log" 2>&1
 
 cat > "$run_root/export-dataframes.rss" <<'EOF'
-[bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para] = import_dss("sparrowzz/dss/models/4bus_daily_qsts/4bus_dy.dss");
+[bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para] = import_dss("dss/models/4bus_daily_qsts/4bus_dy.dss");
 EOF
 (
-  cd "$TENSOREVAL_CWD"
+  cd "$SPARROWZZ_DIR"
   "$TENSOREVAL_BIN" --df --result-dir "$RELEASE_DATAFRAME_DIR" --output-format parquet "$run_root/export-dataframes.rss"
 ) >>"$raw_log" 2>&1
 
@@ -89,12 +89,12 @@ node -e '
   if (!/^[a-f0-9]{64}$/.test(report.engineBinarySha256 ?? "") || !report.engineContract) process.exit(1);
   if (!/^ers_[a-f0-9]{32}$/.test(report.engineResourceSnapshot ?? "")) process.exit(1);
   const counts = report.engineExampleCounts;
-  if (!counts || counts.rootRss < 1 || counts.bundles < 1 || counts.importable < 1) process.exit(1);
+  if (!counts || counts.bundles < 1 || counts.importable < 1) process.exit(1);
   if (counts.discovered !== counts.importable + counts.nonImportable) process.exit(1);
   if (!report.engineContractChecks?.staticModelImport || !report.engineContractChecks?.singleSolveModelImport) process.exit(1);
   if (report.finalState?.runCount !== 2 || report.finalState?.datasetCount !== 1 || report.finalState?.analysisRunCount !== 2 || report.finalState?.comparisonCount !== 1) process.exit(1);
   const text = JSON.stringify(report);
-  for (const value of [process.env.DEEPSEEK_API_KEY, process.env.TENSOREVAL_BIN, process.env.TENSOREVAL_CWD, process.env.DATA_DIR]) {
+  for (const value of [process.env.DEEPSEEK_API_KEY, process.env.TENSOREVAL_BIN, process.env.SPARROWZZ_DIR, process.env.DATA_DIR]) {
     if (value && text.includes(value)) process.exit(1);
   }
 ' >>"$raw_log" 2>&1

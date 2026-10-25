@@ -35,7 +35,7 @@ cd ..
 ./scripts/check-functional-coverage --require-pr
 ```
 
-生产启动必须配置 `TENSOREVAL_BIN`、`TENSOREVAL_CWD` 和 LLM secret；不会自动回退到测试 stub。具体配置
+生产启动必须配置 `TENSOREVAL_BIN`、`SPARROWZZ_DIR` 和 LLM secret；不会自动回退到测试 stub。具体配置
 见 `backend/.env.example`。候选发布的真实依赖门禁见 `docs/v3-deployment.md`。
 
 ## 项目结构与权威来源
@@ -62,7 +62,7 @@ cd ..
 3. LLM 和前端只传稳定资源 ID 与受控 spec，不得接收服务器路径、命令、SQL 或任意 ECharts option。
 4. artifact、模型版本、任务脚本、结果数据集和分析记录发布后不可修改；更新通过新资源和血缘表达。
 5. 每个 repository 查询显式接收 `UserId`；跨用户与不存在资源统一返回 404。
-6. `TENSOREVAL_CWD` 必须是当前可读的 eig-rs 资源树，并满足代码定义的 catalog schema、路径和容量约束；
+6. `SPARROWZZ_DIR` 必须直接指向当前可读的 `eig-rs/sparrowzz` 资源树，并满足代码定义的 catalog schema、路径和容量约束；
    服务只读取、验证并发布本次启动的不可变 snapshot，不得 checkout、pull、reset、clean 或改写该工作树。
 7. Agent Prompt 不常驻整套引擎文档。服务启动时功能性预检当前 binary，并索引和发布当前资源 snapshot；
    更新 eig-rs 后必须重启，agent 按需调用文档和 skill 工具；

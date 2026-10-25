@@ -13,17 +13,17 @@ fn hash(bytes: &[u8]) -> String {
 
 struct Fixture {
     _root: tempfile::TempDir,
-    cwd: PathBuf,
+    sparrowzz_dir: PathBuf,
 }
 impl Fixture {
     fn dss(&self) -> PathBuf {
-        self.cwd.join("sparrowzz/dss")
+        self.sparrowzz_dir.join("dss")
     }
     fn bundle_root(&self) -> PathBuf {
         self.dss().join("rssbundle/Grid/123Bus/demo.rssbundle")
     }
     fn load(&self) -> zjudss::engine_resources::EngineResourceSnapshot {
-        EngineResourceRegistry::load(&self.cwd, &HashSet::new()).unwrap()
+        EngineResourceRegistry::load(&self.sparrowzz_dir, &HashSet::new()).unwrap()
     }
 }
 
@@ -63,8 +63,8 @@ fn write_case(bundle: &Path, manifest: &Value) {
 
 fn fixture() -> Fixture {
     let root = tempfile::tempdir().unwrap();
-    let cwd = root.path().join("engine");
-    let dss = cwd.join("sparrowzz/dss");
+    let sparrowzz_dir = root.path().join("sparrowzz");
+    let dss = sparrowzz_dir.join("dss");
     std::fs::create_dir_all(dss.join("docs/catalog")).unwrap();
     std::fs::create_dir_all(dss.join("docs/nested")).unwrap();
     std::fs::write(dss.join("docs/catalog/dataframes.json"), br#"{"schema_version":2,"frames":{"load":{"required":{"name":"str","bus":"str"},"optional":{"model":"str"}}}}"#).unwrap();
@@ -85,7 +85,10 @@ fn fixture() -> Fixture {
         &dss.join("rssbundle/Grid/123Bus/demo.rssbundle"),
         &valid_manifest(main, model),
     );
-    Fixture { _root: root, cwd }
+    Fixture {
+        _root: root,
+        sparrowzz_dir,
+    }
 }
 
 #[test]
@@ -212,7 +215,7 @@ fn bundle_manifest_rejects_duplicate_missing_unsafe_and_hash_mismatch_files() {
     }
     let serialized = serde_json::to_string(&snapshot.examples).unwrap();
     assert!(!serialized.contains("/home/operator"));
-    assert!(!serialized.contains(fixture.cwd.to_string_lossy().as_ref()));
+    assert!(!serialized.contains(fixture.sparrowzz_dir.to_string_lossy().as_ref()));
 }
 
 #[test]
@@ -274,8 +277,8 @@ fn publish_freezes_only_manifest_declared_case_sources_and_rebases_the_snapshot(
     assert_eq!(published.engine_root, path.join("source"));
     assert!(path.join("catalog/dataframes.json").is_file());
     assert!(path.join("docs/nested/guide.md").is_file());
-    assert!(!path.join("source/sparrowzz/dss/demo.rss").exists());
-    let bundle = path.join("source/sparrowzz/dss/rssbundle/Grid/123Bus/demo.rssbundle");
+    assert!(!path.join("source/dss/demo.rss").exists());
+    let bundle = path.join("source/dss/rssbundle/Grid/123Bus/demo.rssbundle");
     assert!(bundle.join("manifest.json").is_file());
     assert!(bundle.join("main.rss").is_file());
     assert!(bundle.join("dss/model.dss").is_file());
@@ -297,7 +300,7 @@ fn publish_rejects_source_changes_and_corrupt_existing_snapshots() {
     let data = tempfile::tempdir().unwrap();
     let (_, path) = EngineResourceRegistry::publish(snapshot.clone(), data.path()).unwrap();
     std::fs::write(
-        path.join("source/sparrowzz/dss/rssbundle/Grid/123Bus/demo.rssbundle/dss/model.dss"),
+        path.join("source/dss/rssbundle/Grid/123Bus/demo.rssbundle/dss/model.dss"),
         "corrupt",
     )
     .unwrap();
@@ -321,7 +324,7 @@ fn validates_catalog_schema_and_required_shape_but_allows_no_examples() {
     )
     .unwrap();
     assert_eq!(
-        EngineResourceRegistry::load(&unsupported.cwd, &HashSet::new())
+        EngineResourceRegistry::load(&unsupported.sparrowzz_dir, &HashSet::new())
             .unwrap_err()
             .code(),
         "engine_contract_mismatch"
@@ -333,7 +336,7 @@ fn validates_catalog_schema_and_required_shape_but_allows_no_examples() {
     )
     .unwrap();
     assert_eq!(
-        EngineResourceRegistry::load(&malformed.cwd, &HashSet::new())
+        EngineResourceRegistry::load(&malformed.sparrowzz_dir, &HashSet::new())
             .unwrap_err()
             .code(),
         "catalog_invalid"
@@ -406,7 +409,7 @@ fn all_resource_limits_fail_with_one_stable_code() {
         let fixture = fixture();
         assert_eq!(
             EngineResourceRegistry::load_with_limits(
-                &fixture.cwd,
+                &fixture.sparrowzz_dir,
                 &HashSet::new(),
                 limits(&fixture)
             )
@@ -422,11 +425,11 @@ fn all_resource_limits_fail_with_one_stable_code() {
 fn rejects_symlinks_anywhere_in_global_document_tree() {
     use std::os::unix::fs::symlink;
     let fixture = fixture();
-    let outside = fixture.cwd.join("outside.md");
+    let outside = fixture._root.path().join("outside.md");
     std::fs::write(&outside, "outside").unwrap();
     symlink(&outside, fixture.dss().join("docs/linked.md")).unwrap();
     assert_eq!(
-        EngineResourceRegistry::load(&fixture.cwd, &HashSet::new())
+        EngineResourceRegistry::load(&fixture.sparrowzz_dir, &HashSet::new())
             .unwrap_err()
             .code(),
         "engine_resource_path_escape"
@@ -462,11 +465,8 @@ fn publish_accepts_a_symlinked_data_dir_root() {
 
 #[test]
 fn current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count() {
-    let path = PathBuf::from("../../eig-rs");
-    if path
-        .join("sparrowzz/dss/docs/catalog/dataframes.json")
-        .is_file()
-    {
+    let path = PathBuf::from("../../eig-rs/sparrowzz");
+    if path.join("dss/docs/catalog/dataframes.json").is_file() {
         let snapshot = EngineResourceRegistry::load(&path, &HashSet::new())
             .expect("current configured eig-rs resources must be dynamically valid");
         assert_eq!(snapshot.catalog_schema_version, 2);

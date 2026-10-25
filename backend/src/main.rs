@@ -39,7 +39,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let resource_features = process_engine.capabilities().resource_features();
     let knowledge = AgentKnowledge::load_embedded(&runtime.agent_bundle_version)?;
     let engine_resources =
-        EngineResourceRegistry::load(&runtime.tensoreval_cwd, &resource_features)?;
+        EngineResourceRegistry::load(&runtime.sparrowzz_dir, &resource_features)?;
     let (engine_resources, snapshot_path) =
         EngineResourceRegistry::publish(engine_resources, &runtime.data_dir)?;
     let catalog = std::sync::Arc::new(SchemaCatalog::from_snapshot(

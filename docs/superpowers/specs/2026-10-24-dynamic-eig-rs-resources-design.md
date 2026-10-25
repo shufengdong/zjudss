@@ -2,7 +2,8 @@
 
 ## Intent
 
-V3 always uses the current `TENSOREVAL_BIN` and `TENSOREVAL_CWD` supplied by the operator. It does
+V3 always uses the current `TENSOREVAL_BIN` and `SPARROWZZ_DIR` supplied by the operator. `SPARROWZZ_DIR`
+points directly to `eig-rs/sparrowzz`. The application does
 not pin or compare eig-rs/sparrowzz commits, source-dirty state, catalog hashes, documentation hashes,
 example-list hashes, or an exact example count. An incompatible or broken current engine is reported
 as an explicit startup, import, validation, or execution error; the application does not silently fall
@@ -39,22 +40,22 @@ back to a stub or an older snapshot.
 ## Runtime discovery and validation
 
 Startup orchestration first asks the adapter to probe `TENSOREVAL_BIN`, then passes the validated
-capability/feature set into `EngineResourceRegistry::load(TENSOREVAL_CWD, capabilities)`. Resource code
+capability/feature set into `EngineResourceRegistry::load(SPARROWZZ_DIR, capabilities)`. Resource code
 never starts a subprocess. The registry performs one startup scan:
 
-- Require `sparrowzz/dss/docs/catalog/dataframes.json` and `functions.json`.
+- Require `dss/docs/catalog/dataframes.json` and `functions.json` below `SPARROWZZ_DIR`.
 - Parse both catalogs and require a schema version in a code-owned
   `SUPPORTED_CATALOG_SCHEMA_VERSIONS` set. A newer unknown schema fails with
   `engine_contract_mismatch` and a readable diagnostic; both catalogs also undergo their existing
   required-shape validation.
-- Recursively discover regular UTF-8 Markdown files below `sparrowzz/dss/docs`, excluding symlinks and
+- Recursively discover regular UTF-8 Markdown files below `SPARROWZZ_DIR/dss/docs`, excluding symlinks and
   escaping paths, with bounded file count and total bytes. Catalog JSON files remain separately parsed.
-- Discover top-level `sparrowzz/dss/*.rss` entries and all
-  `sparrowzz/dss/rssbundle/**/*.rssbundle/manifest.json` files in sorted portable-path order.
+- Discover `SPARROWZZ_DIR/dss/rssbundle/**/*.rssbundle/manifest.json` files in sorted portable-path order;
+  top-level `.rss` files outside the bundle tree are not cases.
 - Bundle file hashes declared by each current bundle manifest remain a self-consistency check. A broken
   bundle is listed as non-importable with diagnostics rather than changing another example.
-- Resolve RSS dependencies only inside `TENSOREVAL_CWD`; external, missing, symlink, and escaping
-  dependencies make that example non-importable.
+- Resolve manifest-declared bundle files only inside `SPARROWZZ_DIR`; external, missing, symlink, and
+  escaping dependencies make that example non-importable.
 - The adapter probe must exercise named Parquet input/output, static DSS import, single-Solve import,
   and script validation rather than inferring support from the same help flags. Bundle feature names are
   compared with the feature set returned by the adapter. The binary and resource tree are not
@@ -72,7 +73,7 @@ never changes snapshots after startup; picking up a newer eig-rs tree requires a
 Resource limits are code-owned release constants: at most 512 Markdown documents, 4 MiB per document,
 64 MiB total documentation, 2,048 examples, 10,000 files and 2 GiB per example, and dependency depth 64.
 Exceeding one fails with `engine_resource_limit_exceeded`. An empty example set is a valid runtime state;
-the real release gate separately requires at least one root RSS and one bundle.
+the real release gate separately requires at least one bundle and one importable example.
 
 ## Agent bundle and provenance
 
@@ -93,7 +94,7 @@ model, Agent bundle, skill, and engine-contract provenance.
 - Missing/unreadable required paths: `engine_resource_io` or `engine_resource_unavailable`.
 - Unsafe global docs/catalog paths or symlinks: startup `engine_resource_path_escape`.
 - Invalid/unsupported catalogs: `catalog_invalid` or `engine_contract_mismatch`.
-- Invalid, missing, escaping, symlinked, dynamically unresolved, or hash-inconsistent bundle/RSS
+- Invalid, missing, escaping, symlinked, or hash-inconsistent bundle
   dependencies: the individual example remains in the internal/Agent registry as non-importable with
   path-redacted diagnostics; the public case API keeps its existing modelizable-only filter.
 - Duplicate normalized paths or stable IDs: startup error because ownership is ambiguous.
@@ -101,9 +102,8 @@ model, Agent bundle, skill, and engine-contract provenance.
 - Runtime import/validation/execution failures: existing structured adapter errors; no fallback or retry
   against an older engine.
 
-RSS dependency discovery remains a bounded static parser for literal quoted paths plus DSS
-`redirect`/`compile` tokens. Unknown dynamic path construction is not executed and marks only that example
-non-importable.
+Bundle discovery never executes RSS. It reads only `manifest.json` and its declared files, validates safe
+relative paths and hashes, and marks only the affected example non-importable when validation fails.
 
 Startup logs and release reports record the computed snapshot ID, catalog schema, discovered/importable/
 non-importable counts, and binary hash. They do not claim an eig-rs commit. The hash is observation evidence
@@ -114,7 +114,8 @@ replacing the executable takes effect on the next call without a restart.
 
 - Rewrite engine-resource tests around dynamic discovery, deterministic runtime hashes, path/size
   bounds, schema failures, bundle self-consistency, and snapshot changes when current bytes change.
-- Remove exact `16/68/84` release assertions; require non-empty RSS and bundle sets and report counts.
+- Remove exact `16/68/84` release assertions; require a non-empty bundle set and at least one importable
+  example, then report discovered/importable/non-importable counts.
 - Run the local real gate against the configured current `.env`; if the current eig-rs fails, preserve
   and report the failure instead of checking out a pinned revision.
 - Change the candidate-release workflow to check out and build the default branch of eig-rs at workflow

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   agentTurnCompleted,
+  expectEngineReleaseEvidence,
   expectToolTrace,
   readAllMessages,
   type ToolTraceEntry,
@@ -11,6 +12,23 @@ const call = (toolName: string, status: ToolTraceEntry['status'], args: Record<s
 })
 
 describe('release semantic assertions', () => {
+  test('accepts the bundle-only engine report and rejects inconsistent counts', () => {
+    const report = {
+      engineContract: 'tensoreval-parquet-v3',
+      engineResourceSnapshot: `ers_${'a'.repeat(32)}`,
+      binarySha256: 'b'.repeat(64),
+      bundleExamples: 103,
+      importableExamples: 99,
+      nonImportableExamples: 4,
+      nonImportableDetails: Array.from({ length: 4 }, (_, index) => ({ exampleId: `ex_${index}` })),
+    }
+    expect(() => expectEngineReleaseEvidence(report)).not.toThrow()
+    expect(() => expectEngineReleaseEvidence({
+      ...report,
+      nonImportableExamples: 3,
+    })).toThrow(/counts are inconsistent/)
+  })
+
   test('waits for an assistant response after the final tool result', () => {
     expect(agentTurnCompleted([
       { id: 1, type: 'assistant' },

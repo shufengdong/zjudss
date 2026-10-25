@@ -8,13 +8,13 @@ migration。`backend/resources/init_users.csv` 必须为 `ID,NAME`；初始密�
 
 ## Required configuration
 
-生产必须配置 `DATABASE_URL`、持久化 `DATA_DIR`、`TENSOREVAL_BIN`、`TENSOREVAL_CWD` 和 DeepSeek secret。
+生产必须配置 `DATABASE_URL`、持久化 `DATA_DIR`、`TENSOREVAL_BIN`、`SPARROWZZ_DIR` 和 DeepSeek secret。
 binary 必须支持命名 Parquet input、`--result-dir`、`--output-format parquet`、两种模型 import profile 与脚本
 校验；资源目录必须包含受支持 schema 的 catalog、可安全读取的文档与案例。启动从当前目录动态计算资源
 snapshot，不固定 eig-rs/sparrowzz commit、binary SHA、资源 hash 或案例数量。生产没有 stub 回退，也不会自动
 checkout、pull、reset、clean、构建或改写配置的 eig-rs 工作树。
 
-案例根固定为 `TENSOREVAL_CWD/sparrowzz/dss/rssbundle`。候选资源必须让每个案例以直接包含
+`SPARROWZZ_DIR` 直接指向 `eig-rs/sparrowzz`；案例根固定为 `SPARROWZZ_DIR/dss/rssbundle`。候选资源必须让每个案例以直接包含
 `manifest.json` 的 `.rssbundle` 目录发布；中间目录只用于分类。manifest 声明的入口和 files 必须是 bundle 内安全
 相对路径，文件存在且 SHA-256 一致。单个无效案例会作为不可导入叶节点及脱敏诊断保留，目录逃逸或全局限制错误
 仍使启动失败。
@@ -69,7 +69,7 @@ git diff --check
 ## Candidate real-dependency gate
 
 受保护环境只提供 `DEEPSEEK_API_KEY`。workflow 每次检出 eig-rs 默认分支（含 submodule），构建当前
-`tensoreval`，设置 `TENSOREVAL_BIN/TENSOREVAL_CWD` 并运行：
+`tensoreval`，设置 `TENSOREVAL_BIN/SPARROWZZ_DIR` 并运行：
 
 ```bash
 ./scripts/test-release-integration

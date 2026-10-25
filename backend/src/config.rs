@@ -12,7 +12,7 @@ const MIB: u64 = 1024 * 1024;
 pub struct RuntimeConfig {
     pub database_url: String,
     pub data_dir: PathBuf,
-    pub tensoreval_cwd: PathBuf,
+    pub sparrowzz_dir: PathBuf,
     pub session_ttl: Duration,
     pub session_cookie_secure: bool,
     pub agent_max_concurrent_runs: usize,
@@ -67,12 +67,12 @@ impl RuntimeConfig {
         Self::from_values(&base_dir, std::env::vars().collect(), None)
     }
 
-    /// 供测试和确定性配置校验使用。test_engine_root 只能由测试夹具显式注入；
-    /// 为 None 时采用生产规则，必须从配置中读取 TENSOREVAL_CWD。
+    /// 供测试和确定性配置校验使用。test_sparrowzz_dir 只能由测试夹具显式注入；
+    /// 为 None 时采用生产规则，必须从配置中读取 SPARROWZZ_DIR。
     pub fn from_values(
         base_dir: &Path,
         values: BTreeMap<String, String>,
-        test_engine_root: Option<PathBuf>,
+        test_sparrowzz_dir: Option<PathBuf>,
     ) -> Result<Self, ConfigError> {
         let get = |name: &str| values.get(name).map(String::as_str);
 
@@ -82,19 +82,19 @@ impl RuntimeConfig {
         let data_dir = absolute_path(base_dir, get("DATA_DIR").unwrap_or("data"));
         ensure_writable_dir(&data_dir)?;
 
-        let tensoreval_cwd = match test_engine_root {
+        let sparrowzz_dir = match test_sparrowzz_dir {
             Some(path) => path,
-            None => get("TENSOREVAL_CWD").map(PathBuf::from).ok_or_else(|| {
+            None => get("SPARROWZZ_DIR").map(PathBuf::from).ok_or_else(|| {
                 ConfigError::new(
-                    "config_tensoreval_cwd_missing",
-                    "非测试启动必须配置 TENSOREVAL_CWD",
+                    "config_sparrowzz_dir_missing",
+                    "非测试启动必须配置 SPARROWZZ_DIR",
                 )
             })?,
         };
-        if !tensoreval_cwd.is_dir() || std::fs::read_dir(&tensoreval_cwd).is_err() {
+        if !sparrowzz_dir.is_dir() || std::fs::read_dir(&sparrowzz_dir).is_err() {
             return Err(ConfigError::new(
-                "config_tensoreval_cwd_unreadable",
-                "TENSOREVAL_CWD 不存在或不是可读目录",
+                "config_sparrowzz_dir_unreadable",
+                "SPARROWZZ_DIR 不存在或不是可读目录",
             ));
         }
 
@@ -109,7 +109,7 @@ impl RuntimeConfig {
         Ok(Self {
             database_url,
             data_dir,
-            tensoreval_cwd,
+            sparrowzz_dir,
             session_ttl,
             session_cookie_secure,
             agent_max_concurrent_runs: positive_usize(&values, "AGENT_MAX_CONCURRENT_RUNS", 8)?,

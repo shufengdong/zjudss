@@ -2,17 +2,18 @@
 
 ## 1. 背景与目标
 
-当前案例资源同时发现 `sparrowzz/dss` 根目录的 `.rss` 文件和
-`sparrowzz/dss/rssbundle` 下的 bundle，并以扁平列表提供给前端和 Agent。该结构与 eig-rs
+调整前的案例资源同时发现 `SPARROWZZ_DIR/dss` 根目录的 `.rss` 文件和
+`SPARROWZZ_DIR/dss/rssbundle` 下的 bundle，并以扁平列表提供给前端和 Agent。该结构与 eig-rs
 当前发布的案例基线不一致，也丢失了案例在源码目录中的分类关系。
 
-本次调整以当前 `TENSOREVAL_CWD/sparrowzz/dss/rssbundle` 为唯一案例根目录。中间目录仅表示分类；
+本次调整以当前 `SPARROWZZ_DIR/dss/rssbundle` 为唯一案例根目录。`SPARROWZZ_DIR` 直接指向
+`eig-rs/sparrowzz`。中间目录仅表示分类；
 只有名称以 `.rssbundle` 结尾、且目录内包含 `manifest.json` 的目录才表示案例。案例内容、分析类型和
 可导入文件全部由 manifest 决定。
 
 完成后应满足：
 
-- 案例库不再发现或展示 `sparrowzz/dss` 根目录的 `.rss` 文件。
+- 案例库不再发现或展示 `SPARROWZZ_DIR/dss` 根目录的 `.rss` 文件。
 - 前端目录层级与 `rssbundle` 下的真实相对目录层级一致。
 - 前端、HTTP API 和 Agent 工具共享同一份后端目录与 manifest 解释结果。
 - 应用案例时只导入 manifest 声明的文件，并在导入前验证路径、入口和内容哈希。
@@ -26,7 +27,7 @@
 资源扫描器只递归访问：
 
 ```text
-TENSOREVAL_CWD/sparrowzz/dss/rssbundle
+SPARROWZZ_DIR/dss/rssbundle
 ```
 
 目录语义如下：

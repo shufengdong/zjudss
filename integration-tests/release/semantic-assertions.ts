@@ -35,11 +35,11 @@ export function expectEngineReleaseEvidence(report: any) {
   invariant(report?.engineContract === 'tensoreval-parquet-v3', 'engine contract is missing or unsupported')
   invariant(/^ers_[a-f0-9]{32}$/.test(report.engineResourceSnapshot ?? ''), 'engine resource snapshot is invalid')
   invariant(/^[a-f0-9]{64}$/.test(report.binarySha256 ?? ''), 'engine binary hash is invalid')
-  invariant(report.rootRssExamples > 0, 'release engine has no root RSS examples')
   invariant(report.bundleExamples > 0, 'release engine has no bundle examples')
   invariant(report.importableExamples > 0, 'release engine has no importable examples')
   invariant(
-    report.discoveredExamples === report.importableExamples + (report.nonImportableExamples?.length ?? 0),
+    report.bundleExamples === report.importableExamples + report.nonImportableExamples
+      && report.nonImportableDetails?.length === report.nonImportableExamples,
     'release engine example counts are inconsistent',
   )
 }

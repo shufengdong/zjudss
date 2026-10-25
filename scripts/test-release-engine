@@ -15,16 +15,16 @@ if [ -z "${TENSOREVAL_BIN:-}" ]; then
   echo "release_engine_missing:TENSOREVAL_BIN" >&2
   exit 2
 fi
-if [ -z "${TENSOREVAL_CWD:-}" ]; then
-  echo "release_engine_missing:TENSOREVAL_CWD" >&2
+if [ -z "${SPARROWZZ_DIR:-}" ]; then
+  echo "release_engine_missing:SPARROWZZ_DIR" >&2
   exit 2
 fi
 if [ ! -x "$TENSOREVAL_BIN" ]; then
   echo "release_engine_binary_invalid" >&2
   exit 2
 fi
-if [ ! -d "$TENSOREVAL_CWD" ]; then
-  echo "release_engine_cwd_invalid" >&2
+if [ ! -d "$SPARROWZZ_DIR" ]; then
+  echo "release_engine_sparrowzz_dir_invalid" >&2
   exit 2
 fi
 

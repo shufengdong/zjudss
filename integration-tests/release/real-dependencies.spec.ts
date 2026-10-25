@@ -292,10 +292,9 @@ test('real DeepSeek and tensoreval complete the V3 semantic release journey', as
       engineBinarySha256: engineReport?.binarySha256 ?? null,
       engineResourceSnapshot: engineReport?.engineResourceSnapshot ?? null,
       engineExampleCounts: engineReport ? {
-        discovered: engineReport.discoveredExamples,
+        discovered: engineReport.bundleExamples,
         importable: engineReport.importableExamples,
-        nonImportable: engineReport.nonImportableExamples?.length ?? 0,
-        rootRss: engineReport.rootRssExamples,
+        nonImportable: engineReport.nonImportableExamples,
         bundles: engineReport.bundleExamples,
       } : null,
       attempts,

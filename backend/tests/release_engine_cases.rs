@@ -384,7 +384,7 @@ async fn run_representative(
 #[tokio::test]
 async fn real_engine_imports_all_examples_and_runs_representative_studies() {
     let binary = required_path("TENSOREVAL_BIN");
-    let cwd = required_path("TENSOREVAL_CWD");
+    let sparrowzz_dir = required_path("SPARROWZZ_DIR");
     let config = EngineConfig::probe(binary.clone(), Duration::from_secs(120))
         .unwrap_or_else(|error| panic!("release_engine_capability_mismatch:{}", error.code));
     assert_eq!(
@@ -394,7 +394,7 @@ async fn real_engine_imports_all_examples_and_runs_representative_studies() {
     let binary_sha256 = config.binary_sha256.clone();
     let resource_features = config.capabilities.resource_features();
     let engine = ProcessEngine::new(config);
-    let snapshot = EngineResourceRegistry::load(&cwd, &resource_features)
+    let snapshot = EngineResourceRegistry::load(&sparrowzz_dir, &resource_features)
         .unwrap_or_else(|error| panic!("release_engine_snapshot_invalid:{}", error.code()));
     let temp = tempfile::tempdir().unwrap();
     let (snapshot, _) = EngineResourceRegistry::publish(snapshot, temp.path())

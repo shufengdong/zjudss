@@ -13,16 +13,16 @@ use common::TestApp;
 #[test]
 fn config_defaults_are_safe() {
     let root = tempfile::tempdir().expect("create config root");
-    let engine_root = root.path().join("engine");
-    std::fs::create_dir_all(engine_root.join("sparrowzz/dss/docs")).expect("create engine fixture");
+    let sparrowzz_dir = root.path().join("sparrowzz");
+    std::fs::create_dir_all(sparrowzz_dir.join("dss/docs")).expect("create engine fixture");
 
     let config =
-        RuntimeConfig::from_values(root.path(), BTreeMap::new(), Some(engine_root.clone()))
+        RuntimeConfig::from_values(root.path(), BTreeMap::new(), Some(sparrowzz_dir.clone()))
             .expect("parse defaults");
 
     assert_eq!(config.database_url, "sqlite://backend.db");
     assert_eq!(config.data_dir, root.path().join("data"));
-    assert_eq!(config.tensoreval_cwd, engine_root);
+    assert_eq!(config.sparrowzz_dir, sparrowzz_dir);
     assert_eq!(
         config.session_ttl,
         std::time::Duration::from_secs(30 * 24 * 60 * 60)
@@ -43,20 +43,40 @@ fn config_defaults_are_safe() {
 }
 
 #[test]
-fn production_config_requires_readable_tensoreval_cwd() {
+fn production_config_requires_readable_sparrowzz_dir() {
     let root = tempfile::tempdir().expect("create config root");
 
-    let missing = RuntimeConfig::from_values(root.path(), BTreeMap::new(), None)
-        .expect_err("production config must require TENSOREVAL_CWD");
-    assert_eq!(missing.code(), "config_tensoreval_cwd_missing");
+    let missing = RuntimeConfig::from_values(
+        root.path(),
+        BTreeMap::from([(
+            "TENSOREVAL_CWD".to_string(),
+            root.path().display().to_string(),
+        )]),
+        None,
+    )
+    .expect_err("production config must require SPARROWZZ_DIR and reject the old alias");
+    assert_eq!(missing.code(), "config_sparrowzz_dir_missing");
 
     let vars = BTreeMap::from([(
-        "TENSOREVAL_CWD".to_string(),
+        "SPARROWZZ_DIR".to_string(),
         root.path().join("does-not-exist").display().to_string(),
     )]);
     let unreadable = RuntimeConfig::from_values(root.path(), vars, None)
-        .expect_err("production config must reject an unreadable engine root");
-    assert_eq!(unreadable.code(), "config_tensoreval_cwd_unreadable");
+        .expect_err("production config must reject an unreadable Sparrowzz root");
+    assert_eq!(unreadable.code(), "config_sparrowzz_dir_unreadable");
+
+    let sparrowzz_dir = root.path().join("sparrowzz");
+    std::fs::create_dir_all(&sparrowzz_dir).expect("create Sparrowzz root");
+    let valid = RuntimeConfig::from_values(
+        root.path(),
+        BTreeMap::from([(
+            "SPARROWZZ_DIR".to_string(),
+            sparrowzz_dir.display().to_string(),
+        )]),
+        None,
+    )
+    .expect("production config accepts SPARROWZZ_DIR");
+    assert_eq!(valid.sparrowzz_dir, sparrowzz_dir);
 }
 
 #[test]

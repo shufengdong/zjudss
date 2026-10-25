@@ -61,7 +61,7 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     assert!(rss_generation.contains("终端输出必须是 DataFrame"));
     assert!(rss_generation.contains("未被后续节点消费的纯标量"));
     assert!(!knowledge.system_prompt.contains("/Users/"));
-    assert!(!knowledge.system_prompt.contains("TENSOREVAL_CWD"));
+    assert!(!knowledge.system_prompt.contains("SPARROWZZ_DIR"));
     assert!(!knowledge.system_prompt.contains("p_nom"));
     assert!(!knowledge.system_prompt.contains("API_KEY"));
 }

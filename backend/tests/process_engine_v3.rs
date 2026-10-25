@@ -767,7 +767,7 @@ fn release_script_fails_closed_with_stable_preflight_reasons() {
     let missing = Command::new(&script)
         .env("ZJUDSS_SKIP_DOTENV", "1")
         .env_remove("TENSOREVAL_BIN")
-        .env_remove("TENSOREVAL_CWD")
+        .env_remove("SPARROWZZ_DIR")
         .output()
         .unwrap();
     assert!(!missing.status.success());
@@ -777,13 +777,38 @@ fn release_script_fails_closed_with_stable_preflight_reasons() {
     );
 
     let root = tempfile::tempdir().unwrap();
+    let renamed = Command::new(&script)
+        .env("ZJUDSS_SKIP_DOTENV", "1")
+        .env("TENSOREVAL_BIN", &script)
+        .env("TENSOREVAL_CWD", root.path())
+        .env_remove("SPARROWZZ_DIR")
+        .output()
+        .unwrap();
+    assert!(!renamed.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&renamed.stderr).trim(),
+        "release_engine_missing:SPARROWZZ_DIR"
+    );
+
+    let invalid_dir = Command::new(&script)
+        .env("ZJUDSS_SKIP_DOTENV", "1")
+        .env("TENSOREVAL_BIN", &script)
+        .env("SPARROWZZ_DIR", root.path().join("missing-sparrowzz"))
+        .output()
+        .unwrap();
+    assert!(!invalid_dir.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&invalid_dir.stderr).trim(),
+        "release_engine_sparrowzz_dir_invalid"
+    );
+
     let old = root.path().join("old-tensoreval");
     std::fs::write(&old, "#!/bin/sh\necho 'Usage: tensoreval --result-dir'\n").unwrap();
     std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).unwrap();
     let incompatible = Command::new(&script)
         .env("ZJUDSS_SKIP_DOTENV", "1")
         .env("TENSOREVAL_BIN", &old)
-        .env("TENSOREVAL_CWD", root.path())
+        .env("SPARROWZZ_DIR", root.path())
         .output()
         .unwrap();
     assert!(!incompatible.status.success());

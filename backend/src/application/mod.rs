@@ -150,7 +150,7 @@ impl AppState {
             .unwrap_or(&data_dir)
             .join("engine-fixture");
         let bundle_path = "E2E/Demo/E2E demo.rssbundle";
-        let bundle_relative = format!("sparrowzz/dss/rssbundle/{bundle_path}");
+        let bundle_relative = format!("dss/rssbundle/{bundle_path}");
         let bundle = engine_root.join(&bundle_relative);
         std::fs::create_dir_all(bundle.join("dss")).expect("create e2e example directory");
         let main_bytes = b"model = import_dss(\"dss/model.dss\");\n";
@@ -193,7 +193,7 @@ impl AppState {
         let manifest_bytes = serde_json::to_vec_pretty(&manifest).expect("serialize e2e manifest");
         std::fs::write(bundle.join("manifest.json"), &manifest_bytes).expect("write e2e manifest");
         let manifest_hash = hex::encode(Sha256::digest(&manifest_bytes));
-        let invalid_relative = "sparrowzz/dss/rssbundle/E2E/Demo/Broken.rssbundle";
+        let invalid_relative = "dss/rssbundle/E2E/Demo/Broken.rssbundle";
         let invalid_bytes = b"{";
         std::fs::create_dir_all(engine_root.join(invalid_relative))
             .expect("create invalid e2e example directory");
@@ -239,7 +239,7 @@ impl AppState {
             id: "e2e-snapshot".into(),
             contract_version: "e2e-contract".into(),
             catalog_schema_version: 2,
-            source_root: engine_root.join("sparrowzz/dss"),
+            source_root: engine_root.join("dss"),
             engine_root: engine_root.clone(),
             catalog_json: catalog_value,
             functions_json: serde_json::json!({"schema_version": 2, "frame_functions": []}),

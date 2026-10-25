@@ -37,7 +37,7 @@ shell 命令和任意图表 option。`modify_model` 使用 `tableName + rowKey +
 
 ## Engine knowledge
 
-服务启动时从当前 `TENSOREVAL_CWD` 动态发现、验证并发布不可变 snapshot，索引受控文档章节、catalog 和案例。
+服务启动时从当前 `SPARROWZZ_DIR` 动态发现、验证并发布不可变 snapshot，索引受控文档章节、catalog 和案例。
 snapshot 由本次实际读取的字节计算，不比较 eig-rs/sparrowzz commit，也不要求固定案例数量；更新资源后需重启。
 Agent 先 `search_engine_docs`，再凭 section ID 读取需要的片段。案例 search/inspect 只读；应用由固定 UI 完成。
 

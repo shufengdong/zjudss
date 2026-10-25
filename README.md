@@ -50,13 +50,13 @@ zjudss/
 ```bash
 cd backend
 cp .env.example .env
-# 必填：DEEPSEEK_API_KEY、TENSOREVAL_BIN、TENSOREVAL_CWD
+# 必填：DEEPSEEK_API_KEY、TENSOREVAL_BIN、SPARROWZZ_DIR
 cargo run --release
 ```
 
-`TENSOREVAL_CWD` 是发布 artifact 中经过校验的资源根目录，其中必须包含合同固定的文档、catalog、
-案例及其依赖。开发时可以指向 `eig-rs` 的受控工作树；合同范围内的内容 hash 必须与内置 manifest
-完全一致，否则启动 preflight 失败。当前相邻仓库不能自动视为发布资源。
+`SPARROWZZ_DIR` 直接指向经过校验的 `eig-rs/sparrowzz` 资源根，其中必须包含 `dss` 下合同固定的文档、
+catalog、案例及其依赖。从仓库根看相邻开发树通常是 `../eig-rs/sparrowzz`；从 `backend/` 启动时对应
+`../../eig-rs/sparrowzz`。当前相邻仓库不会被自动选中，必须显式配置。
 
 启动前端：
 

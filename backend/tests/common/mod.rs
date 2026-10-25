@@ -135,8 +135,8 @@ impl TestApp {
         agent_factory: std::sync::Arc<dyn AgentFactory>,
     ) -> Self {
         let root = tempfile::tempdir().expect("create isolated test root");
-        let engine_root = root.path().join("engine");
-        let dss_root = engine_root.join("sparrowzz/dss");
+        let engine_root = root.path().join("sparrowzz");
+        let dss_root = engine_root.join("dss");
         std::fs::create_dir_all(dss_root.join("docs/catalog"))
             .expect("create test engine resource fixture");
         let dataframes = br#"{"schema_version":2,"frames":{"bus":{"required":{"id":"str"}}}}"#;
@@ -147,8 +147,8 @@ impl TestApp {
         std::fs::write(dss_root.join("docs/guide.md"), guide).unwrap();
         std::fs::create_dir_all(dss_root.join("models/demo")).unwrap();
         std::fs::create_dir_all(engine_root.join("psa/tests/bmopf")).unwrap();
-        std::fs::create_dir_all(engine_root.join("sparrowzz/rspower/lib")).unwrap();
-        let demo_rss = b"a=import_dss(\"sparrowzz/dss/models/demo/master.dss\");\nb=import_bmopf(\"psa/tests/bmopf/demo.json\");\nc=read(\"sparrowzz/rspower/lib/helper.csv\");\n";
+        std::fs::create_dir_all(engine_root.join("rspower/lib")).unwrap();
+        let demo_rss = b"a=import_dss(\"dss/models/demo/master.dss\");\nb=import_bmopf(\"psa/tests/bmopf/demo.json\");\nc=read(\"rspower/lib/helper.csv\");\n";
         let master = b"Redirect child.dss\n";
         std::fs::write(dss_root.join("demo.rss"), demo_rss).unwrap();
         std::fs::write(dss_root.join("models/demo/master.dss"), master).unwrap();
@@ -158,11 +158,7 @@ impl TestApp {
         )
         .unwrap();
         std::fs::write(engine_root.join("psa/tests/bmopf/demo.json"), b"{}\n").unwrap();
-        std::fs::write(
-            engine_root.join("sparrowzz/rspower/lib/helper.csv"),
-            b"id\n1\n",
-        )
-        .unwrap();
+        std::fs::write(engine_root.join("rspower/lib/helper.csv"), b"id\n1\n").unwrap();
         let bundle = dss_root.join("rssbundle/E2E/Demo/E2E demo.rssbundle");
         std::fs::create_dir_all(bundle.join("dss")).unwrap();
         let bundle_main = b"model = import_dss(\"dss/model.dss\");\n";
@@ -215,7 +211,7 @@ impl TestApp {
         .expect("build isolated test config");
         AgentKnowledge::load_embedded(&config.agent_bundle_version)
             .expect("preflight embedded agent knowledge");
-        let engine_snapshot = EngineResourceRegistry::load(&config.tensoreval_cwd, &HashSet::new())
+        let engine_snapshot = EngineResourceRegistry::load(&config.sparrowzz_dir, &HashSet::new())
             .expect("preflight isolated engine resource fixture");
         let (engine_snapshot, _) =
             EngineResourceRegistry::publish(engine_snapshot, &config.data_dir)

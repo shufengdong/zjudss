@@ -55,21 +55,21 @@ pub struct EngineResourceRegistry;
 
 impl EngineResourceRegistry {
     pub fn load(
-        tensoreval_cwd: &Path,
+        sparrowzz_dir: &Path,
         capabilities: &HashSet<String>,
     ) -> Result<EngineResourceSnapshot, EngineResourceError> {
-        Self::load_with_limits(tensoreval_cwd, capabilities, ResourceLimits::default())
+        Self::load_with_limits(sparrowzz_dir, capabilities, ResourceLimits::default())
     }
 
     pub fn load_with_limits(
-        tensoreval_cwd: &Path,
+        sparrowzz_dir: &Path,
         _capabilities: &HashSet<String>,
         limits: ResourceLimits,
     ) -> Result<EngineResourceSnapshot, EngineResourceError> {
-        let engine_root = tensoreval_cwd
+        let engine_root = sparrowzz_dir
             .canonicalize()
             .map_err(EngineResourceError::io)?;
-        let dss_root = safe_directory(&engine_root, "sparrowzz/dss")?;
+        let dss_root = safe_directory(&engine_root, "dss")?;
         let dataframes = read_safe_bounded(
             &dss_root,
             "docs/catalog/dataframes.json",
@@ -124,20 +124,16 @@ impl EngineResourceRegistry {
         let mut source_hashes = BTreeMap::new();
         insert_source_hash(
             &mut source_hashes,
-            "sparrowzz/dss/docs/catalog/dataframes.json".to_string(),
+            "dss/docs/catalog/dataframes.json".to_string(),
             hash_bytes(&dataframes),
         )?;
         insert_source_hash(
             &mut source_hashes,
-            "sparrowzz/dss/docs/catalog/functions.json".to_string(),
+            "dss/docs/catalog/functions.json".to_string(),
             hash_bytes(&functions),
         )?;
         for (path, bytes) in &documents {
-            insert_source_hash(
-                &mut source_hashes,
-                format!("sparrowzz/dss/{path}"),
-                hash_bytes(bytes),
-            )?;
+            insert_source_hash(&mut source_hashes, format!("dss/{path}"), hash_bytes(bytes))?;
         }
         for example in &examples {
             for file in &example.files {
@@ -435,7 +431,7 @@ fn rebase_snapshot(
     destination: &Path,
 ) -> Result<(), EngineResourceError> {
     snapshot.engine_root = safe_directory(destination, "source")?;
-    snapshot.source_root = safe_directory(&snapshot.engine_root, "sparrowzz/dss")?;
+    snapshot.source_root = safe_directory(&snapshot.engine_root, "dss")?;
     Ok(())
 }
 

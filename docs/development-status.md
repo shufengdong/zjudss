@@ -23,8 +23,8 @@
 - 后端 Cargo package 与 library crate 均为 `zjudss`；`backend/` 只是仓库目录名，Rust 调用点使用
   `zjudss::`。
 - Agent bundle：`v3.0.0`，目录 `backend/resources/agent/v3`。
-- Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `TENSOREVAL_CWD` 动态发现并验证
-  docs/catalog 与 `sparrowzz/dss/rssbundle` manifest，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
+- Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `SPARROWZZ_DIR` 动态发现并验证
+  `dss/docs/catalog` 与 `dss/rssbundle` manifest，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
 - 公共合同：41 条路由、9 类消息、16 个工具、6 个 skills、8 个上传来源、6 类视图。
 - 模型表：adapter 固定输出 21 张规范 DataFrame，包含合法的零行表。
 
@@ -44,7 +44,7 @@ LLM 不接触物理路径。脚本创建不运行，模型修改不发布，案�
 启动会功能性探测当前 `TENSOREVAL_BIN` 的命名 Parquet、两种模型导入和脚本校验能力；启动后替换 binary
 无需重启，下一次调用直接使用路径上的当前普通文件，只有文件不存在或不再是普通文件时才拒绝。资源扫描限制为 512 篇
 Markdown、单篇 4 MiB、文档合计 64 MiB、2,048 个案例、每案例 10,000 文件/2 GiB、依赖深度 64；变更资源树
-后也必须重启。案例只发现 `sparrowzz/dss/rssbundle` 下直接含 manifest 的 `.rssbundle` 目录；运行时允许没有案例，
+后也必须重启。案例只发现 `SPARROWZZ_DIR/dss/rssbundle` 下直接含 manifest 的 `.rssbundle` 目录；运行时允许没有案例，
 候选发布门禁要求至少一个 rssbundle 和一个可导入案例，并对当前存在的受支持 study 类型各运行一个代表案例。
 
 ## Reset and operation
