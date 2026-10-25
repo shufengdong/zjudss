@@ -2,13 +2,24 @@
 
 mod common;
 
+use std::io::Cursor;
 use std::sync::Arc;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
+use diesel::prelude::*;
+use diesel::sql_types::Integer;
 use serde_json::{Value, json};
 use tower::ServiceExt;
+use zjudss::application::study_planning::{
+    MotorDynamicsRequest, SolverPreference, StudyRequest, TransientSubtype,
+};
+use zjudss::application::{PublishDraftRequest, UploadBatch, UploadFile};
+use zjudss::auth::CurrentUser;
+use zjudss::db::models::DraftRef;
+use zjudss::storage::StageLimits;
 use zjudss::testing::{ScriptScenario, ScriptTurn, ScriptedAgentFactory};
+use zjudss::tools::ReadyStudyPlanRegistry;
 
 use common::TestApp;
 
@@ -84,6 +95,475 @@ async fn messages(app: &TestApp, session_id: &str) -> Vec<Value> {
         .clone()
 }
 
+async fn runs(app: &TestApp, session_id: &str) -> Vec<Value> {
+    let cookie = app.login_cookie("instance").await;
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/sessions/{session_id}/runs"))
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    serde_json::from_slice::<Value>(&body).unwrap()["runs"]
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+async fn apply_csv(
+    app: &TestApp,
+    user: &CurrentUser,
+    session_id: i32,
+    table_name: &str,
+    csv: &[u8],
+    expected: Option<DraftRef>,
+    sequence: usize,
+) -> DraftRef {
+    let client_id = format!("agent-study-{session_id}-{table_name}-{sequence}");
+    let staged = app
+        .state
+        .artifact_service
+        .store()
+        .stage(Cursor::new(csv), StageLimits::default())
+        .unwrap();
+    let accepted = app
+        .state
+        .model_import_service
+        .accept(
+            user,
+            session_id,
+            client_id.clone(),
+            expected,
+            UploadBatch {
+                client_batch_id: client_id.clone(),
+                files: vec![UploadFile {
+                    client_file_id: client_id,
+                    file_name: format!("{table_name}.csv"),
+                    relative_path: None,
+                    media_type: Some("text/csv".into()),
+                    staged,
+                }],
+            },
+        )
+        .await
+        .unwrap();
+    let import_id = accepted.id.parse().unwrap();
+    let ready = app
+        .state
+        .model_import_service
+        .process(user, import_id)
+        .await
+        .unwrap();
+    let candidate = ready
+        .candidates
+        .into_iter()
+        .find(|candidate| candidate.table_name.as_deref() == Some(table_name))
+        .unwrap();
+    app.state
+        .model_import_service
+        .resolve_and_apply(user, import_id, expected, vec![candidate.id])
+        .await
+        .unwrap()
+}
+
+async fn publish_agent_study_model(app: &TestApp, session_id: i32) {
+    let user = common::test_user("instance");
+    let tables: [(&str, &[u8]); 5] = [
+        ("bus", b"id\nsource\nb1\n"),
+        ("line", b"name,bus_from,bus_to\nl1,source,b1\n"),
+        ("voltage_source", b"name,bus\nsource,source\n"),
+        ("motor", b"name,bus,motor_marker\nm1,b1,present\n"),
+        ("spectrum", b"name,harmonic\ndefault,1\n"),
+    ];
+    let mut draft = None;
+    for (sequence, (table_name, csv)) in tables.into_iter().enumerate() {
+        draft = Some(apply_csv(app, &user, session_id, table_name, csv, draft, sequence).await);
+    }
+    let draft = draft.unwrap();
+    app.state
+        .version_service
+        .publish(
+            &user,
+            session_id,
+            PublishDraftRequest {
+                expected_draft_id: draft.id,
+                expected_draft_revision: draft.revision,
+                client_publish_id: format!("publish-agent-study-{session_id}"),
+            },
+        )
+        .await
+        .unwrap();
+}
+
+#[derive(diesel::QueryableByName)]
+struct MessageIdRow {
+    #[diesel(sql_type = Integer)]
+    id: i32,
+}
+
+async fn next_message_id(app: &TestApp) -> i32 {
+    let pool = app.pool.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get().unwrap();
+        diesel::sql_query("SELECT COALESCE(MAX(id), 0) + 1 AS id FROM messages")
+            .get_result::<MessageIdRow>(&mut conn)
+            .unwrap()
+            .id
+    })
+    .await
+    .unwrap()
+}
+
+async fn ready_plan_id(app: &TestApp, session_id: i32, request: StudyRequest) -> String {
+    let plan = app
+        .state
+        .study_planning_service
+        .plan(&common::test_user("instance"), session_id, request)
+        .await
+        .unwrap();
+    let mut registry = ReadyStudyPlanRegistry::default();
+    registry.insert(next_message_id(app).await, plan.ready.unwrap())
+}
+
+fn tool_names(events: &[Value]) -> Vec<&str> {
+    events
+        .iter()
+        .filter(|event| event["type"] == "tool-call" && event["status"] == "running")
+        .filter_map(|event| event["toolName"].as_str())
+        .collect()
+}
+
+fn assert_no_script_or_run(events: &[Value]) {
+    assert!(
+        events
+            .iter()
+            .all(|event| event["type"] != "script" && event["type"] != "simulation-run"),
+        "events: {events:#?}"
+    );
+}
+
+const POWER_FLOW_SCRIPT: &str = r#"[bus_phase, summary] = ds_radial_pf(
+    bus, line, linecode, load, transformer, voltage_source, motor,
+    transformer_winding, transformer_impedance, current_source, generator, ibr,
+    switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para
+);"#;
+
+const MOTOR_DYNAMICS_SCRIPT: &str = r#"[motor_state] = ds_motor_dynamics(
+    bus, line, linecode, load, transformer, voltage_source, motor,
+    transformer_winding, transformer_impedance, current_source, generator, ibr,
+    switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage,
+    timeline, event, tcc_curve, fuse, recloser, relay, spec, para
+);"#;
+
+#[tokio::test]
+async fn study_power_flow_uses_ready_plan_before_creating_the_planned_script() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let session = create_session(&app).await;
+    let session_id = session.parse().unwrap();
+    publish_agent_study_model(&app, session_id).await;
+    let request = StudyRequest::StaticPowerFlow {
+        solver_preference: SolverPreference::Auto,
+        requested_results: vec![],
+    };
+    let plan_id = ready_plan_id(&app, session_id, request.clone()).await;
+    factory.enqueue(ScriptScenario {
+        id: "study-power-flow-ready".into(),
+        expected_prompt: Some("计算潮流".into()),
+        turns: vec![
+            ScriptTurn::ToolCall {
+                call_id: "inspect".into(),
+                name: "inspect_workspace".into(),
+                args: json!({}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "load-planning".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"study-planning"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "plan".into(),
+                name: "plan_study".into(),
+                args: json!({"request": request}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "load-rss".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"rss-generation"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "search-pf-docs".into(),
+                name: "search_engine_docs".into(),
+                args: json!({"query":"ds_radial_pf"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "create".into(),
+                name: "create_script".into(),
+                args: json!({
+                    "name":"power-flow.rss",
+                    "content":POWER_FLOW_SCRIPT,
+                    "studyPlanId":plan_id
+                }),
+            },
+            ScriptTurn::Text {
+                text: "已按当前模型的径向潮流计划生成脚本，请检查后点击运行。".into(),
+            },
+        ],
+    });
+
+    assert_eq!(
+        post_and_wait(&app, &session, "计算潮流").await,
+        StatusCode::ACCEPTED
+    );
+    let events = messages(&app, &session).await;
+    assert_eq!(
+        tool_names(&events),
+        [
+            "inspect_workspace",
+            "load_agent_skill",
+            "plan_study",
+            "load_agent_skill",
+            "search_engine_docs",
+            "create_script"
+        ]
+    );
+    let script = events
+        .iter()
+        .find(|event| event["type"] == "script")
+        .expect("planned script message");
+    assert!(script.to_string().contains("ds_radial_pf"));
+    assert!(!script.to_string().contains("ds_newton_raphson_pf"));
+    assert!(runs(&app, &session).await.is_empty());
+}
+
+#[tokio::test]
+async fn incomplete_study_requests_ask_once_with_every_reported_missing_field() {
+    struct Case {
+        prompt: &'static str,
+        request: Value,
+        answer: &'static str,
+        fields: &'static [&'static str],
+    }
+    let cases = [
+        Case {
+            prompt: "做一天时序模拟",
+            request: json!({"studyType":"qsts"}),
+            answer: "还需要确认 mode、startSeconds、stepSizeSeconds、number 和 profile。",
+            fields: &[
+                "mode",
+                "startSeconds",
+                "stepSizeSeconds",
+                "number",
+                "profile",
+            ],
+        },
+        Case {
+            prompt: "短路计算",
+            request: json!({"studyType":"fault"}),
+            answer: "还需要一次性确认 cases 和 allowIdealSources。",
+            fields: &["cases", "allowIdealSources"],
+        },
+        Case {
+            prompt: "谐波分析",
+            request: json!({"studyType":"harmonic"}),
+            answer: "还需要 hMax；当前模型还缺少 model.spectrum 引用。",
+            fields: &["hMax", "model.spectrum"],
+        },
+        Case {
+            prompt: "暂态仿真",
+            request: json!({"studyType":"transient"}),
+            answer: "请先确认 subtype；当前仅支持 motor_dynamics。",
+            fields: &["subtype"],
+        },
+    ];
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let session = create_session(&app).await;
+    publish_agent_study_model(&app, session.parse().unwrap()).await;
+
+    for case in &cases {
+        factory.enqueue(ScriptScenario {
+            id: format!("study-clarify-{}", case.prompt),
+            expected_prompt: Some(case.prompt.into()),
+            turns: vec![
+                ScriptTurn::ToolCall {
+                    call_id: format!("inspect-{}", case.prompt),
+                    name: "inspect_workspace".into(),
+                    args: json!({}),
+                },
+                ScriptTurn::ToolCall {
+                    call_id: format!("skill-{}", case.prompt),
+                    name: "load_agent_skill".into(),
+                    args: json!({"skill_id":"study-planning"}),
+                },
+                ScriptTurn::ToolCall {
+                    call_id: format!("plan-{}", case.prompt),
+                    name: "plan_study".into(),
+                    args: json!({"request":case.request}),
+                },
+                ScriptTurn::Text {
+                    text: case.answer.into(),
+                },
+            ],
+        });
+        assert_eq!(
+            post_and_wait(&app, &session, case.prompt).await,
+            StatusCode::ACCEPTED
+        );
+        let events = messages(&app, &session).await;
+        assert_no_script_or_run(&events);
+        assert!(runs(&app, &session).await.is_empty());
+        assert_eq!(
+            tool_names(&events)
+                .into_iter()
+                .rev()
+                .take(3)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>(),
+            ["inspect_workspace", "load_agent_skill", "plan_study"]
+        );
+        let answer = events
+            .iter()
+            .rev()
+            .find(|event| event["type"] == "assistant")
+            .unwrap()["content"]
+            .as_str()
+            .unwrap();
+        for field in case.fields {
+            assert!(answer.contains(field), "missing {field} in {answer}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn transient_study_supports_motor_dynamics_and_rejects_emt() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let session = create_session(&app).await;
+    let session_id = session.parse().unwrap();
+    publish_agent_study_model(&app, session_id).await;
+    let motor_request = StudyRequest::Transient {
+        subtype: Some(TransientSubtype::MotorDynamics),
+        motor_dynamics: Some(MotorDynamicsRequest {
+            duration_seconds: Some(2.0),
+            step_size_seconds: Some(0.01),
+            events: Some(vec![]),
+        }),
+        requested_results: vec![],
+    };
+    let plan_id = ready_plan_id(&app, session_id, motor_request.clone()).await;
+    factory.enqueue(ScriptScenario {
+        id: "study-motor-dynamics-ready".into(),
+        expected_prompt: Some("模拟电机启动暂态2秒，步长0.01秒，无外部事件".into()),
+        turns: vec![
+            ScriptTurn::ToolCall {
+                call_id: "motor-inspect".into(),
+                name: "inspect_workspace".into(),
+                args: json!({}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "motor-planning-skill".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"study-planning"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "motor-plan".into(),
+                name: "plan_study".into(),
+                args: json!({"request":motor_request}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "motor-rss-skill".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"rss-generation"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "search-motor-docs".into(),
+                name: "search_engine_docs".into(),
+                args: json!({"query":"ds_motor_dynamics"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "motor-create".into(),
+                name: "create_script".into(),
+                args: json!({
+                    "name":"motor-dynamics.rss",
+                    "content":MOTOR_DYNAMICS_SCRIPT,
+                    "studyPlanId":plan_id
+                }),
+            },
+            ScriptTurn::Text {
+                text: "已生成电机—网络动态脚本，请检查后点击运行。".into(),
+            },
+        ],
+    });
+    assert_eq!(
+        post_and_wait(
+            &app,
+            &session,
+            "模拟电机启动暂态2秒，步长0.01秒，无外部事件"
+        )
+        .await,
+        StatusCode::ACCEPTED
+    );
+    let events = messages(&app, &session).await;
+    let script = events
+        .iter()
+        .find(|event| event["type"] == "script")
+        .expect("motor dynamics script");
+    assert!(script.to_string().contains("ds_motor_dynamics"));
+    assert!(runs(&app, &session).await.is_empty());
+
+    let emt_session = create_session(&app).await;
+    publish_agent_study_model(&app, emt_session.parse().unwrap()).await;
+    factory.enqueue(ScriptScenario {
+        id: "study-emt-unsupported".into(),
+        expected_prompt: Some("做EMT暂态仿真".into()),
+        turns: vec![
+            ScriptTurn::ToolCall {
+                call_id: "emt-inspect".into(),
+                name: "inspect_workspace".into(),
+                args: json!({}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "emt-planning-skill".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"study-planning"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "emt-plan".into(),
+                name: "plan_study".into(),
+                args: json!({"request":{"studyType":"transient","subtype":"emt"}}),
+            },
+            ScriptTurn::Text {
+                text: "当前引擎不支持 EMT 暂态仿真；当前暂态只支持 motor_dynamics。".into(),
+            },
+        ],
+    });
+    assert_eq!(
+        post_and_wait(&app, &emt_session, "做EMT暂态仿真").await,
+        StatusCode::ACCEPTED
+    );
+    let events = messages(&app, &emt_session).await;
+    assert_no_script_or_run(&events);
+    assert!(runs(&app, &emt_session).await.is_empty());
+    assert!(
+        events.iter().rev().any(|event| {
+            event["type"] == "assistant"
+                && event["content"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("不支持") && text.contains("motor_dynamics"))
+        }),
+        "events: {events:#?}"
+    );
+}
+
 #[tokio::test]
 async fn scripted_tool_call_runs_registered_tool_and_persists_events() {
     let factory = Arc::new(ScriptedAgentFactory::default());
@@ -122,7 +602,7 @@ async fn scripted_tool_call_runs_registered_tool_and_persists_events() {
     );
     let trace = factory.trace();
     assert_eq!(trace[0].scenario_id, "storage");
-    assert_eq!(trace[0].tool_names.len(), 17);
+    assert_eq!(trace[0].tool_names.len(), 18);
     assert!(trace[0].system_prompt.contains("# Engine resources"));
     assert_eq!(trace[0].calls.len(), 2);
 }

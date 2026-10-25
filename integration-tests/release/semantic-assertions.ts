@@ -53,7 +53,7 @@ interface AgentTurnMessage {
 }
 
 const allowedTools = new Set([
-  'inspect_workspace', 'search_examples', 'inspect_example', 'modify_model', 'create_script',
+  'inspect_workspace', 'plan_study', 'search_examples', 'inspect_example', 'modify_model', 'create_script',
   'list_result_datasets',
   'run_result_analysis', 'create_dataset_view', 'compare_simulations',
   'list_simulation_history', 'search_chat_history', 'read_chat_context', 'get_storage_usage',
@@ -85,7 +85,9 @@ export function agentTurnCompleted(messages: AgentTurnMessage[], requiredTools: 
 
 function assertStableIds(call: ToolTraceEntry) {
   const visit = (value: unknown, key = '') => {
-    if (key === 'exampleId' || key === 'example_id') {
+    if (key === 'studyPlanId') {
+      invariant(typeof value === 'string' && /^study-plan:[a-f0-9]{64}$/.test(value), `${call.toolName}.${key} is not an opaque study plan ID`)
+    } else if (key === 'exampleId' || key === 'example_id') {
       invariant(typeof value === 'string' && /^ex_[a-f0-9]+$/.test(value), `${call.toolName}.${key} is not a stable example ID`)
     } else if (key === 'engineResourceSnapshot') {
       invariant(typeof value === 'string' && /^ers_[a-f0-9]+$/.test(value), `${call.toolName}.${key} is not a stable snapshot ID`)

@@ -28,7 +28,8 @@ revision 冲突恢复；Agent 对模型行的严格类型等值读取、完整�
 两用户隔离（包含六个模型表读取端点）；重启收敛与 FTS 局部失败；配额、恶意归档和模型表窄屏响应式无障碍。
 
 应用层 scripted-agent 测试额外覆盖脚本已创建后的 provider 收尾失败不覆盖成功，以及失败的
-`create_script` 不会被误判为成功。
+`create_script` 不会被误判为成功；并用“计算潮流”等原始短指令覆盖五类研究统一规划、一次性缺参追问、
+active 模型决定的 ready/missing 分支、电机动态和 EMT 边界，以及所有脚本都必须由用户显式运行。
 
 ScenarioEngine 场景由控制端按调用顺序排队，不使用 sleep；timeout 使用 barrier。测试证据写入
 `target/functional-coverage/e2e-routes.ndjson`，包含通过的测试名及实际 method/path/status。
@@ -50,7 +51,7 @@ cd ..
 
 候选发布执行 `scripts/test-release-integration`。报告记录测试 ID、Agent bundle hash、用户 seed hash/数量、engine
 contract、当前 binary hash、动态资源 snapshot 与案例分类数量；hash 是证据而非固定接收值，日志必须脱敏。
-真实门禁必须覆盖模型导入/发布、Agent 创建脚本、用户显式运行、结果分析/比较和只使用稳定 ID，并动态导入所有
+真实门禁必须覆盖模型导入/发布、五类研究短指令的 `plan_study` trace、Agent 创建 ready 潮流脚本、用户显式运行、结果分析/比较和只使用稳定 ID，并动态导入所有
 可导入案例、报告个别不可导入案例、执行按来源类型与 study 选择的代表案例。
 
 ## Failure policy

@@ -538,7 +538,7 @@ impl AppState {
             events.clone(),
         );
         let agent_knowledge = Arc::new(
-            AgentKnowledge::load_embedded("v3.1.0").expect("内置 agent knowledge 已在构建时校验"),
+            AgentKnowledge::load_embedded("v3.2.0").expect("内置 agent knowledge 已在构建时校验"),
         );
         let analysis_service = AnalysisService::new(
             AnalysisRepo::new(pool.clone()),

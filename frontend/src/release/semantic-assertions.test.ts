@@ -53,6 +53,17 @@ describe('release semantic assertions', () => {
       requiredTools: ['create_script'],
       gatedTools: { create_script: ['rss-generation'] },
     })).not.toThrow()
+    expect(() => expectToolTrace([
+      call('load_agent_skill', 'success', { skill_id: 'study-planning' }),
+      call('plan_study', 'running', { request: { studyType: 'static_power_flow' } }),
+      call('plan_study', 'success', { request: { studyType: 'static_power_flow' } }),
+      call('load_agent_skill', 'success', { skill_id: 'rss-generation' }),
+      call('create_script', 'running', { name: '潮流分析', studyPlanId: `study-plan:${'a'.repeat(64)}` }),
+      call('create_script', 'success', { name: '潮流分析', studyPlanId: `study-plan:${'a'.repeat(64)}` }),
+    ], {
+      requiredTools: ['plan_study', 'create_script'],
+      gatedTools: { plan_study: ['study-planning'], create_script: ['rss-generation'] },
+    })).not.toThrow()
   })
 
   test('rejects illegal tools, unstable IDs, failed tools, and missing skill ordering', () => {

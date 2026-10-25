@@ -33,8 +33,8 @@ fn skill(id: &str, path: &str, tool: &str, content: &str) -> Value {
 
 #[test]
 fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
-    let knowledge = AgentKnowledge::load_embedded("v3.1.0").expect("embedded knowledge");
-    assert_eq!(knowledge.manifest.agent_bundle_version, "v3.1.0");
+    let knowledge = AgentKnowledge::load_embedded("v3.2.0").expect("embedded knowledge");
+    assert_eq!(knowledge.manifest.agent_bundle_version, "v3.2.0");
     assert_eq!(
         knowledge.manifest.engine_contract_version,
         "tensoreval-parquet-v3"
@@ -57,9 +57,18 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     }
     assert_eq!(knowledge.skill_index().count(), 6);
     assert!(knowledge.skill("result-analysis").is_some());
+    let study_planning = &knowledge.skill("study-planning").unwrap().content;
+    assert!(study_planning.contains("plan_study"));
+    assert!(study_planning.contains("needs_clarification"));
+    assert!(study_planning.contains("missing_model_data"));
+    assert!(study_planning.contains("unsupported"));
+    assert!(study_planning.contains("studyPlanId"));
     let rss_generation = &knowledge.skill("rss-generation").unwrap().content;
     assert!(rss_generation.contains("终端输出必须是 DataFrame"));
     assert!(rss_generation.contains("未被后续节点消费的纯标量"));
+    assert!(rss_generation.contains("studyPlanId"));
+    assert!(knowledge.system_prompt.contains("inspect_workspace"));
+    assert!(knowledge.system_prompt.contains("plan_study"));
     assert!(!knowledge.system_prompt.contains("/Users/"));
     assert!(!knowledge.system_prompt.contains("SPARROWZZ_DIR"));
     assert!(!knowledge.system_prompt.contains("p_nom"));

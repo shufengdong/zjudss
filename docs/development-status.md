@@ -15,18 +15,19 @@
 | 运行 | complete | 仅按钮创建、active race、冻结快照、私有输入树、多 Parquet 结果 |
 | 结果与派生 | complete | 单结果删除、分析、物化视图、比较、tombstone 血缘 |
 | 前端 | complete | 三列/窄屏、运行记录、结果数据表/图表、active/draft/历史模型表只读工作台、登录用户菜单 |
-| Agent V3 | complete | 17 工具、6 skills、模型行读取、按需引擎知识、无运行/发布/删除权 |
+| Agent V3 | complete | 18 工具、6 skills、五类研究确定性规划、模型行读取、按需引擎知识、无运行/发布/删除权 |
 | 发布门禁 | complete | deterministic Rust/Vitest/build/Playwright/coverage；真实依赖另行执行 |
 
 ## Runtime contracts
 
 - 后端 Cargo package 与 library crate 均为 `zjudss`；`backend/` 只是仓库目录名，Rust 调用点使用
   `zjudss::`。
-- Agent bundle：`v3.1.0`，目录 `backend/resources/agent/v3`。
+- Agent bundle：`v3.2.0`，目录 `backend/resources/agent/v3`。
 - Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `SPARROWZZ_DIR` 动态发现并验证
   `dss/docs/catalog` 与 `dss/rssbundle` manifest，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
-- 公共合同：48 条路由、9 类消息、17 个工具、6 个 skills、8 个上传来源、6 类视图。
+- 公共合同：48 条路由、9 类消息、18 个工具、6 个 skills、8 个上传来源、6 类视图。
 - 模型表：adapter 固定输出 21 张规范 DataFrame，包含合法的零行表。
+- 研究规划：潮流、QSTS、短路、谐波和暂态只基于 active 的 21 表模型与当前 engine snapshot；四态结果决定一次性追问、模型补充、能力边界或 ready 脚本。当前暂态仅支持电机—网络动态。
 - 模型表读取：active、准确 draft revision 和历史版本均支持元数据、分页投影与 Parquet 下载；Agent 可通过
   有界等值查询读取实际行后再修改，读取不改变模型生命周期。
 

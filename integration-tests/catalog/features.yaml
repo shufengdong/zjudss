@@ -467,8 +467,38 @@
     - "skill:model-intake"
     - "skill:result-analysis"
     - "skill:rss-generation"
-    - "skill:study-planning"
     - "skill:troubleshooting"
+
+- id: AGENT-STUDY-PLANNING-001
+  source: docs/agent-prompt-skills-design.md#tool-authority
+  title: Study intent is planned against the active model before script creation
+  layers: [application, agent, adapter]
+  lanes: [pr, release]
+  tests:
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: study_power_flow_uses_ready_plan_before_creating_the_planned_script
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: incomplete_study_requests_ask_once_with_every_reported_missing_field
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: transient_study_supports_motor_dynamics_and_rejects_emt
+    - runner: release
+      file: scripts/test-release-integration
+      name: real DeepSeek and tensoreval complete the semantic release journey
+  assertions: [all five study families call the deterministic planner, incomplete and unsupported requests create no script or run, ready scripts match the planned function and require an opaque request-local plan ID]
+  fixtures: [published 21-table active model, radial topology, motor table, current engine function catalog]
+  contracts:
+    - "tool:plan_study"
+    - "skill:study-planning"
+    - "error:skill_required"
+    - "error:study_catalog_invalid"
+    - "error:study_model_read_failed"
+    - "error:study_plan_function_mismatch"
+    - "error:study_plan_not_found"
+    - "error:study_plan_required"
+    - "error:study_plan_stale"
 
 - id: SCRIPT-001
   source: docs/integration-testing-design.md#coverage-matrix

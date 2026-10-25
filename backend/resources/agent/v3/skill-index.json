@@ -1,5 +1,5 @@
 {
-  "bundleVersion": "v3.1.0",
+  "bundleVersion": "v3.2.0",
   "skills": [
     {
       "id": "model-intake",
@@ -25,17 +25,26 @@
     },
     {
       "id": "study-planning",
-      "version": "1.0.0",
-      "description": "选择仿真类型、求解器、参数与输出",
+      "version": "1.1.0",
+      "description": "结合 active 模型规划潮流、QSTS、短路、谐波与暂态研究",
       "triggers": [
         "simulate",
+        "仿真",
         "power-flow",
+        "潮流",
         "short-circuit",
-        "qsts"
+        "短路",
+        "fault",
+        "qsts",
+        "时序",
+        "harmonic",
+        "谐波",
+        "transient",
+        "暂态"
       ],
       "requiredTools": [
         "inspect_workspace",
-        "create_script"
+        "plan_study"
       ],
       "engineContractVersion": "tensoreval-parquet-v3",
       "sources": [
@@ -43,11 +52,11 @@
         "docs/dsa_function_reference.md"
       ],
       "path": "skills/study-planning.md",
-      "sha256": "cbe6fca2e96d1752fdd643bc0f7bd2d5da875da3942f10a5b38f2742c35a5d57"
+      "sha256": "1b683b1f44f843638589c3e25bdf66683387677d98e60136c3eecd1144bc8b5f"
     },
     {
       "id": "rss-generation",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "按函数合同生成并校验 RSS",
       "triggers": [
         "generate-script",
@@ -64,7 +73,7 @@
         "docs/rsdss_function_reference.md"
       ],
       "path": "skills/rss-generation.md",
-      "sha256": "e8e5fe4c4ed204591d65961142c23f3930483a8450d21da4fcc785509b448c20"
+      "sha256": "234143e83b776a17fbcd9a822acadbe05fb70ee5b2e05c5f25b942604bfb56ce"
     },
     {
       "id": "result-analysis",

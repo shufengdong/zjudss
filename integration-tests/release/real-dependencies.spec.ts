@@ -144,7 +144,13 @@ async function sendAndCollect(page: Page, api: APIRequestContext, sessionId: str
 async function importAndPublish(page: Page, api: APIRequestContext, sessionId: string) {
   const directory = process.env.RELEASE_DATAFRAME_DIR
   if (!directory) throw new Error('release_dataframe_fixture_missing')
-  const required = new Set(['bus.parquet', 'line.parquet', 'linecode.parquet', 'load.parquet', 'transformer.parquet', 'voltage_source.parquet'])
+  const required = new Set([
+    'bus.parquet', 'line.parquet', 'linecode.parquet', 'load.parquet', 'transformer.parquet',
+    'voltage_source.parquet', 'motor.parquet', 'transformer_winding.parquet',
+    'transformer_impedance.parquet', 'current_source.parquet', 'generator.parquet', 'ibr.parquet',
+    'switch.parquet', 'shunt.parquet', 'capacitor.parquet', 'reactor.parquet', 'spectrum.parquet',
+    'control_profile.parquet', 'xy_curve.parquet', 'storage.parquet', 'para.parquet',
+  ])
   const files = (await readdir(directory)).filter(name => required.has(name)).sort().map(name => join(directory, name))
   expect(files.length).toBe(required.size)
   await page.locator('input[type=file]').first().setInputFiles(files)
@@ -161,8 +167,8 @@ async function importAndPublish(page: Page, api: APIRequestContext, sessionId: s
   })
 }
 
-async function clickRunAndWait(page: Page, api: APIRequestContext, sessionId: string, expectedCount: number) {
-  await page.getByRole('article', { name: '脚本 release-flow.rss' }).getByRole('button', { name: '运行' }).click()
+async function clickRunAndWait(page: Page, api: APIRequestContext, sessionId: string, scriptName: string, expectedCount: number) {
+  await page.getByRole('article', { name: `脚本 ${scriptName}` }).getByRole('button', { name: '运行' }).click()
   return waitFor(async () => {
     const runs = (await apiJson(api, `/api/sessions/${sessionId}/runs`)).runs
     return runs.length === expectedCount && runs.every((run: any) => run.status === 'succeeded') ? runs[0] : undefined
@@ -184,19 +190,41 @@ async function runJourney(browser: Browser, report: AttemptReport) {
     const versionId = String(workspace.active.id)
 
     let trace = await sendAndCollect(page, api, sessionId,
-      '检查当前 DataFrame 模型，加载 rss-generation 技能，并创建一个名为 release-flow.rss 的径向潮流 RSS 脚本。脚本使用 bus、line、linecode、load、transformer、voltage_source 六个命名 DataFrame，必须产生名为 voltage 的结果。只创建脚本，不要尝试运行。',
+      '计算潮流',
       ['create_script'])
     expectToolTrace(trace, {
-      requiredTools: ['inspect_workspace', 'load_agent_skill', 'create_script'],
-      allowedTools: ['inspect_workspace', 'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section', 'create_script'],
-      gatedTools: { create_script: ['rss-generation'] },
+      requiredTools: ['inspect_workspace', 'load_agent_skill', 'plan_study', 'create_script'],
+      allowedTools: ['inspect_workspace', 'load_agent_skill', 'plan_study', 'search_engine_docs', 'read_engine_doc_section', 'create_script'],
+      gatedTools: { plan_study: ['study-planning'], create_script: ['rss-generation'] },
     })
-    report.segments.push(summarizeTrace('create_script', trace))
-    await expect(page.getByRole('article', { name: '脚本 release-flow.rss' })).toBeVisible()
+    report.segments.push(summarizeTrace('study_power_flow', trace))
+    const scripts = (await apiJson(api, `/api/sessions/${sessionId}/scripts`)).scripts as any[]
+    expect(scripts).toHaveLength(1)
+    const scriptName = String(scripts[0].name)
+    await expect(page.getByRole('article', { name: `脚本 ${scriptName}` })).toBeVisible()
     expect((await apiJson(api, `/api/sessions/${sessionId}/runs`)).runs).toHaveLength(0)
 
-    const first = await clickRunAndWait(page, api, sessionId, 1)
-    await clickRunAndWait(page, api, sessionId, 2)
+    for (const study of [
+      { label: 'study_fault_clarify', prompt: '短路计算' },
+      { label: 'study_qsts_clarify', prompt: '做一天时序模拟' },
+      { label: 'study_harmonic_clarify', prompt: '谐波分析' },
+      { label: 'study_transient_clarify', prompt: '暂态仿真' },
+      { label: 'study_motor_model_missing', prompt: '模拟电机启动暂态2秒，步长0.01秒，无外部事件' },
+      { label: 'study_emt_unsupported', prompt: '做EMT暂态仿真' },
+    ]) {
+      trace = await sendAndCollect(page, api, sessionId, study.prompt, ['plan_study'])
+      expectToolTrace(trace, {
+        requiredTools: ['inspect_workspace', 'load_agent_skill', 'plan_study'],
+        allowedTools: ['inspect_workspace', 'load_agent_skill', 'plan_study'],
+        gatedTools: { plan_study: ['study-planning'] },
+      })
+      expect((await apiJson(api, `/api/sessions/${sessionId}/scripts`)).scripts).toHaveLength(1)
+      expect((await apiJson(api, `/api/sessions/${sessionId}/runs`)).runs).toHaveLength(0)
+      report.segments.push(summarizeTrace(study.label, trace))
+    }
+
+    const first = await clickRunAndWait(page, api, sessionId, scriptName, 1)
+    await clickRunAndWait(page, api, sessionId, scriptName, 2)
     const runs = (await apiJson(api, `/api/sessions/${sessionId}/runs`)).runs
     const baseline = runs.find((run: any) => run.id === first.id) ?? runs[1]
     const candidate = runs.find((run: any) => run.id !== baseline.id)
@@ -280,7 +308,7 @@ test('real DeepSeek and tensoreval complete the V3 semantic release journey', as
     const seed = await fixedUserSeed()
     await writeFile(reportPath, JSON.stringify({
       schemaVersion: 1,
-      testIds: ['ENGINE-RELEASE-001', 'REAL-RELEASE-001'],
+      testIds: ['ENGINE-RELEASE-001', 'REAL-RELEASE-001', 'AGENT-STUDY-PLANNING-001'],
       provider: 'deepseek',
       model: process.env.LLM_MODEL ?? 'deepseek-chat',
       agentBundleVersion: agentBundle.version,
