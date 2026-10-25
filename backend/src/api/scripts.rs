@@ -8,6 +8,12 @@ use crate::auth::CurrentUser;
 
 use super::ApiError;
 
+#[derive(serde::Deserialize)]
+pub struct CreateScriptTextBody {
+    name: String,
+    content: String,
+}
+
 pub async fn list(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -71,6 +77,29 @@ pub async fn upload(
         )
         .await?;
     Ok((StatusCode::CREATED, Json(json!({"script":summary}))))
+}
+
+pub async fn create_text(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<i32>,
+    Json(body): Json<CreateScriptTextBody>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let summary = state
+        .script_service
+        .create(
+            &user,
+            session_id,
+            CreateScriptRequest {
+                name: body.name,
+                content: body.content,
+                source: ScriptSource::Manual,
+                agent_bundle_version: None,
+                agent_skill_refs: vec![],
+            },
+        )
+        .await?;
+    Ok((StatusCode::CREATED, Json(json!({"script": summary}))))
 }
 
 pub async fn detail(

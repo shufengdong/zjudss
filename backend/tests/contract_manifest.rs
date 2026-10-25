@@ -10,12 +10,13 @@ fn production_router_and_manifest_share_one_declaration() {
         .map(|route| (route.method, route.path))
         .collect::<HashSet<_>>();
 
-    assert_eq!(routes.len(), 41);
-    assert_eq!(unique.len(), 41);
+    assert_eq!(routes.len(), 42);
+    assert_eq!(unique.len(), 42);
     assert!(unique.contains(&("GET", "/health")));
     assert!(unique.contains(&("POST", "/api/auth/login")));
     assert!(unique.contains(&("POST", "/api/auth/logout")));
     assert!(unique.contains(&("POST", "/api/sessions/{id}/model-imports")));
+    assert!(unique.contains(&("POST", "/api/sessions/{id}/scripts/text")));
     assert!(unique.contains(&("GET", "/api/run-comparisons/{id}")));
 
     let _ = build_router;

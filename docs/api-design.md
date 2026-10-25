@@ -28,6 +28,7 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 | GET/DELETE | `/api/model-imports/{id}` | 读取/放弃导入 |
 | POST | `/api/model-imports/{id}/resolve` | 选择候选并整表合并草稿 |
 | GET/POST | `/api/sessions/{id}/scripts` | 列表/上传单个 `.rss` |
+| POST | `/api/sessions/{id}/scripts/text` | 以文本创建脚本 |
 | GET | `/api/scripts/{id}` | 懒加载脚本全文 |
 | GET | `/api/sessions/{id}/workspace` | active、draft、导入状态 |
 | GET/POST | `/api/sessions/{id}/versions` | 历史/显式生成版本 |
@@ -73,9 +74,10 @@ manifest、角色化文件哈希和验证诊断。两个工具只读，Agent 无
 
 ## Scripts and runs
 
-上传脚本 multipart 只接受字段 `file` 的单个 UTF-8 `.rss`。脚本详情返回全文；列表和消息只返回有界预览。
-运行请求为 `{modelVersionId, clientRunId}`。服务端要求该版本仍为 active，重新检查脚本静态有效性和所需
-DataFrame alias，再异步执行。Agent 没有运行、激活或删除工具。
+上传脚本 multipart 只接受字段 `file` 的单个 UTF-8 `.rss`；`POST /api/sessions/{id}/scripts/text` 接受 JSON
+`{name, content}` 直接以文本创建（`sourceKind: "manual"`）。两条路径共用同一静态校验与不可变落盘。脚本详情
+返回全文；列表和消息只返回有界预览。运行请求为 `{modelVersionId, clientRunId}`。服务端要求该版本仍为
+active，重新检查脚本静态有效性和所需 DataFrame alias，再异步执行。Agent 没有运行、激活或删除工具。
 
 ## Messages and errors
 

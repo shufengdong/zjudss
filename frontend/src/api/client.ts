@@ -54,6 +54,7 @@ export const getModelImport=async(id:string)=>(await request<{modelImport:ModelI
 export const resolveModelImport=(id:string,candidateIds:string[],draft?:{id:string;revision:number}|null)=>request<{modelImport:ModelImport;draft:Workspace['draft']}>(`/api/model-imports/${id}/resolve`,{method:'POST',body:JSON.stringify({candidateIds,expectedDraftId:draft?Number(draft.id):null,expectedDraftRevision:draft?.revision??null})})
 export const discardModelImport=(id:string)=>request<void>(`/api/model-imports/${id}`,{method:'DELETE'},async()=>undefined)
 export async function uploadScript(sessionId:string,file:File){const form=new FormData();form.append('file',file);return request<{script:ScriptSummary}>(`/api/sessions/${sessionId}/scripts`,{method:'POST',body:form})}
+export const createScriptText=(sessionId:string,body:{name:string;content:string})=>request<{script:ScriptSummary}>(`/api/sessions/${sessionId}/scripts/text`,{method:'POST',body:JSON.stringify(body)})
 export const listScripts=async(sessionId:string)=>(await request<{scripts:ScriptSummary[]}>(`/api/sessions/${sessionId}/scripts`)).scripts
 export const getScript=async(id:string)=>(await request<{script:ScriptDetail}>(`/api/scripts/${id}`)).script
 export const getWorkspace=(id:string)=>request<Workspace>(`/api/sessions/${id}/workspace`)

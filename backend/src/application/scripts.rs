@@ -21,12 +21,14 @@ const SCRIPT_MAX_BYTES: u64 = 2 * 1024 * 1024;
 pub enum ScriptSource {
     Upload,
     Agent,
+    Manual,
 }
 impl ScriptSource {
     fn as_str(&self) -> &'static str {
         match self {
             Self::Upload => "upload",
             Self::Agent => "agent",
+            Self::Manual => "manual",
         }
     }
 }

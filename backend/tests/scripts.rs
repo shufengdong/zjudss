@@ -203,6 +203,40 @@ async fn script_routes_accept_only_single_rss_and_have_no_edit_or_delete() {
 }
 
 #[tokio::test]
+async fn script_text_endpoint_creates_a_manual_source_script() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "paste script", 1)
+        .await
+        .unwrap();
+    let cookie = app.login_cookie("alice@example.com").await;
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/sessions/{}/scripts/text", session.id))
+                .header("cookie", &cookie)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"manual.rss","content":"result = bus"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert_eq!(body["script"]["sourceKind"], "manual");
+    assert_eq!(body["script"]["validationStatus"], "valid");
+    assert_eq!(body["script"]["name"], "manual.rss");
+}
+
+#[tokio::test]
 async fn script_resources_disappear_only_with_the_whole_session() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");

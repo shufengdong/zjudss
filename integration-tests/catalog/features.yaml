@@ -372,6 +372,7 @@
   contracts:
     - "route:GET /api/sessions/{id}/scripts"
     - "route:POST /api/sessions/{id}/scripts"
+    - "route:POST /api/sessions/{id}/scripts/text"
     - "route:GET /api/scripts/{id}"
     - "tool:create_script"
 

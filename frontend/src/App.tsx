@@ -1,6 +1,6 @@
 import{useCallback,useEffect,useMemo,useReducer,useRef,useState}from'react'
 import type{Message,MessageHandlers,Session,User}from'./types'
-import{ApiError,applyExample,createRun,createSession,deleteSession as deleteSessionApi,getCurrentUser,listRunDatasets,listSessions,logout,postMessage,renameSession as renameSessionApi}from'./api/client'
+import{ApiError,applyExample,createRun,createScriptText,createSession,deleteSession as deleteSessionApi,getCurrentUser,listRunDatasets,listSessions,logout,postMessage,renameSession as renameSessionApi}from'./api/client'
 import{useSessionFeed}from'./hooks/useSessionFeed';import{useWorkspace}from'./hooks/useWorkspace';import{useModelImports}from'./hooks/useModelImports'
 import{useRunHistory}from'./hooks/useRunHistory';import{useStorageUsage}from'./hooks/useStorageUsage';import{useMediaQuery}from'./hooks/useMediaQuery'
 import HistorySidebar from'./components/history/HistorySidebar';import Composer from'./components/Composer';import UploadQueue from'./components/uploads/UploadQueue'
@@ -44,6 +44,7 @@ function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
     }).catch(e=>{remove(selectedId,optimistic.id);setDraft(content);notify(e instanceof Error?e.message:'发送失败')})
   },[selectedId,add,remove,notify])
   const runScript=useCallback(async(script:Extract<Message,{type:'script'}>['script'])=>{const active=workspaceState.workspace?.active;if(!active){notify('请先生成或激活模型版本');return}try{await createRun(script.id,active.id,crypto.randomUUID?.()??`${Date.now()}-${Math.random()}`);notify('运行已提交')}catch(error){if(error instanceof ApiError&&error.code==='active_model_changed')await reloadWorkspace();throw error}},[workspaceState.workspace?.active?.id,notify,reloadWorkspace])
+  const createScript=useCallback(async(content:string)=>{if(!selectedId)return;await createScriptText(selectedId,{name:`manual-${Date.now()}.rss`,content});notify('脚本已创建')},[selectedId,notify])
   const handlers:MessageHandlers=useMemo(()=>({onOpenDataset:setDatasetId,onOpenComparison:setComparisonId,onRunScript:runScript,activeVersionId:workspaceState.workspace?.active?.id??null,notify}),[notify,runScript,workspaceState.workspace?.active?.id])
   const openRun=async(id:string)=>{try{const datasets=await listRunDatasets(id);if(datasets[0])setDatasetId(datasets[0].id);else notify('该运行暂无结果数据集')}catch(e){notify(e instanceof Error?e.message:'结果加载失败')}}
   if(sessionLoadState!=='ready')return <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 text-center text-sm text-slate-600">
@@ -62,7 +63,7 @@ function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
     <div className="flex-1 overflow-y-auto">{feed?.hasMoreBefore&&<div className="py-2 text-center"><button onClick={()=>void older()} className="rounded border bg-white px-3 py-1 text-xs">加载更早消息</button></div>}
       {!feed?.messages.length?<div className="flex h-full items-center justify-center text-center"><div><div className="text-3xl">⚡</div><p className="mt-2 text-sm text-slate-500">描述要做的仿真，或上传 RSS、文件夹、CSV、Excel、Parquet</p></div></div>:
         <div className="py-4">{feed.messages.map(message=><div key={message.id} data-testid={`message-${message.type}`} data-message-id={message.id}><MessageItem message={message} handlers={handlers}/></div>)}</div>}</div>
-    <UploadQueue entries={imports.queue}/><Composer value={draft} onChange={setDraft} onSend={()=>sendText(draft)} uploading={imports.queue.some(e=>e.status==='uploading')} onUploadFiles={files=>void imports.upload(files)}/>
+    <UploadQueue entries={imports.queue}/><Composer value={draft} onChange={setDraft} onSend={()=>sendText(draft)} uploading={imports.queue.some(e=>e.status==='uploading')} onUploadFiles={files=>void imports.upload(files)} onCreateScript={createScript}/>
     </main>
     <ResultPanel open={panelOpen} overlay={isNarrow} tab={tab} onTab={setTab} onClose={()=>setPanelOpen(false)} sessionId={selectedId} workspace={workspaceState.workspace} imports={imports.imports} runs={runs} onReload={reloadWorkspace} notify={notify} onRun={id=>void openRun(id)}/>
     {datasetId&&<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-2 sm:p-8"><div className="h-full w-full max-w-full overflow-hidden rounded-xl shadow-2xl sm:w-auto"><DatasetWorkbench datasetId={datasetId} onClose={()=>setDatasetId(null)} onDeleted={()=>notify('结果已删除')}/></div></div>}

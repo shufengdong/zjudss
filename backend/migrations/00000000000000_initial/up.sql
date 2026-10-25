@@ -190,7 +190,7 @@ CREATE TABLE script_resources (
  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
  artifact_id INTEGER NOT NULL REFERENCES artifacts(id) ON DELETE RESTRICT,
  name TEXT NOT NULL CHECK(length(name)>0),
- source_kind TEXT NOT NULL CHECK(source_kind IN ('upload','agent')),
+ source_kind TEXT NOT NULL CHECK(source_kind IN ('upload','agent','manual')),
  content_hash TEXT NOT NULL CHECK(length(content_hash)=64),
  validation_status TEXT NOT NULL CHECK(validation_status IN ('valid','invalid')),
  required_aliases_json TEXT NOT NULL,

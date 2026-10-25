@@ -481,6 +481,11 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
             .layer(DefaultBodyLimit::disable()),
         ["GET", "POST"]
     );
+    add_route!(
+        "/api/sessions/{id}/scripts/text",
+        post(scripts::create_text),
+        ["POST"]
+    );
     add_route!("/api/scripts/{id}", get(scripts::detail), ["GET"]);
     add_route!(
         "/api/sessions/{id}/workspace",
