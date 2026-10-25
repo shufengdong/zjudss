@@ -532,12 +532,30 @@
   tests:
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
+      name: model import stays a draft until publish and a script runs only after its explicit button
+    - runner: playwright
+      file: integration-tests/e2e/v3-workflows.spec.ts
       name: one result can be deleted without deleting its run or sibling result
     - runner: rust
       file: backend/tests/simulation_runs.rs
       name: successful_run_publishes_a_terminal_done_progress_event
-  assertions: [run binds script and active version, run and result lists remain readable, successful run progress has no running stage]
-  fixtures: [published model, valid RSS script]
+    - runner: vitest
+      file: frontend/src/components/runs/RunHistory.test.tsx
+      name: renders an informative collapsed summary without requesting results or offering deletion
+    - runner: vitest
+      file: frontend/src/components/runs/RunHistory.test.tsx
+      name: loads every result only after expansion and opens the selected dataset
+    - runner: vitest
+      file: frontend/src/components/runs/RunHistory.test.tsx
+      name: shows failed and running details without requesting result datasets
+    - runner: vitest
+      file: frontend/src/components/runs/RunHistory.test.tsx
+      name: distinguishes list failures and retries them
+    - runner: vitest
+      file: frontend/src/components/runs/RunHistory.test.tsx
+      name: refreshes expanded results after deletion and ignores the obsolete response
+  assertions: [run binds immutable script name and active version, run and result lists remain readable, successful run progress has no running stage, run cards default collapsed with localized status and duration, failed runs show bounded public reasons without requesting datasets, expanded successful runs list every live dataset and open the selected one, list and dataset failures retry, result deletion invalidates expanded result caches, scripts never auto-run and runs have no delete action]
+  fixtures: [published model, valid RSS script, successful and failed runs, multi-result run]
   contracts:
     - "route:POST /api/scripts/{id}/runs"
     - "route:GET /api/sessions/{id}/runs"

@@ -93,6 +93,12 @@ manifest、角色化文件哈希和验证诊断。两个工具只读，Agent 无
 返回全文；列表和消息只返回有界预览。运行请求为 `{modelVersionId, clientRunId}`。服务端要求该版本仍为
 active，重新检查脚本静态有效性和所需 DataFrame alias，再异步执行。Agent 没有运行、激活或删除工具。
 
+运行创建响应、session 运行列表和单运行详情中的 `SimulationRun` 都包含必填 `scriptName`；它来自运行所绑定的
+不可变脚本资源，不由前端按 ID 二次猜测。运行快照继续冻结模型、脚本 artifact/hash、engine contract、Agent bundle
+和 skill refs；`GET /api/runs/{id}/datasets` 只列出该运行当前仍存活的全部结果数据集。失败快照的公共
+`error.code`/`error.message`、阶段、退出码与时间戳供运行记录解释失败，但不返回调用栈或服务器路径。四个既有运行路由、
+跨用户 404、显式按钮创建和运行不可删除的语义不变。
+
 ## Messages and errors
 
 持久消息类型是 `user`、`assistant`、`tool-call`、`progress`、`result`、`attachment`、`model-status`、

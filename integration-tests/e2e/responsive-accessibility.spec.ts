@@ -17,6 +17,13 @@ async function expectUserMenuAtSidebarBottom(page: Page, userName: string) {
   expect(bottomGap).toBeLessThanOrEqual(12)
 }
 
+async function openReplacementRunResult(page: Page) {
+  const runHeader = page.getByRole('button', { name: /replacement\.rss.*成功/ })
+  await expect(runHeader).toHaveAttribute('aria-expanded', 'false')
+  await runHeader.click()
+  await runHeader.locator('xpath=..').getByRole('button', { name: '查看 voltage' }).click()
+}
+
 test('desktop three-column workspace completes upload, script, run, and result flows with accessible controls', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'desktop@example.com', tenant: 'grid-ui' })
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -25,12 +32,12 @@ test('desktop three-column workspace completes upload, script, run, and result f
   await expect(page.getByRole('textbox', { name: '消息' })).toBeVisible()
   await expect(page.getByRole('button', { name: '模型工作区' })).toBeVisible()
   await expectUserMenuAtSidebarBottom(page, 'Desktop Test')
-  const { run } = await uploadScriptAndRun({
+  await uploadScriptAndRun({
     page, api, control, sessionId,
     engine: { kind: 'success', data: [{ name: 'voltage', rows: [['b1', 1]], valueUnit: 'pu' }] },
   })
   await page.getByRole('button', { name: '运行记录' }).click()
-  await page.getByRole('button', { name: `运行 #${run.id}` }).click()
+  await openReplacementRunResult(page)
   await expect(page.getByRole('columnheader', { name: 'value (pu)' })).toBeVisible()
   await expectNoSeriousViolations(page)
 })
@@ -55,13 +62,13 @@ test('responsive narrow drawers and model tables remain keyboard reachable witho
   await page.getByRole('button', { name: '关闭模型表' }).click()
   await page.getByRole('button', { name: '关闭结果面板' }).click()
 
-  const { run } = await uploadScriptAndRun({
+  await uploadScriptAndRun({
     page, api, control, sessionId,
     engine: { kind: 'success', data: [{ name: 'voltage', rows: [['b1', 1]], valueUnit: 'pu' }] },
   })
   await page.getByRole('button', { name: '展开结果面板' }).click()
   await page.getByRole('button', { name: '运行记录' }).click()
-  await page.getByRole('button', { name: `运行 #${run.id}` }).click()
+  await openReplacementRunResult(page)
   await expect(page.getByRole('columnheader', { name: 'value (pu)' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await expectNoSeriousViolations(page)

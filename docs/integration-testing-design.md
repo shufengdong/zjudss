@@ -24,8 +24,13 @@ EXAMPLE、AGENT、SCRIPT、RUN、DATASET、ANALYSIS、VIEW、COMPARE、HISTORY�
 DSS/bundle/ZIP/表格导入；案例确认；draft
 发布、active race、历史激活和版本删除；active/draft/历史模型表的只读元数据、分页投影和 Parquet 下载；草稿
 revision 冲突恢复；Agent 对模型行的严格类型等值读取、完整匹配计数和 read-before-modify；脚本预览/全文/复制与 Agent 只创建；按钮运行、多结果与单结果删除；
+运行记录默认收起摘要、成功后懒加载全部结果并可选择非首个结果、失败原因/阶段/耗时、加载重试和删除后结果刷新；
 运行成功进度终态、Arrow 字符串视图分页和不同宽度数据集详情居中；分析、视图、比较在来源删除后继续读取；
 两用户隔离（包含六个模型表读取端点）；重启收敛与 FTS 局部失败；配额、恶意归档和模型表窄屏响应式无障碍。
+
+RUN-001 在 Rust 层验证创建、重放、列表和详情都返回绑定脚本的必填 `scriptName`，在 Vitest 层验证中文摘要、终态/动态耗时、
+失败详情、运行列表与结果加载错误、按运行请求代次隔离和 `datasetRevision` 刷新，在 Playwright 层验证显式运行产生的两个结果
+都出现在展开记录中，并能选择非首个 `loss` 打开工作台。运行记录仍不可删除，脚本仍不自动运行。
 
 应用层 scripted-agent 测试额外覆盖脚本已创建后的 provider 收尾失败不覆盖成功，以及失败的
 `create_script` 不会被误判为成功；并用“计算潮流”等原始短指令覆盖五类研究统一规划、一次性缺参追问、
