@@ -18,6 +18,7 @@ pub mod model_patch;
 pub mod runs;
 pub mod scheduler;
 pub mod scripts;
+pub mod study_planning;
 pub mod versions;
 pub mod visualization;
 
