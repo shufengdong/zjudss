@@ -40,9 +40,8 @@ describe('run presentation', () => {
   })
 
   it('localizes statuses and execution stages without guessing unknown values', () => {
-    expect(['排队中', '运行中', '成功', '失败']).toEqual(
-      ['queued', 'running', 'succeeded', 'failed'].map(runStatusLabel),
-    )
+    const statuses: SimulationRun['status'][] = ['queued', 'running', 'succeeded', 'failed']
+    expect(['排队中', '运行中', '成功', '失败']).toEqual(statuses.map(runStatusLabel))
     expect(['准备输入', '执行计算', '收集结果', '已完成']).toEqual(
       ['prepare', 'execute', 'collect', 'completed'].map(runStageLabel),
     )

@@ -45,7 +45,15 @@ test('model import stays a draft until publish and a script runs only after its 
   const datasets = (await (await api.get(`/api/runs/${run.id}/datasets`)).json()).datasets
   expect(datasets.map((dataset: any) => dataset.name).sort()).toEqual(['loss', 'voltage'])
 
-  await page.getByRole('button', { name: '查看 voltage' }).click()
+  await page.getByRole('button', { name: '运行记录' }).click()
+  const runHeader = page.getByRole('button', { name: /long-script\.rss.*成功/ })
+  await expect(runHeader).toHaveAttribute('aria-expanded', 'false')
+  await runHeader.click()
+  const runCard = runHeader.locator('xpath=..')
+  await expect(runCard.getByText('voltage', { exact: true })).toBeVisible()
+  await expect(runCard.getByText('loss', { exact: true })).toBeVisible()
+  await runCard.getByRole('button', { name: '查看 loss' }).click()
+  await expect(page.getByRole('heading', { name: 'loss' })).toBeVisible()
   const datasetDialog = page.getByRole('button', { name: '关闭数据集' }).locator('xpath=../../..')
   const dialogBox = await datasetDialog.boundingBox()
   const viewport = page.viewportSize()
