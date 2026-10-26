@@ -1,5 +1,9 @@
 # V3 前端设计
 
+> 本文描述当前 V3。V4 将在右侧工作台新增持久的“数据文件”入口，并增加研究确认卡、运行删除及运行到历史脚本
+> 的精确定位，用于负荷预测等不参与模型版本管理的 DataFrame；需求见
+> [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)。
+
 ## Layout
 
 桌面为历史侧栏、对话区、结果面板三列；窄屏把两侧改为可键盘访问的 drawer，并禁止横向溢出。左下角显示

@@ -1,5 +1,8 @@
 # 配电网仿真智能体 V3 架构
 
+> 本文描述当前 V3。V4 将新增与模型版本分离的数据资源库和受管研究工作流，并以空数据库作为新基线；规划见
+> [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)。
+
 ## Scope
 
 V3 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axum 应用、SQLite 元数据与

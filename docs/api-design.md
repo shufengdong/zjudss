@@ -1,5 +1,9 @@
 # V3 HTTP 与 SSE API
 
+> 本文描述当前 V3 公共接口。V4 将增加独立数据资源、受管研究、运行删除和运行到脚本消息定位接口，已确认的行为边界见
+> [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)；
+> 路由和 DTO 将在实施方案中确定，当前接口表不提前声明未实现能力。
+
 ## Conventions
 
 除 `/health` 与登录外，所有路由要求 HttpOnly 登录 Cookie。ID 出网为字符串，时间为 ISO 8601，字段为

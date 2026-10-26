@@ -1,5 +1,10 @@
 # V3 数据库设计
 
+> 本文描述当前 V3 schema。V4 的数据资源实体、运行输入绑定、可空 run→script message 锚点、运行/直接结果
+> tombstone 删除和空库切换要求见
+> [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)；
+> 不为 V3 数据库设计迁移或兼容层。
+
 ## Scope
 
 SQLite 只支持从空库执行 `backend/migrations/00000000000000_initial`。模型和结果正文保存在按用户 storage

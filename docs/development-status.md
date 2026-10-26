@@ -1,5 +1,10 @@
 # V3 开发状态
 
+> V4 规划：负荷预测等辅助 DataFrame 将使用独立数据资源库，不再进入模型版本；V4 从空数据库建立，
+> 不迁移或兼容 V3 持久化数据。已确认需求见
+> [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)。
+> 本文其余内容仍描述当前已实现的 V3 基线。
+
 ## Current release
 
 第三版已直接替换前两个未上线版本。当前产品合同是 DataFrame 模型、独立 RSS 脚本、用户显式运行和可删除的
