@@ -73,13 +73,20 @@ describe('run presentation', () => {
   })
 
   it('renders only bounded public failure strings and otherwise uses a safe fallback', () => {
-    expect(runFailure(run({ status: 'failed', error: { code: 'run_failed', message: '求解未收敛' } }))).toEqual({
-      code: 'run_failed', message: '求解未收敛',
+    expect(runFailure(run({ status: 'failed', error: {
+      code: 'run_failed', message: '求解未收敛', engineOutput: 'line 1\nline 2',
+    } }))).toEqual({
+      code: 'run_failed', message: '求解未收敛', engineOutput: 'line 1\nline 2',
     })
     expect(runFailure(run({ status: 'failed', error: null })).message).toBe('运行失败，未提供可用原因')
     expect(runFailure(run({ status: 'failed', error: ['raw', 'diagnostics'] })).message).toBe('运行失败，未提供可用原因')
     const bounded = runFailure(run({ status: 'failed', error: { message: '错'.repeat(600) } })).message
     expect(Array.from(bounded)).toHaveLength(501)
     expect(bounded.endsWith('…')).toBe(true)
+    const boundedOutput = runFailure(run({ status: 'failed', error: {
+      message: '失败', engineOutput: '错'.repeat(17_000),
+    } })).engineOutput!
+    expect(Array.from(boundedOutput)).toHaveLength(16_385)
+    expect(boundedOutput.endsWith('…')).toBe(true)
   })
 })

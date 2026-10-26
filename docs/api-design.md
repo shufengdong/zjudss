@@ -97,8 +97,9 @@ active，重新检查脚本静态有效性和所需 DataFrame alias，再异步�
 运行创建响应、session 运行列表和单运行详情中的 `SimulationRun` 都包含必填 `scriptName`；它来自运行所绑定的
 不可变脚本资源，不由前端按 ID 二次猜测。运行快照继续冻结模型、脚本 artifact/hash、engine contract、Agent bundle
 和 skill refs；`GET /api/runs/{id}/datasets` 只列出该运行当前仍存活的全部结果数据集。失败时保留实际执行阶段；API 将内部
-adapter/IO/校验错误映射为受控 `error.code`/`error.message`，并在读取旧记录时丢弃未标记的原始 message，因此运行记录可解释
-失败但不会返回 stderr、调用栈或服务器路径。四个既有运行路由、
+adapter/IO/校验错误映射为受控 `error.code`/`error.message`。tensoreval 以非零状态退出时，运行同时保存退出码，并通过可选
+`error.engineOutput` 返回最多 16,384 个字符的多行错误输出；服务端在持久化和出网时都隐藏绝对路径并清理控制字符。没有该标记的
+旧记录仍丢弃原始 message，因此不会返回历史调用栈或服务器路径。四个既有运行路由、
 跨用户 404、显式按钮创建和运行不可删除的语义不变。
 
 ## Messages and errors

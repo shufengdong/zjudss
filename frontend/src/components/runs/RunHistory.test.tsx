@@ -68,7 +68,10 @@ describe('RunHistory', () => {
   it('shows failed and running details without requesting result datasets', () => {
     const failed = makeRun({
       id: '10', status: 'failed', stage: 'execute', exitCode: 7,
-      error: { code: 'engine_failed', message: '求解未收敛' },
+      error: {
+        code: 'engine_failed', message: '求解未收敛',
+        engineOutput: 'RSS parse error: unexpected token\nat [服务器路径已隐藏]',
+      },
       finishedAt: '2026-01-01T00:00:01.700Z',
     })
     const running = makeRun({
@@ -80,6 +83,9 @@ describe('RunHistory', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('失败阶段：执行计算')
     expect(screen.getByRole('alert')).toHaveTextContent('失败原因：求解未收敛')
     expect(screen.getByRole('alert')).toHaveTextContent('错误码：engine_failed')
+    expect(screen.getByRole('alert')).toHaveTextContent('tensoreval 报错：')
+    expect(screen.getByRole('alert')).toHaveTextContent('RSS parse error: unexpected token')
+    expect(screen.getByRole('alert')).toHaveTextContent('at [服务器路径已隐藏]')
     expect(screen.getByRole('alert')).toHaveTextContent('退出码：7')
     expect(screen.getByRole('alert')).toHaveTextContent('耗时：0.7 秒')
     expect(screen.getByRole('alert')).toHaveTextContent(`开始时间：${new Date(failed.startedAt!).toLocaleString()}`)

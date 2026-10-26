@@ -95,7 +95,16 @@ fn public_run_error(status: &str, raw: Option<&str>) -> Option<Value> {
         Some("internal") => "计算服务发生内部错误",
         _ => "运行失败，未提供可用原因",
     };
-    Some(json!({"code":"run_failed","message":message}))
+    let mut error = json!({"code":"run_failed","message":message});
+    if let Some(engine_output) = parsed
+        .as_ref()
+        .and_then(|value| value.get("engineOutput"))
+        .and_then(Value::as_str)
+        .and_then(crate::application::runs::sanitize_engine_output)
+    {
+        error["engineOutput"] = Value::String(engine_output);
+    }
+    Some(error)
 }
 
 #[cfg(test)]
@@ -113,5 +122,36 @@ mod tests {
                 "message": "运行失败，未提供可用原因"
             }))
         );
+    }
+
+    #[test]
+    fn current_run_errors_return_bounded_sanitized_engine_output() {
+        let raw = serde_json::json!({
+            "code": "run_failed",
+            "reason": "engine",
+            "engineOutput": "RSS parse error\nat /srv/private/input.rss:2:1"
+        })
+        .to_string();
+        assert_eq!(
+            public_run_error("failed", Some(&raw)),
+            Some(json!({
+                "code": "run_failed",
+                "message": "仿真引擎执行失败",
+                "engineOutput": "RSS parse error\nat [服务器路径已隐藏]"
+            }))
+        );
+
+        let oversized = serde_json::json!({
+            "code": "run_failed",
+            "reason": "engine",
+            "engineOutput": "错".repeat(17_000)
+        })
+        .to_string();
+        let output = public_run_error("failed", Some(&oversized)).unwrap()["engineOutput"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(output.chars().count(), 16_385);
+        assert!(output.ends_with('…'));
     }
 }

@@ -507,6 +507,42 @@ async fn process_engine_accepts_binary_replacement_and_rejects_only_a_missing_bi
 
 #[cfg(unix)]
 #[tokio::test]
+async fn process_engine_preserves_multiline_failure_output_and_exit_code() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _probe_guard = ENGINE_PROBE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let root = tempfile::tempdir().unwrap();
+    let binary = root.path().join("engine");
+    write_probe_engine(&binary, None);
+    let config = EngineConfig::probe(binary.clone(), Duration::from_secs(2)).unwrap();
+    let engine = ProcessEngine::new(config);
+    drop(_probe_guard);
+
+    std::fs::write(
+        &binary,
+        "#!/bin/sh\nprintf 'RSS parse error: unexpected token\\nat /srv/private/input/script.rss:12:4\\n' >&2\nexit 7\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let (task, input_tree) = tree();
+    let error = engine
+        .run_dataframe(spec(task.path(), &input_tree, RunMode::Dataframe))
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "model_error");
+    assert_eq!(
+        error.message,
+        "RSS parse error: unexpected token\nat /srv/private/input/script.rss:12:4"
+    );
+    assert_eq!(error.diagnostics.as_deref().unwrap()["exitCode"], 7);
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn process_engine_import_uses_input_root_wrapper_for_nested_entry() {
     use std::os::unix::fs::PermissionsExt;
 

@@ -23,7 +23,7 @@ function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
   const notify=useCallback((text:string)=>{setToast(text);if(timer.current)clearTimeout(timer.current);timer.current=window.setTimeout(()=>setToast(null),2500)},[])
   const reloadWorkspace=useCallback(async()=>selectedId?workspaceState.reload(selectedId):undefined,[selectedId,workspaceState.reload])
   const imports=useModelImports(selectedId,workspaceState.workspace?.draft,reloadWorkspace)
-  const runHistory=useRunHistory(selectedId,feed?.messages.length??0),usage=useStorageUsage(feed?.messages.length??0)
+  const runHistory=useRunHistory(selectedId,feed?.revision??0),usage=useStorageUsage(feed?.messages.length??0)
   const select=useCallback((id:string)=>{setSelectedId(id);setOpenDataFrame(null);setComparisonId(null);if(isNarrow)setSidebarCollapsed(true);localStorage.setItem(preferenceKey(user.id),id)},[user.id,isNarrow])
   useEffect(()=>{if(isNarrow){setSidebarCollapsed(true);setPanelOpen(false)}},[isNarrow])
   useEffect(()=>{let live=true;setSessionLoadState('loading');void listSessions().then(async list=>{if(!live)return

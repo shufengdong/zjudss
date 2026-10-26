@@ -76,6 +76,7 @@ pub(super) struct StateTransition {
     pub status: &'static str,
     pub stage: String,
     pub error: Option<String>,
+    pub exit_code: Option<i32>,
     pub started_at_ms: Option<i64>,
     pub finished_at_ms: Option<i64>,
 }
@@ -86,6 +87,7 @@ impl StateTransition {
             status: "running",
             stage: stage.to_string(),
             error: None,
+            exit_code: None,
             started_at_ms: Some(now_ms),
             finished_at_ms: None,
         }
@@ -96,8 +98,21 @@ impl StateTransition {
             status: "failed",
             stage: stage.to_string(),
             error: Some(error),
+            exit_code: None,
             started_at_ms: None,
             finished_at_ms: Some(now_ms),
+        }
+    }
+
+    pub fn failed_with_exit_code(
+        stage: &str,
+        error: String,
+        exit_code: Option<i32>,
+        now_ms: i64,
+    ) -> Self {
+        Self {
+            exit_code,
+            ..Self::failed(stage, error, now_ms)
         }
     }
 }

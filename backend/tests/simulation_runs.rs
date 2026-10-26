@@ -245,6 +245,11 @@ async fn failed_run_publishes_a_terminal_failed_progress_event() {
     assert_eq!(failed_run["stage"], "run");
     assert_eq!(failed_run["error"]["code"], "run_failed");
     assert_eq!(failed_run["error"]["message"], "仿真引擎执行失败");
+    assert_eq!(
+        failed_run["error"]["engineOutput"],
+        "RSS parse error: unexpected token\nat [服务器路径已隐藏]"
+    );
+    assert_eq!(failed_run["exitCode"], 7);
     assert!(!failed_run.to_string().contains("/srv/private"));
 
     let progress = tokio::time::timeout(std::time::Duration::from_secs(5), async {

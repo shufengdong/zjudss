@@ -328,10 +328,15 @@ impl RunRepo {
         id: i32,
         stage: &str,
         error: String,
+        exit_code: Option<i32>,
         now: i64,
     ) -> RepoResult<()> {
-        self.update_state(user, id, StateTransition::failed(stage, error, now))
-            .await
+        self.update_state(
+            user,
+            id,
+            StateTransition::failed_with_exit_code(stage, error, exit_code, now),
+        )
+        .await
     }
     async fn update_state(
         &self,
@@ -345,13 +350,14 @@ impl RunRepo {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let count = diesel::sql_query(
                 "UPDATE simulation_runs SET status=?1,stage=?2,error_json=?3,\
-                 started_at_ms=COALESCE(started_at_ms,?4),finished_at_ms=?5 \
-                 WHERE id=?6 AND deleted_at_ms IS NULL AND \
-                 session_id IN(SELECT id FROM sessions WHERE user_id=?7)",
+                 exit_code=?4,started_at_ms=COALESCE(started_at_ms,?5),finished_at_ms=?6 \
+                 WHERE id=?7 AND deleted_at_ms IS NULL AND \
+                 session_id IN(SELECT id FROM sessions WHERE user_id=?8)",
             )
             .bind::<Text, _>(transition.status)
             .bind::<Text, _>(transition.stage)
             .bind::<Nullable<Text>, _>(transition.error)
+            .bind::<Nullable<Integer>, _>(transition.exit_code)
             .bind::<Nullable<BigInt>, _>(transition.started_at_ms)
             .bind::<Nullable<BigInt>, _>(transition.finished_at_ms)
             .bind::<Integer, _>(id)

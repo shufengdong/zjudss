@@ -104,15 +104,17 @@ export function formatTimestamp(value: string | null): string {
   return milliseconds === null ? '—' : new Date(milliseconds).toLocaleString()
 }
 
-export function runFailure(run: SimulationRun): { code?: string; message: string } {
+export function runFailure(run: SimulationRun): { code?: string; message: string; engineOutput?: string } {
   if (!run.error || typeof run.error !== 'object' || Array.isArray(run.error)) {
     return { message: '运行失败，未提供可用原因' }
   }
   const error = run.error as Record<string, unknown>
   const code = boundedText(error.code, 128)
   const message = boundedText(error.message)
+  const engineOutput = boundedText(error.engineOutput, 16_384)
   return {
     ...(code ? { code } : {}),
+    ...(engineOutput ? { engineOutput } : {}),
     message: message ?? '运行失败，未提供可用原因',
   }
 }

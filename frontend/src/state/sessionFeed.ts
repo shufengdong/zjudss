@@ -1,6 +1,6 @@
 import type { Message, MessagePage } from '../types'
 import { mergeMessage } from './messageReducer'
-export interface FeedEntry { messages:Message[]; nextBeforeId:string|null; hasMoreBefore:boolean; loading:boolean }
+export interface FeedEntry { messages:Message[]; nextBeforeId:string|null; hasMoreBefore:boolean; loading:boolean; revision:number }
 export type FeedState=Record<string,FeedEntry>
 export type FeedAction=
   |{type:'loading';sessionId:string}
@@ -8,13 +8,13 @@ export type FeedAction=
   |{type:'older';sessionId:string;page:MessagePage<Message>}
   |{type:'event';sessionId:string;message:Message}
   |{type:'remove';sessionId:string;messageId:string}
-export const emptyFeed=():FeedEntry=>({messages:[],nextBeforeId:null,hasMoreBefore:false,loading:false})
+export const emptyFeed=():FeedEntry=>({messages:[],nextBeforeId:null,hasMoreBefore:false,loading:false,revision:0})
 export function sessionFeedReducer(state:FeedState,action:FeedAction):FeedState{
   const current=state[action.sessionId]??emptyFeed()
   if(action.type==='loading')return{...state,[action.sessionId]:{...current,loading:true}}
   if(action.type==='remove')return{...state,[action.sessionId]:{...current,messages:current.messages.filter(m=>m.id!==action.messageId)}}
-  if(action.type==='event')return{...state,[action.sessionId]:{...current,messages:mergeMessage(current.messages,action.message)}}
+  if(action.type==='event')return{...state,[action.sessionId]:{...current,messages:mergeMessage(current.messages,action.message),revision:current.revision+1}}
   const merged=(action.type==='older'?[...action.page.messages,...current.messages]:[...action.page.messages,...current.messages])
     .reduce<Message[]>(mergeMessage,[])
-  return{...state,[action.sessionId]:{messages:merged,nextBeforeId:action.page.nextBeforeId,hasMoreBefore:action.page.hasMoreBefore,loading:false}}
+  return{...state,[action.sessionId]:{messages:merged,nextBeforeId:action.page.nextBeforeId,hasMoreBefore:action.page.hasMoreBefore,loading:false,revision:action.type==='snapshot'?current.revision+1:current.revision}}
 }

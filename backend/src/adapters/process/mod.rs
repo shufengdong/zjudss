@@ -387,8 +387,15 @@ fn ensure_binary_available(path: &std::path::Path) -> Result<(), AdapterError> {
 }
 
 fn exit_error(output: &std::process::Output) -> AdapterError {
+    const MAX_ERROR_OUTPUT_CHARS: usize = 16_384;
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let lower = stderr.to_ascii_lowercase();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let raw_output = if stderr.trim().is_empty() {
+        stdout.trim()
+    } else {
+        stderr.trim()
+    };
+    let lower = raw_output.to_ascii_lowercase();
     let (code, category) = if lower.contains("converge") || lower.contains("solve") {
         ("solver_error", ErrorCategory::Solver)
     } else if lower.contains("parse") || lower.contains("import") || lower.contains("invalid") {
@@ -399,11 +406,21 @@ fn exit_error(output: &std::process::Output) -> AdapterError {
     AdapterError::new(
         code,
         category,
-        stderr
-            .lines()
-            .find(|line| !line.trim().is_empty())
-            .unwrap_or("tensoreval 执行失败")
-            .trim(),
+        bounded_text(raw_output, MAX_ERROR_OUTPUT_CHARS)
+            .unwrap_or_else(|| "tensoreval 执行失败".into()),
     )
     .with_diagnostics(serde_json::json!({"exitCode":output.status.code()}))
+}
+
+fn bounded_text(value: &str, limit: usize) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let mut characters = value.chars();
+    let mut bounded = characters.by_ref().take(limit).collect::<String>();
+    if characters.next().is_some() {
+        bounded.push('…');
+    }
+    Some(bounded)
 }

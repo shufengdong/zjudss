@@ -192,8 +192,9 @@ impl ScenarioEngine {
             )),
             EngineScenario::RunFailure => Err(failure(
                 "scenario_run_failed",
-                "仿真失败于 /srv/private/runs/secret/input/script.rss",
-            )),
+                "RSS parse error: unexpected token\nat /srv/private/runs/secret/input/script.rss:12:4",
+            )
+            .with_diagnostics(serde_json::json!({"exitCode": 7}))),
             EngineScenario::Timeout { barrier_id } => {
                 let barrier = self
                     .inner

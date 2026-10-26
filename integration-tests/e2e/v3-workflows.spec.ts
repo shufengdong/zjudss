@@ -101,7 +101,7 @@ test('agent-created script is visible but never auto-runs; the user click starts
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/runs`)).json()).runs[0]?.status).toBe('succeeded')
 })
 
-test('failed run history shows a safe phase and reason without requesting datasets', async ({ appPage, control }) => {
+test('failed run history shows sanitized tensoreval output without requesting datasets', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'studies@example.com' })
   const { sessionId } = await createReadySession(page, api, '失败运行详情')
   const datasetRequests: string[] = []
@@ -118,6 +118,9 @@ test('failed run history shows a safe phase and reason without requesting datase
   const detail = runHeader.locator('xpath=..').getByRole('alert')
   await expect(detail).toContainText('失败阶段：执行计算')
   await expect(detail).toContainText('失败原因：仿真引擎执行失败')
+  await expect(detail).toContainText('tensoreval 报错：')
+  await expect(detail).toContainText('RSS parse error: unexpected token')
+  await expect(detail).toContainText('退出码：7')
   await expect(detail).not.toContainText('/srv/private')
   expect(datasetRequests).toEqual([])
 })

@@ -54,6 +54,10 @@ function RunDetails({ run, detail, now, onRetry, onOpenDataset }: {
       <p>失败阶段：{runStageLabel(run.stage)}</p>
       <p className="break-words">失败原因：{failure.message}</p>
       {failure.code && <p className="break-all">错误码：{failure.code}</p>}
+      {failure.engineOutput && <div className="space-y-1">
+        <p>tensoreval 报错：</p>
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border border-red-200 bg-white p-2 font-mono text-[11px] text-red-900">{failure.engineOutput}</pre>
+      </div>}
       {run.exitCode !== null && <p>退出码：{run.exitCode}</p>}
       <p>耗时：{duration}</p>
       <RunTimestamps run={run} />

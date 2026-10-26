@@ -559,7 +559,10 @@
       name: one result can be deleted without deleting its run or sibling result
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
-      name: failed run history shows a safe phase and reason without requesting datasets
+      name: failed run history shows sanitized tensoreval output without requesting datasets
+    - runner: rust
+      file: backend/tests/simulation_runs.rs
+      name: failed_run_publishes_a_terminal_failed_progress_event
     - runner: rust
       file: backend/tests/simulation_runs.rs
       name: successful_run_publishes_a_terminal_done_progress_event
@@ -578,7 +581,7 @@
     - runner: vitest
       file: frontend/src/components/runs/RunHistory.test.tsx
       name: refreshes expanded results after deletion and ignores the obsolete response
-  assertions: [run binds immutable script name and active version, run and result lists remain readable, successful run progress has no running stage, run cards default collapsed with localized status and duration, failed runs show bounded public reasons without requesting datasets, expanded successful runs list every live dataset and open the selected one, list and dataset failures retry, result deletion invalidates expanded result caches, scripts never auto-run and runs have no delete action]
+  assertions: [run binds immutable script name and active version, run and result lists remain readable, successful run progress has no running stage, run cards default collapsed with localized status and duration, failed runs show bounded sanitized tensoreval output and exit code without requesting datasets, expanded successful runs list every live dataset and open the selected one, list and dataset failures retry, result deletion invalidates expanded result caches, scripts never auto-run and runs have no delete action]
   fixtures: [published model, valid RSS script, successful and failed runs, multi-result run]
   contracts:
     - "route:POST /api/scripts/{id}/runs"

@@ -268,13 +268,19 @@ impl RunService {
                 .unwrap_or_else(|| "run".to_string());
             eprintln!("[run] failed id={id}, stage={failed_stage}: {error}");
             let reason = public_failure_reason(&error);
+            let (engine_output, exit_code) = engine_failure_details(&error);
+            let mut failure = serde_json::json!({"code":"run_failed","reason":reason});
+            if let Some(engine_output) = engine_output {
+                failure["engineOutput"] = serde_json::Value::String(engine_output);
+            }
             let failed = self
                 .repo
                 .fail(
                     &user.id,
                     id,
                     &failed_stage,
-                    serde_json::json!({"code":"run_failed","reason":reason}).to_string(),
+                    failure.to_string(),
+                    exit_code,
                     now_ms(),
                 )
                 .await;
@@ -473,6 +479,78 @@ fn public_failure_reason(error: &RunError) -> &'static str {
         RunError::Artifact(_) | RunError::Io(_) => "io",
         _ => "internal",
     }
+}
+
+fn engine_failure_details(error: &RunError) -> (Option<String>, Option<i32>) {
+    let RunError::Adapter(error) = error else {
+        return (None, None);
+    };
+    let exit_code = error
+        .diagnostics
+        .as_deref()
+        .and_then(|diagnostics| diagnostics.get("exitCode"))
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok());
+    let has_process_output = error
+        .diagnostics
+        .as_deref()
+        .is_some_and(|diagnostics| diagnostics.get("exitCode").is_some());
+    let output = has_process_output
+        .then(|| sanitize_engine_output(&error.message))
+        .flatten();
+    (output, exit_code)
+}
+
+pub(crate) fn sanitize_engine_output(value: &str) -> Option<String> {
+    const MAX_ENGINE_OUTPUT_CHARS: usize = 16_384;
+    const REDACTED_PATH: &str = "[服务器路径已隐藏]";
+
+    let normalized = value
+        .chars()
+        .map(|character| {
+            if character.is_control() && !matches!(character, '\n' | '\r' | '\t') {
+                '�'
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    let mut sanitized = String::with_capacity(normalized.len());
+    for chunk in normalized.split_inclusive(char::is_whitespace) {
+        let body = chunk.trim_end_matches(char::is_whitespace);
+        let whitespace = &chunk[body.len()..];
+        if contains_absolute_path(body) {
+            sanitized.push_str(REDACTED_PATH);
+        } else {
+            sanitized.push_str(body);
+        }
+        sanitized.push_str(whitespace);
+    }
+    let sanitized = sanitized.trim();
+    if sanitized.is_empty() {
+        return None;
+    }
+    let mut characters = sanitized.chars();
+    let mut bounded = characters
+        .by_ref()
+        .take(MAX_ENGINE_OUTPUT_CHARS)
+        .collect::<String>();
+    if characters.next().is_some() {
+        bounded.push('…');
+    }
+    Some(bounded)
+}
+
+fn contains_absolute_path(token: &str) -> bool {
+    let token = token.trim_start_matches(['"', '\'', '(', '[', '{', '<']);
+    if token.starts_with('/') && token.len() > 1 {
+        return true;
+    }
+    let bytes = token.as_bytes();
+    bytes.len() > 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\')
 }
 
 fn run_stages(active: &str) -> Vec<Stage> {
