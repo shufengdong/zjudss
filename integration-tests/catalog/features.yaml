@@ -487,10 +487,25 @@
     - runner: rust
       file: backend/tests/scripted_agent.rs
       name: transient_study_supports_motor_dynamics_and_rejects_emt
+    - runner: rust
+      file: backend/tests/study_planning.rs
+      name: planning_lists_every_missing_canonical_table_from_the_active_version
+    - runner: rust
+      file: backend/tests/workspace_tools.rs
+      name: plan_study_preserves_explicit_newton_and_issues_request_local_ready_ids
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: turn_limit_failure_explains_that_no_script_was_created
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: planned_agent_script_cannot_reimport_the_active_model
+    - runner: rust
+      file: backend/tests/scripts.rs
+      name: planned_agent_script_cannot_overwrite_an_active_input_alias
     - runner: release
       file: scripts/test-release-integration
       name: real DeepSeek and tensoreval complete the semantic release journey
-  assertions: [all five study families call the deterministic planner, incomplete and unsupported requests create no script or run, ready scripts match the planned function and require an opaque request-local plan ID]
+  assertions: [all five study families call the deterministic planner, camelCase tool arguments preserve every explicit study parameter, an explicit Newton request uses Newton even for a radial network, incomplete and unsupported requests create no script or run, input aliases and their canonical argument order come from the actual active tables and are frozen into the ready plan, every missing canonical table is reported together, ready scripts directly consume planned aliases without repeated order lookups, imports and input rebinding are rejected before persistence, ready scripts match the planned function and require an opaque request-local plan ID, turn-budget exhaustion reports that no script was created]
   fixtures: [published 21-table active model, radial topology, motor table, current engine function catalog]
   contracts:
     - "tool:plan_study"
@@ -518,7 +533,10 @@
     - runner: rust
       file: backend/tests/scripted_agent.rs
       name: successful_script_creation_is_not_overwritten_by_a_later_provider_error
-  assertions: [scripts list independently, full text loads on demand, Agent creation does not run, successful script creation remains successful if provider finalization fails]
+    - runner: rust
+      file: backend/tests/script_validation_adapter.rs
+      name: static_validation_rejects_a_trailing_bare_output_expression
+  assertions: [scripts list independently, full text loads on demand, Agent creation does not run, successful script creation remains successful if provider finalization fails, DataFrame scripts reject trailing bare output expressions before persistence]
   fixtures: [long RSS script]
   contracts:
     - "route:GET /api/sessions/{id}/scripts"

@@ -50,7 +50,12 @@ pub struct QstsProfilePoint {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum QstsProfile {
     Constant {
         load_multiplier: f64,
@@ -99,7 +104,12 @@ pub enum TransientSubtype {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum MotorEvent {
     FaultOn {
         time_seconds: f64,
@@ -136,7 +146,12 @@ pub struct MotorDynamicsRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "studyType", rename_all = "snake_case")]
+#[serde(
+    tag = "studyType",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum StudyRequest {
     StaticPowerFlow {
         #[serde(default)]
@@ -190,6 +205,7 @@ impl StudyRequest {
 
 #[derive(Debug, Clone)]
 pub struct ModelStudyFacts {
+    pub available_aliases: BTreeSet<String>,
     pub active_version_id: Option<i32>,
     pub content_hash: Option<String>,
     pub engine_snapshot_id: String,
@@ -312,18 +328,32 @@ impl StudyFunctionCatalog {
         }
         let mut functions = BTreeMap::new();
         for entry in entries {
-            let names = entry
-                .get("names")
-                .and_then(Value::as_array)
-                .ok_or_else(|| StudyPlanningError::InvalidCatalog("函数缺少 names".into()))?;
-            let names = names
-                .iter()
-                .map(|name| {
-                    name.as_str().ok_or_else(|| {
-                        StudyPlanningError::InvalidCatalog("函数名不是字符串".into())
+            let names = match (entry.get("names"), entry.get("name")) {
+                (Some(Value::Array(names)), _) => names
+                    .iter()
+                    .map(|name| {
+                        name.as_str().ok_or_else(|| {
+                            StudyPlanningError::InvalidCatalog("函数名不是字符串".into())
+                        })
                     })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+                    .collect::<Result<Vec<_>, _>>()?,
+                (Some(_), _) => {
+                    return Err(StudyPlanningError::InvalidCatalog(
+                        "函数 names 不是数组".into(),
+                    ));
+                }
+                (None, Some(Value::String(name))) => vec![name.as_str()],
+                (None, Some(_)) => {
+                    return Err(StudyPlanningError::InvalidCatalog(
+                        "函数名不是字符串".into(),
+                    ));
+                }
+                (None, None) => {
+                    return Err(StudyPlanningError::InvalidCatalog(
+                        "函数缺少 name/names".into(),
+                    ));
+                }
+            };
             let names = names
                 .into_iter()
                 .filter(|name| GOVERNED.contains(name))
@@ -387,6 +417,8 @@ pub struct ReadyStudyPlan {
     pub model_version_id: i32,
     pub model_content_hash: String,
     pub engine_snapshot_id: String,
+    pub input_aliases: Vec<String>,
+    pub model_input_order: Vec<String>,
     pub request: StudyRequest,
     pub function: String,
     pub arity: usize,
@@ -400,6 +432,8 @@ pub struct StudyPlan {
     pub status: StudyStatus,
     pub study_type: StudyKind,
     pub model_facts: ModelStudySummary,
+    pub input_aliases: Vec<String>,
+    pub model_input_order: Vec<String>,
     pub function: Option<String>,
     pub arity: Option<usize>,
     pub solver: Option<ResolvedSolver>,
@@ -438,3 +472,175 @@ impl std::fmt::Display for StudyPlanningError {
 }
 
 impl std::error::Error for StudyPlanningError {}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{
+        FaultCase, FaultKind, MotorDynamicsRequest, MotorEvent, QstsMode, QstsProfile,
+        SolverPreference, StudyRequest, TransientSubtype,
+    };
+
+    #[test]
+    fn study_request_json_preserves_camel_case_static_power_flow_fields() {
+        let request: StudyRequest = serde_json::from_value(json!({
+            "studyType": "static_power_flow",
+            "solverPreference": "newton",
+            "requestedResults": ["bus_phase", "summary"]
+        }))
+        .unwrap();
+
+        assert_eq!(
+            request,
+            StudyRequest::StaticPowerFlow {
+                solver_preference: SolverPreference::Newton,
+                requested_results: vec!["bus_phase".into(), "summary".into()],
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            json!({
+                "studyType": "static_power_flow",
+                "solverPreference": "newton",
+                "requestedResults": ["bus_phase", "summary"]
+            })
+        );
+    }
+
+    #[test]
+    fn study_request_json_preserves_camel_case_qsts_fields() {
+        let request: StudyRequest = serde_json::from_value(json!({
+            "studyType": "qsts",
+            "solverPreference": "newton",
+            "mode": "daily",
+            "startSeconds": 0.0,
+            "stepSizeSeconds": 900.0,
+            "number": 96,
+            "profile": {
+                "kind": "constant",
+                "loadMultiplier": 1.0,
+                "generationMultiplier": 0.8
+            },
+            "requestedResults": ["summary"]
+        }))
+        .unwrap();
+
+        assert_eq!(
+            request,
+            StudyRequest::Qsts {
+                solver_preference: SolverPreference::Newton,
+                mode: Some(QstsMode::Daily),
+                start_seconds: Some(0.0),
+                step_size_seconds: Some(900.0),
+                number: Some(96),
+                profile: Some(QstsProfile::Constant {
+                    load_multiplier: 1.0,
+                    generation_multiplier: 0.8,
+                }),
+                requested_results: vec!["summary".into()],
+            }
+        );
+    }
+
+    #[test]
+    fn study_request_json_rejects_unknown_or_misspelled_fields() {
+        let error = serde_json::from_value::<StudyRequest>(json!({
+            "studyType": "static_power_flow",
+            "solver_preference": "newton"
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn study_request_json_preserves_camel_case_fields_for_other_studies() {
+        let fault: StudyRequest = serde_json::from_value(json!({
+            "studyType": "fault",
+            "cases": [{
+                "bus": "bus1",
+                "terminalMap": ["1"],
+                "kind": "slg",
+                "bolted": true,
+                "zf": null,
+                "xf": null
+            }],
+            "allowIdealSources": true,
+            "requestedResults": ["fault_result"]
+        }))
+        .unwrap();
+        assert_eq!(
+            fault,
+            StudyRequest::Fault {
+                cases: Some(vec![FaultCase {
+                    bus: Some("bus1".into()),
+                    terminal_map: Some(vec!["1".into()]),
+                    kind: Some(FaultKind::Slg),
+                    bolted: Some(true),
+                    zf: None,
+                    xf: None,
+                }]),
+                allow_ideal_sources: Some(true),
+                requested_results: vec!["fault_result".into()],
+            }
+        );
+
+        let harmonic: StudyRequest = serde_json::from_value(json!({
+            "studyType": "harmonic",
+            "hMax": 25,
+            "monitorElements": ["line.l1"],
+            "requestedResults": ["bus_voltage"]
+        }))
+        .unwrap();
+        assert_eq!(
+            harmonic,
+            StudyRequest::Harmonic {
+                h_max: Some(25),
+                monitor_elements: vec!["line.l1".into()],
+                requested_results: vec!["bus_voltage".into()],
+            }
+        );
+
+        let transient: StudyRequest = serde_json::from_value(json!({
+            "studyType": "transient",
+            "subtype": "motor_dynamics",
+            "motorDynamics": {
+                "durationSeconds": 1.0,
+                "stepSizeSeconds": 0.01,
+                "events": [{
+                    "kind": "fault_on",
+                    "timeSeconds": 0.1,
+                    "eventId": "f1",
+                    "bus": "bus1",
+                    "phases": ["1"],
+                    "faultKind": "slg",
+                    "zfRe": 0.0,
+                    "zfIm": 0.0
+                }]
+            },
+            "requestedResults": ["event"]
+        }))
+        .unwrap();
+        assert_eq!(
+            transient,
+            StudyRequest::Transient {
+                subtype: Some(TransientSubtype::MotorDynamics),
+                motor_dynamics: Some(MotorDynamicsRequest {
+                    duration_seconds: Some(1.0),
+                    step_size_seconds: Some(0.01),
+                    events: Some(vec![MotorEvent::FaultOn {
+                        time_seconds: 0.1,
+                        event_id: "f1".into(),
+                        bus: "bus1".into(),
+                        phases: vec!["1".into()],
+                        fault_kind: FaultKind::Slg,
+                        zf_re: Some(0.0),
+                        zf_im: Some(0.0),
+                    }]),
+                }),
+                requested_results: vec!["event".into()],
+            }
+        );
+    }
+}

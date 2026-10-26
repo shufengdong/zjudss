@@ -62,7 +62,7 @@ zjudss/
 cd backend
 cp .env.example .env
 # 必填：DEEPSEEK_API_KEY、TENSOREVAL_BIN、SPARROWZZ_DIR
-# 可选：AGENT_BUNDLE_VERSION（缺省 v3.1.0）、DATABASE_URL、DATA_DIR 等
+# 可选：AGENT_BUNDLE_VERSION（缺省 v3.3.3）、DATABASE_URL、DATA_DIR 等
 cargo run --release
 ```
 

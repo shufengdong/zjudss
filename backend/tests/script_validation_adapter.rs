@@ -102,3 +102,15 @@ async fn static_validation_requires_a_named_dataframe_output() {
     assert_eq!(result.diagnostics["code"], "script_output_required");
     assert!(result.called_functions.is_empty());
 }
+
+#[tokio::test]
+async fn static_validation_rejects_a_trailing_bare_output_expression() {
+    for source in [
+        "result = select(col(id), bus);\nresult;",
+        "result = select(col(id), bus);\nresult",
+    ] {
+        let result = validate(source).await;
+        assert!(!result.valid, "{source}");
+        assert_eq!(result.diagnostics["code"], "script_bare_output_rejected");
+    }
+}

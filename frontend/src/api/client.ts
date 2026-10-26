@@ -5,7 +5,7 @@ import type {
   SimulationRun, StorageUsage, User, VersionDeletionPreview, Workspace,
 } from '../types'
 import { emitAuthenticationRequired } from '../state/auth'
-import { normalizeApiBasePath } from '../../api-config'
+import { normalizeApiBasePath } from '../../config/api-config'
 
 export const apiUrl = (path: string) => `${normalizeApiBasePath(import.meta.env.VITE_API_BASE_PATH)}${path.slice(4)}`
 

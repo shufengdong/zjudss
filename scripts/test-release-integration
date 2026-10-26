@@ -83,7 +83,7 @@ node -e '
   const fs = require("node:fs");
   const report = JSON.parse(fs.readFileSync(process.env.RELEASE_LLM_REPORT, "utf8"));
   if (!report.success || !report.attempts?.some((attempt) => attempt.outcome === "passed")) process.exit(1);
-  if (report.agentBundleVersion !== "v3.2.0" || !/^[a-f0-9]{64}$/.test(report.agentBundleSha256 ?? "")) process.exit(1);
+  if (report.agentBundleVersion !== "v3.3.3" || !/^[a-f0-9]{64}$/.test(report.agentBundleSha256 ?? "")) process.exit(1);
   if (!/^[a-f0-9]{64}$/.test(report.userSeedSha256 ?? "") || !(report.userCount > 0)) process.exit(1);
   if (!["ENGINE-RELEASE-001", "REAL-RELEASE-001", "AGENT-STUDY-PLANNING-001"].every((id) => report.testIds?.includes(id))) process.exit(1);
   if (!/^[a-f0-9]{64}$/.test(report.engineBinarySha256 ?? "") || !report.engineContract) process.exit(1);

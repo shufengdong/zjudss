@@ -2,7 +2,7 @@
 
 ## Bundle
 
-生产 bundle 位于 `backend/resources/agent/v3/`，版本 `v3.2.0`。manifest 固定 system prompt、skill index、
+生产 bundle 位于 `backend/resources/agent/v3/`，版本 `v3.3.3`。manifest 固定 system prompt、skill index、
 engine contract、允许工具和文件 SHA-256；启动时完整验证。Agent prompt 只常驻策略，不常驻整套引擎文档。
 
 ## Skills
@@ -37,9 +37,25 @@ Agent 可以检查工作区、修改 draft、创建脚本、读取运行/结果�
 `unsupported`。后两类缺失状态必须在一条回复中覆盖全部缺失项；不允许从案例或历史运行补参数。当前暂态只支持
 `ds_motor_dynamics`，EMT、暂态稳定和逆变器控制暂态明确返回不支持。
 
+`plan_study.request` 的字段使用 camelCase，并拒绝未知字段，避免拼写错误静默落入默认值。用户明确指定 Newton
+或 Radial 时，Agent 必须分别传 `solverPreference=newton` 或 `radial`；只有未指定求解器时才传 `auto`。
+Newton 是通用求解器，也可用于径向网络；显式 Newton 请求不得因拓扑径向而降级或要求用户先修改模型。
+
 只有 `ready` 结果签发请求内有效的 opaque `studyPlanId`。Agent 随后加载 `rss-generation`、按需读取引擎文档，
-并使用计划给出的函数、arity 和结果生成脚本；`create_script` 在持久化前核对 plan ID、active 模型 hash、引擎
-snapshot 与实际函数。计划或模型变化后旧 ID 失效，且任何研究脚本创建仍不产生运行。
+并使用计划给出的函数、arity 和结果生成脚本。`inspect_workspace.active.tables[].tableName` 是当前 active 版本
+实际可用的 DataFrame alias；`plan_study` 将同一清单稳定排序后作为 `inputAliases`，并将其中规范模型输入按
+adapter 合同排列为 `modelInputOrder`，写入响应和 ready plan，与 model version、content hash、engine snapshot
+一起冻结。规范研究输入缺失时，规划器一次返回所有
+`model.tables.<alias>` 缺失项，不签发 plan ID。Prompt 和 skill 不保存固定表名清单。
+
+运行时按表名向脚本注入 active DataFrame。受管脚本直接引用 `inputAliases` 并按 `modelInputOrder` 放置规范模型
+参数，可以用新变量派生参数和保存结果。静态潮流不得再查询模型输入顺序；需要确认参数或结果语法时最多执行
+一次文档搜索和一次章节读取，避免在保存脚本前耗尽 8 次模型调用预算。DataFrame 模式只接受变量声明；函数
+结果绑定中的未消费叶变量就是结果，脚本末尾不得追加裸变量表达式。静态校验以
+`script_bare_output_rejected` 在持久化前拒绝该语法。受管脚本
+不得重新导入、读取模型文件或覆盖输入 alias。`create_script` 在持久化前核对 plan ID、active 模型 hash、引擎
+snapshot、实际函数、静态校验、输入集合和输出绑定；失败返回 `script_error`，不保存 artifact、脚本记录或脚本
+消息。计划或模型变化后旧 ID 失效，且任何研究脚本创建仍不产生运行。手工文本和上传脚本维持既有兼容行为。
 
 模型修改遵循 `inspect_workspace -> read_model_dataframe -> modify_model`。`read_model_dataframe` 只在加载
 `model-intake` skill 后可用，scope 只能是 active 或携带准确 expected draft 的 draft；查询只允许表名、最多
@@ -51,7 +67,9 @@ snapshot 与实际函数。计划或模型变化后旧 ID 失效，且任何研�
 工具只接收 session 上下文内的稳定资源 ID、expected draft、受控 patch/spec 和文本。禁止路径、URL、SQL、
 shell 命令和任意图表 option。`modify_model` 使用 `tableName + rowKey + changes + expectedDraft`；
 `read_model_dataframe` 使用 `scope + tableName + columns + equals + limit + expectedDraft?`；
-`create_script` 使用 `name + content + studyPlanId?`；其中受管研究函数必须提供本次 ready 计划的 ID；比较使用两个 run ID。模型范围不存在、查询无效、输出过大、草稿 revision
+`plan_study` 响应使用 `inputAliases` 暴露本次 active 版本实际表名，使用 `modelInputOrder` 暴露其中规范模型输入
+的动态调用顺序；`create_script` 使用
+`name + content + studyPlanId?`，其中受管研究函数必须提供本次 ready 计划的 ID；比较使用两个 run ID。模型范围不存在、查询无效、输出过大、草稿 revision
 冲突和表不存在分别使用稳定错误码，工具响应不包含 artifact 路径。
 
 ## Engine knowledge

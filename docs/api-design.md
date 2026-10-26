@@ -91,7 +91,8 @@ manifest、角色化文件哈希和验证诊断。两个工具只读，Agent 无
 上传脚本 multipart 只接受字段 `file` 的单个 UTF-8 `.rss`；`POST /api/sessions/{id}/scripts/text` 接受 JSON
 `{name, content}` 直接以文本创建（`sourceKind: "manual"`）。两条路径共用同一静态校验与不可变落盘。脚本详情
 返回全文；列表和消息只返回有界预览。运行请求为 `{modelVersionId, clientRunId}`。服务端要求该版本仍为
-active，重新检查脚本静态有效性和所需 DataFrame alias，再异步执行。Agent 没有运行、激活或删除工具。
+active，重新检查脚本静态有效性和所需 DataFrame alias，再异步执行。DataFrame 脚本只允许变量声明；函数结果
+绑定的叶变量直接成为结果，末尾裸变量表达式在创建时以 `script_validation_failed` 拒绝。Agent 没有运行、激活或删除工具。
 
 运行创建响应、session 运行列表和单运行详情中的 `SimulationRun` 都包含必填 `scriptName`；它来自运行所绑定的
 不可变脚本资源，不由前端按 ID 二次猜测。运行快照继续冻结模型、脚本 artifact/hash、engine contract、Agent bundle
@@ -105,6 +106,8 @@ adapter/IO/校验错误映射为受控 `error.code`/`error.message`，并在读�
 持久消息类型是 `user`、`assistant`、`tool-call`、`progress`、`result`、`attachment`、`model-status`、
 `comparison`、`script`。运行关联字段统一为 `runId`。成功的 `create_script` tool-call 和 `script` 消息是脚本生成的持久成功事实；
 后续模型收尾失败不追加通用 Agent 失败，缺少 assistant 收尾时由服务端补充检查并点击“运行”的提示。
+Agent 在创建脚本前耗尽单轮模型调用预算时，assistant 明确提示本轮尚未生成脚本并可重新发送请求；后台日志记录
+session ID 和失败类别，消息正文不暴露 provider 诊断。
 
 主要稳定错误包括认证/隔离、配额与上传、导入与草稿冲突、模型表分页/读取/受控查询、脚本校验/兼容、active race、运行队列、版本删除
 影响变化、结果 busy、分析/比较/视图校验、历史索引不可用、engine snapshot/contract 不匹配。权威枚举由

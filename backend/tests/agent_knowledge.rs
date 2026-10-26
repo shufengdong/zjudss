@@ -33,8 +33,8 @@ fn skill(id: &str, path: &str, tool: &str, content: &str) -> Value {
 
 #[test]
 fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
-    let knowledge = AgentKnowledge::load_embedded("v3.2.0").expect("embedded knowledge");
-    assert_eq!(knowledge.manifest.agent_bundle_version, "v3.2.0");
+    let knowledge = AgentKnowledge::load_embedded("v3.3.3").expect("embedded knowledge");
+    assert_eq!(knowledge.manifest.agent_bundle_version, "v3.3.3");
     assert_eq!(
         knowledge.manifest.engine_contract_version,
         "tensoreval-parquet-v3"
@@ -57,18 +57,51 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     }
     assert_eq!(knowledge.skill_index().count(), 6);
     assert!(knowledge.skill("result-analysis").is_some());
-    let study_planning = &knowledge.skill("study-planning").unwrap().content;
+    let study_skill = knowledge.skill("study-planning").unwrap();
+    assert_eq!(study_skill.metadata.version, "1.2.2");
+    let study_planning = &study_skill.content;
     assert!(study_planning.contains("plan_study"));
     assert!(study_planning.contains("needs_clarification"));
     assert!(study_planning.contains("missing_model_data"));
     assert!(study_planning.contains("unsupported"));
     assert!(study_planning.contains("studyPlanId"));
-    let rss_generation = &knowledge.skill("rss-generation").unwrap().content;
-    assert!(rss_generation.contains("终端输出必须是 DataFrame"));
+    assert!(study_planning.contains("inspect_workspace.active.tables[].tableName"));
+    assert!(study_planning.contains("plan_study.inputAliases"));
+    assert!(study_planning.contains("plan_study.modelInputOrder"));
+    assert!(study_planning.contains("只有用户未指定求解器时才传 `auto`"));
+    assert!(study_planning.contains("适用于径向和非径向网络"));
+    let rss_skill = knowledge.skill("rss-generation").unwrap();
+    assert_eq!(rss_skill.metadata.version, "1.2.2");
+    let rss_generation = &rss_skill.content;
+    assert!(rss_generation.contains("函数结果绑定本身就是输出"));
     assert!(rss_generation.contains("未被后续节点消费的纯标量"));
     assert!(rss_generation.contains("studyPlanId"));
+    assert!(rss_generation.contains("plan_study.inputAliases"));
+    assert!(rss_generation.contains("plan_study.modelInputOrder"));
+    assert!(rss_generation.contains("最多一次 `search_engine_docs`"));
+    assert!(rss_generation.contains("不得查询 active 模型输入顺序"));
+    assert!(rss_generation.contains("只能包含变量声明"));
+    assert!(rss_generation.contains("函数调用后不要追加"));
+    assert!(rss_generation.contains("import_dss"));
+    assert!(rss_generation.contains("文件读取"));
+    assert!(rss_generation.contains("重新绑定"));
+    assert!(!study_planning.contains("bus, line, linecode"));
+    assert!(!rss_generation.contains("bus, line, linecode"));
     assert!(knowledge.system_prompt.contains("inspect_workspace"));
     assert!(knowledge.system_prompt.contains("plan_study"));
+    assert!(
+        knowledge
+            .system_prompt
+            .contains("inspect_workspace.active.tables[].tableName")
+    );
+    assert!(knowledge.system_prompt.contains("plan_study.inputAliases"));
+    assert!(knowledge.system_prompt.contains("solverPreference=newton"));
+    assert!(
+        knowledge
+            .system_prompt
+            .contains("plan_study.modelInputOrder")
+    );
+    assert!(!knowledge.system_prompt.contains("bus, line, linecode"));
     assert!(!knowledge.system_prompt.contains("/Users/"));
     assert!(!knowledge.system_prompt.contains("SPARROWZZ_DIR"));
     assert!(!knowledge.system_prompt.contains("p_nom"));

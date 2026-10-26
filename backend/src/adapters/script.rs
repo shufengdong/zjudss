@@ -59,6 +59,9 @@ pub(crate) fn validate_script_source(
             called_functions,
         ));
     }
+    if has_trailing_bare_identifier(&callable_source) {
+        return Ok(invalid("script_bare_output_rejected", called_functions));
+    }
 
     let mut outputs = BTreeSet::new();
     for statement in source.split([';', '\n']) {
@@ -92,6 +95,16 @@ pub(crate) fn validate_script_source(
         called_functions,
         diagnostics: serde_json::json!({"code":"ok","validator":"adapter-v3"}),
     })
+}
+
+fn has_trailing_bare_identifier(source: &str) -> bool {
+    let source = source.trim();
+    let source = source.strip_suffix(';').unwrap_or(source).trim_end();
+    let statement = source
+        .rsplit_once(';')
+        .map_or(source, |(_, statement)| statement)
+        .trim();
+    valid_identifier(statement)
 }
 
 fn invalid(code: &str, called_functions: Vec<String>) -> StaticScriptValidation {

@@ -172,6 +172,61 @@ async fn apply_csv(
         .unwrap()
 }
 
+async fn seed_canonical_draft(app: &TestApp, user: &CurrentUser, session_id: i32) -> DraftRef {
+    let client_id = format!("agent-study-{session_id}-canonical");
+    let staged = app
+        .state
+        .artifact_service
+        .store()
+        .stage(
+            Cursor::new(b"New Circuit.Test\n".to_vec()),
+            StageLimits::default(),
+        )
+        .unwrap();
+    let accepted = app
+        .state
+        .model_import_service
+        .accept(
+            user,
+            session_id,
+            client_id.clone(),
+            None,
+            UploadBatch {
+                client_batch_id: client_id.clone(),
+                files: vec![UploadFile {
+                    client_file_id: client_id,
+                    file_name: "master.dss".into(),
+                    relative_path: Some("master.dss".into()),
+                    media_type: Some("text/plain".into()),
+                    staged,
+                }],
+            },
+        )
+        .await
+        .unwrap();
+    let import_id = accepted.id.parse().unwrap();
+    let ready = app
+        .state
+        .model_import_service
+        .process(user, import_id)
+        .await
+        .unwrap();
+    app.state
+        .model_import_service
+        .resolve_and_apply(
+            user,
+            import_id,
+            None,
+            ready
+                .candidates
+                .into_iter()
+                .map(|candidate| candidate.id)
+                .collect(),
+        )
+        .await
+        .unwrap()
+}
+
 async fn publish_agent_study_model(app: &TestApp, session_id: i32) {
     let user = common::test_user("instance");
     let tables: [(&str, &[u8]); 5] = [
@@ -181,7 +236,7 @@ async fn publish_agent_study_model(app: &TestApp, session_id: i32) {
         ("motor", b"name,bus,motor_marker\nm1,b1,present\n"),
         ("spectrum", b"name,harmonic\ndefault,1\n"),
     ];
-    let mut draft = None;
+    let mut draft = Some(seed_canonical_draft(app, &user, session_id).await);
     for (sequence, (table_name, csv)) in tables.into_iter().enumerate() {
         draft = Some(apply_csv(app, &user, session_id, table_name, csv, draft, sequence).await);
     }
@@ -249,6 +304,17 @@ fn assert_no_script_or_run(events: &[Value]) {
 }
 
 const POWER_FLOW_SCRIPT: &str = r#"[bus_phase, summary] = ds_radial_pf(
+    bus, line, linecode, load, transformer, voltage_source, motor,
+    transformer_winding, transformer_impedance, current_source, generator, ibr,
+    switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para
+);"#;
+
+const IMPORTING_POWER_FLOW_SCRIPT: &str = r#"[
+    bus, line, linecode, load, transformer, voltage_source, motor,
+    transformer_winding, transformer_impedance, current_source, generator, ibr,
+    switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para
+] = import_dss("case/model.dss");
+[bus_phase, summary] = ds_radial_pf(
     bus, line, linecode, load, transformer, voltage_source, motor,
     transformer_winding, transformer_impedance, current_source, generator, ibr,
     switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para
@@ -340,6 +406,82 @@ async fn study_power_flow_uses_ready_plan_before_creating_the_planned_script() {
     assert!(script.to_string().contains("ds_radial_pf"));
     assert!(!script.to_string().contains("ds_newton_raphson_pf"));
     assert!(runs(&app, &session).await.is_empty());
+}
+
+#[tokio::test]
+async fn planned_agent_script_cannot_reimport_the_active_model() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let session = create_session(&app).await;
+    let session_id = session.parse().unwrap();
+    publish_agent_study_model(&app, session_id).await;
+    let request = StudyRequest::StaticPowerFlow {
+        solver_preference: SolverPreference::Auto,
+        requested_results: vec![],
+    };
+    let plan_id = ready_plan_id(&app, session_id, request.clone()).await;
+    factory.enqueue(ScriptScenario {
+        id: "study-power-flow-reimport-rejected".into(),
+        expected_prompt: Some("计算潮流但错误地重新导入".into()),
+        turns: vec![
+            ScriptTurn::ToolCall {
+                call_id: "inspect-reimport".into(),
+                name: "inspect_workspace".into(),
+                args: json!({}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "load-planning-reimport".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"study-planning"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "plan-reimport".into(),
+                name: "plan_study".into(),
+                args: json!({"request":request}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "load-rss-reimport".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"rss-generation"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "create-reimport".into(),
+                name: "create_script".into(),
+                args: json!({
+                    "name":"reimport.rss",
+                    "content":IMPORTING_POWER_FLOW_SCRIPT,
+                    "studyPlanId":plan_id
+                }),
+            },
+            ScriptTurn::Text {
+                text: "脚本被静态校验拒绝，需要直接使用 active 模型输入。".into(),
+            },
+        ],
+    });
+
+    assert_eq!(
+        post_and_wait(&app, &session, "计算潮流但错误地重新导入").await,
+        StatusCode::ACCEPTED
+    );
+    let events = messages(&app, &session).await;
+    assert_no_script_or_run(&events);
+    assert!(
+        events.iter().any(|event| {
+            event["type"] == "tool-call"
+                && event["toolName"] == "create_script"
+                && event["status"] == "failed"
+                && event.to_string().contains("inputAliases")
+        }),
+        "events: {events:#?}"
+    );
+    assert!(
+        app.state
+            .script_service
+            .list(&common::test_user("instance"), session_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -677,6 +819,38 @@ async fn missing_skill_is_a_failed_tool_result() {
     assert!(
         events.iter().any(|event| {
             event["type"] == "assistant" && event["content"] == "agent 运行失败，请稍后重试"
+        }),
+        "events: {events:#?}"
+    );
+}
+
+#[tokio::test]
+async fn turn_limit_failure_explains_that_no_script_was_created() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    factory.enqueue(ScriptScenario {
+        id: "turn-limit".into(),
+        expected_prompt: Some("计算潮流".into()),
+        turns: (0..8)
+            .map(|index| ScriptTurn::ToolCall {
+                call_id: format!("storage-{index}"),
+                name: "get_storage_usage".into(),
+                args: json!({}),
+            })
+            .collect(),
+    });
+    let app = TestApp::spawn_with_agent_factory(factory).await;
+    let session = create_session(&app).await;
+
+    assert_eq!(
+        post_and_wait(&app, &session, "计算潮流").await,
+        StatusCode::ACCEPTED
+    );
+
+    let events = messages(&app, &session).await;
+    assert!(
+        events.iter().any(|event| {
+            event["type"] == "assistant"
+                && event["content"] == "本轮工具调用已达到上限，尚未生成脚本，请重新发送请求"
         }),
         "events: {events:#?}"
     );

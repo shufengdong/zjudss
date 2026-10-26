@@ -33,6 +33,7 @@ struct FactAccumulator {
 
 pub(super) fn empty_model_facts(engine_snapshot_id: &str) -> ModelStudyFacts {
     ModelStudyFacts {
+        available_aliases: BTreeSet::new(),
         active_version_id: None,
         content_hash: None,
         engine_snapshot_id: engine_snapshot_id.to_string(),
@@ -61,6 +62,11 @@ pub(super) async fn extract_active_model_facts(
     artifacts: &ArtifactService,
     engine_snapshot_id: &str,
 ) -> Result<ModelStudyFacts, StudyPlanningError> {
+    let available_aliases = active
+        .dataframes
+        .iter()
+        .map(|row| row.table_name.clone())
+        .collect();
     let tables = active
         .dataframes
         .iter()
@@ -141,6 +147,7 @@ pub(super) async fn extract_active_model_facts(
         .intersection(&facts.spectrum_names)
         .count();
     Ok(ModelStudyFacts {
+        available_aliases,
         active_version_id: Some(active.version.id),
         content_hash: Some(active.version.content_hash.clone()),
         engine_snapshot_id: engine_snapshot_id.to_string(),
@@ -510,6 +517,9 @@ where
     T: Send + 'static,
     F: FnMut(&RecordBatch, &mut T) -> Result<(), DataFrameReadError> + Send + 'static,
 {
+    if table.row_count == 0 {
+        return Ok(state);
+    }
     let available = available_columns(table)?;
     for column in required {
         if !available.contains(*column) {

@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use crate::adapters::STATIC_MODEL_TABLES;
+
 use super::contracts::*;
 
 const MAX_ITEMS: usize = 64;
@@ -37,6 +39,28 @@ pub fn evaluate(
             None,
             vec![],
             vec![missing("model.active", "当前会话没有 active 模型")],
+            vec![],
+        );
+    }
+    let missing_aliases = STATIC_MODEL_TABLES
+        .into_iter()
+        .filter(|alias| !facts.available_aliases.contains(*alias))
+        .map(|alias| {
+            missing(
+                &format!("model.tables.{alias}"),
+                "当前 active 模型缺少该研究输入表",
+            )
+        })
+        .collect::<Vec<_>>();
+    if !missing_aliases.is_empty() {
+        return plan(
+            request,
+            facts,
+            StudyStatus::MissingModelData,
+            None,
+            None,
+            vec![],
+            missing_aliases,
             vec![],
         );
     }
@@ -701,6 +725,8 @@ fn finish_ready(
         model_version_id: facts.active_version_id.expect("active checked"),
         model_content_hash: facts.content_hash.clone().unwrap_or_default(),
         engine_snapshot_id: facts.engine_snapshot_id.clone(),
+        input_aliases: facts.available_aliases.iter().cloned().collect(),
+        model_input_order: model_input_order(facts),
         request: request.clone(),
         function: function_name.into(),
         arity: contract.arity,
@@ -711,6 +737,8 @@ fn finish_ready(
         status: StudyStatus::Ready,
         study_type: request.kind(),
         model_facts: facts.into(),
+        input_aliases: facts.available_aliases.iter().cloned().collect(),
+        model_input_order: model_input_order(facts),
         function: Some(function_name.into()),
         arity: Some(contract.arity),
         solver,
@@ -736,6 +764,8 @@ fn plan(
         status,
         study_type: request.kind(),
         model_facts: facts.into(),
+        input_aliases: facts.available_aliases.iter().cloned().collect(),
+        model_input_order: model_input_order(facts),
         function: function.map(str::to_string),
         arity,
         solver: None,
@@ -744,6 +774,14 @@ fn plan(
         warnings,
         ready: None,
     }
+}
+
+fn model_input_order(facts: &ModelStudyFacts) -> Vec<String> {
+    STATIC_MODEL_TABLES
+        .into_iter()
+        .filter(|alias| facts.available_aliases.contains(*alias))
+        .map(str::to_string)
+        .collect()
 }
 
 fn missing(field: &str, reason: &str) -> MissingParameter {
@@ -803,6 +841,10 @@ mod tests {
 
     fn radial_facts() -> ModelStudyFacts {
         ModelStudyFacts {
+            available_aliases: crate::adapters::STATIC_MODEL_TABLES
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
             active_version_id: Some(42),
             content_hash: Some("model-hash".into()),
             engine_snapshot_id: "snapshot-1".into(),
@@ -852,6 +894,30 @@ mod tests {
         assert_eq!(radial.function.as_deref(), Some("ds_radial_pf"));
         assert_eq!(radial.results, vec!["bus_phase", "summary"]);
         assert!(radial.ready.is_some());
+        assert_eq!(
+            radial.input_aliases,
+            crate::adapters::STATIC_MODEL_TABLES
+                .into_iter()
+                .map(str::to_string)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            radial.ready.as_ref().unwrap().input_aliases,
+            radial.input_aliases
+        );
+        assert_eq!(
+            radial.model_input_order,
+            crate::adapters::STATIC_MODEL_TABLES
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            radial.ready.as_ref().unwrap().model_input_order,
+            radial.model_input_order
+        );
 
         let mut meshed = radial_facts();
         meshed.has_loops = true;
@@ -859,6 +925,49 @@ mod tests {
         assert_eq!(newton.status, StudyStatus::Ready);
         assert_eq!(newton.function.as_deref(), Some("ds_newton_raphson_pf"));
         assert_eq!(newton.solver, Some(ResolvedSolver::Newton));
+    }
+
+    #[test]
+    fn explicit_newton_is_respected_for_a_radial_network() {
+        let request = StudyRequest::StaticPowerFlow {
+            solver_preference: SolverPreference::Newton,
+            requested_results: vec![],
+        };
+
+        let plan = evaluate(&request, &radial_facts(), &functions());
+
+        assert_eq!(plan.status, StudyStatus::Ready);
+        assert_eq!(plan.function.as_deref(), Some("ds_newton_raphson_pf"));
+        assert_eq!(plan.solver, Some(ResolvedSolver::Newton));
+        assert_eq!(plan.ready.as_ref().unwrap().request, request);
+    }
+
+    #[test]
+    fn governed_study_reports_every_missing_canonical_alias() {
+        let mut facts = radial_facts();
+        facts.available_aliases = BTreeSet::from(["bus".to_string(), "line".to_string()]);
+
+        let plan = evaluate(
+            &StudyRequest::StaticPowerFlow {
+                solver_preference: SolverPreference::Auto,
+                requested_results: vec![],
+            },
+            &facts,
+            &functions(),
+        );
+
+        assert_eq!(plan.status, StudyStatus::MissingModelData);
+        assert!(plan.ready.is_none());
+        assert_eq!(plan.input_aliases, vec!["bus", "line"]);
+        assert_eq!(plan.model_input_order, vec!["bus", "line"]);
+        assert_eq!(
+            fields(&plan),
+            crate::adapters::STATIC_MODEL_TABLES
+                .into_iter()
+                .filter(|name| !matches!(*name, "bus" | "line"))
+                .map(|name| format!("model.tables.{name}"))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -907,6 +1016,26 @@ mod tests {
         );
         assert_eq!(ready.status, StudyStatus::Ready);
         assert_eq!(ready.function.as_deref(), Some("ds_radial_qsts"));
+
+        let newton = evaluate(
+            &StudyRequest::Qsts {
+                solver_preference: SolverPreference::Newton,
+                mode: Some(QstsMode::Daily),
+                start_seconds: Some(0.0),
+                step_size_seconds: Some(3600.0),
+                number: Some(24),
+                profile: Some(QstsProfile::Constant {
+                    load_multiplier: 1.0,
+                    generation_multiplier: 1.0,
+                }),
+                requested_results: vec![],
+            },
+            &radial_facts(),
+            &functions(),
+        );
+        assert_eq!(newton.status, StudyStatus::Ready);
+        assert_eq!(newton.function.as_deref(), Some("ds_newton_raphson_qsts"));
+        assert_eq!(newton.solver, Some(ResolvedSolver::Newton));
     }
 
     #[test]
@@ -1047,7 +1176,7 @@ mod tests {
         let catalog = StudyFunctionCatalog::from_value(&json!({
             "schema_version": 2,
             "frame_functions": [
-                {"names": ["select"], "arity": 2}
+                {"name": "select", "arity": 2}
             ],
             "dsa_functions": [
                 {"names": ["ds_dss_plan"], "allowed_arities": [1, 2]},

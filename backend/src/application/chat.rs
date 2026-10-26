@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use rig::agent::{MultiTurnStreamItem, RunEvents};
+use rig::completion::PromptError;
 use rig::message::{AssistantContent, Message, ToolResultContent};
 use rig::streaming::{Item, StreamEvent};
 
@@ -23,6 +24,8 @@ use tokio::sync::Semaphore;
 /// 单次对话允许的最大模型调用轮数（防死循环）。
 const MAX_TURNS: usize = 8;
 const SCRIPT_CREATED_REPLY: &str = "脚本已生成，请检查代码并点击脚本卡片“运行”";
+const TURN_LIMIT_REPLY: &str = "本轮工具调用已达到上限，尚未生成脚本，请重新发送请求";
+const AGENT_FAILED_REPLY: &str = "agent 运行失败，请稍后重试";
 
 #[derive(Default)]
 struct TurnOutcome {
@@ -151,13 +154,29 @@ impl ChatService {
 
         // 6. 等 agent future 收尾。create_script 已成功即完成本轮领域操作，
         // 后续生成收尾文本的 provider 错误不得覆盖已持久化的成功结果。
-        let agent_failed = !matches!(handle.await, Ok(Ok(_response)));
+        let failure_reply = match handle.await {
+            Ok(Ok(_response)) => None,
+            Ok(Err(PromptError::MaxTurns { max_turns, .. })) => {
+                eprintln!(
+                    "agent turn limit reached: session_id={session_id}, max_turns={max_turns}"
+                );
+                Some(TURN_LIMIT_REPLY)
+            }
+            Ok(Err(error)) => {
+                eprintln!("agent run failed: session_id={session_id}, error={error}");
+                Some(AGENT_FAILED_REPLY)
+            }
+            Err(error) => {
+                eprintln!("agent task failed: session_id={session_id}, error={error}");
+                Some(AGENT_FAILED_REPLY)
+            }
+        };
         if outcome.script_created {
             if !outcome.assistant_emitted {
                 let _ = writer.assistant(SCRIPT_CREATED_REPLY).await;
             }
-        } else if agent_failed {
-            let _ = writer.assistant("agent 运行失败，请稍后重试").await;
+        } else if let Some(reply) = failure_reply {
+            let _ = writer.assistant(reply).await;
         }
         let _ = self
             .session_repo

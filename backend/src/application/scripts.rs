@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -208,13 +209,55 @@ impl ScriptService {
         let _ = std::fs::remove_dir_all(validation_root);
         let validation = validation?;
         let mut agent_skill_refs = request.agent_skill_refs;
-        if request.source == ScriptSource::Agent && !validation.called_functions.is_empty() {
+        if request.source == ScriptSource::Agent
+            && (!validation.called_functions.is_empty() || request.study_plan.is_some())
+        {
             let plan = request.study_plan.as_ref().ok_or_else(|| {
                 ScriptError::study_plan(
                     "study_plan_required",
                     "受管研究脚本必须提供本次请求生成的 studyPlanId",
                 )
             })?;
+            if !validation.valid {
+                let diagnostic = validation
+                    .diagnostics
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .unwrap_or("script_static_invalid");
+                let guidance = if diagnostic == "script_bare_output_rejected" {
+                    "DataFrame 脚本只能包含变量声明；请删除末尾裸变量表达式后重新生成"
+                } else {
+                    "请直接使用计划中的 inputAliases 重新生成脚本"
+                };
+                return Err(ScriptError::Invalid(format!(
+                    "受管研究脚本静态校验失败（{diagnostic}），{guidance}"
+                )));
+            }
+            let planned_aliases = plan.input_aliases.iter().collect::<BTreeSet<_>>();
+            let unknown_aliases = validation
+                .required_aliases
+                .iter()
+                .filter(|alias| !planned_aliases.contains(alias))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !unknown_aliases.is_empty() {
+                return Err(ScriptError::Invalid(format!(
+                    "受管研究脚本使用了计划外输入 alias：{}",
+                    unknown_aliases.join(", ")
+                )));
+            }
+            let overwritten_aliases = validation
+                .outputs
+                .iter()
+                .filter(|alias| planned_aliases.contains(alias))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !overwritten_aliases.is_empty() {
+                return Err(ScriptError::Invalid(format!(
+                    "受管研究脚本不能覆盖 active 模型输入 alias：{}",
+                    overwritten_aliases.join(", ")
+                )));
+            }
             if validation.called_functions.len() != 1
                 || validation.called_functions.first() != Some(&plan.function)
             {

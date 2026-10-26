@@ -40,7 +40,7 @@ fn config_defaults_are_safe() {
     assert_eq!(config.owner_artifact_limit, 20_000);
     assert_eq!(config.owner_storage_limit_bytes, 20 * 1024 * 1024 * 1024);
     assert_eq!(config.storage_warning_ratio, 0.8);
-    assert_eq!(config.agent_bundle_version, "v3.2.0");
+    assert_eq!(config.agent_bundle_version, "v3.3.3");
 }
 
 #[test]

@@ -1,5 +1,5 @@
 {
-  "bundleVersion": "v3.2.0",
+  "bundleVersion": "v3.3.3",
   "skills": [
     {
       "id": "model-intake",
@@ -25,7 +25,7 @@
     },
     {
       "id": "study-planning",
-      "version": "1.1.0",
+      "version": "1.2.2",
       "description": "结合 active 模型规划潮流、QSTS、短路、谐波与暂态研究",
       "triggers": [
         "simulate",
@@ -52,11 +52,11 @@
         "docs/dsa_function_reference.md"
       ],
       "path": "skills/study-planning.md",
-      "sha256": "1b683b1f44f843638589c3e25bdf66683387677d98e60136c3eecd1144bc8b5f"
+      "sha256": "457fefbf474828d6246e36e82c0d9853e1ee75de0ea0f1af28da8bed18c89b41"
     },
     {
       "id": "rss-generation",
-      "version": "1.1.0",
+      "version": "1.2.2",
       "description": "按函数合同生成并校验 RSS",
       "triggers": [
         "generate-script",
@@ -73,7 +73,7 @@
         "docs/rsdss_function_reference.md"
       ],
       "path": "skills/rss-generation.md",
-      "sha256": "234143e83b776a17fbcd9a822acadbe05fb70ee5b2e05c5f25b942604bfb56ce"
+      "sha256": "6e22463087790877a6f5d76968eb21e8b52cbe1d5e8c9297e24b68b50c6c9bd7"
     },
     {
       "id": "result-analysis",

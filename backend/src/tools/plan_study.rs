@@ -33,7 +33,7 @@ impl Tool for PlanStudyTool {
     type Error = DomainToolError;
 
     fn description(&self) -> String {
-        "根据当前会话 active 模型规划静态潮流、QSTS、短路、谐波或暂态研究。调用前必须加载 study-planning skill；仅 status=ready 的结果包含 request-local studyPlanId，后续创建受管研究脚本必须原样传递该 ID。".into()
+        "根据当前会话 active 模型规划静态潮流、QSTS、短路、谐波或暂态研究。用户明确指定 Newton 或 Radial 时，solverPreference 必须原样传 newton 或 radial；仅未指定求解器时使用 auto。Newton 适用于径向网络。响应中的 inputAliases 是本次 active 模型实际表清单，modelInputOrder 是规范模型输入的调用顺序。调用前必须加载 study-planning skill；仅 status=ready 的结果包含 request-local studyPlanId，后续创建受管研究脚本必须原样传递该 ID。".into()
     }
 
     fn parameters(&self) -> Value {

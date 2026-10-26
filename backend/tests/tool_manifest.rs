@@ -53,7 +53,7 @@ fn services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
 
 #[test]
 fn manifest_allowed_tools_equal_runtime_registry() {
-    let mut manifest = AgentKnowledge::load_embedded("v3.2.0")
+    let mut manifest = AgentKnowledge::load_embedded("v3.3.3")
         .unwrap()
         .manifest
         .allowed_tools;

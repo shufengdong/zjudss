@@ -73,6 +73,61 @@ async fn apply_csv(
         .unwrap()
 }
 
+async fn seed_canonical_draft(app: &TestApp, user: &CurrentUser, session_id: i32) -> DraftRef {
+    let client_id = format!("study-{session_id}-canonical");
+    let staged = app
+        .state
+        .artifact_service
+        .store()
+        .stage(
+            Cursor::new(b"New Circuit.Test\n".to_vec()),
+            StageLimits::default(),
+        )
+        .unwrap();
+    let accepted = app
+        .state
+        .model_import_service
+        .accept(
+            user,
+            session_id,
+            client_id.clone(),
+            None,
+            UploadBatch {
+                client_batch_id: client_id.clone(),
+                files: vec![UploadFile {
+                    client_file_id: client_id,
+                    file_name: "master.dss".into(),
+                    relative_path: Some("master.dss".into()),
+                    media_type: Some("text/plain".into()),
+                    staged,
+                }],
+            },
+        )
+        .await
+        .unwrap();
+    let import_id = accepted.id.parse().unwrap();
+    let ready = app
+        .state
+        .model_import_service
+        .process(user, import_id)
+        .await
+        .unwrap();
+    app.state
+        .model_import_service
+        .resolve_and_apply(
+            user,
+            import_id,
+            None,
+            ready
+                .candidates
+                .into_iter()
+                .map(|candidate| candidate.id)
+                .collect(),
+        )
+        .await
+        .unwrap()
+}
+
 async fn publish_tables(
     app: &TestApp,
     user: &CurrentUser,
@@ -85,7 +140,7 @@ async fn publish_tables(
         .create(&user.id, title, 1)
         .await
         .unwrap();
-    let mut draft = None;
+    let mut draft = Some(seed_canonical_draft(app, user, session.id).await);
     for (sequence, (table_name, csv)) in tables.iter().enumerate() {
         draft = Some(apply_csv(app, user, session.id, table_name, csv, draft, sequence).await);
     }
@@ -149,6 +204,136 @@ async fn planning_requires_an_active_model_and_keeps_session_scope_private() {
     assert!(matches!(foreign, StudyPlanningError::NotFound));
     assert_eq!(foreign, absent);
     assert_eq!(foreign.code(), "not_found");
+}
+
+#[tokio::test]
+async fn planning_lists_every_missing_canonical_table_from_the_active_version() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "incomplete model", 1)
+        .await
+        .unwrap();
+    let draft = apply_csv(&app, &user, session.id, "bus", b"id\nsource\n", None, 0).await;
+    app.state
+        .version_service
+        .publish(
+            &user,
+            session.id,
+            PublishDraftRequest {
+                expected_draft_id: draft.id,
+                expected_draft_revision: draft.revision,
+                client_publish_id: "publish-incomplete-study".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let plan = app
+        .state
+        .study_planning_service
+        .plan(&user, session.id, power_flow())
+        .await
+        .unwrap();
+
+    assert_eq!(plan.status, StudyStatus::MissingModelData);
+    assert_eq!(plan.input_aliases, vec!["bus"]);
+    assert!(plan.ready.is_none());
+    assert_eq!(
+        plan.missing_parameters
+            .iter()
+            .map(|item| item.field.as_str())
+            .collect::<Vec<_>>(),
+        zjudss::adapters::STATIC_MODEL_TABLES
+            .into_iter()
+            .filter(|name| *name != "bus")
+            .map(|name| format!("model.tables.{name}"))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn planning_skips_required_column_checks_for_zero_row_canonical_tables() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "zero-row canonical tables", 1)
+        .await
+        .unwrap();
+    let staged = app
+        .state
+        .artifact_service
+        .store()
+        .stage(
+            Cursor::new(b"New Circuit.Demo\n".to_vec()),
+            StageLimits::default(),
+        )
+        .unwrap();
+    let accepted = app
+        .state
+        .model_import_service
+        .accept(
+            &user,
+            session.id,
+            "zero-row-model".into(),
+            None,
+            UploadBatch {
+                client_batch_id: "zero-row-model".into(),
+                files: vec![UploadFile {
+                    client_file_id: "master".into(),
+                    file_name: "master.dss".into(),
+                    relative_path: Some("master.dss".into()),
+                    media_type: Some("text/plain".into()),
+                    staged,
+                }],
+            },
+        )
+        .await
+        .unwrap();
+    let ready = app
+        .state
+        .model_import_service
+        .process(&user, accepted.id.parse().unwrap())
+        .await
+        .unwrap();
+    let candidate_ids = ready
+        .candidates
+        .into_iter()
+        .map(|candidate| candidate.id)
+        .collect();
+    let draft = app
+        .state
+        .model_import_service
+        .resolve_and_apply(&user, accepted.id.parse().unwrap(), None, candidate_ids)
+        .await
+        .unwrap();
+    app.state
+        .version_service
+        .publish(
+            &user,
+            session.id,
+            PublishDraftRequest {
+                expected_draft_id: draft.id,
+                expected_draft_revision: draft.revision,
+                client_publish_id: "publish-zero-row-model".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let plan = app
+        .state
+        .study_planning_service
+        .plan(&user, session.id, power_flow())
+        .await
+        .unwrap();
+
+    assert_eq!(plan.status, StudyStatus::MissingModelData);
+    assert_eq!(plan.model_facts.storage_count, 0);
 }
 
 #[tokio::test]

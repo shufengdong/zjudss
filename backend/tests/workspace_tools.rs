@@ -118,6 +118,62 @@ async fn apply_csv(
         .unwrap()
 }
 
+async fn seed_canonical_draft(app: &TestApp, session_id: i32) -> DraftRef {
+    let user = common::test_user("alice@example.com");
+    let client_id = format!("workspace-{session_id}-canonical");
+    let staged = app
+        .state
+        .artifact_service
+        .store()
+        .stage(
+            Cursor::new(b"New Circuit.Test\n".to_vec()),
+            StageLimits::default(),
+        )
+        .unwrap();
+    let accepted = app
+        .state
+        .model_import_service
+        .accept(
+            &user,
+            session_id,
+            client_id.clone(),
+            None,
+            UploadBatch {
+                client_batch_id: client_id.clone(),
+                files: vec![UploadFile {
+                    client_file_id: client_id,
+                    file_name: "master.dss".into(),
+                    relative_path: Some("master.dss".into()),
+                    media_type: Some("text/plain".into()),
+                    staged,
+                }],
+            },
+        )
+        .await
+        .unwrap();
+    let import_id = accepted.id.parse().unwrap();
+    let ready = app
+        .state
+        .model_import_service
+        .process(&user, import_id)
+        .await
+        .unwrap();
+    app.state
+        .model_import_service
+        .resolve_and_apply(
+            &user,
+            import_id,
+            None,
+            ready
+                .candidates
+                .into_iter()
+                .map(|candidate| candidate.id)
+                .collect(),
+        )
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn a_new_draft_copies_the_active_version_and_replaces_only_selected_tables() {
     let app = TestApp::spawn().await;
@@ -179,7 +235,7 @@ async fn a_new_draft_copies_the_active_version_and_replaces_only_selected_tables
 }
 
 #[tokio::test]
-async fn plan_study_issues_ready_ids_only_and_keeps_them_request_local() {
+async fn plan_study_preserves_explicit_newton_and_issues_request_local_ready_ids() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
     let empty_session = app
@@ -216,13 +272,14 @@ async fn plan_study_issues_ready_ids_only_and_keeps_them_request_local() {
         .create(&user.id, "ready study", 1)
         .await
         .unwrap();
+    let canonical = seed_canonical_draft(&app, session.id).await;
     let bus = apply_csv(
         &app,
         session.id,
         "study-bus",
         "bus.csv",
         b"id\nsource\nb1\n",
-        None,
+        Some(canonical),
     )
     .await;
     let line = apply_csv(
@@ -263,24 +320,51 @@ async fn plan_study_issues_ready_ids_only_and_keeps_them_request_local() {
         .lock()
         .await
         .insert("study-planning".into());
+    let args: tools::plan_study::Args = serde_json::from_value(serde_json::json!({
+        "request": {
+            "studyType": "static_power_flow",
+            "solverPreference": "newton",
+            "requestedResults": []
+        }
+    }))
+    .unwrap();
     let ready = tools::plan_study::PlanStudyTool::new(services.clone())
-        .call(
-            &mut context,
-            tools::plan_study::Args {
-                request: StudyRequest::StaticPowerFlow {
-                    solver_preference: Default::default(),
-                    requested_results: vec![],
-                },
-            },
-        )
+        .call(&mut context, args)
         .await
         .unwrap();
     assert_eq!(ready["status"], "ready");
-    assert_eq!(ready["solver"], serde_json::json!(ResolvedSolver::Radial));
+    let aliases = ready["inputAliases"].as_array().unwrap();
+    assert_eq!(aliases.len(), zjudss::adapters::STATIC_MODEL_TABLES.len());
+    assert!(
+        aliases
+            .windows(2)
+            .all(|pair| pair[0].as_str() < pair[1].as_str())
+    );
+    assert_eq!(
+        ready["modelInputOrder"],
+        serde_json::json!(zjudss::adapters::STATIC_MODEL_TABLES)
+    );
+    assert_eq!(ready["solver"], serde_json::json!(ResolvedSolver::Newton));
+    assert_eq!(ready["ready"]["request"]["solverPreference"], "newton");
     let plan_id = ready["studyPlanId"].as_str().unwrap();
     assert!(plan_id.starts_with("study-plan:"));
     let stored = services.ready_study_plans.lock().await.get(plan_id);
-    assert_eq!(stored.unwrap().function, "ds_radial_pf");
+    let stored = stored.unwrap();
+    assert_eq!(stored.function, "ds_newton_raphson_pf");
+    assert_eq!(
+        stored.model_input_order,
+        zjudss::adapters::STATIC_MODEL_TABLES
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        stored.input_aliases,
+        aliases
+            .iter()
+            .map(|value| value.as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    );
 
     let another_request = tool_services_for_session(&app, user, session.id);
     assert!(
@@ -303,13 +387,14 @@ async fn create_script_requires_a_matching_fresh_plan_for_governed_agent_calls()
         .create(&user.id, "bound study script", 1)
         .await
         .unwrap();
+    let canonical = seed_canonical_draft(&app, session.id).await;
     let bus = apply_csv(
         &app,
         session.id,
         "proof-bus",
         "bus.csv",
         b"id\nsource\nb1\n",
-        None,
+        Some(canonical),
     )
     .await;
     let line = apply_csv(
