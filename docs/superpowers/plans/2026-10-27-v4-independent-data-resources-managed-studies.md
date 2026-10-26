@@ -19,6 +19,8 @@
   表达式或任意 ECharts option；专用手写/粘贴/上传 `.rss` 入口仍可接收用户脚本文本。
 - 模型版本、数据资源正文/artifact、attempt 脚本、任务脚本、结果和分析发布后不可修改；资源的 display name、alias 和
   lifecycle 元数据只能通过受控事务更新，正文变化通过新资源、replacement 和血缘表达。
+- 每个模型版本随发布冻结非空的单行简短描述；用户可选填写，缺省由后端按草稿差异确定性生成。描述不参与模型内容
+  hash；相同内容去重或幂等重放返回已有版本及原描述，不能修改历史描述或只因描述不同创建重复版本。
 - 静态模型导入的 `para` 永远不是模型表：model draft/version/active 只含 `bus` 至 `storage` 的 20 张网络表；`para` 是有普通 alias 的本地 Data 资源，可由参数卡修改并通过 replacement 覆盖。
 - 每个 repository 查询显式接收 `UserId`；跨用户与不存在资源统一 404。
 - `$SPARROWZZ_DIR/dss/docs` 是 RSS、全部 DataFrame 研究门面、输入 schema、Struct 参数和结果合同的唯一权威来源；不扫描 eig-rs 源码，不内置竞争目录。
@@ -90,20 +92,24 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
 - Modify: `backend/migrations/00000000000000_initial/down.sql`
 - Modify: `backend/src/db/schema.rs`
 - Modify: `backend/src/db/models.rs`
+- Modify: `backend/src/db/repositories/version.rs`
+- Modify: `backend/src/application/versions.rs`
+- Modify: `backend/src/api/workspaces.rs`
 - Modify: `backend/src/config.rs`
 - Modify: `backend/.env.example`
 - Modify: `backend/src/contract_manifest.rs`
 - Modify: `backend/tests/v3_schema.rs` → rename to `backend/tests/v4_schema.rs`
 - Modify: `backend/tests/app_bootstrap.rs`
+- Modify: `backend/tests/model_versions.rs`
 - Modify: `backend/tests/contract_manifest.rs`
 
 **Interfaces:**
 - Consumes: V3 用户、会话、workspace、artifact、结果/分析/比较的行为合同。
 - Produces: V4 全部 repository 使用的表、`RuntimeConfig` 限制字段、V4 contract manifest 版本。
 
-- [ ] **Step 1: 写失败的 V4 schema/config 测试。** 新测试 `v4_initial_schema_contains_only_current_tables`、`one_live_data_alias_and_one_nonterminal_workflow_are_database_constraints`、`para_resources_cannot_join_model_versions`、`resource_replacement_preserves_frozen_artifacts`、`run_and_result_tombstones_are_consistent`、`run_script_message_anchor_is_same_session_and_write_once`、`staging_reservations_cannot_be_negative`、`runtime_config_uses_v4_defaults_and_rejects_zero_or_inconsistent_limits` 应断言：旧库初始化不受支持；live Data alias 按 `(session_id, normalized_alias)` 唯一；所有资源统一为 Data，`para` 没有通向 draft/model dataframe 的外键；覆盖只转移 alias 且不改写冻结 artifact；run 删除时所有直接结果必须同时 tombstone；run 的可空 script message anchor 只能由服务事务写入同会话 script 消息且一旦设置不可更换；每会话最多一个非终态 workflow；`used_bytes + reserved_bytes` 均非负；结果总量不小于单文件；所有规格默认值精确匹配。
+- [ ] **Step 1: 写失败的 V4 schema/config 测试。** 新测试 `v4_initial_schema_contains_only_current_tables`、`one_live_data_alias_and_one_nonterminal_workflow_are_database_constraints`、`para_resources_cannot_join_model_versions`、`model_version_description_is_frozen_and_nonempty`、`model_version_description_defaults_from_canonical_diff`、`duplicate_model_content_keeps_original_description`、`resource_replacement_preserves_frozen_artifacts`、`run_and_result_tombstones_are_consistent`、`run_script_message_anchor_is_same_session_and_write_once`、`staging_reservations_cannot_be_negative`、`runtime_config_uses_v4_defaults_and_rejects_zero_or_inconsistent_limits` 应断言：旧库初始化不受支持；live Data alias 按 `(session_id, normalized_alias)` 唯一；所有资源统一为 Data，`para` 没有通向 draft/model dataframe 的外键；每个模型版本有非空不可变描述，用户描述按单行 200 Unicode 字符合同校验，缺省描述由实际草稿差异确定性生成且不调用 LLM；描述不进入模型内容 hash，相同内容去重和幂等重放返回原描述；覆盖只转移 alias 且不改写冻结 artifact；run 删除时所有直接结果必须同时 tombstone；run 的可空 script message anchor 只能由服务事务写入同会话 script 消息且一旦设置不可更换；每会话最多一个非终态 workflow；`used_bytes + reserved_bytes` 均非负；结果总量不小于单文件；所有规格默认值精确匹配。
 
-- [ ] **Step 2: 运行 `cd backend && cargo test --test v4_schema --test app_bootstrap --test contract_manifest --features e2e-test`。** 预期因 V4 表和配置字段不存在而失败。
+- [ ] **Step 2: 运行 `cd backend && cargo test --test v4_schema --test app_bootstrap --test model_versions --test contract_manifest --features e2e-test`。** 预期因 V4 表、模型版本描述合同和配置字段不存在而失败。
 
 - [ ] **Step 3: 用空库 V4 schema 替换 initial migration。** 保留认证、会话、artifact、workspace/model、消息、结果/分析/比较/历史实体；删除 V3 `model_imports` 的旧状态合同并建立以下新实体及外键/partial unique index：
 
@@ -117,18 +123,20 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
   script_resources, simulation_runs, result_datasets（按 V4 字段重建）
   ```
 
-  `storage_scopes` 增加 `reserved_bytes`；`sessions` 增加删除中/删除完成终态；所有带用户内容的表可沿 session→user 验证归属。`data_resources` 保存 opaque 公共 ID、live/deleted/replaced 状态、normalized alias、可选 declared schemaRef、来源种类、normalized/source artifact、schema/hash/row count、同批模型来源、replacement 和 lineage；所有资源均为 Data，不增加 `parameter_preset` discriminator。partial unique index 约束 live 资源的 `(session_id, normalized_alias)`。`simulation_runs` 的 model version/hash 改为可空，保存可空且只写一次的 `script_message_id`、tombstone/deleted 状态；`result_datasets` 保存 tombstone/deleted 状态；`run_deletion_previews` 保存短期用户/运行/影响集合绑定 token；repository 事务验证 message 与 run 同 session 且 kind=script。`managed_workflows` 用 partial unique index 限制每会话一个非终态实例。
+  `storage_scopes` 增加 `reserved_bytes`；`sessions` 增加删除中/删除完成终态；所有带用户内容的表可沿 session→user 验证归属。`model_versions` 增加不可空 `description`，它不参与 `content_hash`，也没有发布后的更新路径。`data_resources` 保存 opaque 公共 ID、live/deleted/replaced 状态、normalized alias、可选 declared schemaRef、来源种类、normalized/source artifact、schema/hash/row count、同批模型来源、replacement 和 lineage；所有资源均为 Data，不增加 `parameter_preset` discriminator。partial unique index 约束 live 资源的 `(session_id, normalized_alias)`。`simulation_runs` 的 model version/hash 改为可空，保存可空且只写一次的 `script_message_id`、tombstone/deleted 状态；`result_datasets` 保存 tombstone/deleted 状态；`run_deletion_previews` 保存短期用户/运行/影响集合绑定 token；repository 事务验证 message 与 run 同 session 且 kind=script。`managed_workflows` 用 partial unique index 限制每会话一个非终态实例。
 
-- [ ] **Step 4: 扩充 `RuntimeConfig`。** 使用 `USER_ARTIFACT_LIMIT`、`USER_STORAGE_LIMIT_BYTES`、`AGENT_MAX_USER_RUNS` 分别替换 V3 `OWNER_ARTIFACT_LIMIT`、`OWNER_STORAGE_LIMIT_BYTES`、`AGENT_MAX_OWNER_RUNS`，不接受旧名；加入 `UPLOAD_STAGING_TTL_HOURS`、`RESULT_MAX_FILES`、`RESULT_MAX_FILE_BYTES`、`RESULT_MAX_TOTAL_BYTES`、`ENGINE_PROCESS_OUTPUT_MAX_BYTES`、`SCRIPT_REPAIR_STDERR_MAX_BYTES`、`SCRIPT_REPAIR_MAX_ATTEMPTS`、`AGENT_MODEL_RETRY_MAX`、`TENSOREVAL_TIMEOUT_MS`。继续校验 `STORAGE_WARNING_RATIO` 和既有 upload/archive 限制，并对所有正数、比例、单文件/总量关系执行启动校验。把 `.env.example` 和测试环境同步到 V4 名称。
+- [ ] **Step 4: 补全模型版本发布合同。** `PublishDraftRequest` 增加可选 `description`；服务端归一为单行、校验最多 200 个 Unicode 字符并拒绝控制字符。空值依据 draft 与其基准版本的规范表差异生成确定性描述，首次发布使用表数量，后续发布使用新增/删除/修改表摘要；摘要按规范表顺序且使用确定性截断。版本列表、详情和发布响应都返回实际冻结描述。内容去重仍只由模型内容 hash 决定，命中已有版本或 publish receipt 重放时返回原描述和既有 `deduplicated/replayed`，不更新记录。repository 不提供描述更新方法。
 
-- [ ] **Step 5: 将 manifest 基线切换为 V4。** manifest 仍从注册表生成 route/message/tool/skill/upload/view/error 枚举；本任务只建立 V4 版本和空集合变更入口，后续任务每次新增合同即同步测试。
+- [ ] **Step 5: 扩充 `RuntimeConfig`。** 使用 `USER_ARTIFACT_LIMIT`、`USER_STORAGE_LIMIT_BYTES`、`AGENT_MAX_USER_RUNS` 分别替换 V3 `OWNER_ARTIFACT_LIMIT`、`OWNER_STORAGE_LIMIT_BYTES`、`AGENT_MAX_OWNER_RUNS`，不接受旧名；加入 `UPLOAD_STAGING_TTL_HOURS`、`RESULT_MAX_FILES`、`RESULT_MAX_FILE_BYTES`、`RESULT_MAX_TOTAL_BYTES`、`ENGINE_PROCESS_OUTPUT_MAX_BYTES`、`SCRIPT_REPAIR_STDERR_MAX_BYTES`、`SCRIPT_REPAIR_MAX_ATTEMPTS`、`AGENT_MODEL_RETRY_MAX`、`TENSOREVAL_TIMEOUT_MS`。继续校验 `STORAGE_WARNING_RATIO` 和既有 upload/archive 限制，并对所有正数、比例、单文件/总量关系执行启动校验。把 `.env.example` 和测试环境同步到 V4 名称。
 
-- [ ] **Step 6: 运行聚焦测试和 `cd backend && cargo test --no-run --features e2e-test`。** 聚焦测试必须通过；全量只允许暴露后续任务尚未迁移的编译调用点，不得通过兼容字段消除它们。
+- [ ] **Step 6: 将 manifest 基线切换为 V4。** manifest 仍从注册表生成 route/message/tool/skill/upload/view/error 枚举；本任务只建立 V4 版本和空集合变更入口，后续任务每次新增合同即同步测试。
 
-- [ ] **Step 7: 提交。**
+- [ ] **Step 7: 运行聚焦测试和 `cd backend && cargo test --no-run --features e2e-test`。** 聚焦测试必须通过；全量只允许暴露后续任务尚未迁移的编译调用点，不得通过兼容字段消除它们。
+
+- [ ] **Step 8: 提交。**
 
   ```bash
-  git add backend/migrations backend/src/db backend/src/config.rs backend/.env.example backend/src/contract_manifest.rs backend/tests/v4_schema.rs backend/tests/app_bootstrap.rs backend/tests/contract_manifest.rs integration-tests/catalog/features.yaml
+  git add backend/migrations backend/src/db backend/src/application/versions.rs backend/src/api/workspaces.rs backend/src/config.rs backend/.env.example backend/src/contract_manifest.rs backend/tests/v4_schema.rs backend/tests/app_bootstrap.rs backend/tests/model_versions.rs backend/tests/contract_manifest.rs integration-tests/catalog/features.yaml
   git commit -m "refactor: define v4 persistence contracts"
   ```
 
@@ -822,6 +830,8 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
 - Modify: `frontend/src/components/uploads/UploadQueue.tsx`
 - Modify: `frontend/src/components/Composer.tsx`
 - Modify: `frontend/src/components/ResultPanel.tsx`
+- Modify: `frontend/src/components/workspace/WorkspacePanel.tsx`
+- Modify: `frontend/src/components/workspace/WorkspacePanel.test.tsx`
 - Modify: `frontend/src/App.tsx`
 - Create: `frontend/src/components/resources/DataResourcePanel.test.tsx`
 - Create: `frontend/src/hooks/useDataResources.test.ts`
@@ -831,24 +841,26 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
 - Consumes: Tasks 4–5 HTTP DTO、Task 7 `upload-batch` message。
 - Produces: 右侧“数据文件”入口、上传/预览/下载/删除/替换交互；Task 13 在对话卡片中复用 upload hooks。
 
-- [ ] **Step 1: 写失败的 Vitest。** 断言 session 切换隔离资源和批次、“数据文件”中的所有条目统一为普通 Data 资源而模型候选仍进入模型子事务、`para` 显示普通 alias/schemaRef/来源和重新上传、任一 Struct-compatible 单行资源显示“修改参数”且普通表不显示、cursor 列表、schema/行分页、原文件入口仅在可用时显示、删除先加载 impact 再确认、replacement 显示新旧 diff/三个动作、刷新恢复 staging、全选不选择隐藏 sheet、案例导入显示 20 模型表 + 1 个普通 `para` 资源、401 统一退出、窄屏不横向溢出。
+- [ ] **Step 1: 写失败的 Vitest。** 断言 session 切换隔离资源和批次、“数据文件”中的所有条目统一为普通 Data 资源而模型候选仍进入模型子事务、`para` 显示普通 alias/schemaRef/来源和重新上传、任一 Struct-compatible 单行资源显示“修改参数”且普通表不显示、cursor 列表、schema/行分页、原文件入口仅在可用时显示、删除先加载 impact 再确认、replacement 显示新旧 diff/三个动作、刷新恢复 staging、全选不选择隐藏 sheet、案例导入显示 20 模型表 + 1 个普通 `para` 资源、模型版本列表/详情显示冻结描述、“生成版本”接受可选的 200 字符单行描述、空值由后端生成并回显、内容去重时显示复用已有版本及原描述、401 统一退出、窄屏不横向溢出。
 
-- [ ] **Step 2: 运行 `cd frontend && npm test -- --run src/components/resources/DataResourcePanel.test.tsx src/hooks/useDataResources.test.ts src/hooks/useUploadBatches.test.ts` 并确认失败。**
+- [ ] **Step 2: 运行 `cd frontend && npm test -- --run src/components/resources/DataResourcePanel.test.tsx src/components/workspace/WorkspacePanel.test.tsx src/hooks/useDataResources.test.ts src/hooks/useUploadBatches.test.ts` 并确认失败。**
 
-- [ ] **Step 3: 定义前端公共类型和 API。** 类型逐字段匹配 Rust DTO，opaque ID 全为 string；上传 multipart 只含文件、clientBatchId、入口 hint 和可选 replacement resource ID。parse settings/candidate decisions 只发送服务端允许字段。
+- [ ] **Step 3: 定义前端公共类型和 API。** 类型逐字段匹配 Rust DTO，opaque ID 全为 string；`ModelVersion` 增加必需 `description`，发布请求增加可选 `description` 并保留 `deduplicated/replayed` 响应；上传 multipart 只含文件、clientBatchId、入口 hint 和可选 replacement resource ID。parse settings/candidate decisions 只发送服务端允许字段。
 
 - [ ] **Step 4: 用 `useUploadBatches` 替换模型专用上传 hook。** 从模型工作区、数据文件、研究缺参和通用 Composer 传不同 purpose hint；同一 hook 恢复服务端批次、提交 parse/purpose/全选确认并分别刷新 workspace/data resources。两个子事务的部分成功分栏展示，不能显示成整个批次成功。
 
 - [ ] **Step 5: 增加“数据文件”tab。** 列表显示 display name、alias、schema、行列数、size、来源、created time、状态；所有条目都是 Data，`para` 可附加显示 schemaRef/关联案例或 import，但操作与其他资源一致。预览复用 `DataFrameTable`，normalized/original 下载按能力显示。固定按钮为查看、下载、删除、重新上传，以及当前 snapshot 明确匹配 Struct schema 时的“修改参数”；后者打开 Task 13 参数卡。alias 修改仍从自然语言进入 Agent。
 
-- [ ] **Step 6: 实现删除与 replacement。** 删除第一击只打开 impact dialog；确认才 DELETE。replacement 旧资源在 processing 时仍可用；diff card 明示 schema/row/time/hash，三种 action 分别调用 confirm，终态后原子刷新 alias owner。
+- [ ] **Step 6: 显示并提交模型版本描述。** 当前模型和历史版本摘要始终显示冻结描述，空间不足时视觉截断但保留可访问全文。可变草稿的“生成版本”区域提供可选单行描述输入和 200 字符计数；空值原样交给后端生成，成功后以响应中的实际描述刷新版本列表。`deduplicated=true` 时明确提示复用了哪个现有版本及其原描述，不显示用户刚输入但未保存的新文字。切换会话或发布成功后清空输入，失败时保留便于重试。
 
-- [ ] **Step 7: 运行聚焦测试及 `cd frontend && npm run build`。**
+- [ ] **Step 7: 实现删除与 replacement。** 删除第一击只打开 impact dialog；确认才 DELETE。replacement 旧资源在 processing 时仍可用；diff card 明示 schema/row/time/hash，三种 action 分别调用 confirm，终态后原子刷新 alias owner。
 
-- [ ] **Step 8: 提交。**
+- [ ] **Step 8: 运行聚焦测试及 `cd frontend && npm run build`。**
+
+- [ ] **Step 9: 提交。**
 
   ```bash
-  git add frontend/src/types frontend/src/api frontend/src/hooks frontend/src/components/resources frontend/src/components/uploads frontend/src/components/Composer.tsx frontend/src/components/ResultPanel.tsx frontend/src/App.tsx integration-tests/catalog/features.yaml
+  git add frontend/src/types frontend/src/api frontend/src/hooks frontend/src/components/resources frontend/src/components/uploads frontend/src/components/workspace frontend/src/components/Composer.tsx frontend/src/components/ResultPanel.tsx frontend/src/App.tsx integration-tests/catalog/features.yaml
   git commit -m "feat: add dataframe resource workspace"
   ```
 
@@ -933,11 +945,11 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
 - Consumes: 全部 V4 后端/前端行为。
 - Produces: 不依赖真实 LLM/binary 的 PR gate 和 route/message/tool/skill/upload/view/error 100% 功能追溯。
 
-- [ ] **Step 1: 审计功能目录并先登记跨层测试。** 复核 Tasks 1–13 已逐步建立的 `UPLOAD-BATCH`、`DATA-RESOURCE`、`STUDY-CONFIG`、`MANAGED-WORKFLOW`、`SCRIPT-REPAIR`、`RUN-NAVIGATION`、`RUN-DELETION` 功能族，每个公共合同只出现一次并已引用当时存在的 Rust/Vitest 行为测试；再加入本任务将创建的 Playwright 测试符号。运行 `./scripts/check-functional-coverage --require-pr`，预期只因这些 Playwright 文件/符号尚未存在而失败。
+- [ ] **Step 1: 审计功能目录并先登记跨层测试。** 复核 Tasks 1–13 已逐步建立的 `MODEL-VERSION-DESCRIPTION`、`UPLOAD-BATCH`、`DATA-RESOURCE`、`STUDY-CONFIG`、`MANAGED-WORKFLOW`、`SCRIPT-REPAIR`、`RUN-NAVIGATION`、`RUN-DELETION` 功能族，每个公共合同只出现一次并已引用当时存在的 Rust/Vitest 行为测试；再加入本任务将创建的 Playwright 测试符号。运行 `./scripts/check-functional-coverage --require-pr`，预期只因这些 Playwright 文件/符号尚未存在而失败。
 
 - [ ] **Step 2: 扩展确定性控制端。** ScriptedAgent 与 ScriptedAuthor 分开排队/trace；ScenarioEngine 能产生 stderr、合同漂移、大小超限、barrier、monitor failure；控制端只在 loopback + token 下可用，不允许普通测试路由修改生产状态。
 
-- [ ] **Step 3: 编写数据资源浏览器旅程。** 登录→案例/DSS 导入 21 个 adapter 输出→只发布 20 张模型表并把 `para` 发布为普通 Data resource→通用 CSV/Excel/Parquet→解析歧义→sheet 全选/隐藏 sheet→混合用途→两个子事务（含一次部分成功后只重试失败侧）→数据预览/原文件与规范文件下载→自然语言重命名 alias→以稳定 resource ID 做一次派生表格和受控 ECharts 分析→把指定结果提升为普通 Data resource→`para` 与其他 Data replacement diff 三动作→删除 impact；覆盖刷新恢复、TTL、配额、恶意 archive、两用户隔离和 390px/axe。
+- [ ] **Step 3: 编写数据资源与模型版本浏览器旅程。** 登录→案例/DSS 导入 21 个 adapter 输出→只发布 20 张模型表并把 `para` 发布为普通 Data resource→用用户描述发布模型版本→修改草稿后留空描述并验证确定性摘要→以不同描述重复发布同一内容并验证复用原版本/原描述→通用 CSV/Excel/Parquet→解析歧义→sheet 全选/隐藏 sheet→混合用途→两个子事务（含一次部分成功后只重试失败侧）→数据预览/原文件与规范文件下载→自然语言重命名 alias→以稳定 resource ID 做一次派生表格和受控 ECharts 分析→把指定结果提升为普通 Data resource→`para` 与其他 Data replacement diff 三动作→删除 impact；覆盖刷新恢复、TTL、配额、恶意 archive、两用户隔离和 390px/axe。
 
 - [ ] **Step 4: 编写受管研究旅程。** 自然语言→多门面/显式 Newton→从同源普通资源读取 `para` 并修改→选择覆盖→Struct/Data/para reuse/result 卡→最终按钮→原 alias 转移且首次 workflow 冻结新 ID/hash→初始失败→脚本自动修正→成功只列 datasets→再次覆盖 `para`→成功 Run 使用最新 Data/Struct 资源且失败不修正→失败 script Retry 输入 diff/合同 hash并产生新派生脚本/新 message anchor；另用不含 model 输入的 fixture 门面在没有 active 模型时仅凭 Data/Struct 资源完成一次研究。再制造超过首屏消息的历史，点击不同 run 验证按各自 `scriptMessageId` 加载 around context、定位/聚焦精确脚本，null anchor 不误跳。断言 active 模型没有 `para`、历史 run 仍引用覆盖前 artifact、engine 调用次数、脚本全文和 stderr 不泄漏到不应出现的消息。
 
@@ -995,7 +1007,7 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
 
 - [ ] **Step 2: 运行 `cd frontend && npm test -- --run src/release/semantic-assertions.test.ts` 和 `./scripts/check-functional-coverage --require-release`，确认文档/报告尚未对齐。**
 
-- [ ] **Step 3: 把当前设计文档切到 V4。** API 文档列出 Task 4–11 的精确路由/DTO/status/error，包括 run 的 `scriptMessageId`、message `aroundId` 和 run deletion preview/confirm；DB 文档列出 V4 空库表、run→script message anchor、run/result tombstone、不可变 artifact/替换血缘/partial index；前端文档描述统一 Data 文件、`para` 参数卡、运行定位历史脚本和终态运行确认删除；Agent 文档列出 V4 bundle、工具和专用 ScriptAuthor；architecture 描述 21 个导入输出拆为 20 张模型表 + 1 个普通 `para` Data resource、双事务上传、确认事务和 workflow；development-status 只在所有验证通过后标记 V4 complete。历史 plans/spec 保留为记录，不成为当前合同。
+- [ ] **Step 3: 把当前设计文档切到 V4。** API 文档列出 Task 1、4–11 的精确路由/DTO/status/error，包括模型版本可选发布描述、响应中的冻结描述与内容去重语义、run 的 `scriptMessageId`、message `aroundId` 和 run deletion preview/confirm；DB 文档列出 V4 空库表、不可变且不参与内容 hash 的模型版本描述、run→script message anchor、run/result tombstone、不可变 artifact/替换血缘/partial index；前端文档描述模型版本描述输入/显示/去重反馈、统一 Data 文件、`para` 参数卡、运行定位历史脚本和终态运行确认删除；Agent 文档列出 V4 bundle、工具和专用 ScriptAuthor；architecture 描述 21 个导入输出拆为 20 张模型表 + 1 个普通 `para` Data resource、双事务上传、确认事务和 workflow；development-status 只在所有验证通过后标记 V4 complete。历史 plans/spec 保留为记录，不成为当前合同。
 
 - [ ] **Step 4: 编写空库部署步骤。** 停服、备份后同时移走 V3 SQLite 与 DATA_DIR，以 V4 initial migration 启动；明确不迁移历史。列出全部必需/默认 env，并明确 `OWNER_ARTIFACT_LIMIT`、`OWNER_STORAGE_LIMIT_BYTES`、`AGENT_MAX_OWNER_RUNS` 均已分别改为 `USER_ARTIFACT_LIMIT`、`USER_STORAGE_LIMIT_BYTES`、`AGENT_MAX_USER_RUNS` 且旧名不接受；说明重启 recovery 行为和 engine snapshot 生命周期。
 
