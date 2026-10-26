@@ -126,17 +126,20 @@ export default function Composer({
             role="dialog"
             aria-modal="true"
             aria-labelledby="script-dialog-title"
-            className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"
+            className="max-h-[calc(100dvh-2rem)] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
           >
             <h2 id="script-dialog-title" className="text-base font-semibold text-slate-900">新建脚本</h2>
             <textarea
               aria-label="脚本内容"
+              aria-describedby="script-editor-help"
               value={scriptContent}
               onChange={(e) => setScriptContent(e.target.value)}
-              rows={10}
+              rows={18}
+              spellCheck={false}
               placeholder="粘贴 RSS 脚本内容"
-              className="mt-2 w-full resize-y rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs outline-none focus:border-brand-400"
+              className="mt-3 h-[50vh] min-h-64 max-h-[calc(100dvh-14rem)] w-full resize-y overflow-auto rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs leading-relaxed outline-none focus:border-brand-400 sm:min-h-80"
             />
+            <p id="script-editor-help" className="mt-1 text-xs text-slate-400">可拖动编辑区右下角调整高度。</p>
             {scriptError && <p role="alert" className="mt-2 text-xs text-red-600">{scriptError}</p>}
             <div className="mt-4 flex justify-end gap-2">
               <button

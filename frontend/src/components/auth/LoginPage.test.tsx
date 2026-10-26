@@ -3,6 +3,19 @@ import { describe, expect, it, vi } from 'vitest'
 import LoginPage from './LoginPage'
 
 describe('LoginPage', () => {
+  it('shows the official SGOOL mark beside the product title', () => {
+    render(<LoginPage onAuthenticated={() => undefined} />)
+
+    const logo = screen.getByRole('img', { name: 'SGOOL 实验室标识' })
+    const title = screen.getByRole('heading', { name: '配电网仿真智能体' })
+
+    expect(logo).toHaveAttribute('src', '/images/biglogo2.png')
+    expect(logo.parentElement).toContainElement(title)
+    expect(logo.parentElement).toHaveClass('flex', 'items-center')
+    expect(title).toHaveClass('whitespace-nowrap')
+    expect(screen.queryByText('⚡')).not.toBeInTheDocument()
+  })
+
   it('submits with Enter and prevents duplicate login attempts', async () => {
     let finish!: (value: { user: { id: string; name: string } }) => void
     const authenticate = vi.fn(() => new Promise<{ user: { id: string; name: string } }>((resolve) => {

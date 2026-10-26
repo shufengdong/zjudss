@@ -702,10 +702,16 @@
   layers: [browser]
   lanes: [pr]
   tests:
+    - runner: vitest
+      file: frontend/src/components/auth/LoginPage.test.tsx
+      name: shows the official SGOOL mark beside the product title
+    - runner: vitest
+      file: frontend/src/components/Composer.test.tsx
+      name: opens a large vertically resizable script editor
     - runner: playwright
       file: integration-tests/e2e/responsive-accessibility.spec.ts
       name: responsive narrow drawers and model tables remain keyboard reachable without horizontal overflow
-  assertions: [drawers are keyboard reachable, page has no horizontal overflow]
+  assertions: [official SGOOL mark and product title share one brand row, script editor is large and vertically resizable within the viewport, drawers are keyboard reachable, page has no horizontal overflow]
   fixtures: [narrow viewport]
 
 - id: RECOVERY-001
