@@ -82,9 +82,16 @@ CREATE TABLE engine_resource_snapshots (
  id TEXT PRIMARY KEY,
  engine_contract_version TEXT NOT NULL,
  catalog_hash TEXT NOT NULL CHECK(length(catalog_hash)=64),
+ functions_schema_version INTEGER NOT NULL CHECK(functions_schema_version>0),
+ study_facades_schema_version INTEGER NOT NULL CHECK(study_facades_schema_version>0),
+ dataframes_schema_version INTEGER NOT NULL CHECK(dataframes_schema_version>0),
+ dtype_grammar_version INTEGER NOT NULL CHECK(dtype_grammar_version>0),
+ is_current INTEGER NOT NULL DEFAULT 0 CHECK(is_current IN (0,1)),
  snapshot_json TEXT NOT NULL,
  created_at_ms INTEGER NOT NULL
 );
+CREATE UNIQUE INDEX idx_one_current_engine_resource_snapshot
+ ON engine_resource_snapshots(is_current) WHERE is_current=1;
 
 CREATE TABLE workspaces (
  id INTEGER PRIMARY KEY AUTOINCREMENT,

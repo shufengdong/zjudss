@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -289,126 +288,6 @@ pub struct MissingParameter {
     pub reason: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub choices: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StudyFunctionContract {
-    pub name: String,
-    pub arity: usize,
-    pub default_result: String,
-    pub results: BTreeSet<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct StudyFunctionCatalog {
-    functions: BTreeMap<String, StudyFunctionContract>,
-}
-
-impl StudyFunctionCatalog {
-    pub fn from_value(value: &Value) -> Result<Self, StudyPlanningError> {
-        const GOVERNED: &[&str] = &[
-            "ds_radial_pf",
-            "ds_newton_raphson_pf",
-            "ds_radial_qsts",
-            "ds_newton_raphson_qsts",
-            "ds_fault_study",
-            "ds_harmonic_study",
-            "ds_motor_dynamics",
-        ];
-        let mut entries = Vec::new();
-        for section in ["frame_functions", "dsa_functions"] {
-            if let Some(values) = value.get(section).and_then(Value::as_array) {
-                entries.extend(values);
-            }
-        }
-        if entries.is_empty() {
-            return Err(StudyPlanningError::InvalidCatalog(
-                "缺少 frame_functions/dsa_functions".into(),
-            ));
-        }
-        let mut functions = BTreeMap::new();
-        for entry in entries {
-            let names = match (entry.get("names"), entry.get("name")) {
-                (Some(Value::Array(names)), _) => names
-                    .iter()
-                    .map(|name| {
-                        name.as_str().ok_or_else(|| {
-                            StudyPlanningError::InvalidCatalog("函数名不是字符串".into())
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-                (Some(_), _) => {
-                    return Err(StudyPlanningError::InvalidCatalog(
-                        "函数 names 不是数组".into(),
-                    ));
-                }
-                (None, Some(Value::String(name))) => vec![name.as_str()],
-                (None, Some(_)) => {
-                    return Err(StudyPlanningError::InvalidCatalog(
-                        "函数名不是字符串".into(),
-                    ));
-                }
-                (None, None) => {
-                    return Err(StudyPlanningError::InvalidCatalog(
-                        "函数缺少 name/names".into(),
-                    ));
-                }
-            };
-            let names = names
-                .into_iter()
-                .filter(|name| GOVERNED.contains(name))
-                .collect::<Vec<_>>();
-            if names.is_empty() {
-                continue;
-            }
-            let arity = entry
-                .get("complete_arity")
-                .or_else(|| entry.get("arity"))
-                .and_then(Value::as_u64)
-                .and_then(|value| usize::try_from(value).ok())
-                .ok_or_else(|| StudyPlanningError::InvalidCatalog("函数缺少有效 arity".into()))?;
-            let default_result = entry
-                .get("default_result")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            let result_values = entry
-                .get("results")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let mut results = BTreeSet::new();
-            for result in result_values {
-                let result = result
-                    .as_str()
-                    .ok_or_else(|| StudyPlanningError::InvalidCatalog("结果名不是字符串".into()))?;
-                if !results.insert(result.to_string()) {
-                    return Err(StudyPlanningError::InvalidCatalog(format!(
-                        "函数 {} 的 results 包含重复名称: {result}",
-                        names.first().copied().unwrap_or("<unknown>")
-                    )));
-                }
-            }
-            for name in names {
-                let contract = StudyFunctionContract {
-                    name: name.to_string(),
-                    arity,
-                    default_result: default_result.clone(),
-                    results: results.clone(),
-                };
-                if functions.insert(name.to_string(), contract).is_some() {
-                    return Err(StudyPlanningError::InvalidCatalog(format!(
-                        "函数重复: {name}"
-                    )));
-                }
-            }
-        }
-        Ok(Self { functions })
-    }
-
-    pub fn get(&self, name: &str) -> Option<&StudyFunctionContract> {
-        self.functions.get(name)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

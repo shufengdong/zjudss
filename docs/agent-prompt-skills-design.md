@@ -78,6 +78,16 @@ shell 命令和任意图表 option。`modify_model` 使用 `tableName + rowKey +
 snapshot 由本次实际读取的字节计算，不比较 eig-rs/sparrowzz commit，也不要求固定案例数量；更新资源后需重启。
 Agent 先 `search_engine_docs`，再凭 section ID 读取需要的片段。案例 search/inspect 只读；应用由固定 UI 完成。
 
+V4 动态目录基础已经实现：`functions.json=2`、`study_facades.json=1`、`dataframes.json=3` 和
+`dtype_grammar=1` 分别校验，不要求版本号相等。`study_facades.json` 是研究门面的唯一入口；输入种类、参数位置、
+结果和选择约束均由该文件及传递 DataFrame schema 决定，`functions.json` 不再补齐研究门面。单个门面或传递 schema
+无效时只禁用受影响门面并保留稳定诊断；文件缺失时发布“没有可用研究门面”的全局诊断。Agent 常驻摘要使用
+`catalogSchemaVersions` 和门面启用/禁用数量，不注入完整目录。
+
+`StudyPlanningService::search/get` 直接查询当前 snapshot 的门面注册表。显式函数选择只返回该函数，不根据网络拓扑
+改写；候选较多时向用户展示目录中的 `differences`。旧 `plan_study` DTO 在 V4 受管研究入口完成前仍作为过渡适配器，
+其函数、arity、模型输入顺序与结果集合也只读取同一个门面注册表。
+
 ## Persistence and audit
 
 每次 tool call 都先写 durable `tool-call` 消息再通过 SSE 发布。脚本消息仅含摘要与有界 preview；全文不进入

@@ -504,7 +504,13 @@
       name: transient_study_supports_motor_dynamics_and_rejects_emt
     - runner: rust
       file: backend/tests/study_planning.rs
-      name: planning_lists_every_missing_canonical_table_from_the_active_version
+      name: catalog_search_returns_all_matching_facades_with_user_visible_differences
+    - runner: rust
+      file: backend/tests/study_planning.rs
+      name: explicit_newton_is_not_replaced_by_radial
+    - runner: rust
+      file: backend/tests/study_planning.rs
+      name: planning_lookup_is_driven_by_the_full_facade_catalog
     - runner: rust
       file: backend/tests/workspace_tools.rs
       name: plan_study_preserves_explicit_newton_and_issues_request_local_ready_ids
@@ -532,6 +538,50 @@
     - "error:study_plan_not_found"
     - "error:study_plan_required"
     - "error:study_plan_stale"
+
+- id: ENGINE-FACADE-CATALOG-001
+  source: docs/superpowers/plans/2026-10-27-v4-independent-data-resources-managed-studies.md#task-2-从引擎-snapshot-发布全部可用-dataframe-研究门面
+  title: Engine snapshots publish independently versioned DataFrame facade contracts
+  layers: [database, application, agent]
+  lanes: [pr, release]
+  tests:
+    - runner: rust
+      file: backend/tests/engine_resources.rs
+      name: accepts_independent_supported_catalog_versions
+    - runner: rust
+      file: backend/tests/engine_resources.rs
+      name: rejects_each_unsupported_catalog_or_dtype_grammar_version
+    - runner: rust
+      file: backend/tests/engine_resources.rs
+      name: publishes_every_valid_dataframe_facade
+    - runner: rust
+      file: backend/tests/engine_resources.rs
+      name: invalid_facade_is_disabled_without_disabling_neighbors
+    - runner: rust
+      file: backend/tests/engine_resources.rs
+      name: incomplete_transitive_schema_disables_only_affected_facades
+    - runner: rust
+      file: backend/tests/engine_resources.rs
+      name: base_schema_resolves_once_without_cycles
+    - runner: rust
+      file: backend/tests/engine_resources.rs
+      name: facade_hash_changes_with_transitive_executable_schema
+    - runner: rust
+      file: backend/tests/engine_resources.rs
+      name: facade_hash_ignores_presentation_only_text
+    - runner: rust
+      file: backend/tests/engine_resources.rs
+      name: publishing_snapshot_metadata_atomically_marks_one_current_snapshot
+    - runner: rust
+      file: backend/tests/engine_resources.rs
+      name: current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count
+  assertions: [catalog versions are validated independently, every valid DataFrame facade is published, invalid entries are isolated with stable diagnostics, transitive executable schemas determine contract hashes, presentation text does not, one persisted snapshot is current while referenced history remains]
+  fixtures: [frozen eig-rs catalog, current SPARROWZZ_DIR catalog, temporary V4 database]
+  contracts:
+    - "error:study_facades_missing"
+    - "error:facade_contract_invalid"
+    - "error:facade_schema_invalid"
+    - "error:facade_unsupported_input_kind"
 
 - id: SCRIPT-001
   source: docs/integration-testing-design.md#coverage-matrix

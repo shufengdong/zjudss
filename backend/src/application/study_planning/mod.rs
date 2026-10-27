@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::application::{ArtifactService, now_ms};
 use crate::auth::CurrentUser;
 use crate::db::repositories::{RepoError, VersionRepo, VersionRepoError};
-use crate::engine_resources::EngineResourceSnapshot;
+use crate::engine_resources::{EngineResourceSnapshot, FacadeContract, FacadeSearchResult};
 
 pub use contracts::*;
 pub use policy::*;
@@ -17,7 +17,6 @@ pub struct StudyPlanningService {
     versions: VersionRepo,
     artifacts: ArtifactService,
     engine_snapshot: Arc<EngineResourceSnapshot>,
-    functions: Result<StudyFunctionCatalog, StudyPlanningError>,
 }
 
 impl StudyPlanningService {
@@ -26,13 +25,30 @@ impl StudyPlanningService {
         artifacts: ArtifactService,
         engine_snapshot: Arc<EngineResourceSnapshot>,
     ) -> Self {
-        let functions = StudyFunctionCatalog::from_value(&engine_snapshot.functions_json);
         Self {
             versions,
             artifacts,
             engine_snapshot,
-            functions,
         }
+    }
+
+    pub fn search(&self, query: &str, explicit_function: Option<&str>) -> FacadeSearchResult {
+        self.engine_snapshot
+            .facades
+            .search(query, explicit_function)
+    }
+
+    pub fn get(&self, facade_id: &str) -> Result<FacadeContract, StudyPlanningError> {
+        if let Some(facade) = self.engine_snapshot.facades.get_enabled(facade_id) {
+            return Ok(facade.clone());
+        }
+        if let Some(diagnostic) = self.engine_snapshot.facades.diagnostic(facade_id) {
+            return Err(StudyPlanningError::InvalidCatalog(format!(
+                "{}: {}",
+                diagnostic.code, diagnostic.message
+            )));
+        }
+        Err(StudyPlanningError::NotFound)
     }
 
     pub async fn plan(
@@ -46,7 +62,6 @@ impl StudyPlanningService {
             .workspace(&user.id, session_id, now_ms())
             .await
             .map_err(map_version_error)?;
-        let functions = self.functions.as_ref().map_err(Clone::clone)?;
         let facts = match workspace.active.as_ref() {
             Some(active) => {
                 facts::extract_active_model_facts(
@@ -59,7 +74,7 @@ impl StudyPlanningService {
             }
             None => facts::empty_model_facts(&self.engine_snapshot.id),
         };
-        Ok(evaluate(&request, &facts, functions))
+        Ok(evaluate(&request, &facts, &self.engine_snapshot.facades))
     }
 }
 

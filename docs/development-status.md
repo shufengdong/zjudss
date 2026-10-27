@@ -1,13 +1,21 @@
-# V3 开发状态
+# V4 开发状态（实施中）
 
 > V4 规划：负荷预测等辅助 DataFrame 将使用独立数据资源库，不再进入模型版本；V4 从空数据库建立，
 > 不迁移或兼容 V3 持久化数据。已确认需求见
 > [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)。
 > 详细实施步骤见
 > [`2026-10-27-v4-independent-data-resources-managed-studies.md`](superpowers/plans/2026-10-27-v4-independent-data-resources-managed-studies.md)。
-> 当前 eig-rs 已提供全部门面的完整传递输入、Struct 参数卡和结果 schema，外部机器合同门禁已经满足。V4 尚未开始
-> 实施；当前 V3 预检不支持 dataframes/functions/study_facades 的独立 schema version，修复已明确列入 V4 Task 2。
-> 本文其余内容仍描述当前已实现的 V3 基线。
+> 当前 eig-rs 已提供全部门面的完整传递输入、Struct 参数卡和结果 schema，外部机器合同门禁已经满足。V4 Task 1
+> 的空库持久化合同和 Task 2 的动态研究门面目录已经实现；后续上传、独立数据资源和受管研究工作流尚未实现。
+> 本文未明确标为 V4 已完成的其余内容仍描述进入 V4 前已验证的 V3 产品行为。
+
+## V4 implementation progress
+
+| Task | Status | Evidence |
+|---|---|---|
+| Task 1：空库 schema、配置与合同基线 | complete | `6607387`，V4 schema/config/manifest 聚焦测试 |
+| Task 2：动态 DataFrame 研究门面 | complete | 独立 catalog 版本、15 门面真实目录门禁、隔离诊断、传递 schema/hash、current snapshot 事务 |
+| Tasks 3–15 | planned | 以 V4 实施计划为准 |
 
 ## Current release
 

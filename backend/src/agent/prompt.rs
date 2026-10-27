@@ -25,7 +25,11 @@ impl PromptAssembler {
         let summary = json!({
             "engineResourceSnapshot": resources.id,
             "engineContractVersion": resources.contract_version,
-            "catalogSchemaVersion": resources.catalog_schema_version,
+            "catalogSchemaVersions": resources.catalog_schema_versions,
+            "studyFacades": {
+                "enabled": resources.facades.enabled_count(),
+                "disabled": resources.facades.diagnostics().len(),
+            },
             "documentSections": resources.knowledge.sections.len(),
             "examples": resources.examples.len(),
         });

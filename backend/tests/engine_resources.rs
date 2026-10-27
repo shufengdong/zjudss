@@ -3,9 +3,17 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use zjudss::db;
+use zjudss::db::repositories::EngineResourceSnapshotRepo;
 use zjudss::engine_resources::{
-    EngineResourceRegistry, ResourceLimits, SUPPORTED_CATALOG_SCHEMA_VERSIONS,
+    EngineResourceRegistry, ResourceLimits, SUPPORTED_DATAFRAMES_SCHEMA_VERSION,
+    SUPPORTED_DTYPE_GRAMMAR_VERSION, SUPPORTED_FUNCTIONS_SCHEMA_VERSION,
+    SUPPORTED_STUDY_FACADES_SCHEMA_VERSION,
 };
+
+const DATAFRAMES: &[u8] = include_bytes!("fixtures/engine_resources/catalog/dataframes.json");
+const FUNCTIONS: &[u8] = include_bytes!("fixtures/engine_resources/catalog/functions.json");
+const STUDY_FACADES: &[u8] = include_bytes!("fixtures/engine_resources/catalog/study_facades.json");
 
 fn hash(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -67,12 +75,9 @@ fn fixture() -> Fixture {
     let dss = sparrowzz_dir.join("dss");
     std::fs::create_dir_all(dss.join("docs/catalog")).unwrap();
     std::fs::create_dir_all(dss.join("docs/nested")).unwrap();
-    std::fs::write(dss.join("docs/catalog/dataframes.json"), br#"{"schema_version":2,"frames":{"load":{"required":{"name":"str","bus":"str"},"optional":{"model":"str"}}}}"#).unwrap();
-    std::fs::write(
-        dss.join("docs/catalog/functions.json"),
-        br#"{"schema_version":2,"frame_functions":[]}"#,
-    )
-    .unwrap();
+    std::fs::write(dss.join("docs/catalog/dataframes.json"), DATAFRAMES).unwrap();
+    std::fs::write(dss.join("docs/catalog/functions.json"), FUNCTIONS).unwrap();
+    std::fs::write(dss.join("docs/catalog/study_facades.json"), STUDY_FACADES).unwrap();
     std::fs::write(
         dss.join("docs/nested/guide.md"),
         b"# Guide\nintro\n## Power flow\nUse the validated solver.\n",
@@ -91,9 +96,309 @@ fn fixture() -> Fixture {
     }
 }
 
+fn rewrite_catalog(fixture: &Fixture, file_name: &str, change: impl FnOnce(&mut Value)) {
+    let path = fixture.dss().join("docs/catalog").join(file_name);
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    change(&mut value);
+    std::fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+}
+
+#[test]
+fn accepts_independent_supported_catalog_versions() {
+    let snapshot = fixture().load();
+    assert_eq!(snapshot.catalog_schema_versions.functions, 2);
+    assert_eq!(snapshot.catalog_schema_versions.study_facades, 1);
+    assert_eq!(snapshot.catalog_schema_versions.dataframes, 3);
+    assert_eq!(snapshot.catalog_schema_versions.dtype_grammar, 1);
+}
+
+#[test]
+fn rejects_each_unsupported_catalog_or_dtype_grammar_version() {
+    let cases = [
+        ("functions.json", vec!["schema_version"]),
+        ("study_facades.json", vec!["schema_version"]),
+        ("dataframes.json", vec!["schema_version"]),
+        ("dataframes.json", vec!["dtype_grammar", "version"]),
+    ];
+    for (file, path) in cases {
+        let fixture = fixture();
+        rewrite_catalog(&fixture, file, |root| {
+            let mut current = root;
+            for part in &path[..path.len() - 1] {
+                current = &mut current[*part];
+            }
+            current[path[path.len() - 1]] = json!(999);
+        });
+        assert_eq!(
+            EngineResourceRegistry::load(&fixture.sparrowzz_dir, &HashSet::new())
+                .unwrap_err()
+                .code(),
+            "engine_contract_mismatch"
+        );
+    }
+}
+
+#[test]
+fn snapshot_hash_includes_study_facades_and_all_version_numbers() {
+    let fixture = fixture();
+    let first = fixture.load();
+    rewrite_catalog(&fixture, "study_facades.json", |root| {
+        root["source_of_truth"] = json!(["changed presentation source"]);
+    });
+    let second = fixture.load();
+    assert_ne!(first.id, second.id);
+    assert_ne!(first.study_facades_sha256, second.study_facades_sha256);
+    assert_eq!(
+        first.catalog_schema_versions,
+        second.catalog_schema_versions
+    );
+}
+
+#[test]
+fn publishes_every_valid_dataframe_facade() {
+    let snapshot = fixture().load();
+    assert_eq!(snapshot.facades.catalog_entry_count(), 15);
+    assert_eq!(
+        snapshot.facades.enabled_count(),
+        15,
+        "{:?}",
+        snapshot.facades.diagnostics()
+    );
+    assert!(snapshot.facades.diagnostics().is_empty());
+    assert!(
+        snapshot
+            .facades
+            .get_enabled("static_power_flow_newton")
+            .is_some()
+    );
+}
+
+#[test]
+fn missing_study_facades_publishes_one_global_diagnostic() {
+    let fixture = fixture();
+    std::fs::remove_file(fixture.dss().join("docs/catalog/study_facades.json")).unwrap();
+
+    let snapshot = fixture.load();
+
+    assert_eq!(snapshot.facades.catalog_entry_count(), 0);
+    assert_eq!(snapshot.facades.enabled_count(), 0);
+    assert_eq!(snapshot.facades.diagnostics().len(), 1);
+    assert_eq!(
+        snapshot.facades.diagnostics()[0].code,
+        "study_facades_missing"
+    );
+}
+
+#[tokio::test]
+async fn publishing_snapshot_metadata_atomically_marks_one_current_snapshot() {
+    let fixture = fixture();
+    let first = fixture.load();
+    rewrite_catalog(&fixture, "study_facades.json", |root| {
+        root["source_of_truth"] = json!(["second snapshot"]);
+    });
+    let second = fixture.load();
+    let database = tempfile::NamedTempFile::new().unwrap();
+    let pool = db::establish_pool(&format!("sqlite://{}", database.path().display())).unwrap();
+    {
+        let mut connection = pool.get().unwrap();
+        db::run_migrations(&mut connection).unwrap();
+    }
+    let repo = EngineResourceSnapshotRepo::new(pool);
+
+    repo.publish_current(&first, 1).await.unwrap();
+    repo.publish_current(&second, 2).await.unwrap();
+
+    let current = repo.current().await.unwrap().unwrap();
+    assert_eq!(current.id, second.id);
+    assert!(current.is_current);
+    assert_eq!(current.functions_schema_version, 2);
+    assert_eq!(current.study_facades_schema_version, 1);
+    assert_eq!(current.dataframes_schema_version, 3);
+    assert_eq!(current.dtype_grammar_version, 1);
+    assert_eq!(repo.count().await.unwrap(), 2);
+}
+
+#[test]
+fn excludes_path_url_and_import_facades() {
+    let fixture = fixture();
+    rewrite_catalog(&fixture, "study_facades.json", |root| {
+        let mut facade = root["facades"][0].clone();
+        facade["id"] = json!("unsafe_import");
+        facade["function"] = json!("import_dss_url");
+        facade["inputs"] = json!([{
+            "id":"source", "alias":"source", "inputKind":"url",
+            "schemaRef":"frames.bus", "required":true, "position":1
+        }]);
+        root["facades"].as_array_mut().unwrap().push(facade);
+    });
+    let snapshot = fixture.load();
+    assert_eq!(snapshot.facades.catalog_entry_count(), 16);
+    assert_eq!(snapshot.facades.enabled_count(), 15);
+    assert!(snapshot.facades.get_enabled("unsafe_import").is_none());
+    assert_eq!(
+        snapshot.facades.diagnostic("unsafe_import").unwrap().code,
+        "facade_unsupported_input_kind"
+    );
+}
+
+#[test]
+fn invalid_facade_is_disabled_without_disabling_neighbors() {
+    let fixture = fixture();
+    rewrite_catalog(&fixture, "study_facades.json", |root| {
+        root["facades"][0]["inputs"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("inputKind");
+    });
+    let snapshot = fixture.load();
+    assert_eq!(snapshot.facades.enabled_count(), 14);
+    assert!(
+        snapshot
+            .facades
+            .get_enabled("static_power_flow_radial")
+            .is_none()
+    );
+    assert!(
+        snapshot
+            .facades
+            .get_enabled("static_power_flow_newton")
+            .is_some()
+    );
+    assert_eq!(snapshot.facades.diagnostics().len(), 1);
+    let explicit = snapshot.facades.search("", Some("ds_radial_pf"));
+    assert!(explicit.enabled.is_empty());
+    assert_eq!(explicit.disabled.len(), 1);
+}
+
+#[test]
+fn incomplete_transitive_schema_disables_only_affected_facades() {
+    let fixture = fixture();
+    rewrite_catalog(&fixture, "dataframes.json", |root| {
+        root["result_frames"]["bus_voltage"]["contract"]["columns"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("dtype");
+    });
+    let snapshot = fixture.load();
+    assert!(
+        snapshot
+            .facades
+            .get_enabled("static_power_flow_radial")
+            .is_none()
+    );
+    assert!(
+        snapshot.facades.get_enabled("fault_study").is_some(),
+        "{:?}",
+        snapshot.facades.diagnostics()
+    );
+    assert!(snapshot.facades.enabled_count() > 0);
+}
+
+#[test]
+fn prose_constraints_do_not_satisfy_struct_card_contract() {
+    let fixture = fixture();
+    rewrite_catalog(&fixture, "dataframes.json", |root| {
+        root["frames"]["para"]["constraints"] =
+            json!(["the omitted machine-readable card exists in prose"]);
+        root["frames"]["para"]["contract"]["columns"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("card");
+    });
+    let snapshot = fixture.load();
+    let diagnostic = snapshot
+        .facades
+        .diagnostic("static_power_flow_radial")
+        .unwrap();
+    assert_eq!(diagnostic.code, "facade_schema_invalid");
+    assert!(diagnostic.message.contains("card"));
+}
+
+#[test]
+fn base_schema_resolves_once_without_cycles() {
+    let snapshot = fixture().load();
+    let qsts = snapshot
+        .schemas
+        .resolve("qsts_outputs.bus_voltage")
+        .unwrap();
+    let names = qsts
+        .fields
+        .iter()
+        .map(|field| field.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names.iter().filter(|name| **name == "bus").count(), 1);
+    assert!(names.contains(&"time"));
+
+    let cyclic = fixture();
+    rewrite_catalog(&cyclic, "dataframes.json", |root| {
+        root["qsts_outputs"]["bus_voltage"]["base_schema"] = json!("qsts_outputs.bus_voltage");
+    });
+    let cyclic = cyclic.load();
+    assert!(cyclic.facades.get_enabled("qsts_radial").is_none());
+    assert!(
+        cyclic
+            .facades
+            .get_enabled("static_power_flow_radial")
+            .is_some()
+    );
+}
+
+#[test]
+fn facade_hash_changes_with_transitive_executable_schema() {
+    let fixture = fixture();
+    let first = fixture.load();
+    let first_hash = first
+        .facades
+        .get_enabled("static_power_flow_radial")
+        .unwrap()
+        .contract_hash
+        .clone();
+    rewrite_catalog(&fixture, "dataframes.json", |root| {
+        root["result_frames"]["bus_voltage"]["contract"]["columns"][1]["unit"] = json!("kV");
+    });
+    let second = fixture.load();
+    assert_ne!(
+        first_hash,
+        second
+            .facades
+            .get_enabled("static_power_flow_radial")
+            .unwrap()
+            .contract_hash
+    );
+}
+
+#[test]
+fn facade_hash_ignores_presentation_only_text() {
+    let fixture = fixture();
+    let first = fixture.load();
+    let first_hash = first
+        .facades
+        .get_enabled("static_power_flow_radial")
+        .unwrap()
+        .contract_hash
+        .clone();
+    rewrite_catalog(&fixture, "study_facades.json", |root| {
+        root["facades"][0]["title"] = json!("新的展示标题");
+        root["facades"][0]["description"] = json!("新的展示说明");
+        root["facades"][0]["differences"] = json!(["新的展示差异"]);
+    });
+    let second = fixture.load();
+    assert_eq!(
+        first_hash,
+        second
+            .facades
+            .get_enabled("static_power_flow_radial")
+            .unwrap()
+            .contract_hash
+    );
+}
+
 #[test]
 fn discovers_current_tree_deterministically_and_snapshot_changes_with_loaded_bytes() {
-    assert_eq!(SUPPORTED_CATALOG_SCHEMA_VERSIONS, &[2]);
+    assert_eq!(SUPPORTED_FUNCTIONS_SCHEMA_VERSION, 2);
+    assert_eq!(SUPPORTED_STUDY_FACADES_SCHEMA_VERSION, 1);
+    assert_eq!(SUPPORTED_DATAFRAMES_SCHEMA_VERSION, 3);
+    assert_eq!(SUPPORTED_DTYPE_GRAMMAR_VERSION, 1);
     let fixture = fixture();
     let first = fixture.load();
     assert_eq!(first.id, fixture.load().id);
@@ -318,11 +623,9 @@ fn validates_catalog_schema_and_required_shape_but_allows_no_examples() {
     std::fs::remove_dir_all(empty.dss().join("rssbundle")).unwrap();
     assert!(empty.load().examples.is_empty());
     let unsupported = fixture();
-    std::fs::write(
-        unsupported.dss().join("docs/catalog/dataframes.json"),
-        br#"{"schema_version":3,"frames":{"load":{"required":{"name":"str"}}}}"#,
-    )
-    .unwrap();
+    rewrite_catalog(&unsupported, "dataframes.json", |root| {
+        root["schema_version"] = json!(999);
+    });
     assert_eq!(
         EngineResourceRegistry::load(&unsupported.sparrowzz_dir, &HashSet::new())
             .unwrap_err()
@@ -471,7 +774,13 @@ fn current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count() 
     if path.join("dss/docs/catalog/dataframes.json").is_file() {
         let snapshot = EngineResourceRegistry::load(&path, &HashSet::new())
             .expect("current configured eig-rs resources must be dynamically valid");
-        assert_eq!(snapshot.catalog_schema_version, 2);
+        assert_eq!(snapshot.catalog_schema_versions.dataframes, 3);
+        assert_eq!(snapshot.facades.enabled_count(), 15);
+        assert_eq!(
+            snapshot.facades.enabled_count(),
+            snapshot.facades.catalog_entry_count()
+        );
+        assert!(snapshot.facades.diagnostics().is_empty());
         assert!(
             snapshot
                 .examples

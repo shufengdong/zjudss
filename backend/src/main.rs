@@ -92,6 +92,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             &seeded.seed_sha256[..12]
         );
     }
+    zjudss::db::repositories::EngineResourceSnapshotRepo::new(pool.clone())
+        .publish_current(&engine_resources, zjudss::application::now_ms())
+        .await?;
     eprintln!("[db] ready at {}", runtime.database_url);
 
     let engine: std::sync::Arc<dyn adapters::SimEngine> = std::sync::Arc::new(process_engine);

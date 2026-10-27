@@ -1,6 +1,7 @@
 mod analysis;
 mod artifact;
 mod comparison;
+mod engine_resource_snapshot;
 mod history;
 mod message;
 mod model_import;
@@ -15,6 +16,7 @@ mod version;
 pub use analysis::AnalysisRepo;
 pub use artifact::{ArtifactDraft, ArtifactRepo};
 pub use comparison::ComparisonRepo;
+pub use engine_resource_snapshot::EngineResourceSnapshotRepo;
 pub use history::{HistoryHit, HistoryRepo, SearchFilters};
 pub use message::MessageRepo;
 pub use model_import::{ModelImportRecord, ModelImportRepo};

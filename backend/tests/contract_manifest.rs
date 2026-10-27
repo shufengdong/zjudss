@@ -37,7 +37,7 @@ fn contract_manifest_contains_all_public_enums() {
     let manifest = contract_manifest().expect("embedded contract manifest");
 
     assert_eq!(manifest.version, "v4");
-    assert!(manifest.changes.is_empty());
+    assert_eq!(manifest.changes, ["dynamic_study_facades"]);
 
     assert_eq!(
         manifest.message_types,
@@ -114,6 +114,10 @@ fn contract_manifest_contains_all_public_enums() {
         "study_plan_not_found",
         "study_plan_stale",
         "study_plan_function_mismatch",
+        "study_facades_missing",
+        "facade_contract_invalid",
+        "facade_schema_invalid",
+        "facade_unsupported_input_kind",
     ] {
         assert!(
             manifest.stable_error_codes.contains(&code),

@@ -100,6 +100,10 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "study_plan_not_found",
     "study_plan_stale",
     "study_plan_function_mismatch",
+    "study_facades_missing",
+    "facade_contract_invalid",
+    "facade_schema_invalid",
+    "facade_unsupported_input_kind",
 ];
 
 #[derive(Debug, Serialize)]
@@ -126,7 +130,7 @@ pub fn contract_manifest() -> Result<ContractManifest, KnowledgeError> {
 
     Ok(ContractManifest {
         version: "v4",
-        changes: Vec::new(),
+        changes: vec!["dynamic_study_facades"],
         routes: route_manifest(),
         message_types: MESSAGE_TYPES.to_vec(),
         tool_names: registered_tool_names().to_vec(),

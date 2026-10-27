@@ -1,8 +1,11 @@
+mod common;
+
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use zjudss::agent::knowledge::AgentKnowledge;
+use zjudss::agent::prompt::PromptAssembler;
 
 fn hash(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
@@ -171,4 +174,18 @@ fn preflight_rejects_bundle_and_engine_contract_mismatch() {
             .code(),
         "engine_contract_mismatch"
     );
+}
+
+#[tokio::test]
+async fn prompt_publishes_independent_catalog_versions_and_facade_inventory() {
+    let app = common::TestApp::spawn().await;
+    let prompt = PromptAssembler::assemble(&app.state.agent_knowledge, &app.state.engine_snapshot);
+
+    assert!(prompt.contains("catalogSchemaVersions"));
+    assert!(prompt.contains("studyFacades"));
+    assert!(prompt.contains("\"functions\":2"));
+    assert!(prompt.contains("\"studyFacades\":1"));
+    assert!(prompt.contains("\"dataframes\":3"));
+    assert!(prompt.contains("\"dtypeGrammar\":1"));
+    assert!(!prompt.contains("\"catalogSchemaVersion\":"));
 }

@@ -246,14 +246,25 @@ impl AppState {
         let catalog = Arc::new(
             SchemaCatalog::from_value("e2e-contract", &catalog_value).expect("e2e catalog valid"),
         );
+        let dynamic_catalog = EngineResourceSnapshot::minimal(
+            "e2e-snapshot",
+            "e2e-contract",
+            engine_root.join("dss"),
+        );
         let engine_snapshot = Arc::new(EngineResourceSnapshot {
             id: "e2e-snapshot".into(),
             contract_version: "e2e-contract".into(),
-            catalog_schema_version: 2,
+            catalog_schema_versions: dynamic_catalog.catalog_schema_versions,
+            dataframes_sha256: String::new(),
+            functions_sha256: String::new(),
+            study_facades_sha256: String::new(),
             source_root: engine_root.join("dss"),
             engine_root: engine_root.clone(),
             catalog_json: catalog_value,
             functions_json: serde_json::json!({"schema_version": 2, "frame_functions": []}),
+            study_facades_json: dynamic_catalog.study_facades_json,
+            schemas: dynamic_catalog.schemas,
+            facades: dynamic_catalog.facades,
             catalog_bytes: Default::default(),
             documents: std::collections::BTreeMap::from([(
                 docs[0].0.clone(),
@@ -407,20 +418,11 @@ impl AppState {
             "embedded-test",
             &serde_json::json!({"schema_version":2,"frames":{"table":{"required":{"id":"str"}}}}),
         ).expect("内置最小 catalog 有效"));
-        let engine_snapshot = Arc::new(EngineResourceSnapshot {
-            id: "embedded-empty".into(),
-            contract_version: "embedded-test".into(),
-            catalog_schema_version: 2,
-            source_root: data_dir.clone(),
-            engine_root: data_dir.clone(),
-            catalog_json: serde_json::json!({}),
-            functions_json: serde_json::json!({}),
-            catalog_bytes: Default::default(),
-            documents: Default::default(),
-            knowledge: EngineKnowledge::from_documents(&[]),
-            examples: vec![],
-            source_hashes: Default::default(),
-        });
+        let engine_snapshot = Arc::new(EngineResourceSnapshot::minimal(
+            "embedded-empty",
+            "embedded-test",
+            data_dir.clone(),
+        ));
         Self::new_with_resources(
             pool,
             engine,
@@ -612,20 +614,11 @@ impl AppState {
             )
             .expect("内置最小 catalog 有效"),
         );
-        let engine_snapshot = Arc::new(EngineResourceSnapshot {
-            id: "embedded-empty".into(),
-            contract_version: "embedded-test".into(),
-            catalog_schema_version: 2,
-            source_root: data_dir.clone(),
-            engine_root: data_dir.clone(),
-            catalog_json: serde_json::json!({}),
-            functions_json: serde_json::json!({}),
-            catalog_bytes: Default::default(),
-            documents: Default::default(),
-            knowledge: EngineKnowledge::from_documents(&[]),
-            examples: vec![],
-            source_hashes: Default::default(),
-        });
+        let engine_snapshot = Arc::new(EngineResourceSnapshot::minimal(
+            "embedded-empty",
+            "embedded-test",
+            data_dir.clone(),
+        ));
         Self::new_with_resources_and_agent_factory(
             pool,
             engine,

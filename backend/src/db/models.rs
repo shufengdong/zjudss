@@ -595,6 +595,11 @@ pub struct EngineResourceSnapshotRecord {
     pub id: String,
     pub engine_contract_version: String,
     pub catalog_hash: String,
+    pub functions_schema_version: i32,
+    pub study_facades_schema_version: i32,
+    pub dataframes_schema_version: i32,
+    pub dtype_grammar_version: i32,
+    pub is_current: bool,
     pub snapshot_json: String,
     pub created_at_ms: i64,
 }

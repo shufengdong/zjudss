@@ -139,35 +139,18 @@ impl TestApp {
         let dss_root = engine_root.join("dss");
         std::fs::create_dir_all(dss_root.join("docs/catalog"))
             .expect("create test engine resource fixture");
-        let dataframes = br#"{
-            "schema_version": 2,
-            "frames": {
-                "bus": {"required": {"id": "str"}},
-                "line": {"required": {"name": "str", "bus_from": "str", "bus_to": "str"}},
-                "voltage_source": {"required": {"name": "str", "bus": "str"}},
-                "generator": {"required": {"name": "str", "bus": "str", "execution_mode": "str"}},
-                "ibr": {"required": {"name": "str", "bus": "str", "port_model": "str"}},
-                "switch": {"required": {"name": "str", "bus_from": "str", "bus_to": "str", "open": "bool", "switch_marker": "str"}},
-                "transformer_winding": {"required": {"transformer": "str", "bus": "str", "winding": "u32"}},
-                "spectrum": {"required": {"name": "str", "harmonic": "f64"}},
-                "motor": {"required": {"name": "str", "bus": "str", "motor_marker": "str"}},
-                "storage": {"required": {"name": "str", "bus": "str", "storage_marker": "str"}}
-            }
-        }"#;
-        let functions = br#"{
-            "schema_version": 2,
-            "frame_functions": [],
-            "dsa_functions": [
-                {"names":["ds_radial_pf","ds_newton_raphson_pf"],"complete_arity":21,"default_result":"bus_voltage","results":["bus_voltage","bus_phase","summary"]},
-                {"names":["ds_radial_qsts","ds_newton_raphson_qsts"],"complete_arity":33,"default_result":"bus_voltage","results":["bus_voltage","bus_phase","summary"]},
-                {"names":["ds_fault_study"],"complete_arity":22,"default_result":"fault","results":["fault","branch_flow"]},
-                {"names":["ds_harmonic_study"],"complete_arity":22,"default_result":"bus_voltage","results":["bus_voltage","monitor"]},
-                {"names":["ds_motor_dynamics"],"complete_arity":28,"default_result":"motor_state","results":["bus_voltage","motor_state","event"]}
-            ]
-        }"#;
+        let dataframes = include_bytes!("../fixtures/engine_resources/catalog/dataframes.json");
+        let functions = include_bytes!("../fixtures/engine_resources/catalog/functions.json");
+        let study_facades =
+            include_bytes!("../fixtures/engine_resources/catalog/study_facades.json");
         let guide = b"# Test engine guide\nfixture content\n";
         std::fs::write(dss_root.join("docs/catalog/dataframes.json"), dataframes).unwrap();
         std::fs::write(dss_root.join("docs/catalog/functions.json"), functions).unwrap();
+        std::fs::write(
+            dss_root.join("docs/catalog/study_facades.json"),
+            study_facades,
+        )
+        .unwrap();
         std::fs::write(dss_root.join("docs/guide.md"), guide).unwrap();
         std::fs::create_dir_all(dss_root.join("models/demo")).unwrap();
         std::fs::create_dir_all(engine_root.join("psa/tests/bmopf")).unwrap();

@@ -1,4 +1,5 @@
 mod examples;
+mod facades;
 mod knowledge;
 mod snapshot;
 
@@ -9,16 +10,24 @@ use std::path::{Component, Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::adapters::ENGINE_CONTRACT_VERSION;
+use crate::catalog::SchemaRegistry;
 
 pub use examples::{
     EngineExample, ExampleManifest, ExampleManifestFile, ExampleSource, ExampleSourceFile,
     ExampleStudy,
 };
+pub use facades::{
+    DisabledFacadeDiagnostic, FacadeContract, FacadeInputContract, FacadeInputKind, FacadeRegistry,
+    FacadeResultContract, FacadeSearchResult, ResultCondition, ResultSelectionRule,
+};
 pub use knowledge::{DocSearchHit, DocSection, EngineKnowledge};
 use snapshot::SourceFileSpec;
-pub use snapshot::{EngineResourceSnapshot, ResourceLimits};
+pub use snapshot::{CatalogSchemaVersions, EngineResourceSnapshot, ResourceLimits};
 
-pub const SUPPORTED_CATALOG_SCHEMA_VERSIONS: &[u32] = &[2];
+pub const SUPPORTED_FUNCTIONS_SCHEMA_VERSION: u32 = 2;
+pub const SUPPORTED_STUDY_FACADES_SCHEMA_VERSION: u32 = 1;
+pub const SUPPORTED_DATAFRAMES_SCHEMA_VERSION: u32 = 3;
+pub const SUPPORTED_DTYPE_GRAMMAR_VERSION: u32 = 1;
 
 #[derive(Debug)]
 pub struct EngineResourceError {
@@ -80,18 +89,61 @@ impl EngineResourceRegistry {
             "docs/catalog/functions.json",
             limits.max_document_bytes,
         )?;
+        let study_facades_path = dss_root.join("docs/catalog/study_facades.json");
+        let study_facades_missing = matches!(
+            std::fs::symlink_metadata(&study_facades_path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        );
+        let study_facades = if study_facades_missing {
+            br#"{"schema_version":1,"facades":[]}"#.to_vec()
+        } else {
+            read_safe_bounded(
+                &dss_root,
+                "docs/catalog/study_facades.json",
+                limits.max_document_bytes,
+            )?
+        };
         let catalog_json: serde_json::Value = serde_json::from_slice(&dataframes)
             .map_err(|error| EngineResourceError::new("catalog_invalid", error.to_string()))?;
         let functions_json: serde_json::Value = serde_json::from_slice(&functions)
             .map_err(|error| EngineResourceError::new("catalog_invalid", error.to_string()))?;
-        let catalog_schema_version = catalog_schema(&catalog_json)?;
-        if catalog_schema(&functions_json)? != catalog_schema_version {
-            return Err(EngineResourceError::new(
-                "engine_contract_mismatch",
-                "catalog schema version 彼此不匹配",
-            ));
-        }
-        validate_catalog_shape(&catalog_json, &functions_json)?;
+        let study_facades_json: serde_json::Value = serde_json::from_slice(&study_facades)
+            .map_err(|error| EngineResourceError::new("catalog_invalid", error.to_string()))?;
+        let catalog_schema_versions = CatalogSchemaVersions {
+            functions: supported_schema_version(
+                &functions_json,
+                "functions",
+                SUPPORTED_FUNCTIONS_SCHEMA_VERSION,
+            )?,
+            study_facades: supported_schema_version(
+                &study_facades_json,
+                "study_facades",
+                SUPPORTED_STUDY_FACADES_SCHEMA_VERSION,
+            )?,
+            dataframes: supported_schema_version(
+                &catalog_json,
+                "dataframes",
+                SUPPORTED_DATAFRAMES_SCHEMA_VERSION,
+            )?,
+            dtype_grammar: supported_nested_version(
+                &catalog_json,
+                &["dtype_grammar", "version"],
+                "dtype grammar",
+                SUPPORTED_DTYPE_GRAMMAR_VERSION,
+            )?,
+        };
+        validate_catalog_shape(&catalog_json, &functions_json, &study_facades_json)?;
+        let mut schemas = SchemaRegistry::from_catalog(&catalog_json)
+            .map_err(|error| EngineResourceError::new("catalog_invalid", error.to_string()))?;
+        let facades = if study_facades_missing {
+            FacadeRegistry::unavailable(
+                "study_facades_missing",
+                "当前引擎 snapshot 缺少 study_facades.json，没有可用研究门面",
+            )
+        } else {
+            FacadeRegistry::from_catalogs(&study_facades_json, &mut schemas)
+                .map_err(|error| EngineResourceError::new("catalog_invalid", error.to_string()))?
+        };
 
         let mut docs = Vec::new();
         let mut documents = BTreeMap::new();
@@ -132,6 +184,13 @@ impl EngineResourceRegistry {
             "dss/docs/catalog/functions.json".to_string(),
             hash_bytes(&functions),
         )?;
+        if !study_facades_missing {
+            insert_source_hash(
+                &mut source_hashes,
+                "dss/docs/catalog/study_facades.json".to_string(),
+                hash_bytes(&study_facades),
+            )?;
+        }
         for (path, bytes) in &documents {
             insert_source_hash(&mut source_hashes, format!("dss/{path}"), hash_bytes(bytes))?;
         }
@@ -151,6 +210,27 @@ impl EngineResourceRegistry {
             b"contract",
             ENGINE_CONTRACT_VERSION.as_bytes(),
         );
+        identity_part(
+            &mut identity,
+            b"study-facades-source",
+            if study_facades_missing {
+                b"missing"
+            } else {
+                b"present"
+            },
+        );
+        for (name, version) in [
+            ("functions", catalog_schema_versions.functions),
+            ("study_facades", catalog_schema_versions.study_facades),
+            ("dataframes", catalog_schema_versions.dataframes),
+            ("dtype_grammar", catalog_schema_versions.dtype_grammar),
+        ] {
+            identity_part(
+                &mut identity,
+                format!("schema-version-{name}").as_bytes(),
+                version.to_string().as_bytes(),
+            );
+        }
         for (path, hash) in &source_hashes {
             identity_part(&mut identity, path.as_bytes(), hash.as_bytes());
         }
@@ -195,14 +275,21 @@ impl EngineResourceRegistry {
         Ok(EngineResourceSnapshot {
             id,
             contract_version: ENGINE_CONTRACT_VERSION.to_string(),
-            catalog_schema_version,
+            catalog_schema_versions,
+            dataframes_sha256: hash_bytes(&dataframes),
+            functions_sha256: hash_bytes(&functions),
+            study_facades_sha256: hash_bytes(&study_facades),
             source_root: dss_root,
             engine_root,
             catalog_json,
             functions_json,
+            study_facades_json,
+            schemas,
+            facades,
             catalog_bytes: BTreeMap::from([
                 ("dataframes.json".to_string(), dataframes),
                 ("functions.json".to_string(), functions),
+                ("study_facades.json".to_string(), study_facades),
             ]),
             documents,
             knowledge,
@@ -264,7 +351,12 @@ impl EngineResourceRegistry {
                 &serde_json::to_vec_pretty(&serde_json::json!({
                     "snapshotId": snapshot.id,
                     "engineContractVersion": snapshot.contract_version,
-                    "catalogSchemaVersion": snapshot.catalog_schema_version,
+                    "catalogSchemaVersions": snapshot.catalog_schema_versions,
+                    "facades": {
+                        "catalogEntries": snapshot.facades.catalog_entry_count(),
+                        "enabled": snapshot.facades.enabled_count(),
+                        "diagnostics": snapshot.facades.diagnostics(),
+                    },
                     "files": inventory,
                 }))
                 .map_err(|error| {
@@ -517,24 +609,56 @@ fn insert_source_hash(
     Ok(())
 }
 
-fn catalog_schema(value: &serde_json::Value) -> Result<u32, EngineResourceError> {
+fn supported_schema_version(
+    value: &serde_json::Value,
+    catalog: &str,
+    supported: u32,
+) -> Result<u32, EngineResourceError> {
     let schema = value
         .get("schema_version")
         .and_then(serde_json::Value::as_u64)
         .and_then(|value| u32::try_from(value).ok())
         .ok_or_else(|| EngineResourceError::new("catalog_invalid", "缺少 schema_version"))?;
-    if !SUPPORTED_CATALOG_SCHEMA_VERSIONS.contains(&schema) {
+    if schema != supported {
         return Err(EngineResourceError::new(
             "engine_contract_mismatch",
-            format!("不支持 catalog schema version {schema}"),
+            format!("不支持 {catalog} schema version {schema}，当前支持 {supported}"),
         ));
     }
     Ok(schema)
 }
 
+fn supported_nested_version(
+    value: &serde_json::Value,
+    path: &[&str],
+    catalog: &str,
+    supported: u32,
+) -> Result<u32, EngineResourceError> {
+    let mut current = value;
+    for part in path {
+        current = current.get(*part).ok_or_else(|| {
+            EngineResourceError::new("catalog_invalid", format!("{catalog} 缺少版本字段"))
+        })?;
+    }
+    let version = current
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| {
+            EngineResourceError::new("catalog_invalid", format!("{catalog} 版本无效"))
+        })?;
+    if version != supported {
+        return Err(EngineResourceError::new(
+            "engine_contract_mismatch",
+            format!("不支持 {catalog} version {version}，当前支持 {supported}"),
+        ));
+    }
+    Ok(version)
+}
+
 fn validate_catalog_shape(
     dataframes: &serde_json::Value,
     functions: &serde_json::Value,
+    study_facades: &serde_json::Value,
 ) -> Result<(), EngineResourceError> {
     let frames = dataframes
         .get("frames")
@@ -558,6 +682,16 @@ fn validate_catalog_shape(
         return Err(EngineResourceError::new(
             "catalog_invalid",
             "functions catalog 缺少 frame_functions",
+        ));
+    }
+    if study_facades
+        .get("facades")
+        .and_then(serde_json::Value::as_array)
+        .is_none()
+    {
+        return Err(EngineResourceError::new(
+            "catalog_invalid",
+            "study_facades catalog 缺少 facades",
         ));
     }
     Ok(())
