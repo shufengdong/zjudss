@@ -251,6 +251,7 @@ impl TestApp {
             engine_snapshot,
             config.upload_single_file_limit_bytes,
             config.upload_batch_limit_bytes,
+            config.upload_staging_ttl_hours,
             zjudss::ingestion::ArchiveLimits {
                 max_entries: config.archive_max_entries,
                 max_expanded_bytes: config.archive_max_expanded_bytes,

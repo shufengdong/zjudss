@@ -409,6 +409,7 @@ diesel::table! {
         session_id -> Integer,
         client_batch_id -> Text,
         source_kind -> Text,
+        replacement_resource_id -> Nullable<Text>,
         status -> Text,
         model_publish_status -> Text,
         resource_publish_status -> Text,

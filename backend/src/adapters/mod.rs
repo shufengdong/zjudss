@@ -15,7 +15,8 @@ use sha2::Digest;
 pub use contract::{ENGINE_CONTRACT_VERSION, EngineCapabilities};
 pub use import::{
     EXECUTION_IMPORT_TABLES, ImportEntryCandidate, ImportInspectSpec, ImportInspection,
-    ImportProfile, ImportSpec, ImportedModel, STATIC_MODEL_TABLES,
+    ImportProfile, ImportSpec, ImportedModel, MODEL_TABLE_OUTPUTS, PARA_RESOURCE_OUTPUT,
+    STATIC_IMPORT_OUTPUTS, STATIC_MODEL_TABLES,
 };
 pub use process::{
     EngineCommand, EngineConfig, OutputLimits, ProcessEngine, build_command, validate_outputs,

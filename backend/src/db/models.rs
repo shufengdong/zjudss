@@ -611,6 +611,7 @@ pub struct UploadBatchRecord {
     pub session_id: i32,
     pub client_batch_id: String,
     pub source_kind: String,
+    pub replacement_resource_id: Option<String>,
     pub status: String,
     pub model_publish_status: String,
     pub resource_publish_status: String,

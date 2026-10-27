@@ -154,6 +154,7 @@ CREATE TABLE upload_batches (
  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
  client_batch_id TEXT NOT NULL,
  source_kind TEXT NOT NULL CHECK(source_kind IN ('upload','case')),
+ replacement_resource_id TEXT REFERENCES data_resources(id) ON DELETE RESTRICT,
  status TEXT NOT NULL CHECK(status IN ('processing','awaiting_parse_settings','awaiting_purpose','ready_to_confirm','partially_confirmed','confirmed','failed','discarded','expired')),
  model_publish_status TEXT NOT NULL DEFAULT 'not_applicable' CHECK(model_publish_status IN ('not_applicable','ready','published','failed')),
  resource_publish_status TEXT NOT NULL DEFAULT 'not_applicable' CHECK(resource_publish_status IN ('not_applicable','ready','published','failed')),

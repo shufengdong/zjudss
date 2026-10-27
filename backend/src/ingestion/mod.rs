@@ -44,6 +44,7 @@ pub use bundle::{BundleFile, BundleManifest, BundleStudy, BundleValidator, Valid
 pub use rss::{DependencyReport, RssInspector};
 
 pub use tabular::{
-    ColumnSchema, NormalizedSheet, TableSchema, TabularError, TabularFormat, TabularInspector,
-    normalize_csv_to_parquet, normalize_excel_to_parquet,
+    ColumnSchema, ExcelSafetyInspection, FormulaCell, NormalizedSheet, TableSchema, TabularError,
+    TabularFormat, TabularInspector, inspect_excel_safely, normalize_csv_to_parquet,
+    normalize_csv_with_settings, normalize_excel_to_parquet, validate_formula_cache,
 };

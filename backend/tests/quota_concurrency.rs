@@ -4,6 +4,7 @@ use std::io::Cursor;
 
 use diesel::prelude::*;
 use zjudss::application::{ArtifactError, ArtifactMetadata, StorageLimits};
+use zjudss::db::repositories::{RepoError, UploadRepo};
 use zjudss::storage::StageLimits;
 
 use common::TestApp;
@@ -100,4 +101,71 @@ async fn concurrent_same_hash_commits_charge_once_and_preserve_refs_at_quota() {
     let usage = service.get_usage(scope.id).await.unwrap();
     assert_eq!(usage.used_artifacts, 2);
     assert_eq!(usage.used_bytes, 20);
+}
+
+#[tokio::test]
+async fn concurrent_upload_reservations_never_overbook_the_scope() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let left_session = app
+        .state
+        .session_repo
+        .create(&user.id, "left", 1)
+        .await
+        .unwrap();
+    let right_session = app
+        .state
+        .session_repo
+        .create(&user.id, "right", 1)
+        .await
+        .unwrap();
+    app.state
+        .artifact_service
+        .set_limits(
+            user.storage_scope_id,
+            StorageLimits {
+                artifact_limit: 100,
+                byte_limit: 10,
+                warning_ratio: 0.8,
+            },
+        )
+        .await
+        .unwrap();
+    let repo = UploadRepo::new(app.pool.clone());
+    let reserve = |repo: UploadRepo, session_id, client: &str| {
+        let user_id = user.id.clone();
+        let client = client.to_string();
+        tokio::spawn(async move {
+            repo.create_reserved(
+                &user_id,
+                user.storage_scope_id,
+                session_id,
+                client,
+                "upload".into(),
+                None,
+                8,
+                i64::MAX,
+                1,
+            )
+            .await
+        })
+    };
+    let left = reserve(repo.clone(), left_session.id, "left");
+    let right = reserve(repo, right_session.id, "right");
+    let outcomes = [left.await.unwrap(), right.await.unwrap()];
+    assert_eq!(outcomes.iter().filter(|value| value.is_ok()).count(), 1);
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|value| matches!(value, Err(RepoError::QuotaExceeded)))
+            .count(),
+        1
+    );
+    let mut conn = app.pool.get().unwrap();
+    let reserved: i64 = zjudss::db::schema::storage_scopes::table
+        .find(user.storage_scope_id)
+        .select(zjudss::db::schema::storage_scopes::reserved_bytes)
+        .first(&mut conn)
+        .unwrap();
+    assert_eq!(reserved, 8);
 }

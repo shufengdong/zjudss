@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{application::AppState, auth::CurrentUser, db::models::DraftRef};
+use crate::{application::AppState, auth::CurrentUser};
 
 use super::ApiError;
 
@@ -97,9 +97,8 @@ fn build_tree(
 pub struct ApplyCaseBody {
     example_id: String,
     engine_resource_snapshot: String,
-    client_import_id: String,
-    expected_draft_id: Option<i32>,
-    expected_draft_revision: Option<i64>,
+    #[serde(alias = "clientImportId")]
+    client_batch_id: String,
 }
 
 pub async fn apply(
@@ -108,37 +107,19 @@ pub async fn apply(
     Path(session_id): Path<i32>,
     Json(body): Json<ApplyCaseBody>,
 ) -> Result<(axum::http::StatusCode, Json<Value>), ApiError> {
-    if body.expected_draft_id.is_some() != body.expected_draft_revision.is_some() {
-        return Err(crate::application::ModelImportError::Invalid(
-            "expectedDraftId 与 expectedDraftRevision 必须同时提供".into(),
-        )
-        .into());
-    }
-    let expected = body
-        .expected_draft_id
-        .zip(body.expected_draft_revision)
-        .map(|(id, revision)| DraftRef { id, revision });
-    let service = state.case_import_service.clone();
-    let accepted = service
-        .accept(
+    let accepted = state
+        .case_import_service
+        .apply(
             &user,
             session_id,
-            &body.example_id,
-            &body.engine_resource_snapshot,
-            body.client_import_id,
-            expected,
+            body.example_id,
+            body.engine_resource_snapshot,
+            body.client_batch_id,
         )
         .await?;
-    let import_id = accepted
-        .id
-        .parse::<i32>()
-        .map_err(|_| ApiError::internal("模型导入 ID 无效"))?;
-    tokio::spawn(async move {
-        let _ = service.process(&user, import_id).await;
-    });
     Ok((
         axum::http::StatusCode::ACCEPTED,
-        Json(json!({"ok":true,"modelImport":accepted})),
+        Json(json!({"ok":true,"uploadBatch":accepted})),
     ))
 }
 

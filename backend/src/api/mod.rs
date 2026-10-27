@@ -7,11 +7,11 @@ mod datasets;
 mod events;
 mod examples;
 mod model_dataframes;
-mod model_imports;
 mod runs;
 mod scripts;
 mod sessions;
 mod storage;
+mod uploads;
 mod workspaces;
 
 use axum::Router;
@@ -19,7 +19,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, patch, post};
+use axum::routing::{get, patch, post, put};
 
 use crate::adapters::AdapterError;
 use crate::application::AnalysisError;
@@ -34,6 +34,7 @@ use crate::application::ModelDataFrameReadError;
 use crate::application::ModelImportError;
 use crate::application::RunError;
 use crate::application::ScriptError;
+use crate::application::UploadBatchError;
 use crate::application::VersionError;
 use crate::db::repositories::RepoError;
 
@@ -183,6 +184,37 @@ impl From<ModelImportError> for ApiError {
     }
 }
 
+impl From<UploadBatchError> for ApiError {
+    fn from(error: UploadBatchError) -> Self {
+        let status = match error.code() {
+            "not_found" => StatusCode::NOT_FOUND,
+            "idempotency_conflict" | "upload_batch_expired" => StatusCode::CONFLICT,
+            "upload_file_too_large"
+            | "upload_batch_too_large"
+            | "archive_limits_exceeded"
+            | "storage_quota_exceeded" => StatusCode::PAYLOAD_TOO_LARGE,
+            _ => StatusCode::UNPROCESSABLE_ENTITY,
+        };
+        let code = match error.code() {
+            "not_found" => "not_found",
+            "idempotency_conflict" => "idempotency_conflict",
+            "upload_batch_expired" => "upload_batch_expired",
+            "upload_file_too_large" => "upload_file_too_large",
+            "upload_batch_too_large" => "upload_batch_too_large",
+            "archive_limits_exceeded" => "archive_limits_exceeded",
+            "storage_quota_exceeded" => "storage_quota_exceeded",
+            "excel_formula_value_missing" => "excel_formula_value_missing",
+            _ => "upload_invalid",
+        };
+        Self {
+            status,
+            message: error.to_string(),
+            code,
+            details: None,
+        }
+    }
+}
+
 impl From<ScriptError> for ApiError {
     fn from(error: ScriptError) -> Self {
         match error {
@@ -271,6 +303,7 @@ impl From<CaseImportError> for ApiError {
                 details: None,
             },
             CaseImportError::ModelImport(error) => error.into(),
+            CaseImportError::Upload(error) => error.into(),
         }
     }
 }
@@ -507,18 +540,28 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
         ["GET", "POST"]
     );
     add_route!(
-        "/api/sessions/{id}/model-imports",
-        post(model_imports::create).layer(DefaultBodyLimit::disable()),
+        "/api/sessions/{id}/upload-batches",
+        post(uploads::create).layer(DefaultBodyLimit::disable()),
         ["POST"]
     );
     add_route!(
-        "/api/model-imports/{id}",
-        get(model_imports::get).delete(model_imports::discard),
+        "/api/upload-batches/{id}",
+        get(uploads::get).delete(uploads::discard),
         ["GET", "DELETE"]
     );
     add_route!(
-        "/api/model-imports/{id}/resolve",
-        post(model_imports::resolve),
+        "/api/upload-batches/{id}/parse-settings",
+        put(uploads::parse_settings),
+        ["PUT"]
+    );
+    add_route!(
+        "/api/upload-batches/{id}/candidates",
+        put(uploads::candidates),
+        ["PUT"]
+    );
+    add_route!(
+        "/api/data-resources/{id}/replacement-batches",
+        post(uploads::replacement).layer(DefaultBodyLimit::disable()),
         ["POST"]
     );
     add_route!("/api/sessions/{id}/events", get(events::stream), ["GET"]);

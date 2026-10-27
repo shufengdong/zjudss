@@ -9,7 +9,7 @@ use parquet::file::properties::WriterProperties;
 
 use super::{
     AdapterError, EngineRunOutput, ImportSpec, ImportedModel, InspectOutcome, InspectSpec,
-    OutputLimits, RunMode, RunSpec, STATIC_MODEL_TABLES, SimEngine, validate_outputs,
+    OutputLimits, RunMode, RunSpec, STATIC_IMPORT_OUTPUTS, SimEngine, validate_outputs,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -25,7 +25,7 @@ impl StubEngine {
                 error.to_string(),
             )
         })?;
-        for (index, table) in STATIC_MODEL_TABLES.into_iter().enumerate() {
+        for (index, table) in STATIC_IMPORT_OUTPUTS.into_iter().enumerate() {
             let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Utf8, false)]));
             let values = if index == 0 {
                 StringArray::from(vec!["stub"])

@@ -1,8 +1,9 @@
+use std::io::Read;
 use std::path::Path;
 
 use arrow_array::{ArrayRef, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
-use calamine::{Data, Reader, open_workbook_auto};
+use calamine::{Data, Reader, SheetType, SheetVisible, open_workbook_auto};
 use parquet::arrow::ArrowWriter;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::properties::WriterProperties;
@@ -62,6 +63,67 @@ pub struct NormalizedSheet {
     pub schema: TableSchema,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExcelSafetyInspection {
+    pub visible_nonempty_sheets: Vec<String>,
+    pub executed_formulas: bool,
+    pub executed_macros: bool,
+    pub followed_external_links: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormulaCell {
+    pub position: String,
+    pub required: bool,
+    pub cached: Option<String>,
+}
+
+pub fn validate_formula_cache(cells: &[FormulaCell]) -> Result<(), TabularError> {
+    let missing = cells
+        .iter()
+        .filter(|cell| cell.required && cell.cached.is_none())
+        .map(|cell| cell.position.clone())
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(TabularError::new(
+            "excel_formula_value_missing",
+            format!("必填公式缺少缓存值: {}", missing.join(", ")),
+        ))
+    }
+}
+
+pub fn inspect_excel_safely(path: &Path) -> Result<ExcelSafetyInspection, TabularError> {
+    validate_xlsx_formula_caches(path)?;
+    let mut workbook = open_workbook_auto(path)
+        .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+    let visible = workbook
+        .sheets_metadata()
+        .iter()
+        .filter(|sheet| sheet.visible == SheetVisible::Visible && sheet.typ == SheetType::WorkSheet)
+        .map(|sheet| sheet.name.clone())
+        .collect::<Vec<_>>();
+    let mut visible_nonempty_sheets = Vec::new();
+    for name in visible {
+        let range = workbook
+            .worksheet_range(&name)
+            .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+        if range
+            .rows()
+            .any(|row| row.iter().any(|cell| !matches!(cell, Data::Empty)))
+        {
+            visible_nonempty_sheets.push(name);
+        }
+    }
+    Ok(ExcelSafetyInspection {
+        visible_nonempty_sheets,
+        executed_formulas: false,
+        executed_macros: false,
+        followed_external_links: false,
+    })
+}
+
 impl TabularInspector {
     pub fn inspect(path: &Path, format: TabularFormat) -> Result<Vec<TableSchema>, TabularError> {
         match format {
@@ -76,12 +138,19 @@ pub fn normalize_excel_to_parquet(
     source: &Path,
     output_dir: &Path,
 ) -> Result<Vec<NormalizedSheet>, TabularError> {
+    validate_xlsx_formula_caches(source)?;
     std::fs::create_dir_all(output_dir)
         .map_err(|error| TabularError::new("tabular_normalize_failed", error.to_string()))?;
     let mut workbook = open_workbook_auto(source)
         .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
     let mut outputs = Vec::new();
-    for (sheet_index, sheet_name) in workbook.sheet_names().to_vec().into_iter().enumerate() {
+    let visible = workbook
+        .sheets_metadata()
+        .iter()
+        .filter(|sheet| sheet.visible == SheetVisible::Visible && sheet.typ == SheetType::WorkSheet)
+        .map(|sheet| sheet.name.clone())
+        .collect::<Vec<_>>();
+    for (sheet_index, sheet_name) in visible.into_iter().enumerate() {
         let range = workbook
             .worksheet_range(&sheet_name)
             .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
@@ -158,21 +227,82 @@ pub fn normalize_excel_to_parquet(
     Ok(outputs)
 }
 
+fn validate_xlsx_formula_caches(path: &Path) -> Result<(), TabularError> {
+    let signature = std::fs::read(path)
+        .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+    if !signature.starts_with(b"PK") {
+        return Ok(());
+    }
+    let file = std::fs::File::open(path)
+        .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+    let mut missing = Vec::new();
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+        let entry_name = entry
+            .name()
+            .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?
+            .into_owned();
+        if !entry_name.starts_with("xl/worksheets/") || !entry_name.ends_with(".xml") {
+            continue;
+        }
+        let sheet = entry_name;
+        let mut xml = String::new();
+        entry
+            .read_to_string(&mut xml)
+            .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
+        for cell in xml.split("</c>") {
+            if cell.contains("<f") && !cell.contains("<v>") {
+                let position = cell
+                    .rsplit("<c ")
+                    .next()
+                    .and_then(|start| start.split("r=\"").nth(1))
+                    .and_then(|rest| rest.split('"').next())
+                    .unwrap_or("?");
+                missing.push(format!("{sheet}:{position}"));
+            }
+        }
+    }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(TabularError::new(
+            "excel_formula_value_missing",
+            format!("公式缺少缓存值: {}", missing.join(", ")),
+        ))
+    }
+}
+
 /// 把 CSV 确定性地规范化为 UTF-8 Parquet，供 tensoreval 命名输入使用。
 pub fn normalize_csv_to_parquet(source: &Path, output: &Path) -> Result<TableSchema, TabularError> {
+    normalize_csv_with_settings(source, output, b',', 0)
+}
+
+pub fn normalize_csv_with_settings(
+    source: &Path,
+    output: &Path,
+    delimiter: u8,
+    header_row: u32,
+) -> Result<TableSchema, TabularError> {
     let mut reader = csv::ReaderBuilder::new()
+        .delimiter(delimiter)
         .flexible(true)
+        .has_headers(false)
         .from_path(source)
         .map_err(|e| TabularError::new("tabular_read_failed", e.to_string()))?;
-    let headers = reader
-        .headers()
+    let mut records = reader.records();
+    let headers = records
+        .nth(header_row as usize)
+        .transpose()
         .map_err(|e| TabularError::new("tabular_header_invalid", e.to_string()))?
-        .clone();
+        .ok_or_else(|| TabularError::new("tabular_header_invalid", "表头行超出文件范围"))?;
     if headers.is_empty() {
         return Err(TabularError::new("tabular_empty", "CSV 没有列"));
     }
-    let rows = reader
-        .records()
+    let rows = records
         .map(|r| r.map(|r| r.iter().map(str::to_string).collect::<Vec<_>>()))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| TabularError::new("tabular_read_failed", e.to_string()))?;
@@ -264,7 +394,12 @@ fn inspect_csv(path: &Path) -> Result<Vec<TableSchema>, TabularError> {
 fn inspect_excel(path: &Path) -> Result<Vec<TableSchema>, TabularError> {
     let mut workbook = open_workbook_auto(path)
         .map_err(|error| TabularError::new("tabular_read_failed", error.to_string()))?;
-    let names = workbook.sheet_names().to_vec();
+    let names = workbook
+        .sheets_metadata()
+        .iter()
+        .filter(|sheet| sheet.visible == SheetVisible::Visible && sheet.typ == SheetType::WorkSheet)
+        .map(|sheet| sheet.name.clone())
+        .collect::<Vec<_>>();
     let mut tables = Vec::new();
     for name in names {
         let range = workbook

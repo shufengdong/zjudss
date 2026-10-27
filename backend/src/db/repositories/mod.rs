@@ -10,6 +10,7 @@ mod run;
 mod script;
 mod session;
 mod storage_scope;
+mod upload;
 mod user;
 mod version;
 
@@ -28,6 +29,10 @@ pub use run::{
 pub use script::ScriptRepo;
 pub use session::SessionRepo;
 pub use storage_scope::{StorageLimits, StorageScopeRepo, StorageUsage};
+pub use upload::{
+    NewUploadCandidate, NewUploadFile, RecoverableUpload, SettledUpload, UploadBatchRecordSet,
+    UploadRepo,
+};
 pub use user::UserRepo;
 pub use version::{
     DeleteResult, DeletionImpact, DraftDataFrameReadRow, DraftSnapshot, PublishCommand,

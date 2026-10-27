@@ -12,7 +12,7 @@ use parquet::file::properties::WriterProperties;
 
 use serde::Serialize;
 
-use super::{AdapterError, EXECUTION_IMPORT_TABLES, ErrorCategory, STATIC_MODEL_TABLES};
+use super::{AdapterError, EXECUTION_IMPORT_TABLES, ErrorCategory, STATIC_IMPORT_OUTPUTS};
 
 pub const ENGINE_CONTRACT_VERSION: &str = "tensoreval-parquet-v3";
 
@@ -207,7 +207,7 @@ fn model_import_smoke(binary: &Path, function: &str) -> bool {
         let outputs = if function == "import_dss_execution" {
             EXECUTION_IMPORT_TABLES.as_slice()
         } else {
-            STATIC_MODEL_TABLES.as_slice()
+            STATIC_IMPORT_OUTPUTS.as_slice()
         };
         std::fs::write(
             root.join("import.rss"),

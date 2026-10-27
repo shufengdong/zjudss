@@ -2,14 +2,13 @@ mod common;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use diesel::prelude::*;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use common::TestApp;
 
 #[tokio::test]
-async fn applying_a_case_uses_model_import_and_changes_only_the_mutable_draft() {
+async fn applying_a_case_creates_one_recoverable_upload_batch_without_publishing() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
     let cookie = app.login_cookie("alice@example.com").await;
@@ -26,132 +25,31 @@ async fn applying_a_case_uses_model_import_and_changes_only_the_mutable_draft() 
         .iter()
         .find(|example| zjudss::application::CaseImportService::is_modelizable(example))
         .unwrap();
-    let manifest_source = example
-        .files
-        .iter()
-        .find(|file| file.role == "manifest")
-        .unwrap();
-    let bundle_root = app
-        .state
-        .engine_snapshot
-        .engine_root
-        .join(&manifest_source.source_path)
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    std::fs::write(bundle_root.join("undeclared.txt"), b"must not be imported").unwrap();
-    let expected_summary = json!({
-        "exampleId": example.id,
-        "title": example.title,
-        "categoryPath": example.category_path,
-        "bundlePath": example.bundle_path,
-        "engineResourceSnapshot": app.state.engine_snapshot.id,
-        "manifestSchemaVersion": example.manifest.as_ref().unwrap().schema_version,
-        "sourceTreeHash": example.manifest.as_ref().unwrap().source.tree_sha256,
-        "caseTreeHash": example.tree_hash,
-        "fileCount": example.files.len(),
-    });
     std::fs::remove_dir_all(&app.live_engine_root).unwrap();
-    let response = app.router.clone().oneshot(
-        Request::post(format!("/api/sessions/{}/draft/example", session.id))
-            .header("cookie", &cookie).header("content-type", "application/json")
-            .body(Body::from(json!({
-                "exampleId":example.id,"engineResourceSnapshot":app.state.engine_snapshot.id,
-                "clientImportId":"apply-case-1"
-            }).to_string())).unwrap()
-    ).await.unwrap();
+    let response=app.router.clone().oneshot(Request::post(format!("/api/sessions/{}/draft/example",session.id))
+        .header("cookie",&cookie).header("content-type","application/json")
+        .body(Body::from(json!({"exampleId":example.id,"engineResourceSnapshot":app.state.engine_snapshot.id,"clientBatchId":"apply-case-1"}).to_string())).unwrap()).await.unwrap();
     assert_eq!(response.status(), StatusCode::ACCEPTED);
-    let accepted: Value =
+    let body: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
             .unwrap();
-    assert_eq!(accepted["modelImport"]["sourceKind"], "case");
-    let accepted_files = accepted["modelImport"]["candidates"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|candidate| candidate["displayName"].as_str().unwrap())
-        .collect::<Vec<_>>();
+    let batch = &body["uploadBatch"];
+    assert_eq!(batch["sourceKind"], "case");
+    assert_eq!(batch["status"], "ready_to_confirm");
+    let candidates = batch["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 21);
     assert_eq!(
-        accepted_files,
-        vec!["manifest.json", "dss/model.dss", "main.rss"]
+        candidates
+            .iter()
+            .filter(|value| value["purpose"] == "model_table")
+            .count(),
+        20
     );
-    let import_id = accepted["modelImport"]["id"].as_str().unwrap();
-
-    #[derive(QueryableByName)]
-    struct SourceSummary {
-        #[diesel(sql_type = diesel::sql_types::Text)]
-        source_summary_json: String,
-    }
-    let mut conn = app.pool.get().unwrap();
-    let stored = diesel::sql_query("SELECT source_summary_json FROM model_imports WHERE id=?1")
-        .bind::<diesel::sql_types::Integer, _>(import_id.parse::<i32>().unwrap())
-        .get_result::<SourceSummary>(&mut conn)
-        .unwrap();
-    assert_eq!(
-        serde_json::from_str::<Value>(&stored.source_summary_json).unwrap(),
-        expected_summary
-    );
-    drop(conn);
-
-    let ready = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            let response = app
-                .router
-                .clone()
-                .oneshot(
-                    Request::get(format!("/api/model-imports/{import_id}"))
-                        .header("cookie", &cookie)
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            let value: Value =
-                serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
-                    .unwrap();
-            if matches!(
-                value["modelImport"]["status"].as_str(),
-                Some("ready_to_apply" | "awaiting_resolution" | "failed")
-            ) {
-                break value;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    assert_eq!(ready["modelImport"]["status"], "ready_to_apply", "{ready}");
-    let candidate_ids = ready["modelImport"]["candidates"]
-        .as_array()
-        .unwrap()
+    let para = candidates
         .iter()
-        .map(|candidate| candidate["id"].as_str().unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(candidate_ids.len(), 21);
-    let response = app
-        .router
-        .clone()
-        .oneshot(
-            Request::post(format!("/api/model-imports/{import_id}/resolve"))
-                .header("cookie", &cookie)
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({"candidateIds":candidate_ids}).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
+        .find(|value| value["proposedAlias"] == "para")
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-
-    let workspace = app
-        .state
-        .version_service
-        .workspace(&user, session.id)
-        .await
-        .unwrap();
-    assert!(workspace.active.is_none());
-    assert_eq!(workspace.draft.unwrap().dataframes.len(), 21);
+    assert_eq!(para["purpose"], "data_resource");
     assert!(
         app.state
             .version_service
@@ -160,173 +58,65 @@ async fn applying_a_case_uses_model_import_and_changes_only_the_mutable_draft() 
             .unwrap()
             .is_empty()
     );
-    #[derive(QueryableByName)]
-    struct Count {
-        #[diesel(sql_type=diesel::sql_types::BigInt)]
-        count: i64,
+}
+
+async fn rejected_case_source(mutate: bool) {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let cookie = app.login_cookie("alice@example.com").await;
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "bad case", 1)
+        .await
+        .unwrap();
+    let example = app
+        .state
+        .engine_snapshot
+        .examples
+        .iter()
+        .find(|example| zjudss::application::CaseImportService::is_modelizable(example))
+        .unwrap();
+    let source = example
+        .files
+        .iter()
+        .find(|file| file.role == "main-rss")
+        .unwrap();
+    let path = app
+        .state
+        .engine_snapshot
+        .engine_root
+        .join(&source.source_path);
+    if mutate {
+        std::fs::write(path, b"changed after publication\n").unwrap();
+    } else {
+        std::fs::remove_file(path).unwrap();
     }
-    let mut conn = app.pool.get().unwrap();
-    let count = diesel::sql_query("SELECT count(*) count FROM simulation_runs WHERE session_id=?1")
-        .bind::<diesel::sql_types::Integer, _>(session.id)
-        .get_result::<Count>(&mut conn)
-        .unwrap()
-        .count;
+    let response=app.router.clone().oneshot(Request::post(format!("/api/sessions/{}/draft/example",session.id))
+        .header("cookie",&cookie).header("content-type","application/json")
+        .body(Body::from(json!({"exampleId":example.id,"engineResourceSnapshot":app.state.engine_snapshot.id,"clientBatchId":"bad-case"}).to_string())).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let error: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert_eq!(error["code"], "case_not_modelizable");
+    let count = app
+        .state
+        .upload_batch_service
+        .count_by_client_id(&user, session.id, "bad-case")
+        .await
+        .unwrap();
     assert_eq!(count, 0);
 }
 
 #[tokio::test]
 async fn applying_a_case_rejects_post_publication_mutation_atomically() {
-    let app = TestApp::spawn().await;
-    let user = common::test_user("alice@example.com");
-    let cookie = app.login_cookie("alice@example.com").await;
-    let session = app
-        .state
-        .session_repo
-        .create(&user.id, "mutated case", 1)
-        .await
-        .unwrap();
-    let example = app
-        .state
-        .engine_snapshot
-        .examples
-        .iter()
-        .find(|example| zjudss::application::CaseImportService::is_modelizable(example))
-        .unwrap();
-    let changed = example
-        .files
-        .iter()
-        .find(|file| file.role == "main-rss")
-        .unwrap();
-    std::fs::write(
-        app.state
-            .engine_snapshot
-            .engine_root
-            .join(&changed.source_path),
-        b"changed after publication\n",
-    )
-    .unwrap();
-
-    let response = app
-        .router
-        .clone()
-        .oneshot(
-            Request::post(format!("/api/sessions/{}/draft/example", session.id))
-                .header("cookie", &cookie)
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "exampleId": example.id,
-                        "engineResourceSnapshot": app.state.engine_snapshot.id,
-                        "clientImportId": "mutated-case"
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    let error: Value =
-        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
-            .unwrap();
-    assert_eq!(error["code"], "case_not_modelizable");
-
-    #[derive(QueryableByName)]
-    struct Count {
-        #[diesel(sql_type = diesel::sql_types::BigInt)]
-        count: i64,
-    }
-    let mut conn = app.pool.get().unwrap();
-    let count = diesel::sql_query(
-        "SELECT count(*) count FROM model_imports WHERE client_import_id='mutated-case'",
-    )
-    .get_result::<Count>(&mut conn)
-    .unwrap()
-    .count;
-    assert_eq!(count, 0);
-    assert_eq!(
-        std::fs::read_dir(app.state.data_dir.join("staging"))
-            .unwrap()
-            .count(),
-        0
-    );
+    rejected_case_source(true).await;
 }
 
 #[tokio::test]
 async fn applying_a_case_rejects_missing_published_file_atomically() {
-    let app = TestApp::spawn().await;
-    let user = common::test_user("alice@example.com");
-    let cookie = app.login_cookie("alice@example.com").await;
-    let session = app
-        .state
-        .session_repo
-        .create(&user.id, "missing case source", 1)
-        .await
-        .unwrap();
-    let example = app
-        .state
-        .engine_snapshot
-        .examples
-        .iter()
-        .find(|example| zjudss::application::CaseImportService::is_modelizable(example))
-        .unwrap();
-    let missing = example
-        .files
-        .iter()
-        .find(|file| file.role == "main-rss")
-        .unwrap();
-    std::fs::remove_file(
-        app.state
-            .engine_snapshot
-            .engine_root
-            .join(&missing.source_path),
-    )
-    .unwrap();
-
-    let response = app
-        .router
-        .clone()
-        .oneshot(
-            Request::post(format!("/api/sessions/{}/draft/example", session.id))
-                .header("cookie", &cookie)
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "exampleId": example.id,
-                        "engineResourceSnapshot": app.state.engine_snapshot.id,
-                        "clientImportId": "missing-case-source"
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    let error: Value =
-        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
-            .unwrap();
-    assert_eq!(error["code"], "case_not_modelizable");
-
-    #[derive(QueryableByName)]
-    struct Count {
-        #[diesel(sql_type = diesel::sql_types::BigInt)]
-        count: i64,
-    }
-    let mut conn = app.pool.get().unwrap();
-    let count = diesel::sql_query(
-        "SELECT count(*) count FROM model_imports WHERE client_import_id='missing-case-source'",
-    )
-    .get_result::<Count>(&mut conn)
-    .unwrap()
-    .count;
-    assert_eq!(count, 0);
-    assert_eq!(
-        std::fs::read_dir(app.state.data_dir.join("staging"))
-            .unwrap()
-            .count(),
-        0
-    );
+    rejected_case_source(false).await;
 }
 
 #[tokio::test]

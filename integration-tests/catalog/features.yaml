@@ -27,7 +27,7 @@
       name: invalid_credentials_and_missing_auth_have_stable_distinct_errors
     - runner: rust
       file: backend/tests/model_imports.rs
-      name: upload_is_accepted_idempotent_and_persists_resolution_state
+      name: upload_batch_is_idempotent_by_source_and_requires_purpose
     - runner: rust
       file: backend/tests/simulation_runs.rs
       name: only_explicit_click_route_creates_idempotent_frozen_runs_and_results
@@ -234,10 +234,13 @@
 
 - id: MODEL-IMPORT-001
   source: docs/integration-testing-design.md#coverage-matrix
-  title: Model imports create resolvable DataFrame drafts and can be discarded
+  title: Recoverable uploads parse DataFrames and require explicit purpose before publication
   layers: [api, application, adapter, browser]
   lanes: [pr]
   tests:
+    - runner: playwright
+      file: integration-tests/e2e/upload-batches-v4.spec.ts
+      name: unified upload routes preserve recoverable decisions and owned replacement context
     - runner: playwright
       file: integration-tests/e2e/auth-isolation.spec.ts
       name: two users cannot enumerate or guess each other session, message, SSE, run, or dataset resources
@@ -248,27 +251,52 @@
       file: integration-tests/e2e/bundle-examples.spec.ts
       name: single-Solve bundles become drafts while repeated Solve and specialist lifecycles fail without mutation
     - runner: rust
-      file: backend/tests/model_import_adapter.rs
-      name: include_graph_allows_parent_segments_that_stay_inside_source_tree
+      file: backend/tests/upload_batches.rs
+      name: static_import_splits_twenty_model_tables_from_para_resource
     - runner: rust
-      file: backend/tests/model_import_adapter.rs
-      name: include_graph_rejects_parent_segments_that_escape_source_tree
+      file: backend/tests/upload_batches.rs
+      name: catalog_model_schema_outside_network20_creates_model_candidate
     - runner: rust
-      file: backend/tests/model_import_adapter.rs
-      name: include_graph_rejects_absolute_dependency_paths
+      file: backend/tests/upload_batches.rs
+      name: ambiguous_parse_requires_settings
     - runner: rust
-      file: backend/tests/model_import_adapter.rs
-      name: include_graph_reports_missing_normalized_dependency
+      file: backend/tests/upload_batches.rs
+      name: mixed_candidates_require_explicit_purpose
     - runner: rust
-      file: backend/tests/process_engine_v4.rs
-      name: process_engine_import_uses_input_root_wrapper_for_nested_entry
-  assertions: [imports persist candidates, supported lifecycles become drafts, unsupported lifecycles do not mutate, safe normalized DSS includes stay within the private input tree, unsafe or missing DSS includes remain structured failures, discard releases resources]
-  fixtures: [DSS source, single-Solve bundle, unsupported lifecycle bundles, malicious archives]
+      file: backend/tests/upload_batches.rs
+      name: staging_reservation_survives_restart_and_expires_once
+    - runner: rust
+      file: backend/tests/quota_concurrency.rs
+      name: concurrent_upload_reservations_never_overbook_the_scope
+    - runner: rust
+      file: backend/tests/model_imports.rs
+      name: upload_batch_is_idempotent_by_source_and_requires_purpose
+    - runner: rust
+      file: backend/tests/model_imports.rs
+      name: upload_batches_are_user_scoped_and_discard_is_idempotent
+    - runner: rust
+      file: backend/tests/model_imports.rs
+      name: replacement_batch_uses_the_owned_resource_session
+  assertions: [uploads persist recoverable candidates without publishing, static imports split twenty model tables from para Data, model inference follows the current catalog and actual headers, ambiguous parsing and purpose require user decisions, discard expiry and failure release reservations idempotently]
+  fixtures: [DSS source, case bundle, CSV, Excel, Parquet, malicious archives]
   contracts:
-    - "route:POST /api/sessions/{id}/model-imports"
-    - "route:GET /api/model-imports/{id}"
-    - "route:DELETE /api/model-imports/{id}"
-    - "route:POST /api/model-imports/{id}/resolve"
+    - "route:POST /api/sessions/{id}/upload-batches"
+    - "route:GET /api/upload-batches/{id}"
+    - "route:PUT /api/upload-batches/{id}/parse-settings"
+    - "route:PUT /api/upload-batches/{id}/candidates"
+    - "route:DELETE /api/upload-batches/{id}"
+    - "route:POST /api/data-resources/{id}/replacement-batches"
+    - "error:archive_limits_exceeded"
+    - "error:excel_formula_value_missing"
+    - "error:upload_batch_expired"
+    - "error:upload_batch_too_large"
+    - "error:upload_candidate_invalid"
+    - "error:upload_file_too_large"
+    - "error:upload_format_unsupported"
+    - "error:upload_invalid"
+    - "error:upload_parse_settings_invalid"
+    - "error:upload_staging_missing"
+    - "error:upload_state_invalid"
 
 - id: WORKSPACE-001
   source: docs/integration-testing-design.md#coverage-matrix
@@ -436,7 +464,7 @@
 
 - id: EXAMPLE-001
   source: docs/integration-testing-design.md#coverage-matrix
-  title: Applying a case imports it as a mutable draft
+  title: Applying a case creates a recoverable upload batch without publishing
   layers: [api, application, agent, browser]
   lanes: [pr]
   tests:
@@ -451,11 +479,11 @@
       name: case_detail_exposes_normalized_manifest_without_source_paths
     - runner: rust
       file: backend/tests/case_import.rs
-      name: applying_a_case_uses_model_import_and_changes_only_the_mutable_draft
+      name: applying_a_case_creates_one_recoverable_upload_batch_without_publishing
     - runner: rust
       file: backend/tests/workspace_tools.rs
       name: example_tools_return_manifest_metadata_and_never_physical_paths
-  assertions: [rssbundle directories and invalid leaves remain visible, manifest metadata and relative paths are readable without physical paths, only declared files enter import confirmation, apply creates a draft without publishing or running]
+  assertions: [rssbundle directories and invalid leaves remain visible, manifest metadata and relative paths are readable without physical paths, only declared files enter upload confirmation, apply creates a recoverable 20 plus para candidate batch without publishing or running]
   fixtures: [nested rssbundle categories, valid manifest-backed example, invalid manifest sibling, undeclared bundle file]
   contracts:
     - "route:GET /api/examples"

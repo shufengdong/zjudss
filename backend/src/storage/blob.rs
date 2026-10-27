@@ -110,6 +110,22 @@ impl Drop for StagingWriter {
 }
 
 impl StagedArtifact {
+    pub(crate) fn persist(mut self, destination: &Path) -> Result<PathBuf, StorageError> {
+        let Some(staging_path) = self.path.take() else {
+            return Err(StorageError::new(
+                "artifact_already_published",
+                "暂存文件已经发布",
+            ));
+        };
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| StorageError::new("artifact_publish_failed", error.to_string()))?;
+        }
+        std::fs::rename(&staging_path, destination)
+            .map_err(|error| StorageError::new("artifact_publish_failed", error.to_string()))?;
+        Ok(destination.to_path_buf())
+    }
+
     pub(crate) fn publish(&mut self, destination: &Path) -> Result<(), StorageError> {
         let Some(staging_path) = self.path.take() else {
             return Err(StorageError::new(

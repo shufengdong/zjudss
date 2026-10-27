@@ -1,6 +1,6 @@
-# V3 HTTP 与 SSE API
+# V4 HTTP 与 SSE API（实施中）
 
-> 本文描述当前 V3 公共接口。V4 将增加独立数据资源、受管研究、运行删除和运行到脚本消息定位接口，已确认的行为边界见
+> 本文跟随已实现的 V4 公共接口逐任务更新。Task 4 已替换上传协议；独立数据资源发布、受管研究、运行删除和运行到脚本消息定位接口仍待后续任务实现。已确认的行为边界见
 > [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)；
 > 路由和 DTO 将在实施方案中确定，当前接口表不提前声明未实现能力。
 
@@ -22,15 +22,17 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 | GET | `/api/storage-usage` | 当前用户配额 |
 | GET | `/api/examples` | rssbundle 案例目录树与搜索 |
 | GET | `/api/examples/{id}` | 规范 manifest 案例详情 |
-| POST | `/api/sessions/{id}/draft/example` | 案例进入模型导入 |
+| POST | `/api/sessions/{id}/draft/example` | 案例进入统一上传候选批次 |
 | GET/POST | `/api/sessions` | 列表/新建会话 |
 | PATCH/DELETE | `/api/sessions/{id}` | 改名/删除整个会话 |
 | GET/POST | `/api/sessions/{id}/messages` | 分页消息/发送消息；POST 返回权威 `sessionTitle` 供界面立即同步自动标题 |
 | GET | `/api/sessions/{id}/events` | SSE replay + live |
 | GET | `/api/history/search` | 当前用户历史检索 |
-| POST | `/api/sessions/{id}/model-imports` | 上传模型来源 |
-| GET/DELETE | `/api/model-imports/{id}` | 读取/放弃导入 |
-| POST | `/api/model-imports/{id}/resolve` | 选择候选并整表合并草稿 |
+| POST | `/api/sessions/{id}/upload-batches` | 上传 DSS/ZIP/CSV/Excel/Parquet 并建立可恢复候选批次 |
+| GET/DELETE | `/api/upload-batches/{id}` | 读取/放弃上传批次 |
+| PUT | `/api/upload-batches/{id}/parse-settings` | 提交受控解析设置并重新解析 |
+| PUT | `/api/upload-batches/{id}/candidates` | 确认每个候选的模型表/数据资源/跳过用途 |
+| POST | `/api/data-resources/{id}/replacement-batches` | 为已有资源建立替换候选批次 |
 | GET/POST | `/api/sessions/{id}/scripts` | 列表/上传单个 `.rss` |
 | POST | `/api/sessions/{id}/scripts/text` | 以文本创建脚本 |
 | GET | `/api/scripts/{id}` | 懒加载脚本全文 |
@@ -56,11 +58,15 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 | GET | `/api/dataset-views/{id}/data` | 物化视图数据 |
 | GET | `/api/run-comparisons/{id}` | 运行比较及派生结果 |
 
-## Model import and draft
+## Upload batches and draft
 
-模型上传字段为 `clientImportId`、可选 `expectedDraftId/expectedDraftRevision`、`relativePaths`，以及一个或多个
-`file.<clientFileId>`。resolve 提交 `candidateIds` 与同一 expected draft。状态为
-`accepted|processing|awaiting_resolution|ready_to_apply|applied|failed|discarded`。只有 resolve 最终事务修改草稿。
+上传字段为 `clientBatchId`、可选 `relativePaths`，以及一个或多个 `file.<clientFileId>`。批次状态为
+`processing|awaiting_parse_settings|awaiting_purpose|ready_to_confirm|partially_confirmed|confirmed|failed|discarded|expired`。
+Task 4 只解析并保存候选，不修改草稿或发布数据资源；确认发布接口由 Task 5 和真实双发布事务一同加入。
+CSV/Parquet 每文件一个候选；Excel 只读取可见非空 worksheet 的缓存值，不执行公式、宏或外部链接。候选用途只有
+`model_table|data_resource|skip`。静态 DSS/案例固定拆成 20 个模型候选和一个普通 `para` 数据候选；其他模型
+schema 从当前 engine snapshot 的有效门面动态取得，并按实际列名推断。暂存默认保留 24 小时，配额以
+`used_bytes + reserved_bytes` 原子检查；失败、放弃和到期幂等释放。
 
 发布请求携带 `expectedDraftId`、`expectedDraftRevision`、`clientPublishId`。成功冻结版本、清空草稿并自动激活。
 激活历史版本只移动 active 指针；存在草稿时必须提交 `discardDraft=true` 以及准确 expected draft。
@@ -84,8 +90,8 @@ results、文件计数、验证状态与诊断。搜索匹配名称、bundle 路
 
 `GET /api/examples/{id}` 增加可空 `entryPath`/`manifest`、角色化 `files`、`treeHash` 和 diagnostics。manifest
 保留 schema、artifact、generator、PSA contract、study、source、文件声明与 inputs，不返回物理源路径或文件内容。
-应用请求仍提交 `{exampleId, engineResourceSnapshot, clientImportId, expectedDraftId?, expectedDraftRevision?}`；后端只从
-已发布快照读取 manifest 声明清单，全部哈希通过后进入模型导入确认。它不会直接生成版本或运行。
+应用请求提交 `{exampleId, engineResourceSnapshot, clientBatchId}`（过渡期也接受字段别名 `clientImportId`）；后端只从
+已发布快照读取 manifest 声明清单，全部哈希通过后进入统一上传用途确认。它不会直接生成草稿、版本或运行。
 
 Agent 的 `search_examples` 使用相同搜索谓词并返回最多 50 个规范摘要；`inspect_example` 只按稳定 ID 返回规范
 manifest、角色化文件哈希和验证诊断。两个工具只读，Agent 无权直接应用案例。

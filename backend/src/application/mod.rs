@@ -19,6 +19,7 @@ pub mod runs;
 pub mod scheduler;
 pub mod scripts;
 pub mod study_planning;
+pub mod uploads;
 pub mod versions;
 pub mod visualization;
 
@@ -35,7 +36,7 @@ use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
     AnalysisRepo, ArtifactRepo, ComparisonRepo, HistoryRepo, MessageRepo, ModelImportRepo,
-    ResultRepo, RunRepo, ScriptRepo, SessionRepo, StorageScopeRepo, VersionRepo,
+    ResultRepo, RunRepo, ScriptRepo, SessionRepo, StorageScopeRepo, UploadRepo, VersionRepo,
 };
 use crate::engine_resources::{EngineKnowledge, EngineResourceSnapshot};
 use crate::ingestion::ArchiveLimits;
@@ -74,6 +75,10 @@ pub use scripts::{
     ScriptSource, ScriptSummary,
 };
 pub use study_planning::StudyPlanningService;
+pub use uploads::{
+    CandidateDecision, CandidatePurpose, ChildPublishStatus, ParseSettings, UploadBatchError,
+    UploadBatchService, UploadBatchStatus, UploadBatchView, UploadCandidateView, UploadSourceKind,
+};
 pub use versions::{
     ActivateVersionRequest, PublishDraftRequest, PublishedVersion, VersionDeletionPreview,
     VersionError, VersionService, default_version_description, normalize_version_description,
@@ -91,6 +96,7 @@ pub struct AppState {
     pub artifact_service: ArtifactService,
     pub version_service: VersionService,
     pub model_import_service: ModelImportService,
+    pub upload_batch_service: UploadBatchService,
     pub model_dataframe_read_service: ModelDataFrameReadService,
     pub script_service: ScriptService,
     pub run_service: RunService,
@@ -346,6 +352,7 @@ impl AppState {
             engine_snapshot,
             2 * 1024 * 1024,
             8 * 1024 * 1024,
+            24,
             ArchiveLimits {
                 max_entries: 100,
                 max_expanded_bytes: 16 * 1024 * 1024,
@@ -435,6 +442,7 @@ impl AppState {
             engine_snapshot,
             50 * 1024 * 1024,
             500 * 1024 * 1024,
+            24,
             ArchiveLimits::default(),
         )
     }
@@ -452,6 +460,7 @@ impl AppState {
         engine_snapshot: Arc<EngineResourceSnapshot>,
         upload_single_file_limit_bytes: u64,
         upload_batch_limit_bytes: u64,
+        upload_staging_ttl_hours: u64,
         archive_limits: ArchiveLimits,
     ) -> Self {
         Self::new_with_resources_and_agent_factory(
@@ -466,6 +475,7 @@ impl AppState {
             engine_snapshot,
             upload_single_file_limit_bytes,
             upload_batch_limit_bytes,
+            upload_staging_ttl_hours,
             archive_limits,
         )
     }
@@ -483,6 +493,7 @@ impl AppState {
         engine_snapshot: Arc<EngineResourceSnapshot>,
         upload_single_file_limit_bytes: u64,
         upload_batch_limit_bytes: u64,
+        upload_staging_ttl_hours: u64,
         archive_limits: ArchiveLimits,
     ) -> Self {
         let session_repo = SessionRepo::new(pool.clone());
@@ -504,6 +515,15 @@ impl AppState {
             artifact_service.clone(),
             engine.clone(),
             data_dir.clone(),
+            archive_limits,
+        );
+        let upload_batch_service = UploadBatchService::new(
+            UploadRepo::new(pool.clone()),
+            artifact_service.clone(),
+            engine.clone(),
+            engine_snapshot.clone(),
+            data_dir.clone(),
+            upload_staging_ttl_hours,
             archive_limits,
         );
         let script_service = ScriptService::new(scripts::ScriptServiceDependencies {
@@ -529,6 +549,7 @@ impl AppState {
         let case_import_service = CaseImportService::new(
             engine_snapshot.clone(),
             model_import_service.clone(),
+            upload_batch_service.clone(),
             upload_single_file_limit_bytes,
         );
         let model_patch_service =
@@ -574,6 +595,7 @@ impl AppState {
             version_service,
             model_dataframe_read_service,
             model_import_service,
+            upload_batch_service,
             script_service,
             run_service,
             case_import_service,
@@ -631,6 +653,7 @@ impl AppState {
             engine_snapshot,
             50 * 1024 * 1024,
             500 * 1024 * 1024,
+            24,
             ArchiveLimits::default(),
         )
     }

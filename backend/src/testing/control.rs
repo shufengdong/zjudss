@@ -142,6 +142,7 @@ pub fn control_router(state: ControlState) -> Router {
         .route("/__e2e/barriers/{id}/release", post(release))
         .route("/__e2e/faults", post(inject_fault))
         .route("/__e2e/storage-limits", post(set_storage_limits))
+        .route("/__e2e/data-resources", post(seed_data_resource))
         .route("/__e2e/history-index/drop", post(drop_history_index))
         .route("/__e2e/history-index/rebuild", post(rebuild_history_index))
         .route("/__e2e/trace", get(trace))
@@ -255,6 +256,73 @@ async fn set_storage_limits(
         .await
         .map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
     Ok(Json(json!({"ok": true})))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SeedDataResourceRequest {
+    user_id: String,
+    session_id: i32,
+    upload_batch_id: i32,
+    resource_id: String,
+}
+
+async fn seed_data_resource(
+    State(state): State<ControlState>,
+    Json(request): Json<SeedDataResourceRequest>,
+) -> Result<(StatusCode, Json<Value>), StatusCode> {
+    let pool = state.pool.ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    tokio::task::spawn_blocking(move || {
+        use diesel::prelude::*;
+        let mut connection = pool.get().map_err(|_| ())?;
+        let owned = crate::db::schema::sessions::table
+            .filter(crate::db::schema::sessions::id.eq(request.session_id))
+            .filter(crate::db::schema::sessions::user_id.eq(request.user_id))
+            .select(crate::db::schema::sessions::id)
+            .first::<i32>(&mut connection)
+            .optional()
+            .map_err(|_| ())?;
+        if owned.is_none() {
+            return Err(());
+        }
+        let artifact_id = crate::db::schema::upload_candidates::table
+            .filter(crate::db::schema::upload_candidates::batch_id.eq(request.upload_batch_id))
+            .select(crate::db::schema::upload_candidates::normalized_artifact_id)
+            .first::<Option<i32>>(&mut connection)
+            .map_err(|_| ())?
+            .ok_or(())?;
+        diesel::insert_into(crate::db::schema::data_resources::table)
+            .values(crate::db::models::DataResourceRecord {
+                id: request.resource_id,
+                session_id: request.session_id,
+                display_name: "E2E resource".into(),
+                alias: "e2e_resource".into(),
+                normalized_alias: "e2e_resource".into(),
+                status: "live".into(),
+                declared_schema_ref: None,
+                source_kind: "upload".into(),
+                normalized_artifact_id: artifact_id,
+                source_artifact_id: None,
+                schema_json: "[]".into(),
+                schema_hash: "0".repeat(64),
+                row_count: 1,
+                source_batch_id: Some(request.upload_batch_id),
+                source_model_version_id: None,
+                replaced_by_resource_id: None,
+                lineage_json: "{}".into(),
+                created_at_ms: crate::application::now_ms(),
+                updated_at_ms: crate::application::now_ms(),
+                deleted_at_ms: None,
+                tombstone_json: None,
+            })
+            .execute(&mut connection)
+            .map_err(|_| ())?;
+        Ok::<_, ()>(())
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
+    Ok((StatusCode::CREATED, Json(json!({"ok":true}))))
 }
 
 async fn drop_history_index(State(state): State<ControlState>) -> Result<Json<Value>, StatusCode> {

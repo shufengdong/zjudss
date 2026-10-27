@@ -61,6 +61,13 @@ commit 在一个 immediate transaction 中检查配额、去重并增加引用�
 失败、放弃或过期会按仍待处理的子事务结算 staging reservation。版本、资源、运行和结果删除在元数据事务完成后
 幂等 release，并由 GC 清理零引用 blob；历史冻结输入通过 artifact 引用或墓碑继续可审计。
 
+`upload_batches` 以 `(session_id, client_batch_id)` 幂等，保存总状态、model/resource 两个子发布状态以及重新上传时
+受同会话所有权约束的 `replacement_resource_id`；
+`upload_files` 保存服务端私有暂存位置和来源 hash，公共 DTO 不返回路径；`upload_candidates` 保存 sheet、规范
+Parquet artifact、实际 schema/hash/行数、目录推断证据和用户用途决定。接收前在 immediate transaction 中增加
+`storage_scopes.reserved_bytes`，并发批次不能超卖。Task 4 的 `ready_to_confirm` 仍未发布任何模型或资源，Task 5
+将以同一批次执行两个可独立诊断的发布子事务。
+
 ## Search and recovery
 
 会话标题、消息、上传摘要、脚本和运行摘要写入 FTS5 trigram 外部内容表。索引损坏只让搜索返回 503，不影响

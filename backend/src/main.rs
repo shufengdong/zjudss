@@ -123,6 +123,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         engine_resources,
         runtime.upload_single_file_limit_bytes,
         runtime.upload_batch_limit_bytes,
+        runtime.upload_staging_ttl_hours,
         ArchiveLimits {
             max_entries: runtime.archive_max_entries,
             max_expanded_bytes: runtime.archive_max_expanded_bytes,
@@ -130,6 +131,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             max_file_bytes: runtime.upload_single_file_limit_bytes,
         },
     );
+    state.upload_batch_service.recover_startup().await?;
 
     let addr = runtime.bind_addr;
     let listener = tokio::net::TcpListener::bind(addr).await?;

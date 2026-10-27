@@ -10,12 +10,22 @@ fn production_router_and_manifest_share_one_declaration() {
         .map(|route| (route.method, route.path))
         .collect::<HashSet<_>>();
 
-    assert_eq!(routes.len(), 48);
-    assert_eq!(unique.len(), 48);
+    assert_eq!(routes.len(), 50);
+    assert_eq!(unique.len(), 50);
     assert!(unique.contains(&("GET", "/health")));
     assert!(unique.contains(&("POST", "/api/auth/login")));
     assert!(unique.contains(&("POST", "/api/auth/logout")));
-    assert!(unique.contains(&("POST", "/api/sessions/{id}/model-imports")));
+    assert!(unique.contains(&("POST", "/api/sessions/{id}/upload-batches")));
+    assert!(unique.contains(&("GET", "/api/upload-batches/{id}")));
+    assert!(unique.contains(&("PUT", "/api/upload-batches/{id}/parse-settings")));
+    assert!(unique.contains(&("PUT", "/api/upload-batches/{id}/candidates")));
+    assert!(unique.contains(&("DELETE", "/api/upload-batches/{id}")));
+    assert!(unique.contains(&("POST", "/api/data-resources/{id}/replacement-batches")));
+    assert!(
+        !unique
+            .iter()
+            .any(|(_, path)| path.contains("model-imports"))
+    );
     assert!(unique.contains(&("POST", "/api/sessions/{id}/scripts/text")));
     assert!(unique.contains(&("GET", "/api/run-comparisons/{id}")));
     for path in [
@@ -39,7 +49,11 @@ fn contract_manifest_contains_all_public_enums() {
     assert_eq!(manifest.version, "v4");
     assert_eq!(
         manifest.changes,
-        ["dynamic_study_facades", "bounded_engine_execution"]
+        [
+            "dynamic_study_facades",
+            "bounded_engine_execution",
+            "recoverable_upload_batches"
+        ]
     );
 
     assert_eq!(
@@ -89,6 +103,19 @@ fn contract_manifest_contains_all_public_enums() {
     assert!(manifest.stable_error_codes.contains(&"agent_queue_full"));
     assert!(manifest.stable_error_codes.contains(&"invalid_credentials"));
     assert!(manifest.stable_error_codes.contains(&"invalid_page"));
+    for code in [
+        "upload_file_too_large",
+        "upload_batch_too_large",
+        "archive_limits_exceeded",
+        "upload_batch_expired",
+        "upload_parse_settings_invalid",
+        "excel_formula_value_missing",
+    ] {
+        assert!(
+            manifest.stable_error_codes.contains(&code),
+            "missing {code}"
+        );
+    }
     assert!(
         manifest
             .stable_error_codes

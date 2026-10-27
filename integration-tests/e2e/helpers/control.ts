@@ -43,6 +43,10 @@ export class ControlClient {
     return this.call('/__e2e/storage-limits', { method: 'POST', body: JSON.stringify({ ...scope, ...limits }) })
   }
 
+  seedDataResource(input: { userId: string; sessionId: number; uploadBatchId: number; resourceId: string }) {
+    return this.call('/__e2e/data-resources', { method: 'POST', body: JSON.stringify(input) })
+  }
+
   dropHistoryIndex() {
     return this.call('/__e2e/history-index/drop', { method: 'POST' })
   }

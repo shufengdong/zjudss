@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 
 use super::{AdapterError, EngineDatasetOutput, ErrorCategory};
 
-pub const STATIC_MODEL_TABLES: [&str; 21] = [
+pub const MODEL_TABLE_OUTPUTS: [&str; 20] = [
     "bus",
     "line",
     "linecode",
@@ -27,8 +27,35 @@ pub const STATIC_MODEL_TABLES: [&str; 21] = [
     "control_profile",
     "xy_curve",
     "storage",
-    "para",
 ];
+
+pub const PARA_RESOURCE_OUTPUT: &str = "para";
+pub const STATIC_IMPORT_OUTPUTS: [&str; 21] = [
+    "bus",
+    "line",
+    "linecode",
+    "load",
+    "transformer",
+    "voltage_source",
+    "motor",
+    "transformer_winding",
+    "transformer_impedance",
+    "current_source",
+    "generator",
+    "ibr",
+    "switch",
+    "shunt",
+    "capacitor",
+    "reactor",
+    "spectrum",
+    "control_profile",
+    "xy_curve",
+    "storage",
+    PARA_RESOURCE_OUTPUT,
+];
+
+// Transitional name for V3 callers. V4 publishing must use the split constants above.
+pub const STATIC_MODEL_TABLES: [&str; 21] = STATIC_IMPORT_OUTPUTS;
 
 pub const EXECUTION_IMPORT_TABLES: [&str; 35] = [
     "bus",
@@ -371,8 +398,8 @@ pub(crate) fn order_model_outputs(
         .into_iter()
         .map(|output| (output.name.clone(), output))
         .collect::<BTreeMap<_, _>>();
-    let mut ordered = Vec::with_capacity(STATIC_MODEL_TABLES.len());
-    for table in STATIC_MODEL_TABLES {
+    let mut ordered = Vec::with_capacity(STATIC_IMPORT_OUTPUTS.len());
+    for table in STATIC_IMPORT_OUTPUTS {
         ordered.push(by_name.remove(table).ok_or_else(|| {
             AdapterError::new(
                 "model_import_output_missing",
