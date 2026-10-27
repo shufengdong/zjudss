@@ -280,6 +280,10 @@ pub struct DataResourceService {
 }
 
 impl DataResourceService {
+    pub(crate) fn artifact_store(&self) -> &crate::storage::ArtifactStore {
+        self.artifacts.store()
+    }
+
     pub fn new(
         repo: DataResourceRepo,
         upload_repo: UploadRepo,
@@ -541,8 +545,18 @@ impl DataResourceService {
                     alias: candidate.proposed_alias.clone().unwrap_or_else(|| proposed.clone()),
                     normalized_alias: proposed,
                     display_name: candidate.display_name.clone(),
-                    source_kind: if candidate.evidence_json.contains("static_import") { "static_import".into() } else { "upload".into() },
-                    lineage_json: serde_json::json!({"uploadBatchId":batch_id,"candidateId":candidate.id,"sourceKind":refreshed.batch.source_kind}).to_string(),
+                    source_kind: if candidate.evidence_json.contains("controlled_mapping") {
+                        "mapping".into()
+                    } else if candidate.evidence_json.contains("static_import") {
+                        "static_import".into()
+                    } else {
+                        "upload".into()
+                    },
+                    lineage_json: if candidate.evidence_json.contains("controlled_mapping") {
+                        candidate.evidence_json.clone()
+                    } else {
+                        serde_json::json!({"uploadBatchId":batch_id,"candidateId":candidate.id,"sourceKind":refreshed.batch.source_kind}).to_string()
+                    },
                     alias_explicit: explicit_aliases.contains(&candidate.id),
                 }
             }).collect::<Vec<_>>();

@@ -1,4 +1,4 @@
-# V3 Agent Prompt、Skills 与工具
+# V4 Agent Prompt、Skills 与工具（Task 6 过渡实现）
 
 ## Bundle
 
@@ -13,11 +13,11 @@ engine contract、允许工具和文件 SHA-256；启动时完整验证。Agent 
 
 ## Tool authority
 
-允许工具共 22 个：
+当前运行时允许工具共 23 个；Task 8 将发布正式 V4 bundle 并从对话 Agent 移除通用 `create_script`：
 
 ```text
-inspect_workspace       read_model_dataframe     plan_study
-search_examples
+inspect_workspace       read_model_dataframe     search_study_facades
+prepare_study            search_examples
 inspect_example
 modify_model            create_script            list_result_datasets
 run_result_analysis     create_dataset_view      compare_simulations
@@ -35,30 +35,7 @@ draft、创建脚本、读取运行/结果并创建派生分析或比较。规�
 成功即表示本轮脚本生成任务完成，但不代表仿真发生。`create_script` 成功后如果后续模型收尾失败，服务端发出确定性的检查/运行提示，
 不再用通用 Agent 失败消息覆盖已持久化的脚本成功。
 
-潮流、QSTS、短路、谐波和暂态请求统一遵循
-`inspect_workspace -> load study-planning -> plan_study`。规划只读取当前用户、当前会话的 active 模型，结合
-拓扑、设备、引用关系与本次启动的函数 catalog 返回 `ready`、`needs_clarification`、`missing_model_data` 或
-`unsupported`。后两类缺失状态必须在一条回复中覆盖全部缺失项；不允许从案例或历史运行补参数。当前暂态只支持
-`ds_motor_dynamics`，EMT、暂态稳定和逆变器控制暂态明确返回不支持。
-
-`plan_study.request` 的字段使用 camelCase，并拒绝未知字段，避免拼写错误静默落入默认值。用户明确指定 Newton
-或 Radial 时，Agent 必须分别传 `solverPreference=newton` 或 `radial`；只有未指定求解器时才传 `auto`。
-Newton 是通用求解器，也可用于径向网络；显式 Newton 请求不得因拓扑径向而降级或要求用户先修改模型。
-
-只有 `ready` 结果签发请求内有效的 opaque `studyPlanId`。Agent 随后加载 `rss-generation`、按需读取引擎文档，
-并使用计划给出的函数、arity 和结果生成脚本。`inspect_workspace.active.tables[].tableName` 是当前 active 版本
-实际可用的 DataFrame alias；`plan_study` 将同一清单稳定排序后作为 `inputAliases`，并将其中规范模型输入按
-adapter 合同排列为 `modelInputOrder`，写入响应和 ready plan，与 model version、content hash、engine snapshot
-一起冻结。规范研究输入缺失时，规划器一次返回所有
-`model.tables.<alias>` 缺失项，不签发 plan ID。Prompt 和 skill 不保存固定表名清单。
-
-运行时按表名向脚本注入 active DataFrame。受管脚本直接引用 `inputAliases` 并按 `modelInputOrder` 放置规范模型
-参数，可以用新变量派生参数和保存结果。静态潮流不得再查询模型输入顺序；需要确认参数或结果语法时最多执行
-一次文档搜索和一次章节读取，避免在保存脚本前耗尽 8 次模型调用预算。DataFrame 模式只接受变量声明；函数
-结果绑定中的未消费叶变量就是结果，脚本末尾不得追加裸变量表达式。V4 不在执行前运行 zjudss RSS 静态语法
-校验器；语法和运行可行性由 tensoreval 决定。Task 9 的受管工作流会依据冻结配置做结构一致性检查，阻止更换门面、
-输入、Struct 参数或结果集合，但该检查不解释一般 RSS 语法。计划或模型变化后旧配置失效；手工文本和上传脚本
-保存后仅在用户点击运行时执行一次，也不进入自动修正。
+研究请求遵循 `load study-planning -> inspect_workspace -> search_study_facades -> prepare_study`。显式函数名优先，目录搜索不会根据网络拓扑改写用户选择；候选不唯一时 Agent 展示 `differences`，禁用门面显示合同诊断。`prepare_study` 创建持久化配置卡，由服务端按门面动态展开实际 model/Data/Struct/结果输入。多个兼容资源不能猜选，同门面历史 Struct 只形成复用建议。配置卡未最终确认前，Agent 不得生成或运行受管脚本。旧 `plan_study` 工具及请求内 plan ID 已从运行时删除。
 
 模型修改遵循 `inspect_workspace -> read_model_dataframe -> modify_model`。`read_model_dataframe` 只在加载
 `model-intake` skill 后可用，scope 只能是 active 或携带准确 expected draft 的 draft；查询只允许表名、最多
@@ -70,9 +47,7 @@ adapter 合同排列为 `modelInputOrder`，写入响应和 ready plan，与 mod
 工具只接收 session 上下文内的稳定资源 ID、expected draft、受控 patch/spec 和文本。禁止路径、URL、SQL、
 shell 命令和任意图表 option。`modify_model` 使用 `tableName + rowKey + changes + expectedDraft`；
 `read_model_dataframe` 使用 `scope + tableName + columns + equals + limit + expectedDraft?`；
-`plan_study` 响应使用 `inputAliases` 暴露本次 active 版本实际表名，使用 `modelInputOrder` 暴露其中规范模型输入
-的动态调用顺序；`create_script` 使用
-`name + content + studyPlanId?`，其中受管研究函数必须提供本次 ready 计划的 ID；比较使用两个 run ID。模型范围不存在、查询无效、输出过大、草稿 revision
+`search_study_facades` 只接收查询词和可选显式函数名；`prepare_study` 只接收目录 facade ID、结构化原始意图和可选来源 workflow ID。通用 `create_script` 只接收 `name + content`，不得用于绕过受管研究确认；比较使用两个 run ID。模型范围不存在、查询无效、输出过大、草稿 revision
 冲突和表不存在分别使用稳定错误码，工具响应不包含 artifact 路径。
 
 ## Engine knowledge
@@ -87,9 +62,7 @@ V4 动态目录基础已经实现：`functions.json=2`、`study_facades.json=1`�
 无效时只禁用受影响门面并保留稳定诊断；文件缺失时发布“没有可用研究门面”的全局诊断。Agent 常驻摘要使用
 `catalogSchemaVersions` 和门面启用/禁用数量，不注入完整目录。
 
-`StudyPlanningService::search/get` 直接查询当前 snapshot 的门面注册表。显式函数选择只返回该函数，不根据网络拓扑
-改写；候选较多时向用户展示目录中的 `differences`。旧 `plan_study` DTO 在 V4 受管研究入口完成前仍作为过渡适配器，
-其函数、arity、模型输入顺序与结果集合也只读取同一个门面注册表。
+`StudyPlanningService::search/get` 与 `StudyConfigurationService` 直接查询当前 snapshot 的门面注册表。显式函数选择只返回该函数，不根据网络拓扑改写；候选较多时向用户展示目录中的 `differences`。配置服务按目录合同生成 revisioned 卡片并准备 Task 9 原子确认所需的锁定合同和输入快照。
 
 ## Persistence and audit
 

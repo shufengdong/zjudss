@@ -1,15 +1,12 @@
 mod common;
 
 use common::TestApp;
-use diesel::RunQueryDsl;
-use diesel::sql_types::Text;
 use rig::tool::{Tool, ToolContext};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 use zjudss::adapters::StubEngine;
 use zjudss::application::EventWriter;
-use zjudss::application::study_planning::{ResolvedSolver, StudyRequest};
 use zjudss::application::{ModelChange, ModelPatch, PublishDraftRequest};
 use zjudss::auth::CurrentUser;
 use zjudss::db::models::DraftRef;
@@ -37,8 +34,7 @@ fn tool_services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
         engine_snapshot: app.state.engine_snapshot.clone(),
         agent_knowledge: app.state.agent_knowledge.clone(),
         loaded_skills: Arc::new(Mutex::new(BTreeSet::new())),
-        study_planning: app.state.study_planning_service.clone(),
-        ready_study_plans: Arc::new(Mutex::new(Default::default())),
+        study_configurations: app.state.study_configuration_service.clone(),
         datasets: app.state.dataset_service.clone(),
         analysis: app.state.analysis_service.clone(),
         comparisons: app.state.comparison_service.clone(),
@@ -77,22 +73,6 @@ async fn apply_csv(
         bytes,
         expected,
         file_name.strip_suffix(".csv"),
-    )
-    .await
-}
-
-async fn seed_canonical_draft(app: &TestApp, session_id: i32) -> DraftRef {
-    let user = common::test_user("alice@example.com");
-    let client_id = format!("workspace-{session_id}-canonical");
-    common::publish_model_bytes(
-        app,
-        &user,
-        session_id,
-        &client_id,
-        "master.dss",
-        b"New Circuit.Test\n",
-        None,
-        None,
     )
     .await
 }
@@ -159,342 +139,53 @@ async fn a_new_draft_copies_the_active_version_and_replaces_only_selected_tables
 }
 
 #[tokio::test]
-async fn plan_study_preserves_explicit_newton_and_issues_request_local_ready_ids() {
+async fn study_tools_search_explicit_functions_and_prepare_persisted_cards() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
-    let empty_session = app
-        .state
-        .session_repo
-        .create(&user.id, "empty study", 1)
-        .await
-        .unwrap();
-    let empty_services = tool_services_for_session(&app, user.clone(), empty_session.id);
-    empty_services
-        .loaded_skills
-        .lock()
-        .await
-        .insert("study-planning".into());
-    let mut context = ToolContext::new();
-    let non_ready = tools::plan_study::PlanStudyTool::new(empty_services)
-        .call(
-            &mut context,
-            tools::plan_study::Args {
-                request: StudyRequest::StaticPowerFlow {
-                    solver_preference: Default::default(),
-                    requested_results: vec![],
-                },
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(non_ready["status"], "missing_model_data");
-    assert!(non_ready.get("studyPlanId").is_none());
-
     let session = app
         .state
         .session_repo
-        .create(&user.id, "ready study", 1)
+        .create(&user.id, "study configuration", 1)
         .await
         .unwrap();
-    let canonical = seed_canonical_draft(&app, session.id).await;
-    let bus = apply_csv(
-        &app,
-        session.id,
-        "study-bus",
-        "bus.csv",
-        b"id\nsource\nb1\n",
-        Some(canonical),
-    )
-    .await;
-    let line = apply_csv(
-        &app,
-        session.id,
-        "study-line",
-        "line.csv",
-        b"name,bus_from,bus_to\nl1,source,b1\n",
-        Some(bus),
-    )
-    .await;
-    let source = apply_csv(
-        &app,
-        session.id,
-        "study-source",
-        "voltage_source.csv",
-        b"name,bus\nsource,source\n",
-        Some(line),
-    )
-    .await;
-    app.state
-        .version_service
-        .publish(
-            &user,
-            session.id,
-            PublishDraftRequest {
-                expected_draft_id: source.id,
-                expected_draft_revision: source.revision,
-                client_publish_id: "publish-ready-study".into(),
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-
-    let services = tool_services_for_session(&app, user.clone(), session.id);
+    let services = tool_services_for_session(&app, user, session.id);
     services
         .loaded_skills
         .lock()
         .await
         .insert("study-planning".into());
-    let args: tools::plan_study::Args = serde_json::from_value(serde_json::json!({
-        "request": {
-            "studyType": "static_power_flow",
-            "solverPreference": "newton",
-            "requestedResults": []
-        }
-    }))
-    .unwrap();
-    let ready = tools::plan_study::PlanStudyTool::new(services.clone())
-        .call(&mut context, args)
-        .await
-        .unwrap();
-    assert_eq!(ready["status"], "ready");
-    let aliases = ready["inputAliases"].as_array().unwrap();
-    assert_eq!(aliases.len(), zjudss::adapters::MODEL_TABLE_OUTPUTS.len());
-    assert!(
-        aliases
-            .windows(2)
-            .all(|pair| pair[0].as_str() < pair[1].as_str())
-    );
-    assert_eq!(
-        ready["modelInputOrder"],
-        serde_json::json!(zjudss::adapters::MODEL_TABLE_OUTPUTS)
-    );
-    assert_eq!(ready["solver"], serde_json::json!(ResolvedSolver::Newton));
-    assert_eq!(ready["ready"]["request"]["solverPreference"], "newton");
-    let plan_id = ready["studyPlanId"].as_str().unwrap();
-    assert!(plan_id.starts_with("study-plan:"));
-    let stored = services.ready_study_plans.lock().await.get(plan_id);
-    let stored = stored.unwrap();
-    assert_eq!(stored.function, "ds_newton_raphson_pf");
-    assert_eq!(
-        stored.model_input_order,
-        zjudss::adapters::MODEL_TABLE_OUTPUTS
-            .into_iter()
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        stored.input_aliases,
-        aliases
-            .iter()
-            .map(|value| value.as_str().unwrap().to_string())
-            .collect::<Vec<_>>()
-    );
-
-    let another_request = tool_services_for_session(&app, user, session.id);
-    assert!(
-        another_request
-            .ready_study_plans
-            .lock()
-            .await
-            .get(plan_id)
-            .is_none()
-    );
-}
-
-#[tokio::test]
-async fn create_script_accepts_unplanned_text_and_validates_supplied_plan_freshness() {
-    let app = TestApp::spawn().await;
-    let user = common::test_user("alice@example.com");
-    let session = app
-        .state
-        .session_repo
-        .create(&user.id, "bound study script", 1)
-        .await
-        .unwrap();
-    let canonical = seed_canonical_draft(&app, session.id).await;
-    let bus = apply_csv(
-        &app,
-        session.id,
-        "proof-bus",
-        "bus.csv",
-        b"id\nsource\nb1\n",
-        Some(canonical),
-    )
-    .await;
-    let line = apply_csv(
-        &app,
-        session.id,
-        "proof-line",
-        "line.csv",
-        b"name,bus_from,bus_to\nl1,source,b1\n",
-        Some(bus),
-    )
-    .await;
-    let source = apply_csv(
-        &app,
-        session.id,
-        "proof-source",
-        "voltage_source.csv",
-        b"name,bus\nsource,source\n",
-        Some(line),
-    )
-    .await;
-    app.state
-        .version_service
-        .publish(
-            &user,
-            session.id,
-            PublishDraftRequest {
-                expected_draft_id: source.id,
-                expected_draft_revision: source.revision,
-                client_publish_id: "publish-proof-model".into(),
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-    let services = tool_services_for_session(&app, user.clone(), session.id);
-    {
-        let mut skills = services.loaded_skills.lock().await;
-        skills.insert("study-planning".into());
-        skills.insert("rss-generation".into());
-    }
     let mut context = ToolContext::new();
-    let planned = tools::plan_study::PlanStudyTool::new(services.clone())
+    let search = tools::search_study_facades::SearchStudyFacadesTool::new(services.clone())
         .call(
             &mut context,
-            tools::plan_study::Args {
-                request: StudyRequest::StaticPowerFlow {
-                    solver_preference: Default::default(),
-                    requested_results: vec![],
-                },
+            tools::search_study_facades::Args {
+                query: "潮流".into(),
+                explicit_function: Some("ds_newton_raphson_pf".into()),
             },
         )
         .await
         .unwrap();
-    let plan_id = planned["studyPlanId"].as_str().unwrap().to_string();
-    let unplanned = tools::create_script::CreateScriptTool::new(services.clone())
+    assert_eq!(search["enabled"][0]["id"], "static_power_flow_newton");
+    let prepared = tools::prepare_study::PrepareStudyTool::new(services)
         .call(
             &mut context,
-            tools::create_script::Args {
-                name: "missing.rss".into(),
-                content: "voltage = ds_radial_pf(bus);".into(),
-                study_plan_id: None,
+            tools::prepare_study::Args {
+                facade_id: "static_power_flow_newton".into(),
+                intent: serde_json::json!({"request":"求解牛顿法潮流"}),
+                derived_from_workflow_id: None,
             },
         )
         .await
         .unwrap();
-    assert_eq!(unplanned["validationStatus"], "valid");
-    assert_eq!(
-        unplanned["diagnostics"]["validation"],
-        "deferred_to_tensoreval"
-    );
-
-    let unknown = tools::create_script::CreateScriptTool::new(services.clone())
-        .call(
-            &mut context,
-            tools::create_script::Args {
-                name: "unknown.rss".into(),
-                content: "voltage = ds_radial_pf(bus);".into(),
-                study_plan_id: Some("study-plan:unknown".into()),
-            },
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(unknown.code, "study_plan_not_found");
-
-    let created = tools::create_script::CreateScriptTool::new(services.clone())
-        .call(
-            &mut context,
-            tools::create_script::Args {
-                name: "ready.rss".into(),
-                content: "voltage = ds_radial_pf(bus);".into(),
-                study_plan_id: Some(plan_id.clone()),
-            },
-        )
-        .await
-        .unwrap();
-    assert_eq!(created["sourceKind"], "agent");
-
-    #[derive(diesel::QueryableByName)]
-    struct SkillRefs {
-        #[diesel(sql_type = Text)]
-        agent_skill_refs_json: String,
-    }
-    let refs = {
-        let mut connection = app.pool.get().unwrap();
-        diesel::sql_query(
-            "SELECT agent_skill_refs_json FROM script_resources ORDER BY id DESC LIMIT 1",
-        )
-        .get_result::<SkillRefs>(&mut connection)
-        .unwrap()
-    };
-    let refs: serde_json::Value = serde_json::from_str(&refs.agent_skill_refs_json).unwrap();
+    assert_eq!(prepared["facade"]["function"], "ds_newton_raphson_pf");
+    assert_eq!(prepared["status"], "collecting_inputs");
+    let id = prepared["id"].as_i64().unwrap() as i32;
     assert!(
-        refs.as_array()
-            .unwrap()
-            .iter()
-            .any(|entry| entry["id"] == "study-planning")
-    );
-    assert!(
-        refs.as_array()
-            .unwrap()
-            .iter()
-            .any(|entry| entry["id"] == "rss-generation")
-    );
-    let proof = refs
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["kind"] == "study-plan")
-        .unwrap();
-    assert_eq!(proof["function"], "ds_radial_pf");
-    assert_eq!(proof["engineSnapshotId"], app.state.engine_snapshot.id);
-
-    let changed = apply_csv(
-        &app,
-        session.id,
-        "proof-bus-changed",
-        "bus.csv",
-        b"id\nsource\nb1\nb2\n",
-        None,
-    )
-    .await;
-    app.state
-        .version_service
-        .publish(
-            &user,
-            session.id,
-            PublishDraftRequest {
-                expected_draft_id: changed.id,
-                expected_draft_revision: changed.revision,
-                client_publish_id: "publish-changed-proof-model".into(),
-                description: None,
-            },
-        )
-        .await
-        .unwrap();
-    let stale = tools::create_script::CreateScriptTool::new(services)
-        .call(
-            &mut context,
-            tools::create_script::Args {
-                name: "stale.rss".into(),
-                content: "voltage = ds_radial_pf(bus);".into(),
-                study_plan_id: Some(plan_id),
-            },
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(stale.code, "study_plan_stale");
-    assert_eq!(
         app.state
-            .script_service
-            .list(&user, session.id)
+            .study_configuration_service
+            .get(&common::test_user("alice@example.com"), id)
             .await
-            .unwrap()
-            .len(),
-        2
+            .is_ok()
     );
 }
 

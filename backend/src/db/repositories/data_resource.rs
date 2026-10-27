@@ -216,6 +216,33 @@ impl DataResourceRepo {
         .map_err(RepoError::Join)?
     }
 
+    pub async fn compatible_for_session(
+        &self,
+        user: &UserId,
+        session_id: i32,
+        schema_ref: &str,
+    ) -> RepoResult<Vec<DataResourceRecord>> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        let schema_ref = schema_ref.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            ensure_session(&mut conn, &user, session_id)?;
+            schema::data_resources::table
+                .filter(schema::data_resources::session_id.eq(session_id))
+                .filter(schema::data_resources::status.eq("live"))
+                .filter(schema::data_resources::declared_schema_ref.eq(Some(schema_ref)))
+                .order((
+                    schema::data_resources::created_at_ms.desc(),
+                    schema::data_resources::id.desc(),
+                ))
+                .load(&mut conn)
+                .map_err(Into::into)
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
     pub async fn find(
         &self,
         user: &UserId,

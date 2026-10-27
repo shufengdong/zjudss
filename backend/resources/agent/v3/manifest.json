@@ -1,12 +1,13 @@
 {
   "agentBundleVersion": "v3.3.3",
   "engineContractVersion": "tensoreval-parquet-v3",
-  "systemSha256": "0d93ed66081c1639703593806d4966d168faaf5334e0fe5056605358516ab8d6",
-  "skillIndexSha256": "a3b7be89334ef2067986b2853d8592cc447b049cfd9fedff3a0c86963b7bd138",
+  "systemSha256": "3ffa9a4201803811a1aa554ff3d1b718812053303c15f79218cda3e4ca8b7b34",
+  "skillIndexSha256": "855fbc8d0b4db6f7e0eb18972eefd86eceeece4b379efd1f89ab60cc734440c6",
   "allowedTools": [
     "inspect_workspace",
     "read_model_dataframe",
-    "plan_study",
+    "search_study_facades",
+    "prepare_study",
     "search_examples",
     "inspect_example",
     "modify_model",

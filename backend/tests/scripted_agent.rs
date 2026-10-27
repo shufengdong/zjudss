@@ -6,18 +6,12 @@ use std::sync::Arc;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use diesel::prelude::*;
-use diesel::sql_types::Integer;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use zjudss::application::PublishDraftRequest;
-use zjudss::application::study_planning::{
-    MotorDynamicsRequest, SolverPreference, StudyRequest, TransientSubtype,
-};
 use zjudss::auth::CurrentUser;
 use zjudss::db::models::DraftRef;
 use zjudss::testing::{ScriptScenario, ScriptTurn, ScriptedAgentFactory};
-use zjudss::tools::ReadyStudyPlanRegistry;
 
 use common::TestApp;
 
@@ -185,43 +179,6 @@ async fn publish_agent_study_model(app: &TestApp, session_id: i32) {
         .unwrap();
 }
 
-#[derive(diesel::QueryableByName)]
-struct MessageIdRow {
-    #[diesel(sql_type = Integer)]
-    id: i32,
-}
-
-async fn next_message_id(app: &TestApp) -> i32 {
-    let pool = app.pool.clone();
-    tokio::task::spawn_blocking(move || {
-        let mut conn = pool.get().unwrap();
-        diesel::sql_query("SELECT COALESCE(MAX(id), 0) + 1 AS id FROM messages")
-            .get_result::<MessageIdRow>(&mut conn)
-            .unwrap()
-            .id
-    })
-    .await
-    .unwrap()
-}
-
-async fn ready_plan_id(app: &TestApp, session_id: i32, request: StudyRequest) -> String {
-    let plan = app
-        .state
-        .study_planning_service
-        .plan(&common::test_user("instance"), session_id, request)
-        .await
-        .unwrap();
-    let mut registry = ReadyStudyPlanRegistry::default();
-    let ready = match plan.ready {
-        Some(ready) => ready,
-        None => panic!(
-            "expected ready study plan, got status {:#?}: {:#?}",
-            plan.status, plan.missing_parameters
-        ),
-    };
-    registry.insert(next_message_id(app).await, ready)
-}
-
 fn tool_names(events: &[Value]) -> Vec<&str> {
     events
         .iter()
@@ -239,86 +196,23 @@ fn assert_no_script_or_run(events: &[Value]) {
     );
 }
 
-const POWER_FLOW_SCRIPT: &str = r#"[bus_phase, summary] = ds_radial_pf(
-    bus, line, linecode, load, transformer, voltage_source, motor,
-    transformer_winding, transformer_impedance, current_source, generator, ibr,
-    switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para
-);"#;
-
-const IMPORTING_POWER_FLOW_SCRIPT: &str = r#"[
-    bus, line, linecode, load, transformer, voltage_source, motor,
-    transformer_winding, transformer_impedance, current_source, generator, ibr,
-    switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para
-] = import_dss("case/model.dss");
-[bus_phase, summary] = ds_radial_pf(
-    bus, line, linecode, load, transformer, voltage_source, motor,
-    transformer_winding, transformer_impedance, current_source, generator, ibr,
-    switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para
-);"#;
-
-const MOTOR_DYNAMICS_SCRIPT: &str = r#"[motor_state] = ds_motor_dynamics(
-    bus, line, linecode, load, transformer, voltage_source, motor,
-    transformer_winding, transformer_impedance, current_source, generator, ibr,
-    switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage,
-    timeline, event, tcc_curve, fuse, recloser, relay, spec, para
-);"#;
-
 #[tokio::test]
-async fn study_power_flow_uses_ready_plan_before_creating_the_planned_script() {
+async fn study_power_flow_searches_then_prepares_a_configuration_without_a_script() {
     let factory = Arc::new(ScriptedAgentFactory::default());
     let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
     let session = create_session(&app).await;
-    let session_id = session.parse().unwrap();
-    publish_agent_study_model(&app, session_id).await;
-    let request = StudyRequest::StaticPowerFlow {
-        solver_preference: SolverPreference::Auto,
-        requested_results: vec![],
-    };
-    let plan_id = ready_plan_id(&app, session_id, request.clone()).await;
+    publish_agent_study_model(&app, session.parse().unwrap()).await;
     factory.enqueue(ScriptScenario {
-        id: "study-power-flow-ready".into(),
+        id: "study-power-flow-config".into(),
         expected_prompt: Some("计算潮流".into()),
         turns: vec![
-            ScriptTurn::ToolCall {
-                call_id: "inspect".into(),
-                name: "inspect_workspace".into(),
-                args: json!({}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "load-planning".into(),
-                name: "load_agent_skill".into(),
-                args: json!({"skill_id":"study-planning"}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "plan".into(),
-                name: "plan_study".into(),
-                args: json!({"request": request}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "load-rss".into(),
-                name: "load_agent_skill".into(),
-                args: json!({"skill_id":"rss-generation"}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "search-pf-docs".into(),
-                name: "search_engine_docs".into(),
-                args: json!({"query":"ds_radial_pf"}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "create".into(),
-                name: "create_script".into(),
-                args: json!({
-                    "name":"power-flow.rss",
-                    "content":POWER_FLOW_SCRIPT,
-                    "studyPlanId":plan_id
-                }),
-            },
-            ScriptTurn::Text {
-                text: "已按当前模型的径向潮流计划生成脚本，请检查后点击运行。".into(),
-            },
+            ScriptTurn::ToolCall { call_id: "inspect".into(), name: "inspect_workspace".into(), args: json!({}) },
+            ScriptTurn::ToolCall { call_id: "load-planning".into(), name: "load_agent_skill".into(), args: json!({"skill_id":"study-planning"}) },
+            ScriptTurn::ToolCall { call_id: "search".into(), name: "search_study_facades".into(), args: json!({"query":"潮流","explicitFunction":"ds_radial_pf"}) },
+            ScriptTurn::ToolCall { call_id: "prepare".into(), name: "prepare_study".into(), args: json!({"facadeId":"static_power_flow_radial","intent":{"request":"计算潮流"}}) },
+            ScriptTurn::Text { text: "研究配置已准备，请在卡片中确认输入、参数和结果。".into() },
         ],
     });
-
     assert_eq!(
         post_and_wait(&app, &session, "计算潮流").await,
         StatusCode::ACCEPTED
@@ -329,91 +223,40 @@ async fn study_power_flow_uses_ready_plan_before_creating_the_planned_script() {
         [
             "inspect_workspace",
             "load_agent_skill",
-            "plan_study",
-            "load_agent_skill",
-            "search_engine_docs",
-            "create_script"
+            "search_study_facades",
+            "prepare_study"
         ]
     );
-    let script = events
-        .iter()
-        .find(|event| event["type"] == "script")
-        .expect("planned script message");
-    assert!(script.to_string().contains("ds_radial_pf"));
-    assert!(!script.to_string().contains("ds_newton_raphson_pf"));
+    assert_no_script_or_run(&events);
     assert!(runs(&app, &session).await.is_empty());
 }
 
 #[tokio::test]
-async fn agent_script_validation_is_deferred_to_tensoreval() {
+async fn generic_agent_script_validation_is_deferred_to_tensoreval() {
     let factory = Arc::new(ScriptedAgentFactory::default());
     let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
     let session = create_session(&app).await;
     let session_id = session.parse().unwrap();
-    publish_agent_study_model(&app, session_id).await;
-    let request = StudyRequest::StaticPowerFlow {
-        solver_preference: SolverPreference::Auto,
-        requested_results: vec![],
-    };
-    let plan_id = ready_plan_id(&app, session_id, request.clone()).await;
     factory.enqueue(ScriptScenario {
-        id: "study-power-flow-reimport-rejected".into(),
-        expected_prompt: Some("计算潮流但错误地重新导入".into()),
+        id: "generic-script-deferred".into(),
+        expected_prompt: Some("保存通用脚本".into()),
         turns: vec![
-            ScriptTurn::ToolCall {
-                call_id: "inspect-reimport".into(),
-                name: "inspect_workspace".into(),
-                args: json!({}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "load-planning-reimport".into(),
-                name: "load_agent_skill".into(),
-                args: json!({"skill_id":"study-planning"}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "plan-reimport".into(),
-                name: "plan_study".into(),
-                args: json!({"request":request}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "load-rss-reimport".into(),
-                name: "load_agent_skill".into(),
-                args: json!({"skill_id":"rss-generation"}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "create-reimport".into(),
-                name: "create_script".into(),
-                args: json!({
-                    "name":"reimport.rss",
-                    "content":IMPORTING_POWER_FLOW_SCRIPT,
-                    "studyPlanId":plan_id
-                }),
-            },
-            ScriptTurn::Text {
-                text: "脚本已保存，实际语法与运行可行性将在 tensoreval 执行时判定。".into(),
-            },
+            ScriptTurn::ToolCall { call_id: "load-rss".into(), name: "load_agent_skill".into(), args: json!({"skill_id":"rss-generation"}) },
+            ScriptTurn::ToolCall { call_id: "create".into(), name: "create_script".into(), args: json!({"name":"generic.rss","content":"answer = select(col(value), source);"}) },
+            ScriptTurn::Text { text: "脚本已保存，实际语法与运行可行性将在 tensoreval 执行时判定。".into() },
         ],
     });
-
     assert_eq!(
-        post_and_wait(&app, &session, "计算潮流但错误地重新导入").await,
+        post_and_wait(&app, &session, "保存通用脚本").await,
         StatusCode::ACCEPTED
     );
     let events = messages(&app, &session).await;
-    assert!(events.iter().any(|event| {
-        event["type"] == "script"
-            && event["script"]["validationStatus"] == "valid"
-            && event["script"]["diagnostics"]["validation"] == "deferred_to_tensoreval"
-    }));
-    assert!(runs(&app, &session).await.is_empty());
     assert!(
-        events.iter().any(|event| {
-            event["type"] == "tool-call"
-                && event["toolName"] == "create_script"
-                && event["status"] == "success"
-        }),
-        "events: {events:#?}"
+        events.iter().any(
+            |event| event["type"] == "script" && event["script"]["validationStatus"] == "valid"
+        )
     );
+    assert!(runs(&app, &session).await.is_empty());
     assert_eq!(
         app.state
             .script_service
@@ -426,472 +269,86 @@ async fn agent_script_validation_is_deferred_to_tensoreval() {
 }
 
 #[tokio::test]
-async fn incomplete_study_requests_ask_once_with_every_reported_missing_field() {
-    struct Case {
-        prompt: &'static str,
-        request: Value,
-        answer: &'static str,
-        fields: &'static [&'static str],
-    }
-    let cases = [
-        Case {
-            prompt: "做一天时序模拟",
-            request: json!({"studyType":"qsts"}),
-            answer: "还需要确认 mode、startSeconds、stepSizeSeconds、number 和 profile。",
-            fields: &[
-                "mode",
-                "startSeconds",
-                "stepSizeSeconds",
-                "number",
-                "profile",
-            ],
-        },
-        Case {
-            prompt: "短路计算",
-            request: json!({"studyType":"fault"}),
-            answer: "还需要一次性确认 cases 和 allowIdealSources。",
-            fields: &["cases", "allowIdealSources"],
-        },
-        Case {
-            prompt: "谐波分析",
-            request: json!({"studyType":"harmonic"}),
-            answer: "还需要 hMax；当前模型还缺少 model.spectrum 引用。",
-            fields: &["hMax", "model.spectrum"],
-        },
-        Case {
-            prompt: "暂态仿真",
-            request: json!({"studyType":"transient"}),
-            answer: "请先确认 subtype；当前仅支持 motor_dynamics。",
-            fields: &["subtype"],
-        },
-    ];
+async fn ambiguous_study_requests_present_catalog_choices_before_prepare() {
     let factory = Arc::new(ScriptedAgentFactory::default());
     let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
     let session = create_session(&app).await;
-    publish_agent_study_model(&app, session.parse().unwrap()).await;
-
-    for case in &cases {
-        factory.enqueue(ScriptScenario {
-            id: format!("study-clarify-{}", case.prompt),
-            expected_prompt: Some(case.prompt.into()),
-            turns: vec![
-                ScriptTurn::ToolCall {
-                    call_id: format!("inspect-{}", case.prompt),
-                    name: "inspect_workspace".into(),
-                    args: json!({}),
-                },
-                ScriptTurn::ToolCall {
-                    call_id: format!("skill-{}", case.prompt),
-                    name: "load_agent_skill".into(),
-                    args: json!({"skill_id":"study-planning"}),
-                },
-                ScriptTurn::ToolCall {
-                    call_id: format!("plan-{}", case.prompt),
-                    name: "plan_study".into(),
-                    args: json!({"request":case.request}),
-                },
-                ScriptTurn::Text {
-                    text: case.answer.into(),
-                },
-            ],
-        });
-        assert_eq!(
-            post_and_wait(&app, &session, case.prompt).await,
-            StatusCode::ACCEPTED
-        );
-        let events = messages(&app, &session).await;
-        assert_no_script_or_run(&events);
-        assert!(runs(&app, &session).await.is_empty());
-        assert_eq!(
-            tool_names(&events)
-                .into_iter()
-                .rev()
-                .take(3)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>(),
-            ["inspect_workspace", "load_agent_skill", "plan_study"]
-        );
-        let answer = events
-            .iter()
-            .rev()
-            .find(|event| event["type"] == "assistant")
-            .unwrap()["content"]
-            .as_str()
-            .unwrap();
-        for field in case.fields {
-            assert!(answer.contains(field), "missing {field} in {answer}");
-        }
-    }
-}
-
-#[tokio::test]
-async fn transient_study_supports_motor_dynamics_and_rejects_emt() {
-    let factory = Arc::new(ScriptedAgentFactory::default());
-    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
-    let session = create_session(&app).await;
-    let session_id = session.parse().unwrap();
-    publish_agent_study_model(&app, session_id).await;
-    let motor_request = StudyRequest::Transient {
-        subtype: Some(TransientSubtype::MotorDynamics),
-        motor_dynamics: Some(MotorDynamicsRequest {
-            duration_seconds: Some(2.0),
-            step_size_seconds: Some(0.01),
-            events: Some(vec![]),
-        }),
-        requested_results: vec![],
-    };
-    let plan_id = ready_plan_id(&app, session_id, motor_request.clone()).await;
     factory.enqueue(ScriptScenario {
-        id: "study-motor-dynamics-ready".into(),
-        expected_prompt: Some("模拟电机启动暂态2秒，步长0.01秒，无外部事件".into()),
+        id: "study-choice".into(),
+        expected_prompt: Some("计算潮流".into()),
         turns: vec![
             ScriptTurn::ToolCall {
-                call_id: "motor-inspect".into(),
-                name: "inspect_workspace".into(),
-                args: json!({}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "motor-planning-skill".into(),
+                call_id: "skill".into(),
                 name: "load_agent_skill".into(),
                 args: json!({"skill_id":"study-planning"}),
             },
             ScriptTurn::ToolCall {
-                call_id: "motor-plan".into(),
-                name: "plan_study".into(),
-                args: json!({"request":motor_request}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "motor-rss-skill".into(),
-                name: "load_agent_skill".into(),
-                args: json!({"skill_id":"rss-generation"}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "search-motor-docs".into(),
-                name: "search_engine_docs".into(),
-                args: json!({"query":"ds_motor_dynamics"}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "motor-create".into(),
-                name: "create_script".into(),
-                args: json!({
-                    "name":"motor-dynamics.rss",
-                    "content":MOTOR_DYNAMICS_SCRIPT,
-                    "studyPlanId":plan_id
-                }),
+                call_id: "search".into(),
+                name: "search_study_facades".into(),
+                args: json!({"query":"潮流"}),
             },
             ScriptTurn::Text {
-                text: "已生成电机—网络动态脚本，请检查后点击运行。".into(),
+                text: "可选径向潮流和牛顿潮流；请确认所需方法。".into(),
             },
         ],
     });
     assert_eq!(
-        post_and_wait(
-            &app,
-            &session,
-            "模拟电机启动暂态2秒，步长0.01秒，无外部事件"
-        )
-        .await,
+        post_and_wait(&app, &session, "计算潮流").await,
         StatusCode::ACCEPTED
     );
     let events = messages(&app, &session).await;
-    let script = events
-        .iter()
-        .find(|event| event["type"] == "script")
-        .unwrap_or_else(|| panic!("motor dynamics script; events: {events:#?}"));
-    assert!(script.to_string().contains("ds_motor_dynamics"));
-    assert!(runs(&app, &session).await.is_empty());
-
-    let emt_session = create_session(&app).await;
-    publish_agent_study_model(&app, emt_session.parse().unwrap()).await;
-    factory.enqueue(ScriptScenario {
-        id: "study-emt-unsupported".into(),
-        expected_prompt: Some("做EMT暂态仿真".into()),
-        turns: vec![
-            ScriptTurn::ToolCall {
-                call_id: "emt-inspect".into(),
-                name: "inspect_workspace".into(),
-                args: json!({}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "emt-planning-skill".into(),
-                name: "load_agent_skill".into(),
-                args: json!({"skill_id":"study-planning"}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "emt-plan".into(),
-                name: "plan_study".into(),
-                args: json!({"request":{"studyType":"transient","subtype":"emt"}}),
-            },
-            ScriptTurn::Text {
-                text: "当前引擎不支持 EMT 暂态仿真；当前暂态只支持 motor_dynamics。".into(),
-            },
-        ],
-    });
     assert_eq!(
-        post_and_wait(&app, &emt_session, "做EMT暂态仿真").await,
-        StatusCode::ACCEPTED
+        tool_names(&events),
+        ["load_agent_skill", "search_study_facades"]
     );
-    let events = messages(&app, &emt_session).await;
     assert_no_script_or_run(&events);
-    assert!(runs(&app, &emt_session).await.is_empty());
-    assert!(
-        events.iter().rev().any(|event| {
-            event["type"] == "assistant"
-                && event["content"]
-                    .as_str()
-                    .is_some_and(|text| text.contains("不支持") && text.contains("motor_dynamics"))
-        }),
-        "events: {events:#?}"
-    );
+    assert!(events.iter().any(|event| {
+        event["type"] == "assistant"
+            && event["content"]
+                .as_str()
+                .is_some_and(|text| text.contains("径向潮流") && text.contains("牛顿潮流"))
+    }));
 }
 
 #[tokio::test]
-async fn scripted_tool_call_runs_registered_tool_and_persists_events() {
+async fn transient_studies_use_catalog_search_and_configuration_cards() {
     let factory = Arc::new(ScriptedAgentFactory::default());
-    factory.enqueue(ScriptScenario {
-        id: "storage".into(),
-        expected_prompt: Some("查看空间".into()),
-        turns: vec![
-            ScriptTurn::ToolCall {
-                call_id: "call-storage".into(),
-                name: "search_examples".into(),
-                args: json!({}),
-            },
-            ScriptTurn::Text {
-                text: "空间已查询".into(),
-            },
-        ],
-    });
     let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
     let session = create_session(&app).await;
-    assert_eq!(
-        post_and_wait(&app, &session, "查看空间").await,
-        StatusCode::ACCEPTED
-    );
-
-    let events = messages(&app, &session).await;
-    let statuses = events
-        .iter()
-        .filter(|event| event["type"] == "tool-call")
-        .map(|event| event["status"].as_str().unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(statuses, ["running", "success"], "events: {events:#?}");
-    assert!(
-        events
-            .iter()
-            .any(|event| { event["type"] == "assistant" && event["content"] == "空间已查询" })
-    );
-    let trace = factory.trace();
-    assert_eq!(trace[0].scenario_id, "storage");
-    assert_eq!(trace[0].tool_names.len(), 22);
-    assert!(trace[0].system_prompt.contains("# Engine resources"));
-    assert_eq!(trace[0].calls.len(), 2);
-}
-
-#[tokio::test]
-async fn unknown_tool_and_malformed_args_end_with_readable_error() {
-    let factory = Arc::new(ScriptedAgentFactory::default());
     factory.enqueue(ScriptScenario {
-        id: "unknown".into(),
-        expected_prompt: None,
-        turns: vec![ScriptTurn::ToolCall {
-            call_id: "bad-name".into(),
-            name: "does_not_exist".into(),
-            args: json!({}),
-        }],
-    });
-    factory.enqueue(ScriptScenario {
-        id: "malformed".into(),
-        expected_prompt: None,
+        id: "motor-config".into(),
+        expected_prompt: Some("模拟电机启动暂态".into()),
         turns: vec![
             ScriptTurn::ToolCall {
-                call_id: "bad-args".into(),
-                name: "get_storage_usage".into(),
-                args: json!("not-an-object"),
+                call_id: "skill".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"study-planning"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "search".into(),
+                name: "search_study_facades".into(),
+                args: json!({"query":"电机 暂态","explicitFunction":"ds_motor_dynamics"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "prepare".into(),
+                name: "prepare_study".into(),
+                args: json!({"facadeId":"motor_dynamics","intent":{"request":"模拟电机启动暂态"}}),
             },
             ScriptTurn::Text {
-                text: "参数错误已处理".into(),
+                text: "电机动态配置已准备，请补齐数据和参数后确认。".into(),
             },
         ],
     });
-    let app = TestApp::spawn_with_agent_factory(factory).await;
-    for expected in ["unknown", "malformed"] {
-        let session = create_session(&app).await;
-        assert_eq!(
-            post_and_wait(&app, &session, expected).await,
-            StatusCode::ACCEPTED
-        );
-        let events = messages(&app, &session).await;
-        assert!(events.iter().any(|event| event["type"] == "assistant"));
-    }
-}
-
-#[tokio::test]
-async fn missing_skill_is_a_failed_tool_result() {
-    let factory = Arc::new(ScriptedAgentFactory::default());
-    factory.enqueue(ScriptScenario {
-        id: "skill-gate".into(),
-        expected_prompt: None,
-        turns: vec![
-            ScriptTurn::ToolCall {
-                call_id: "script".into(),
-                name: "create_script".into(),
-                args: json!({"name":"flow.rss","content":"result = 1"}),
-            },
-            ScriptTurn::Error {
-                message: "provider unavailable after failed tool".into(),
-            },
-        ],
-    });
-    let app = TestApp::spawn_with_agent_factory(factory).await;
-    let session = create_session(&app).await;
-    post_and_wait(&app, &session, "运行潮流").await;
-    let events = messages(&app, &session).await;
-    assert!(
-        events.iter().any(|event| {
-            event["type"] == "tool-call"
-                && event["toolName"] == "create_script"
-                && event["status"] == "failed"
-        }),
-        "events: {events:#?}"
-    );
-    assert!(
-        events.iter().any(|event| {
-            event["type"] == "assistant" && event["content"] == "agent 运行失败，请稍后重试"
-        }),
-        "events: {events:#?}"
-    );
-}
-
-#[tokio::test]
-async fn turn_limit_failure_explains_that_no_script_was_created() {
-    let factory = Arc::new(ScriptedAgentFactory::default());
-    factory.enqueue(ScriptScenario {
-        id: "turn-limit".into(),
-        expected_prompt: Some("计算潮流".into()),
-        turns: (0..8)
-            .map(|index| ScriptTurn::ToolCall {
-                call_id: format!("storage-{index}"),
-                name: "get_storage_usage".into(),
-                args: json!({}),
-            })
-            .collect(),
-    });
-    let app = TestApp::spawn_with_agent_factory(factory).await;
-    let session = create_session(&app).await;
-
     assert_eq!(
-        post_and_wait(&app, &session, "计算潮流").await,
-        StatusCode::ACCEPTED
-    );
-
-    let events = messages(&app, &session).await;
-    assert!(
-        events.iter().any(|event| {
-            event["type"] == "assistant"
-                && event["content"] == "本轮工具调用已达到上限，尚未生成脚本，请重新发送请求"
-        }),
-        "events: {events:#?}"
-    );
-}
-
-#[tokio::test]
-async fn successful_script_creation_is_not_overwritten_by_a_later_provider_error() {
-    let factory = Arc::new(ScriptedAgentFactory::default());
-    factory.enqueue(ScriptScenario {
-        id: "script-created-before-provider-error".into(),
-        expected_prompt: Some("计算潮流".into()),
-        turns: vec![
-            ScriptTurn::ToolCall {
-                call_id: "load-rss-skill".into(),
-                name: "load_agent_skill".into(),
-                args: json!({"skill_id":"rss-generation"}),
-            },
-            ScriptTurn::ToolCall {
-                call_id: "create-flow-script".into(),
-                name: "create_script".into(),
-                args: json!({"name":"power-flow.rss","content":"result = 1"}),
-            },
-            ScriptTurn::Error {
-                message: "provider unavailable after tool success".into(),
-            },
-        ],
-    });
-    let app = TestApp::spawn_with_agent_factory(factory).await;
-    let session = create_session(&app).await;
-
-    assert_eq!(
-        post_and_wait(&app, &session, "计算潮流").await,
-        StatusCode::ACCEPTED
-    );
-
-    let events = messages(&app, &session).await;
-    let script_index = events
-        .iter()
-        .position(|event| event["type"] == "script")
-        .unwrap_or_else(|| panic!("script message; events: {events:#?}"));
-    let tool_success_index = events
-        .iter()
-        .position(|event| {
-            event["type"] == "tool-call"
-                && event["toolName"] == "create_script"
-                && event["status"] == "success"
-        })
-        .expect("successful create_script result");
-    let assistants = events
-        .iter()
-        .enumerate()
-        .filter(|(_, event)| event["type"] == "assistant")
-        .collect::<Vec<_>>();
-    assert_eq!(assistants.len(), 1, "events: {events:#?}");
-    assert_eq!(
-        assistants[0].1["content"], "脚本已生成，请检查代码并点击脚本卡片“运行”",
-        "events: {events:#?}"
-    );
-    assert!(
-        script_index < tool_success_index && tool_success_index < assistants[0].0,
-        "events: {events:#?}"
-    );
-}
-
-#[tokio::test]
-async fn provider_error_releases_scheduler_permit() {
-    let factory = Arc::new(ScriptedAgentFactory::default());
-    factory.enqueue(ScriptScenario {
-        id: "provider-error".into(),
-        expected_prompt: None,
-        turns: vec![ScriptTurn::Error {
-            message: "provider unavailable".into(),
-        }],
-    });
-    factory.enqueue(ScriptScenario {
-        id: "retry".into(),
-        expected_prompt: None,
-        turns: vec![ScriptTurn::Text {
-            text: "重试成功".into(),
-        }],
-    });
-    let app = TestApp::spawn_with_agent_factory(factory).await;
-    let session = create_session(&app).await;
-    assert_eq!(
-        post_and_wait(&app, &session, "失败一次").await,
-        StatusCode::ACCEPTED
-    );
-    assert_eq!(app.state.scheduler.active_count(), 0);
-    assert_eq!(
-        post_and_wait(&app, &session, "重试").await,
+        post_and_wait(&app, &session, "模拟电机启动暂态").await,
         StatusCode::ACCEPTED
     );
     let events = messages(&app, &session).await;
-    assert!(
-        events.iter().any(|event| {
-            event["type"] == "assistant" && event["content"] == "agent 运行失败，请稍后重试"
-        }),
-        "events: {events:#?}"
+    assert_eq!(
+        tool_names(&events),
+        ["load_agent_skill", "search_study_facades", "prepare_study"]
     );
-    assert!(events.iter().any(|event| event["content"] == "重试成功"));
+    assert_no_script_or_run(&events);
 }
 
 #[tokio::test]

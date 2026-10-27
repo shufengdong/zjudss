@@ -71,7 +71,7 @@ cd ..
 
 候选发布执行 `scripts/test-release-integration`。报告记录测试 ID、Agent bundle hash、用户 seed hash/数量、engine
 contract、当前 binary hash、动态资源 snapshot 与案例分类数量；hash 是证据而非固定接收值，日志必须脱敏。
-真实门禁必须覆盖模型导入/发布、五类研究短指令的 `plan_study` trace、Agent 创建 ready 潮流脚本、用户显式运行、结果分析/比较和只使用稳定 ID，并动态导入所有
+真实门禁必须覆盖模型导入/发布、目录驱动的研究门面检索、配置卡准备与最终确认、Agent 创建受管研究脚本、自动执行、结果分析/比较和只使用稳定 ID，并动态导入所有
 可导入案例、报告个别不可导入案例、执行按来源类型与 study 选择的代表案例。
 
 ## Failure policy

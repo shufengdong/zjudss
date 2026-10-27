@@ -12,6 +12,7 @@ mod runs;
 mod scripts;
 mod sessions;
 mod storage;
+mod study_configurations;
 mod uploads;
 mod workspaces;
 
@@ -35,6 +36,7 @@ use crate::application::HistoryError;
 use crate::application::ModelDataFrameReadError;
 use crate::application::RunError;
 use crate::application::ScriptError;
+use crate::application::StudyConfigurationError;
 use crate::application::UploadBatchError;
 use crate::application::VersionError;
 use crate::db::repositories::RepoError;
@@ -200,6 +202,23 @@ impl From<DataResourceError> for ApiError {
             | "idempotency_conflict"
             | "deletion_impact_changed"
             | "invalid_deletion_impact_token" => StatusCode::CONFLICT,
+            _ => StatusCode::UNPROCESSABLE_ENTITY,
+        };
+        Self {
+            status,
+            message: error.to_string(),
+            code,
+            details: None,
+        }
+    }
+}
+
+impl From<StudyConfigurationError> for ApiError {
+    fn from(error: StudyConfigurationError) -> Self {
+        let code = error.code();
+        let status = match code {
+            "not_found" => StatusCode::NOT_FOUND,
+            "configuration_stale" => StatusCode::CONFLICT,
             _ => StatusCode::UNPROCESSABLE_ENTITY,
         };
         Self {
@@ -602,6 +621,36 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
         ["POST"]
     );
     add_route!("/api/sessions/{id}/events", get(events::stream), ["GET"]);
+    add_route!(
+        "/api/study-configurations/{id}",
+        get(study_configurations::get).delete(study_configurations::cancel),
+        ["GET", "DELETE"]
+    );
+    add_route!(
+        "/api/study-configurations/{id}/facade",
+        put(study_configurations::select_facade),
+        ["PUT"]
+    );
+    add_route!(
+        "/api/study-configurations/{id}/bindings/{inputId}",
+        put(study_configurations::bind_resource),
+        ["PUT"]
+    );
+    add_route!(
+        "/api/study-configurations/{id}/bindings/{inputId}/mapping",
+        post(study_configurations::map_resource),
+        ["POST"]
+    );
+    add_route!(
+        "/api/study-configurations/{id}/structs/{inputId}",
+        put(study_configurations::update_struct),
+        ["PUT"]
+    );
+    add_route!(
+        "/api/study-configurations/{id}/results",
+        put(study_configurations::select_results),
+        ["PUT"]
+    );
     add_route!(
         "/api/sessions/{id}/scripts",
         get(scripts::list)

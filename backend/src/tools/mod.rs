@@ -17,7 +17,7 @@ pub mod list_result_datasets;
 pub mod list_simulation_history;
 pub mod load_agent_skill;
 pub mod modify_model;
-pub mod plan_study;
+pub mod prepare_study;
 pub mod promote_result_dataset;
 pub mod read_chat_context;
 pub mod read_data_resource;
@@ -27,6 +27,7 @@ pub mod run_result_analysis;
 pub mod search_chat_history;
 pub mod search_engine_docs;
 pub mod search_examples;
+pub mod search_study_facades;
 mod support;
 pub mod update_data_resource_alias;
 
@@ -41,7 +42,7 @@ use crate::agent::knowledge::AgentKnowledge;
 use crate::application::{
     AnalysisService, ArtifactService, ComparisonService, DataResourceService, DatasetService,
     EventWriter, HistoryService, ModelDataFrameReadService, ModelPatchService, RunService,
-    ScriptService, StudyPlanningService, VersionService,
+    ScriptService, StudyConfigurationService, VersionService,
 };
 use crate::auth::{CurrentUser, UserId};
 use crate::engine_resources::EngineResourceSnapshot;
@@ -66,8 +67,7 @@ pub struct ToolServices {
     pub engine_snapshot: Arc<EngineResourceSnapshot>,
     pub agent_knowledge: Arc<AgentKnowledge>,
     pub loaded_skills: Arc<Mutex<BTreeSet<String>>>,
-    pub study_planning: StudyPlanningService,
-    pub ready_study_plans: Arc<Mutex<ReadyStudyPlanRegistry>>,
+    pub study_configurations: StudyConfigurationService,
     pub datasets: DatasetService,
     pub analysis: AnalysisService,
     pub comparisons: ComparisonService,
@@ -112,7 +112,8 @@ macro_rules! define_tool_registry {
 define_tool_registry!(
     inspect_workspace::InspectWorkspaceTool,
     read_model_dataframe::ReadModelDataFrameTool,
-    plan_study::PlanStudyTool,
+    search_study_facades::SearchStudyFacadesTool,
+    prepare_study::PrepareStudyTool,
     search_examples::SearchExamplesTool,
     inspect_example::InspectExampleTool,
     modify_model::ModifyModelTool,

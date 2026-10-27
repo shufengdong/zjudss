@@ -8,6 +8,7 @@ pub mod artifacts;
 pub mod case_import;
 pub mod chat;
 pub mod comparisons;
+mod data_mapping;
 pub mod data_resources;
 pub(crate) mod dataframe_reader;
 pub mod datasets;
@@ -18,6 +19,7 @@ pub mod model_patch;
 pub mod runs;
 pub mod scheduler;
 pub mod scripts;
+mod study_configurations;
 pub mod study_planning;
 pub mod uploads;
 pub mod versions;
@@ -36,7 +38,8 @@ use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
     AnalysisRepo, ArtifactRepo, ComparisonRepo, DataResourceRepo, HistoryRepo, MessageRepo,
-    ResultRepo, RunRepo, ScriptRepo, SessionRepo, StorageScopeRepo, UploadRepo, VersionRepo,
+    ResultRepo, RunRepo, ScriptRepo, SessionRepo, StorageScopeRepo, StudyConfigurationRepo,
+    UploadRepo, VersionRepo,
 };
 use crate::engine_resources::{EngineKnowledge, EngineResourceSnapshot};
 use crate::ingestion::ArchiveLimits;
@@ -53,6 +56,7 @@ pub use artifacts::{
 pub use case_import::{CaseImportError, CaseImportService};
 pub use chat::ChatService;
 pub use comparisons::{ComparisonError, ComparisonService};
+pub use data_mapping::{ColumnMapping, CreateMappedResourceRequest, DataMappingService};
 pub use data_resources::{
     DataResourceDeletionPreview, DataResourceDownload, DataResourceError, DataResourcePage,
     DataResourceRows, DataResourceService, DataResourceView, DeletedDataResource,
@@ -77,6 +81,7 @@ pub use scripts::{
     CreateScriptRequest, ScriptDetail, ScriptError, ScriptService, ScriptServiceDependencies,
     ScriptSource, ScriptSummary,
 };
+pub use study_configurations::*;
 pub use study_planning::StudyPlanningService;
 pub use uploads::{
     CandidateDecision, CandidatePurpose, ChildPublishStatus, ParseSettings, UploadBatchError,
@@ -101,6 +106,7 @@ pub struct AppState {
     pub version_service: VersionService,
     pub upload_batch_service: UploadBatchService,
     pub data_resource_service: DataResourceService,
+    pub data_mapping_service: DataMappingService,
     pub model_dataframe_read_service: ModelDataFrameReadService,
     pub script_service: ScriptService,
     pub run_service: RunService,
@@ -111,6 +117,7 @@ pub struct AppState {
     pub comparison_service: ComparisonService,
     pub history_service: HistoryService,
     pub study_planning_service: StudyPlanningService,
+    pub study_configuration_service: StudyConfigurationService,
     pub engine_snapshot: Arc<EngineResourceSnapshot>,
     pub agent_knowledge: Arc<AgentKnowledge>,
     pub events: EventBus,
@@ -531,6 +538,11 @@ impl AppState {
             engine_snapshot.clone(),
             data_dir.clone(),
         );
+        let data_mapping_service = DataMappingService::new(
+            data_resource_service.clone(),
+            upload_batch_service.clone(),
+            UploadRepo::new(pool.clone()),
+        );
         let script_service = ScriptService::new(scripts::ScriptServiceDependencies {
             repo: ScriptRepo::new(pool.clone()),
             artifacts: artifact_service.clone(),
@@ -592,6 +604,14 @@ impl AppState {
             artifact_service.clone(),
             engine_snapshot.clone(),
         );
+        let study_configuration_service = StudyConfigurationService::new(
+            StudyConfigurationRepo::new(pool.clone()),
+            VersionRepo::new(pool.clone()),
+            DataResourceRepo::new(pool.clone()),
+            data_resource_service.clone(),
+            data_mapping_service.clone(),
+            engine_snapshot.clone(),
+        );
         Self {
             pool,
             session_repo,
@@ -601,6 +621,7 @@ impl AppState {
             model_dataframe_read_service,
             upload_batch_service,
             data_resource_service,
+            data_mapping_service,
             script_service,
             run_service,
             case_import_service,
@@ -610,6 +631,7 @@ impl AppState {
             comparison_service,
             history_service,
             study_planning_service,
+            study_configuration_service,
             engine_snapshot,
             agent_knowledge,
             events,

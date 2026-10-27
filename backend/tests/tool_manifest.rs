@@ -52,8 +52,7 @@ fn services_for_session(
         engine_snapshot: app.state.engine_snapshot.clone(),
         agent_knowledge: app.state.agent_knowledge.clone(),
         loaded_skills: Arc::new(Mutex::new(BTreeSet::new())),
-        study_planning: app.state.study_planning_service.clone(),
-        ready_study_plans: Arc::new(Mutex::new(Default::default())),
+        study_configurations: app.state.study_configuration_service.clone(),
         datasets: app.state.dataset_service.clone(),
         analysis: app.state.analysis_service.clone(),
         comparisons: app.state.comparison_service.clone(),
@@ -203,11 +202,11 @@ fn manifest_allowed_tools_equal_runtime_registry() {
 
     assert_eq!(
         runtime.len(),
-        22,
-        "runtime registry must contain 22 unique tools"
+        23,
+        "runtime registry must contain 23 unique tools"
     );
     runtime.dedup();
-    assert_eq!(runtime.len(), 22, "runtime tool names must be unique");
+    assert_eq!(runtime.len(), 23, "runtime tool names must be unique");
     assert_eq!(
         manifest, runtime,
         "manifest and runtime tool registries must be bidirectionally equal"
@@ -220,11 +219,11 @@ async fn registered_tools_preserve_domain_error_feedback_and_metadata() {
     let registered = tools::build_tools(services(&app, principal("alice")));
     let planner = registered
         .iter()
-        .find(|tool| tool.name() == "plan_study")
-        .expect("plan_study registered");
+        .find(|tool| tool.name() == "search_study_facades")
+        .expect("search_study_facades registered");
     let result = planner
         .execute(
-            r#"{"request":{"studyType":"static_power_flow"}}"#.into(),
+            r#"{"query":"潮流","explicitFunction":null}"#.into(),
             &mut ToolContext::new(),
         )
         .await;

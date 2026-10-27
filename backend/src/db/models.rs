@@ -626,6 +626,35 @@ pub struct StudyConfigurationRecord {
 }
 
 #[derive(Queryable, Insertable, Debug, Clone)]
+#[diesel(table_name = study_input_bindings)]
+pub struct StudyInputBindingRecord {
+    pub configuration_id: i32,
+    pub input_name: String,
+    pub input_kind: String,
+    pub model_table_name: Option<String>,
+    pub resource_id: Option<String>,
+    pub mapping_json: Option<String>,
+    pub ordinal: i32,
+}
+
+#[derive(Queryable, Insertable, Debug, Clone)]
+#[diesel(table_name = study_struct_values)]
+pub struct StudyStructValueRecord {
+    pub configuration_id: i32,
+    pub input_name: String,
+    pub values_json: String,
+    pub schema_ref: String,
+}
+
+#[derive(Queryable, Insertable, Debug, Clone)]
+#[diesel(table_name = study_result_selections)]
+pub struct StudyResultSelectionRecord {
+    pub configuration_id: i32,
+    pub result_name: String,
+    pub ordinal: i32,
+}
+
+#[derive(Queryable, Insertable, Debug, Clone)]
 #[diesel(table_name = managed_workflows)]
 pub struct ManagedWorkflowRecord {
     pub id: i32,
@@ -701,35 +730,6 @@ pub struct WorkflowAttemptRecord {
     pub created_at_ms: i64,
     pub started_at_ms: Option<i64>,
     pub finished_at_ms: Option<i64>,
-}
-
-#[derive(Queryable, Insertable, Debug, Clone)]
-#[diesel(table_name = study_input_bindings)]
-pub struct StudyInputBindingRecord {
-    pub configuration_id: i32,
-    pub input_name: String,
-    pub input_kind: String,
-    pub model_table_name: Option<String>,
-    pub resource_id: Option<String>,
-    pub mapping_json: Option<String>,
-    pub ordinal: i32,
-}
-
-#[derive(Queryable, Insertable, Debug, Clone)]
-#[diesel(table_name = study_struct_values)]
-pub struct StudyStructValueRecord {
-    pub configuration_id: i32,
-    pub input_name: String,
-    pub values_json: String,
-    pub schema_ref: String,
-}
-
-#[derive(Queryable, Insertable, Debug, Clone)]
-#[diesel(table_name = study_result_selections)]
-pub struct StudyResultSelectionRecord {
-    pub configuration_id: i32,
-    pub result_name: String,
-    pub ordinal: i32,
 }
 
 #[derive(Queryable, Insertable, Debug, Clone)]

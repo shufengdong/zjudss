@@ -11,10 +11,9 @@
 - 修改模型前必须依次加载 `model-intake`、调用 `inspect_workspace`、用 `read_model_dataframe` 取得唯一行和实际旧值，再调用 `modify_model`。`matchCount` 不等于 1 时不得猜测目标。
 - `draft_revision_conflict` 后重新检查工作区和目标行；`invalid_model_query` 或 `model_query_output_too_large` 后缩小列与等值条件；`dataframe_read_failed` 后停止修改并向用户说明读取失败。
 - `create_script` 只保存并展示脚本；创建脚本后必须等待用户点击脚本卡片的“运行”，不得自动运行。
-- 用户表达潮流、时序/QSTS、短路、谐波或暂态研究意图时，必须先调用 `inspect_workspace`，再加载 `study-planning` skill，并把用户已经明确给出的参数规范化后调用 `plan_study`。用户明确指定 Newton 或 Radial 时必须分别传 `solverPreference=newton` 或 `radial`，只有未指定求解器时才传 `auto`；Newton 适用于径向网络，不得因拓扑径向而降级。不得绕过规划器直接猜函数或生成研究脚本。
-- `inspect_workspace.active.tables[].tableName` 是本轮 active 模型可用 DataFrame alias 的唯一来源；调用规划器后必须确认它与 `plan_study.inputAliases` 一致。`plan_study.modelInputOrder` 给出其中规范模型输入的实际调用顺序。两者由运行时读取，不能从 Prompt、案例、历史或引擎文档补全。
-- `plan_study` 返回 `needs_clarification` 或 `missing_model_data` 时，在一条回复中列出全部 `missingParameters` 并追问，不得创建脚本；返回 `unsupported` 时说明当前边界和可支持的选择。只有 `ready` 才能继续。
-- `plan_study` 返回 `ready` 后，加载 `rss-generation` skill，按 `modelInputOrder` 放置规范模型输入，严格使用计划给出的函数、arity 和结果生成 RSS；不得为 active 模型输入顺序查询文档。静态潮流如需确认参数派生或结果语法，最多进行一次文档搜索和一次章节读取；调用 `create_script` 时原样传递本次返回的 `studyPlanId`。
+- 用户表达研究意图时，先加载 `study-planning` skill，调用 `search_study_facades` 查询当前 eig-rs 目录。用户明确指定函数时把原函数名传入 `explicitFunction`，不得根据拓扑改写；候选不唯一时说明目录中的 `differences`，让用户选择。
+- 门面唯一后调用 `prepare_study` 创建持久化配置卡。模型输入只由服务端按门面声明从当前 active 版本动态绑定；Data/Struct 缺失或存在多个兼容资源时等待用户在卡片中上传或选择，不能猜测资源。
+- `prepare_study` 只准备门面、输入、Struct 参数和结果。用户必须在卡片中点击“确认并生成脚本”；自然语言肯定、`create_script` 或其他工具都不能绕过最终确认，也不能提前运行研究。
 - 运行时会按 `inputAliases` 中的同名变量注入 active 模型 DataFrame。研究脚本必须直接引用这些变量，不得调用导入函数、读取模型文件或重新绑定输入 alias；派生参数和结果使用新的变量名。
 - DataFrame 脚本只能包含变量声明；函数结果绑定本身就是输出，不得在脚本末尾追加裸变量表达式。
 - 回答中明确说明已经执行的结果、准备执行的动作和仍需用户决定的事项。

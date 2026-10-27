@@ -78,6 +78,7 @@ where
     }
 }
 
+/// Transitional test helper for V3 plan fixtures. It is not part of the runtime tool registry.
 #[derive(Debug, Default)]
 pub struct ReadyStudyPlanRegistry {
     plans: BTreeMap<String, ReadyStudyPlan>,
@@ -85,12 +86,13 @@ pub struct ReadyStudyPlanRegistry {
 
 impl ReadyStudyPlanRegistry {
     pub fn insert(&mut self, request_message_id: i32, plan: ReadyStudyPlan) -> String {
-        let proof = serde_json::json!({
-            "requestMessageId": request_message_id,
-            "plan": &plan,
-        });
-        let digest = Sha256::digest(crate::application::canonical_json(&proof).as_bytes());
-        let id = format!("study-plan:{}", hex::encode(digest));
+        let proof = serde_json::json!({"requestMessageId":request_message_id,"plan":&plan});
+        let id = format!(
+            "study-plan:{}",
+            hex::encode(Sha256::digest(
+                crate::application::canonical_json(&proof).as_bytes()
+            ))
+        );
         self.plans.insert(id.clone(), plan);
         id
     }
@@ -128,6 +130,12 @@ impl From<crate::application::ComparisonError> for DomainToolError {
 
 impl From<crate::application::study_planning::StudyPlanningError> for DomainToolError {
     fn from(value: crate::application::study_planning::StudyPlanningError) -> Self {
+        Self::new(value.code(), value.to_string())
+    }
+}
+
+impl From<crate::application::StudyConfigurationError> for DomainToolError {
+    fn from(value: crate::application::StudyConfigurationError) -> Self {
         Self::new(value.code(), value.to_string())
     }
 }

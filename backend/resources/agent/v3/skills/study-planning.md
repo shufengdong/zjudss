@@ -4,23 +4,18 @@
 用户要求静态潮流（power flow）、时序/QSTS、短路/故障（short circuit/fault）、谐波（harmonic）或暂态（transient）研究时使用，包括“计算潮流”这类短指令。
 
 ## 执行步骤
-1. 先调用 `inspect_workspace`，以当前会话 active 模型为唯一规划依据；记录 `inspect_workspace.active.tables[].tableName` 的完整清单。草稿、历史运行和案例都不能替代 active 模型。
-2. 将用户原话规范化成 `plan_study` 的一种 `studyType`：`static_power_flow`、`qsts`、`fault`、`harmonic` 或 `transient`。只填用户明确表达的物理参数；用户明确说径向法或牛顿法时，`solverPreference` 必须分别传 `radial` 或 `newton`，只有用户未指定求解器时才传 `auto`。未说明的其他关键参数保留为空，不得补默认值。
-3. 调用 `plan_study`。规划器会结合模型拓扑、设备、引用关系和本次引擎函数 catalog，返回 `ready`、`needs_clarification`、`missing_model_data` 或 `unsupported`；`plan_study.inputAliases` 是本次规划实际冻结的 active 输入 alias，`plan_study.modelInputOrder` 是其中规范模型输入的实际调用顺序。两者均来自当前 active 模型，不得自行补写。
-4. 若状态为 `needs_clarification` 或 `missing_model_data`，在一条自然语言回复中覆盖全部 `missingParameters`；区分用户需要选择的参数和模型中需要补充的数据。追问后停止，不调用 `create_script`。
-5. 若状态为 `unsupported`，说明当前不支持的研究类型及规划器给出的可行边界后停止。当前暂态只支持 `motor_dynamics`；EMT、暂态稳定和逆变器控制暂态不能改写成电机动态。
-6. 只有状态为 `ready`，且 `plan_study.inputAliases` 与先前读取的 `inspect_workspace.active.tables[].tableName` 清单完全一致时，才加载 `rss-generation`。脚本按 `modelInputOrder` 放置规范模型输入，依据计划与当前引擎文档生成计划指定的唯一函数调用，并将返回的 `studyPlanId` 原样交给 `create_script`；不一致时重新检查工作区并重新规划。
-7. 脚本创建后等待用户在脚本卡片上明确点击运行。
+1. 先调用 `inspect_workspace`，了解当前会话是否有 active 模型和可用表；草稿、历史运行和案例不能替代 active 模型。
+2. 从用户原话提取查询词；用户明确给出函数名时必须把原函数名传给 `search_study_facades.explicitFunction`，不得按拓扑替换径向法或 Newton。
+3. 调用 `search_study_facades`。多个可用门面时，用 `title`、`description` 和 `differences` 一次说明差别并让用户选择；禁用门面必须显示其诊断。
+4. 门面唯一后调用 `prepare_study`，完整传入用户意图。服务端从目录生成全部模型、Data、Struct 和结果卡片；工具成功后等待用户操作配置卡及最终确认，不生成脚本、不运行仿真。
 
 ## 参数语义
-- 静态潮流的 `newton` 是显式方法选择，适用于径向和非径向网络；不得因为 active 模型是径向结构而改成 `auto` 或 `radial`，也不得要求用户先制造环网、多电源等条件。`radial` 只适用于规划器确认满足径向边界的模型。`auto` 才根据 active 模型事实选择 Radial 或 Newton。
-- QSTS 必须明确模式、起始时间、步长、步数和负荷/发电曲线。
-- 短路必须明确故障 case 的母线、端子、类型、金属性或阻抗，并处理理想源语义确认。
-- 谐波必须明确最大谐波次数；模型必须存在注入设备实际引用的 spectrum。
-- 电机动态必须明确持续时间、步长和事件；“无外部事件”规范化为显式空数组，未提事件则保持为空并追问。
+- 显式函数选择优先；Newton 适用于径向和非径向网络，不得因为 active 模型是径向结构而改成其他函数。
+- 门面声明的 Data 输入用资源选择或列映射卡补齐；Struct 输入用带类型、单位、范围和枚举的参数卡补齐；结果只从门面声明中选择。
+- 兼容资源唯一时服务端可预选；多个资源时必须由用户选择。同一门面的历史 Struct 参数只能先询问是否复用，不能静默沿用。
 
 ## 禁止推断
-不得仅根据案例名选择求解器，不得把历史运行参数静默带入新请求，不得自行构造 `studyPlanId`，不得在 Prompt 或 skill 中假定固定输入表清单，也不得自动运行脚本。
+不得仅根据案例名选择方法，不得把历史参数静默带入新请求，不得在 Prompt 或 skill 中假定固定输入表清单，也不得用 `create_script` 绕过配置确认或自动运行脚本。
 
 ## 验收
-非 ready 分支只产生一次完整追问或边界说明；ready 脚本的函数、arity、结果、`inputAliases`、`modelInputOrder` 和 `studyPlanId` 与同一次规划完全一致，且创建脚本后不产生运行或结果。
+门面候选分支只产生一次完整选择说明；配置卡必须与选定门面、当前 engine snapshot 和用户会话一致。

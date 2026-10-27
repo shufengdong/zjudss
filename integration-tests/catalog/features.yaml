@@ -604,7 +604,7 @@
   tests:
     - runner: rust
       file: backend/tests/scripted_agent.rs
-      name: scripted_tool_call_runs_registered_tool_and_persists_events
+      name: study_power_flow_searches_then_prepares_a_configuration_without_a_script
     - runner: release
       file: scripts/test-release-integration
       name: real DeepSeek and tensoreval complete the semantic release journey
@@ -617,58 +617,63 @@
     - "skill:result-analysis"
     - "skill:rss-generation"
     - "skill:troubleshooting"
+    - "error:skill_required"
 
-- id: AGENT-STUDY-PLANNING-001
-  source: docs/agent-prompt-skills-design.md#tool-authority
-  title: Study intent is planned against the active model before script creation
-  layers: [application, agent, adapter]
+- id: MANAGED-STUDY-CONFIGURATION-001
+  source: docs/api-design.md#managed-study-configurations
+  title: Catalog-driven studies require a complete revisioned configuration before confirmation
+  layers: [database, application, api, agent]
   lanes: [pr, release]
   tests:
     - runner: rust
-      file: backend/tests/scripted_agent.rs
-      name: study_power_flow_uses_ready_plan_before_creating_the_planned_script
+      file: backend/tests/study_configurations.rs
+      name: explicit_facade_creates_catalog_driven_cards_without_a_model
     - runner: rust
-      file: backend/tests/scripted_agent.rs
-      name: incomplete_study_requests_ask_once_with_every_reported_missing_field
+      file: backend/tests/study_configurations.rs
+      name: imported_case_binds_exact_active_tables_and_independent_para_resource
     - runner: rust
-      file: backend/tests/scripted_agent.rs
-      name: transient_study_supports_motor_dynamics_and_rejects_emt
+      file: backend/tests/study_configurations.rs
+      name: struct_edits_require_a_replacement_choice_and_revision_is_optimistic
     - runner: rust
-      file: backend/tests/study_planning.rs
-      name: catalog_search_returns_all_matching_facades_with_user_visible_differences
+      file: backend/tests/study_configurations.rs
+      name: protection_configuration_uses_only_catalog_declared_model_inputs
     - runner: rust
-      file: backend/tests/study_planning.rs
-      name: explicit_newton_is_not_replaced_by_radial
+      file: backend/tests/study_configurations.rs
+      name: multiple_compatible_struct_resources_are_never_guessed
     - runner: rust
-      file: backend/tests/study_planning.rs
-      name: planning_lookup_is_driven_by_the_full_facade_catalog
+      file: backend/tests/study_configurations.rs
+      name: configuration_routes_are_user_scoped_revisioned_and_expose_no_confirm_endpoint
+    - runner: rust
+      file: backend/tests/study_configurations.rs
+      name: confirmed_column_mapping_publishes_an_immutable_compatible_resource
     - runner: rust
       file: backend/tests/workspace_tools.rs
-      name: plan_study_preserves_explicit_newton_and_issues_request_local_ready_ids
-    - runner: rust
-      file: backend/tests/scripted_agent.rs
-      name: turn_limit_failure_explains_that_no_script_was_created
-    - runner: rust
-      file: backend/tests/scripted_agent.rs
-      name: agent_script_validation_is_deferred_to_tensoreval
-    - runner: rust
-      file: backend/tests/scripts.rs
-      name: planned_agent_script_validation_is_deferred_to_tensoreval
-    - runner: release
-      file: scripts/test-release-integration
-      name: real DeepSeek and tensoreval complete the semantic release journey
-  assertions: [all five study families call the deterministic planner, camelCase tool arguments preserve every explicit study parameter, an explicit Newton request uses Newton even for a radial network, incomplete and unsupported requests create no script or run, input aliases and their canonical argument order come from the actual active tables and are frozen into the ready plan, every missing canonical table is reported together, ready scripts directly consume planned aliases without repeated order lookups, RSS syntax and runtime viability are deferred to tensoreval, supplied plan IDs remain request-local and stale model snapshots are rejected, turn-budget exhaustion reports that no script was created]
-  fixtures: [published active model plus independent para resource, radial topology, motor table, current engine function catalog]
+      name: study_tools_search_explicit_functions_and_prepare_persisted_cards
+  assertions: [explicit functions are never topology-rewritten, model inputs come only from active tables declared by the selected facade, para remains an independent Struct resource, multiple resources require user selection, Struct changes require replacement intent, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, no public confirm endpoint exists before the atomic workflow transaction]
+  fixtures: [current engine facade catalog, imported active model plus independent para resource, ambiguous compatible resources]
   contracts:
-    - "tool:plan_study"
+    - "route:GET /api/study-configurations/{id}"
+    - "route:PUT /api/study-configurations/{id}/facade"
+    - "route:PUT /api/study-configurations/{id}/bindings/{inputId}"
+    - "route:POST /api/study-configurations/{id}/bindings/{inputId}/mapping"
+    - "route:PUT /api/study-configurations/{id}/structs/{inputId}"
+    - "route:PUT /api/study-configurations/{id}/results"
+    - "route:DELETE /api/study-configurations/{id}"
+    - "tool:search_study_facades"
+    - "tool:prepare_study"
     - "skill:study-planning"
-    - "error:skill_required"
-    - "error:study_catalog_invalid"
-    - "error:study_model_read_failed"
-    - "error:study_plan_function_mismatch"
-    - "error:study_plan_not_found"
-    - "error:study_plan_required"
-    - "error:study_plan_stale"
+    - "error:configuration_stale"
+    - "error:configuration_incomplete"
+    - "error:result_selection_invalid"
+    - "error:study_facade_unavailable"
+    - "error:study_input_not_found"
+    - "error:study_binding_invalid"
+    - "error:study_binding_incompatible"
+    - "error:study_mapping_invalid"
+    - "error:study_mapping_incompatible"
+    - "error:study_schema_unavailable"
+    - "error:struct_values_invalid"
+    - "error:replacement_action_invalid"
 
 - id: ENGINE-FACADE-CATALOG-001
   source: docs/superpowers/plans/2026-10-27-v4-independent-data-resources-managed-studies.md#task-2-从引擎-snapshot-发布全部可用-dataframe-研究门面
@@ -713,6 +718,8 @@
     - "error:facade_contract_invalid"
     - "error:facade_schema_invalid"
     - "error:facade_unsupported_input_kind"
+    - "error:study_catalog_invalid"
+    - "error:study_model_read_failed"
 
 - id: SCRIPT-001
   source: docs/integration-testing-design.md#coverage-matrix
@@ -728,7 +735,7 @@
       name: model import stays a draft until publish and a script runs only after its explicit button
     - runner: rust
       file: backend/tests/scripted_agent.rs
-      name: successful_script_creation_is_not_overwritten_by_a_later_provider_error
+      name: generic_agent_script_validation_is_deferred_to_tensoreval
     - runner: rust
       file: backend/tests/scripts.rs
       name: script_text_endpoint_defers_rss_syntax_to_tensoreval
@@ -740,6 +747,10 @@
     - "route:POST /api/sessions/{id}/scripts/text"
     - "route:GET /api/scripts/{id}"
     - "tool:create_script"
+    - "error:study_plan_required"
+    - "error:study_plan_not_found"
+    - "error:study_plan_stale"
+    - "error:study_plan_function_mismatch"
 
 - id: RUN-001
   source: docs/integration-testing-design.md#coverage-matrix

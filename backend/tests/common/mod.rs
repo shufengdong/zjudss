@@ -330,6 +330,10 @@ impl TestApp {
             let mut conn = pool.get().expect("checkout test database");
             db::run_migrations(&mut conn).expect("run test migrations");
         }
+        zjudss::db::repositories::EngineResourceSnapshotRepo::new(pool.clone())
+            .publish_current(&engine_snapshot, zjudss::application::now_ms())
+            .await
+            .expect("publish test engine resource snapshot");
         seed_test_users(
             &pool,
             b"ID,NAME\ninstance,Instance\nalice,Alice\nbob,Bob\nforeign,Foreign\nalice@example.com,Alice Example\nbob@example.com,Bob Example\nowner:alice@example.com,Alice Owner\nowner:bob@example.com,Bob Owner\nowner:foreign,Foreign Owner\n",

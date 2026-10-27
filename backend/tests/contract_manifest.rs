@@ -10,8 +10,8 @@ fn production_router_and_manifest_share_one_declaration() {
         .map(|route| (route.method, route.path))
         .collect::<HashSet<_>>();
 
-    assert_eq!(routes.len(), 60);
-    assert_eq!(unique.len(), 60);
+    assert_eq!(routes.len(), 67);
+    assert_eq!(unique.len(), 67);
     assert!(unique.contains(&("GET", "/health")));
     assert!(unique.contains(&("POST", "/api/auth/login")));
     assert!(unique.contains(&("POST", "/api/auth/logout")));
@@ -21,6 +21,20 @@ fn production_router_and_manifest_share_one_declaration() {
     assert!(unique.contains(&("PUT", "/api/upload-batches/{id}/candidates")));
     assert!(unique.contains(&("DELETE", "/api/upload-batches/{id}")));
     assert!(unique.contains(&("POST", "/api/data-resources/{id}/replacement-batches")));
+    for route in [
+        ("GET", "/api/study-configurations/{id}"),
+        ("DELETE", "/api/study-configurations/{id}"),
+        ("PUT", "/api/study-configurations/{id}/facade"),
+        ("PUT", "/api/study-configurations/{id}/bindings/{inputId}"),
+        (
+            "POST",
+            "/api/study-configurations/{id}/bindings/{inputId}/mapping",
+        ),
+        ("PUT", "/api/study-configurations/{id}/structs/{inputId}"),
+        ("PUT", "/api/study-configurations/{id}/results"),
+    ] {
+        assert!(unique.contains(&route));
+    }
     for route in [
         ("POST", "/api/upload-batches/{id}/confirm"),
         ("GET", "/api/sessions/{id}/data-resources"),
@@ -73,7 +87,8 @@ fn contract_manifest_contains_all_public_enums() {
             "dynamic_study_facades",
             "bounded_engine_execution",
             "recoverable_upload_batches",
-            "independent_data_resources"
+            "independent_data_resources",
+            "managed_study_configurations"
         ]
     );
 
@@ -91,8 +106,9 @@ fn contract_manifest_contains_all_public_enums() {
             "script",
         ]
     );
-    assert_eq!(manifest.tool_names.len(), 22);
-    assert!(manifest.tool_names.contains(&"plan_study"));
+    assert_eq!(manifest.tool_names.len(), 23);
+    assert!(manifest.tool_names.contains(&"search_study_facades"));
+    assert!(manifest.tool_names.contains(&"prepare_study"));
     for tool in [
         "list_data_resources",
         "read_data_resource",

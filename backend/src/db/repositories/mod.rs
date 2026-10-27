@@ -10,6 +10,7 @@ mod run;
 mod script;
 mod session;
 mod storage_scope;
+mod study_configuration;
 mod upload;
 mod user;
 mod version;
@@ -33,6 +34,9 @@ pub use run::{
 pub use script::ScriptRepo;
 pub use session::SessionRepo;
 pub use storage_scope::{StorageLimits, StorageScopeRepo, StorageUsage};
+pub use study_configuration::{
+    NewStudyConfiguration, StudyConfigurationAggregate, StudyConfigurationRepo,
+};
 pub use upload::{
     NewUploadCandidate, NewUploadFile, RecoverableUpload, SettledUpload, UploadBatchRecordSet,
     UploadRepo,

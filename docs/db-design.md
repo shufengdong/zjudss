@@ -89,6 +89,17 @@ normalized/source artifact 和 replacement/lineage。`live|needs_rename` 参与�
 及原 schema/content hash。`result_analysis_inputs` 和 `dataset_lineage_snapshots` 使用 dataset/resource 二选一来源，始终保存
 来源 schema hash 与 content hash，源资源后续替换或删除不会改变既有派生血缘。
 
+`study_configurations` 保存门面 ID/hash、engine snapshot、状态、单调 revision、原始意图和可选来源 workflow；
+`study_input_bindings` 只保存门面声明的 model table 或普通资源 ID，Struct 草稿的 baseline/replacement action 和 Data
+mapping 摘要放在受控 `mapping_json`；`study_struct_values` 保存按规范 schema 校验后的字段；
+`study_result_selections` 以 ordinal 保存有序唯一结果。仓储每次查询都通过 session 校验用户，编辑使用 immediate
+transaction 比较 revision 并整体替换三个子表。资源替换/删除会把引用它的非终态配置置为 `invalidated`；已确认
+工作流只读自己的冻结 input snapshot。
+
+列映射先按目标 schema 在应用层生成 Snappy Parquet，再通过统一上传候选事务发布新 `data_resources` 行；发布时即
+写入 `source_kind=mapping` 和源资源/目标 schema/列映射血缘，避免发布后修改不可变 payload。配置确认事务尚未在
+Task 6 暴露；Task 9 才会同时重验 revision/snapshot/hash、发布 Struct replacement、新增 workflow 和冻结引用。
+
 ## Search and recovery
 
 会话标题、消息、上传摘要、脚本和运行摘要写入 FTS5 trigram 外部内容表。索引损坏只让搜索返回 503，不影响

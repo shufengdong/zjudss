@@ -446,6 +446,59 @@ impl UploadRepo {
         .map_err(RepoError::Join)?
     }
 
+    pub async fn set_controlled_mapping_schema(
+        &self,
+        user: &UserId,
+        batch_id: i32,
+        candidate_id: &str,
+        schema_ref: &str,
+        evidence_json: String,
+        now_ms: i64,
+    ) -> RepoResult<()> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        let candidate_id = candidate_id.to_string();
+        let schema_ref = schema_ref.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            conn.immediate_transaction(|conn| {
+                let status = schema::upload_batches::table
+                    .inner_join(
+                        schema::sessions::table
+                            .on(schema::sessions::id.eq(schema::upload_batches::session_id)),
+                    )
+                    .filter(schema::upload_batches::id.eq(batch_id))
+                    .filter(schema::sessions::user_id.eq(user))
+                    .select(schema::upload_batches::status)
+                    .first::<String>(conn)
+                    .optional()?
+                    .ok_or(RepoError::NotFound)?;
+                if !matches!(status.as_str(), "awaiting_purpose" | "ready_to_confirm") {
+                    return Err(RepoError::InvalidState("upload_state_invalid".into()));
+                }
+                let changed = diesel::update(
+                    schema::upload_candidates::table
+                        .filter(schema::upload_candidates::batch_id.eq(batch_id))
+                        .filter(schema::upload_candidates::id.eq(candidate_id)),
+                )
+                .set((
+                    schema::upload_candidates::inferred_schema_ref.eq(Some(schema_ref)),
+                    schema::upload_candidates::evidence_json.eq(evidence_json),
+                ))
+                .execute(conn)?;
+                if changed != 1 {
+                    return Err(RepoError::NotFound);
+                }
+                diesel::update(schema::upload_batches::table.find(batch_id))
+                    .set(schema::upload_batches::updated_at_ms.eq(now_ms))
+                    .execute(conn)?;
+                Ok(())
+            })
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
     pub async fn settle(
         &self,
         user: &UserId,

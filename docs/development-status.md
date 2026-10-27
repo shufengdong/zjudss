@@ -7,7 +7,7 @@
 > [`2026-10-27-v4-independent-data-resources-managed-studies.md`](superpowers/plans/2026-10-27-v4-independent-data-resources-managed-studies.md)。
 > 当前 eig-rs 已提供全部门面的完整传递输入、Struct 参数卡和结果 schema，外部机器合同门禁已经满足。V4 Task 1
 > 的空库持久化合同、Task 2 的动态研究门面目录、Task 3 的有界进程执行边界、Task 4 的可恢复统一上传批次和
-> Task 5 的独立数据资源发布/管理已经实现；受管研究工作流尚未实现。
+> Task 5 的独立数据资源发布/管理及 Task 6 的目录驱动研究配置已经实现；最终确认与受管执行工作流尚未实现。
 > 本文未明确标为 V4 已完成的其余内容仍描述进入 V4 前已验证的 V3 产品行为。
 
 ## V4 implementation progress
@@ -19,7 +19,8 @@
 | Task 3：统一 tensoreval 进程边界 | complete | 双流有界捕获/完整 hash、运行中结果监控、进程组超时与取消、最终严格扫描、无部分结果 |
 | Task 4：统一上传、解析设置与用途确认 | complete | upload batch API、24h 可配置 TTL、并发 reservation、CSV/Excel/Parquet/DSS/案例候选、20+para 拆分、动态 catalog 表头推断 |
 | Task 5：独立数据资源发布与管理 | complete | model/resource 双子事务、普通 Data/Struct 资源、替换/删除/提升、资源分析与物化视图、4 个 Agent 工具 |
-| Tasks 6–15 | planned | 以 V4 实施计划为准 |
+| Task 6：目录驱动研究配置 | complete | revision 状态机、动态 model/Data/Struct/结果卡、复用建议、多资源消歧、受控列映射、最终确认准备合同、2 个 Agent 工具 |
+| Tasks 7–15 | planned | 以 V4 实施计划为准 |
 
 Task 5 的完整后端测试和统一上传/独立数据资源公共 API Playwright 旅程已通过。完整旧版 Playwright 套件仍依赖已删除的
 `/model-imports` 协议和“确认合并”界面，剩余迁移属于 Task 12 前端工作区任务，不恢复旧协议作为兼容层。
@@ -40,7 +41,7 @@ Task 5 的完整后端测试和统一上传/独立数据资源公共 API Playwri
 | 运行 | complete | 仅按钮创建、active race、含脚本名的冻结快照、私有输入树、可展开失败详情与多 Parquet 结果 |
 | 结果与派生 | complete | 单结果删除、分析、物化视图、比较、tombstone 血缘 |
 | 前端 | complete | 三列/窄屏、运行摘要与失败原因/耗时/全结果选择、结果数据表/图表、active/draft/历史模型表只读工作台、登录用户菜单 |
-| Agent V3 | complete | 22 工具、6 skills、普通资源查询/改名/结果提升、五类研究确定性规划、active 动态输入 alias、按需引擎知识、无运行/发布/删除权 |
+| Agent bundle | transitioning | 23 工具；`search_study_facades`/`prepare_study` 已替代 `plan_study`，受管研究等待配置卡确认；Task 8 发布正式 V4 bundle 并移除对话 Agent 的通用脚本工具 |
 | 发布门禁 | complete | deterministic Rust/Vitest/build/Playwright/coverage；真实依赖另行执行 |
 
 ## Runtime contracts
@@ -53,18 +54,14 @@ Task 5 的完整后端测试和统一上传/独立数据资源公共 API Playwri
 - 每次 tensoreval 调用均由统一 adapter 流式排空 stdout/stderr；每流按 `ENGINE_PROCESS_OUTPUT_MAX_BYTES` 保留等额首尾并
   记录完整 hash/总字节数。运行中和退出后都检查结果数量、单文件/总量、普通文件和路径边界；失败、超时或取消会
   终止整个进程组并清理未发布目录。
-- 公共合同：60 条路由、9 类消息、22 个工具、6 个 skills、8 个上传来源、6 类视图。
+- 公共合同：67 条路由、9 类消息、23 个工具、6 个 skills、8 个上传来源、6 类视图。
 - 静态 DSS adapter profile 固定输出 21 张规范 DataFrame；统一上传把其中 20 张网络表作为模型候选，把 `para`
   作为普通 Data resource 候选。其他模型表完全由当前 engine snapshot 的有效 model schema 和实际表头推断。
-- 研究规划：潮流、QSTS、短路、谐波和暂态只基于 active 模型的实际表清单与当前 engine snapshot；
-  `inputAliases` 与从 active 表动态排列的 `modelInputOrder` 随 ready plan 冻结。规范输入缺失时一次返回全部
-  `model.tables.<alias>`，不签发 plan ID。静态潮流生成不再查询模型输入顺序，参数/结果语法最多进行一次文档
-  搜索和一次章节读取，确保在 8 次模型调用预算内创建脚本；轮次耗尽时返回明确的未创建脚本提示并写后台日志。
-  研究请求字段按 camelCase 严格反序列化；显式 `newton` 在径向网络上仍选择 `ds_newton_raphson_pf`，只有
-  `auto` 才按模型事实在 Radial 与 Newton 间自动选择，未知或拼错字段不会静默回退默认值。
-  Agent 脚本直接使用运行时注入的 alias，且 DataFrame 脚本只包含变量声明；函数结果绑定中的叶变量直接成为
-  结果，不追加裸变量表达式。受管脚本若导入/读取文件、引用计划外输入、覆盖输入或包含裸输出表达式，在持久化前
-  以 `script_error` 拒绝。当前暂态仅支持电机—网络动态。
+- 研究配置：`search_study_facades` 按当前 snapshot 返回目录门面、方法差异和禁用诊断，显式函数不会被拓扑改写；
+  `prepare_study` 持久化 revisioned 配置卡。model 输入仅绑定 active 的实际门面表，Struct/Data 绑定普通资源，
+  多资源必须选择，列映射发布带血缘的新 Parquet 资源。结果集合按 fixed/minimum/conditional 目录约束校验。
+  `prepare_confirmation` 重新检查 revision、snapshot、门面 hash、active 模型和资源内容，生成 Task 9 原子事务使用的
+  locked contract/input snapshot/replacement commands；当前不提供 confirm 公共路由，也不提前生成脚本。
 - 模型表读取：active、准确 draft revision 和历史版本均支持元数据、分页投影与 Parquet 下载；Agent 可通过
   有界等值查询读取实际行后再修改，读取不改变模型生命周期。
 
@@ -118,12 +115,8 @@ Vitest 覆盖公共类型、state、workspace、模型表、脚本卡、运行�
 Vite/Axum/SQLite/CAS 的身份、导入、分层案例目录与窄屏详情、显式运行、可展开运行详情与多结果选择、派生血缘、删除、恢复、恶意 ZIP、配额和无障碍。
 最终命令与真实 DeepSeek/tensoreval 候选门禁见部署文档。
 
-动态脚本输入合同由 `planning_lists_every_missing_canonical_table_from_the_active_version`、
-`plan_study_preserves_explicit_newton_and_issues_request_local_ready_ids`、
-`planned_agent_script_cannot_reimport_the_active_model` 和
-`planned_agent_script_cannot_overwrite_an_active_input_alias` 覆盖；轮次耗尽诊断由
-`turn_limit_failure_explains_that_no_script_was_created` 覆盖；DataFrame 声明语法由
-`static_validation_rejects_a_trailing_bare_output_expression` 覆盖。
+研究配置合同由 `backend/tests/study_configurations.rs` 覆盖：显式 Newton、目录动态模型输入、保护模型范围、独立
+`para`、多资源不猜选、Struct replacement intent、revision/用户隔离、无提前 confirm 路由及受控列映射发布。
 
 当前后端基线通过 `cargo fmt --all -- --check`、
 `cargo clippy --all-targets --all-features -- -D warnings` 及 `cargo test --features e2e-test`。

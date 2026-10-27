@@ -1,6 +1,6 @@
 # V4 HTTP 与 SSE API（实施中）
 
-> 本文跟随已实现的 V4 公共接口逐任务更新。Task 5 已实现独立数据资源发布和管理；受管研究、运行删除和运行到脚本消息定位接口仍待后续任务实现。已确认的行为边界见
+> 本文跟随已实现的 V4 公共接口逐任务更新。Task 6 已实现目录驱动的研究配置；最终确认/自动执行、运行删除和运行到脚本消息定位接口仍待后续任务实现。已确认的行为边界见
 > [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)；
 > 路由和 DTO 将在实施方案中确定，当前接口表不提前声明未实现能力。
 
@@ -42,6 +42,12 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 | POST | `/api/data-resource-replacement-previews/{token}/confirm` | 以 Replace/SaveAsNew/Cancel 确认参数覆盖 |
 | POST | `/api/data-resources/{id}/deletion-preview` | 生成资源引用影响和短期删除 token |
 | DELETE | `/api/data-resources/{id}` | 以 impact token 幂等删除并释放直接 artifact 引用 |
+| GET/DELETE | `/api/study-configurations/{id}` | 读取配置卡/以 `expectedRevision` 取消未确认配置 |
+| PUT | `/api/study-configurations/{id}/facade` | 以 revision 更换目录门面并重建输入/结果卡 |
+| PUT | `/api/study-configurations/{id}/bindings/{inputId}` | 选择或清除兼容的普通数据资源 |
+| POST | `/api/study-configurations/{id}/bindings/{inputId}/mapping` | 受控列选择/重命名/类型转换并发布不可变派生资源后绑定 |
+| PUT | `/api/study-configurations/{id}/structs/{inputId}` | 更新 Struct 卡草稿并声明 Replace/SaveAsNew 意图 |
+| PUT | `/api/study-configurations/{id}/results` | 提交有序且唯一的结果集合 |
 | GET/POST | `/api/sessions/{id}/scripts` | 列表/上传单个 `.rss` |
 | POST | `/api/sessions/{id}/scripts/text` | 以文本创建脚本 |
 | GET | `/api/scripts/{id}` | 懒加载脚本全文 |
@@ -107,6 +113,24 @@ schemaRef、规范字段和 expected content hash，确认前不创建资源，�
 删除先生成 impact token，并统计未确认配置、冻结工作流、分析输入及数据集血缘引用；
 确认后资源立即从普通读取隐藏、使未确认配置失效、清空 tombstone 行的 artifact 外键并释放直接引用。冻结工作流和
 已物化派生结果持有自己的引用或快照，因此删除不破坏历史；重复 DELETE 不重复释放。
+
+## Managed study configurations
+
+`search_study_facades` 只查询本次 engine snapshot 的有效门面，显式函数名优先，返回目录中的方法差异和禁用诊断；
+`prepare_study` 持久化配置卡，不生成脚本或运行。状态为
+`choosing_facade|collecting_inputs|ready_to_confirm|confirmed|invalidated|cancelled`，所有卡片写入都必须提交
+`expectedRevision`。跨用户和不存在配置统一 404，revision、资源或 snapshot 竞争返回
+`configuration_stale`。
+
+模型输入只按门面声明从 active 版本的实际表名动态绑定；`para` 等 Struct 只绑定普通数据资源。兼容资源唯一时可
+预选，多个兼容资源必须由用户选择；同门面的历史 Struct 只返回复用建议，不能静默沿用。Struct 卡由规范 schema
+生成字段类型、单位、范围和枚举；修改已绑定资源时必须选择 Replace 或 SaveAsNew，没有来源时只生成新资源命令。
+卡片保存只记录草稿和受控 replacement command，不提前覆盖资源。
+
+Data 输入的 mapping 只接受源列到目标列的受控映射。服务端按目标 schema 转换为 Snappy Parquet，经统一上传发布
+事务创建 `sourceKind=mapping` 的新普通资源，并冻结源资源 ID、目标 schema 和映射血缘；不会修改源资源。结果集合
+必须有序、唯一、属于门面且满足 fixed/minimum/conditional 约束。当前没有公共 confirm 路由；Task 9 将以一个原子
+事务重新校验配置、发布参数资源、冻结输入并启动 workflow，按钮固定为“确认并生成脚本”。
 
 发布请求携带 `expectedDraftId`、`expectedDraftRevision`、`clientPublishId`。成功冻结版本、清空草稿并自动激活。
 激活历史版本只移动 active 指针；存在草稿时必须提交 `discardDraft=true` 以及准确 expected draft。

@@ -25,7 +25,7 @@
     },
     {
       "id": "study-planning",
-      "version": "1.2.2",
+      "version": "1.3.0",
       "description": "结合 active 模型规划潮流、QSTS、短路、谐波与暂态研究",
       "triggers": [
         "simulate",
@@ -44,7 +44,8 @@
       ],
       "requiredTools": [
         "inspect_workspace",
-        "plan_study"
+        "search_study_facades",
+        "prepare_study"
       ],
       "engineContractVersion": "tensoreval-parquet-v3",
       "sources": [
@@ -52,11 +53,11 @@
         "docs/dsa_function_reference.md"
       ],
       "path": "skills/study-planning.md",
-      "sha256": "457fefbf474828d6246e36e82c0d9853e1ee75de0ea0f1af28da8bed18c89b41"
+      "sha256": "71f71ae765d9968accfd5d3fd95800694792503d1d0ae64a2f0f699eebebe084"
     },
     {
       "id": "rss-generation",
-      "version": "1.2.2",
+      "version": "1.3.0",
       "description": "按函数合同生成并校验 RSS",
       "triggers": [
         "generate-script",
@@ -73,7 +74,7 @@
         "docs/rsdss_function_reference.md"
       ],
       "path": "skills/rss-generation.md",
-      "sha256": "6e22463087790877a6f5d76968eb21e8b52cbe1d5e8c9297e24b68b50c6c9bd7"
+      "sha256": "7c7dd80d4ac0255ffa08c92a7c766c6fc86f10dd4230a20f7d0573c0b5a99a25"
     },
     {
       "id": "result-analysis",
