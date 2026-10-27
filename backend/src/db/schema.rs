@@ -149,55 +149,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    model_imports (id) {
-        id -> Integer,
-        workspace_id -> Integer,
-        session_id -> Integer,
-        client_import_id -> Text,
-        source_kind -> Text,
-        source_summary_json -> Text,
-        source_sha256 -> Text,
-        base_draft_id -> Nullable<Integer>,
-        base_draft_revision -> Nullable<BigInt>,
-        status -> Text,
-        stages_json -> Text,
-        diagnostics_json -> Text,
-        error_code -> Nullable<Text>,
-        error_message -> Nullable<Text>,
-        created_at_ms -> BigInt,
-        updated_at_ms -> BigInt,
-    }
-}
-
-diesel::table! {
-    model_import_candidates (id) {
-        id -> Integer,
-        import_id -> Integer,
-        candidate_id -> Text,
-        candidate_kind -> Text,
-        display_name -> Text,
-        table_name -> Nullable<Text>,
-        artifact_id -> Nullable<Integer>,
-        schema_json -> Nullable<Text>,
-        row_count -> Nullable<BigInt>,
-        content_hash -> Nullable<Text>,
-        evidence_json -> Text,
-        selected -> Bool,
-        created_at_ms -> BigInt,
-    }
-}
-
-diesel::table! {
-    model_import_selections (import_id, candidate_id) {
-        import_id -> Integer,
-        candidate_id -> Text,
-        table_name -> Nullable<Text>,
-        selected -> Bool,
-        created_at_ms -> BigInt,
-    }
-}
-
-diesel::table! {
     publish_receipts (id) {
         id -> Integer,
         draft_id -> Integer,
@@ -265,10 +216,12 @@ diesel::table! {
     dataset_lineage_snapshots (id) {
         id -> Integer,
         derived_dataset_id -> Integer,
-        source_dataset_id -> Integer,
+        source_dataset_id -> Nullable<Integer>,
+        source_resource_id -> Nullable<Text>,
         source_name -> Text,
         source_schema_json -> Text,
         source_schema_hash -> Text,
+        source_content_hash -> Text,
         source_producer_json -> Text,
         created_at_ms -> BigInt,
     }
@@ -320,14 +273,17 @@ diesel::table! {
 }
 
 diesel::table! {
-    result_analysis_inputs (analysis_run_id, dataset_id) {
+    result_analysis_inputs (id) {
+        id -> Integer,
         analysis_run_id -> Integer,
-        dataset_id -> Integer,
+        dataset_id -> Nullable<Integer>,
+        resource_id -> Nullable<Text>,
         alias -> Text,
         ordinal -> Integer,
         source_name -> Text,
         source_schema_json -> Text,
         source_schema_hash -> Text,
+        source_content_hash -> Text,
         source_producer_json -> Text,
     }
 }
@@ -410,6 +366,7 @@ diesel::table! {
         client_batch_id -> Text,
         source_kind -> Text,
         replacement_resource_id -> Nullable<Text>,
+        confirm_operation_id -> Nullable<Text>,
         status -> Text,
         model_publish_status -> Text,
         resource_publish_status -> Text,
@@ -473,7 +430,7 @@ diesel::table! {
         status -> Text,
         declared_schema_ref -> Nullable<Text>,
         source_kind -> Text,
-        normalized_artifact_id -> Integer,
+        normalized_artifact_id -> Nullable<Integer>,
         source_artifact_id -> Nullable<Integer>,
         schema_json -> Text,
         schema_hash -> Text,
@@ -506,7 +463,15 @@ diesel::table! {
         token_hash -> Text,
         user_id -> Text,
         old_resource_id -> Text,
-        new_resource_id -> Text,
+        pending_artifact_id -> Integer,
+        pending_resource_id -> Text,
+        expected_content_hash -> Text,
+        schema_ref -> Text,
+        schema_json -> Text,
+        schema_hash -> Text,
+        values_json -> Text,
+        display_name -> Text,
+        proposed_alias -> Text,
         impact_hash -> Text,
         impact_json -> Text,
         expires_at_ms -> BigInt,
@@ -698,9 +663,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     workspace_drafts,
     draft_dataframes,
     model_dataframes,
-    model_imports,
-    model_import_candidates,
-    model_import_selections,
     publish_receipts,
     script_resources,
     simulation_runs,

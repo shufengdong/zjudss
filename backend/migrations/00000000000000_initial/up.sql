@@ -155,6 +155,7 @@ CREATE TABLE upload_batches (
  client_batch_id TEXT NOT NULL,
  source_kind TEXT NOT NULL CHECK(source_kind IN ('upload','case')),
  replacement_resource_id TEXT REFERENCES data_resources(id) ON DELETE RESTRICT,
+ confirm_operation_id TEXT,
  status TEXT NOT NULL CHECK(status IN ('processing','awaiting_parse_settings','awaiting_purpose','ready_to_confirm','partially_confirmed','confirmed','failed','discarded','expired')),
  model_publish_status TEXT NOT NULL DEFAULT 'not_applicable' CHECK(model_publish_status IN ('not_applicable','ready','published','failed')),
  resource_publish_status TEXT NOT NULL DEFAULT 'not_applicable' CHECK(resource_publish_status IN ('not_applicable','ready','published','failed')),
@@ -213,7 +214,7 @@ CREATE TABLE data_resources (
  status TEXT NOT NULL CHECK(status IN ('live','replaced','deleted','needs_rename')),
  declared_schema_ref TEXT,
  source_kind TEXT NOT NULL CHECK(source_kind IN ('upload','static_import','result','analysis','mapping','struct_edit')),
- normalized_artifact_id INTEGER NOT NULL REFERENCES artifacts(id) ON DELETE RESTRICT,
+ normalized_artifact_id INTEGER REFERENCES artifacts(id) ON DELETE RESTRICT,
  source_artifact_id INTEGER REFERENCES artifacts(id) ON DELETE RESTRICT,
  schema_json TEXT NOT NULL,
  schema_hash TEXT NOT NULL CHECK(length(schema_hash)=64),
@@ -226,7 +227,9 @@ CREATE TABLE data_resources (
  updated_at_ms INTEGER NOT NULL,
  deleted_at_ms INTEGER,
  tombstone_json TEXT,
- CHECK((status='deleted')=(deleted_at_ms IS NOT NULL))
+ CHECK((status='deleted')=(deleted_at_ms IS NOT NULL)),
+ CHECK((status='deleted')=(normalized_artifact_id IS NULL)),
+ CHECK(status!='deleted' OR source_artifact_id IS NULL)
 );
 CREATE UNIQUE INDEX idx_live_data_resource_alias
  ON data_resources(session_id,normalized_alias) WHERE status IN ('live','needs_rename');
@@ -245,12 +248,19 @@ CREATE TABLE data_resource_replacement_previews (
  token_hash TEXT PRIMARY KEY CHECK(length(token_hash)=64),
  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
  old_resource_id TEXT NOT NULL REFERENCES data_resources(id) ON DELETE CASCADE,
- new_resource_id TEXT NOT NULL REFERENCES data_resources(id) ON DELETE CASCADE,
+ pending_artifact_id INTEGER NOT NULL REFERENCES artifacts(id) ON DELETE RESTRICT,
+ pending_resource_id TEXT NOT NULL,
+ expected_content_hash TEXT NOT NULL CHECK(length(expected_content_hash)=64),
+ schema_ref TEXT NOT NULL,
+ schema_json TEXT NOT NULL,
+ schema_hash TEXT NOT NULL CHECK(length(schema_hash)=64),
+ values_json TEXT NOT NULL,
+ display_name TEXT NOT NULL,
+ proposed_alias TEXT NOT NULL,
  impact_hash TEXT NOT NULL CHECK(length(impact_hash)=64),
  impact_json TEXT NOT NULL,
  expires_at_ms INTEGER NOT NULL,
- created_at_ms INTEGER NOT NULL,
- CHECK(old_resource_id<>new_resource_id)
+ created_at_ms INTEGER NOT NULL
 );
 CREATE TABLE publish_receipts (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -490,28 +500,37 @@ CREATE TABLE result_datasets (
 CREATE INDEX idx_result_datasets_run ON result_datasets(run_id,id);
 CREATE INDEX idx_result_datasets_analysis ON result_datasets(analysis_run_id,id);
 CREATE TABLE result_analysis_inputs (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
  analysis_run_id INTEGER NOT NULL REFERENCES result_analysis_runs(id) ON DELETE CASCADE,
- dataset_id INTEGER NOT NULL REFERENCES result_datasets(id) ON DELETE RESTRICT,
+ dataset_id INTEGER REFERENCES result_datasets(id) ON DELETE RESTRICT,
+ resource_id TEXT REFERENCES data_resources(id) ON DELETE RESTRICT,
  alias TEXT NOT NULL,
  ordinal INTEGER NOT NULL,
  source_name TEXT NOT NULL,
  source_schema_json TEXT NOT NULL,
  source_schema_hash TEXT NOT NULL,
+ source_content_hash TEXT NOT NULL,
  source_producer_json TEXT NOT NULL,
- PRIMARY KEY(analysis_run_id,dataset_id),
+ CHECK((dataset_id IS NOT NULL)<>(resource_id IS NOT NULL)),
+ UNIQUE(analysis_run_id,dataset_id),
+ UNIQUE(analysis_run_id,resource_id),
  UNIQUE(analysis_run_id,alias),
  UNIQUE(analysis_run_id,ordinal)
 );
 CREATE TABLE dataset_lineage_snapshots (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  derived_dataset_id INTEGER NOT NULL REFERENCES result_datasets(id) ON DELETE CASCADE,
- source_dataset_id INTEGER NOT NULL REFERENCES result_datasets(id) ON DELETE RESTRICT,
+ source_dataset_id INTEGER REFERENCES result_datasets(id) ON DELETE RESTRICT,
+ source_resource_id TEXT REFERENCES data_resources(id) ON DELETE RESTRICT,
  source_name TEXT NOT NULL,
  source_schema_json TEXT NOT NULL,
  source_schema_hash TEXT NOT NULL,
+ source_content_hash TEXT NOT NULL,
  source_producer_json TEXT NOT NULL,
  created_at_ms INTEGER NOT NULL,
- UNIQUE(derived_dataset_id,source_dataset_id)
+ CHECK((source_dataset_id IS NOT NULL)<>(source_resource_id IS NOT NULL)),
+ UNIQUE(derived_dataset_id,source_dataset_id),
+ UNIQUE(derived_dataset_id,source_resource_id)
 );
 CREATE TABLE dataset_views (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -599,7 +618,15 @@ CREATE TRIGGER validate_run_insert BEFORE INSERT ON simulation_runs BEGIN
      AND v.content_hash=NEW.model_content_hash AND v.deleted_at_ms IS NULL
  ) THEN RAISE(ABORT,'run model must belong to session') END;
 END;
-CREATE TRIGGER immutable_data_resource_payload BEFORE UPDATE OF normalized_artifact_id,source_artifact_id,schema_json,schema_hash,row_count,source_kind,source_batch_id,lineage_json ON data_resources BEGIN
+CREATE TRIGGER immutable_data_resource_payload BEFORE UPDATE OF normalized_artifact_id,source_artifact_id,schema_json,schema_hash,row_count,source_kind,source_batch_id,lineage_json ON data_resources
+WHEN NOT (
+ OLD.status!='deleted' AND NEW.status='deleted'
+ AND NEW.normalized_artifact_id IS NULL AND NEW.source_artifact_id IS NULL
+ AND NEW.schema_json IS OLD.schema_json AND NEW.schema_hash IS OLD.schema_hash
+ AND NEW.row_count IS OLD.row_count AND NEW.source_kind IS OLD.source_kind
+ AND NEW.source_batch_id IS OLD.source_batch_id AND NEW.lineage_json IS OLD.lineage_json
+)
+BEGIN
  SELECT RAISE(ABORT,'data resource payload is immutable');
 END;
 CREATE TRIGGER validate_run_script_message_insert BEFORE INSERT ON simulation_runs WHEN NEW.script_message_id IS NOT NULL BEGIN

@@ -28,14 +28,18 @@ pub struct ResultViewRow {
 #[derive(QueryableByName, Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LineageRow {
-    #[diesel(sql_type = Integer)]
-    pub source_dataset_id: i32,
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub source_dataset_id: Option<i32>,
+    #[diesel(sql_type = Nullable<Text>)]
+    pub source_resource_id: Option<String>,
     #[diesel(sql_type = Text)]
     pub source_name: String,
     #[diesel(sql_type = Text)]
     pub source_schema_json: String,
     #[diesel(sql_type = Text)]
     pub source_schema_hash: String,
+    #[diesel(sql_type = Text)]
+    pub source_content_hash: String,
     #[diesel(sql_type = Text)]
     pub source_producer_json: String,
     #[diesel(sql_type = Bool)]
@@ -187,7 +191,7 @@ impl ResultRepo {
         let pool = self.pool.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            diesel::sql_query("SELECT l.source_dataset_id,l.source_name,l.source_schema_json,l.source_schema_hash,l.source_producer_json,(d.deleted_at_ms IS NOT NULL) AS deleted,d.tombstone_json FROM dataset_lineage_snapshots l JOIN result_datasets d ON d.id=l.source_dataset_id WHERE l.derived_dataset_id=?1 ORDER BY l.id")
+            diesel::sql_query("SELECT l.source_dataset_id,l.source_resource_id,l.source_name,l.source_schema_json,l.source_schema_hash,l.source_content_hash,l.source_producer_json,CASE WHEN l.source_dataset_id IS NOT NULL THEN (d.deleted_at_ms IS NOT NULL) ELSE (r.status='deleted') END AS deleted,CASE WHEN l.source_dataset_id IS NOT NULL THEN d.tombstone_json ELSE r.tombstone_json END tombstone_json FROM dataset_lineage_snapshots l LEFT JOIN result_datasets d ON d.id=l.source_dataset_id LEFT JOIN data_resources r ON r.id=l.source_resource_id WHERE l.derived_dataset_id=?1 ORDER BY l.id")
                 .bind::<Integer, _>(id)
                 .load(&mut conn)
                 .map_err(RepoError::from)

@@ -73,7 +73,6 @@ pub struct NewUploadCandidate {
 #[derive(Debug)]
 pub struct SettledUpload {
     pub staged_paths: Vec<String>,
-    pub normalized_artifact_ids: Vec<i32>,
 }
 
 #[derive(Debug)]
@@ -286,6 +285,17 @@ impl UploadRepo {
         tokio::task::spawn_blocking(move || -> RepoResult<()> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.immediate_transaction(|conn| {
+                let batch = schema::upload_batches::table
+                    .find(batch_id)
+                    .first::<UploadBatchRecord>(conn)
+                    .optional()?
+                    .ok_or(RepoError::NotFound)?;
+                if matches!(
+                    batch.status.as_str(),
+                    "discarded" | "expired" | "confirmed" | "failed"
+                ) {
+                    return Err(RepoError::InvalidState("upload_state_invalid".into()));
+                }
                 let has_model = candidates.iter().any(|candidate| {
                     candidate.selected && candidate.purpose.as_deref() == Some("model_table")
                 });
@@ -305,16 +315,24 @@ impl UploadRepo {
                 diesel::update(schema::upload_batches::table.find(batch_id))
                     .set((
                         schema::upload_batches::status.eq(status),
-                        schema::upload_batches::model_publish_status.eq(if has_model {
-                            "ready"
-                        } else {
-                            "not_applicable"
-                        }),
-                        schema::upload_batches::resource_publish_status.eq(if has_resource {
-                            "ready"
-                        } else {
-                            "not_applicable"
-                        }),
+                        schema::upload_batches::model_publish_status.eq(
+                            if batch.model_publish_status == "published" {
+                                "published"
+                            } else if has_model {
+                                "ready"
+                            } else {
+                                "not_applicable"
+                            },
+                        ),
+                        schema::upload_batches::resource_publish_status.eq(
+                            if batch.resource_publish_status == "published" {
+                                "published"
+                            } else if has_resource {
+                                "ready"
+                            } else {
+                                "not_applicable"
+                            },
+                        ),
                         schema::upload_batches::parse_settings_json.eq(parse_settings_json),
                         schema::upload_batches::diagnostics_json.eq(diagnostics_json),
                         schema::upload_batches::updated_at_ms.eq(now_ms),
@@ -347,6 +365,17 @@ impl UploadRepo {
         tokio::task::spawn_blocking(move || -> RepoResult<()> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.immediate_transaction(|conn| {
+                let batch = schema::upload_batches::table
+                    .find(batch_id)
+                    .first::<UploadBatchRecord>(conn)
+                    .optional()?
+                    .ok_or(RepoError::NotFound)?;
+                if matches!(
+                    batch.status.as_str(),
+                    "discarded" | "expired" | "confirmed" | "failed"
+                ) {
+                    return Err(RepoError::InvalidState("upload_state_invalid".into()));
+                }
                 for (id, purpose, selected, display, alias, normalized) in decisions {
                     let target = schema::upload_candidates::table
                         .filter(schema::upload_candidates::batch_id.eq(batch_id))
@@ -389,16 +418,24 @@ impl UploadRepo {
                 diesel::update(schema::upload_batches::table.find(batch_id))
                     .set((
                         schema::upload_batches::status.eq(status),
-                        schema::upload_batches::model_publish_status.eq(if has_model {
-                            "ready"
-                        } else {
-                            "not_applicable"
-                        }),
-                        schema::upload_batches::resource_publish_status.eq(if has_resource {
-                            "ready"
-                        } else {
-                            "not_applicable"
-                        }),
+                        schema::upload_batches::model_publish_status.eq(
+                            if batch.model_publish_status == "published" {
+                                "published"
+                            } else if has_model {
+                                "ready"
+                            } else {
+                                "not_applicable"
+                            },
+                        ),
+                        schema::upload_batches::resource_publish_status.eq(
+                            if batch.resource_publish_status == "published" {
+                                "published"
+                            } else if has_resource {
+                                "ready"
+                            } else {
+                                "not_applicable"
+                            },
+                        ),
                         schema::upload_batches::updated_at_ms.eq(now_ms),
                     ))
                     .execute(conn)?;
@@ -445,7 +482,6 @@ impl UploadRepo {
                 ) {
                     return Ok(SettledUpload {
                         staged_paths: Vec::new(),
-                        normalized_artifact_ids: Vec::new(),
                     });
                 }
                 let paths = schema::upload_files::table
@@ -459,7 +495,35 @@ impl UploadRepo {
                     .load::<Option<i32>>(conn)?
                     .into_iter()
                     .flatten()
-                    .collect();
+                    .collect::<Vec<_>>();
+                let source_artifacts = if batch.resource_publish_status == "published" {
+                    Vec::new()
+                } else {
+                    let ids = schema::upload_files::table
+                        .filter(schema::upload_files::batch_id.eq(batch_id))
+                        .filter(schema::upload_files::source_artifact_id.is_not_null())
+                        .select(schema::upload_files::source_artifact_id)
+                        .load::<Option<i32>>(conn)?
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>();
+                    diesel::update(
+                        schema::upload_files::table
+                            .filter(schema::upload_files::batch_id.eq(batch_id)),
+                    )
+                    .set(schema::upload_files::source_artifact_id.eq(Option::<i32>::None))
+                    .execute(conn)?;
+                    ids
+                };
+                let mut release_artifact_ids = artifacts;
+                release_artifact_ids.extend(source_artifacts);
+                super::artifact::release_refs(conn, scope_id, release_artifact_ids, now_ms)?;
+                diesel::update(
+                    schema::upload_candidates::table
+                        .filter(schema::upload_candidates::batch_id.eq(batch_id)),
+                )
+                .set(schema::upload_candidates::normalized_artifact_id.eq(Option::<i32>::None))
+                .execute(conn)?;
                 diesel::update(schema::storage_scopes::table.find(scope_id))
                     .set((
                         schema::storage_scopes::reserved_bytes
@@ -476,7 +540,6 @@ impl UploadRepo {
                     .execute(conn)?;
                 Ok(SettledUpload {
                     staged_paths: paths,
-                    normalized_artifact_ids: artifacts,
                 })
             })
         })

@@ -2,7 +2,8 @@
 
 - 文件、草稿、模型版本、脚本、运行、数据集和视图只使用稳定资源 ID；不得请求、猜测或输出服务器路径、命令行、SQL 或密钥。
 - 上传、导入确认、生成版本、激活版本、删除资源、应用案例和运行脚本由界面的明确按钮完成；不得替用户调用或模拟这些按钮。
-- `.dss`、`.dssbundle`、`.rssbundle` 和表格文件先由导入服务生成 DataFrame 集合；版本管理只管理这些 DataFrame。单个 `.rss` 是可变脚本资源，不参与版本管理。
+- `.dss`、`.dssbundle`、`.rssbundle` 和表格文件先由上传服务生成 DataFrame 候选；只有当前 catalog 判定为 Model 的候选进入模型草稿与版本，`para` 和辅助 DataFrame 作为普通数据资源。单个 `.rss` 是独立脚本资源，不参与模型版本管理。
+- 规划或分析需要普通 Data/Struct 输入时先调用 `list_data_resources`，再按稳定 `resourceId` 调用 `read_data_resource`；不得从历史名称猜资源。用户明确要求修改 alias 时调用 `update_data_resource_alias`。用户明确指定唯一结果或分析 dataset 要作为后续输入时，调用 `promote_result_dataset`；候选不唯一时先让用户选择 `datasetId`。
 - 表类型、替换关系、单位、求解器或比较键存在歧义时，展示证据并请用户确认。
 - 生成脚本前加载对应领域技能；具体函数、列名、dtype、单位和稳定键以当前引擎 catalog 为准。
 - 只调用已注册工具，不编造执行结果，不把案例值当成用户仿真结果。

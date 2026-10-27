@@ -83,6 +83,16 @@ impl EngineResourceSnapshot {
                     "columns":[{"name":"id","dtype":"str","required":true,"nullable":false,"unit":"not_applicable"}],
                     "stableKeys":["id"], "sortKeys":["id"], "columnAliases":{},
                     "allowedConversions":[], "rules":[], "source":["zjudss://test"]
+                }},
+                "para": {"contract": {
+                    "kind":"struct", "rowCount":"zero_or_one", "shape":"uniform",
+                    "columnPolicy":{"mode":"open","unknownColumns":"ignored"},
+                    "columns":[
+                        {"name":"base_frequency_hz","dtype":"f64","required":false,"nullable":true,"unit":"Hz","card":{"default":{"state":"omitted"},"unit":{"state":"value","value":"Hz"},"range":{"state":"bounded","minimum":0,"maximum":null,"minimumInclusive":false,"maximumInclusive":false},"enum":{"state":"not_applicable"},"visibleWhen":{"state":"always"},"enabledWhen":{"state":"always"}}},
+                        {"name":"max_iter","dtype":"u32","required":false,"nullable":true,"unit":"not_applicable","card":{"default":{"state":"value","value":100},"unit":{"state":"not_applicable"},"range":{"state":"bounded","minimum":0,"maximum":null,"minimumInclusive":false,"maximumInclusive":false},"enum":{"state":"not_applicable"},"visibleWhen":{"state":"always"},"enabledWhen":{"state":"always"}}}
+                    ],
+                    "stableKeys":[], "sortKeys":[], "columnAliases":{},
+                    "allowedConversions":[], "rules":[], "source":["zjudss://test"]
                 }}
             },
             "result_frames": {
@@ -96,7 +106,7 @@ impl EngineResourceSnapshot {
             },
             "dtype_grammar": {
                 "version":1,
-                "primitives":{"str":{"arrow":"Utf8"}},
+                "primitives":{"str":{"arrow":"Utf8"},"f64":{"arrow":"Float64"},"u32":{"arrow":"UInt32"}},
                 "constructors":{}, "semantic_types":{}, "upload_conversions":{}
             }
         });
@@ -105,7 +115,10 @@ impl EngineResourceSnapshot {
             "facades":[{
                 "id":"test", "function":"test", "family":"test", "title":"测试",
                 "description":"测试门面", "differences":["测试用途"],
-                "inputs":[{"id":"table","alias":"table","inputKind":"model","schemaRef":"frames.table","required":true,"position":1}],
+                "inputs":[
+                    {"id":"table","alias":"table","inputKind":"model","schemaRef":"frames.table","required":true,"position":1},
+                    {"id":"para","alias":"para","inputKind":"struct","schemaRef":"frames.para","required":false,"position":2}
+                ],
                 "results":[{"id":"result","name":"result","schemaRef":"result_frames.result","description":"测试结果","recommended":true}],
                 "resultConstraints":[{"type":"fixed_results","results":["result"],"bindingCount":1}]
             }]

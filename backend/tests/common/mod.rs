@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::collections::{BTreeMap, HashSet};
+use std::io::Cursor;
 
 use axum::Router;
 use sha2::{Digest, Sha256};
@@ -9,11 +10,13 @@ use zjudss::adapters::{SimEngine, StubEngine};
 use zjudss::agent::knowledge::AgentKnowledge;
 use zjudss::agent::{AgentFactory, DeepSeekAgentFactory, LlmConfig};
 use zjudss::application::{AppState, RunScheduler};
+use zjudss::application::{CandidateDecision, CandidatePurpose, UploadFile, UploadSourceKind};
 use zjudss::auth::{AuthService, CurrentUser, UserId};
 use zjudss::catalog::SchemaCatalog;
 use zjudss::config::RuntimeConfig;
 use zjudss::db::{self, DbPool};
 use zjudss::engine_resources::EngineResourceRegistry;
+use zjudss::storage::StageLimits;
 
 pub struct TestApp {
     pub router: Router,
@@ -58,6 +61,100 @@ pub fn test_user(id: &str) -> CurrentUser {
         name: name.to_string(),
         storage_scope_id,
         auth_session_hash: "test".to_string(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn publish_model_bytes(
+    app: &TestApp,
+    user: &CurrentUser,
+    session_id: i32,
+    client_id: &str,
+    file_name: &str,
+    bytes: &[u8],
+    expected: Option<zjudss::db::models::DraftRef>,
+    only_table: Option<&str>,
+) -> zjudss::db::models::DraftRef {
+    let staged = app
+        .state
+        .artifact_service
+        .store()
+        .stage(Cursor::new(bytes), StageLimits::default())
+        .unwrap();
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            user,
+            session_id,
+            client_id.to_string(),
+            UploadSourceKind::Upload,
+            vec![UploadFile {
+                client_file_id: client_id.to_string(),
+                file_name: file_name.to_string(),
+                relative_path: Some(file_name.to_string()),
+                media_type: None,
+                staged,
+            }],
+        )
+        .await
+        .unwrap();
+    let decisions = batch
+        .candidates
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| {
+            let inferred_table = candidate
+                .inferred_schema_ref
+                .as_deref()
+                .and_then(|value| value.strip_prefix("frames."))
+                .or(candidate.proposed_alias.as_deref());
+            let selected = only_table
+                .map(|table| inferred_table == Some(table) || index == 0)
+                .unwrap_or(candidate.purpose == Some(CandidatePurpose::ModelTable));
+            CandidateDecision {
+                candidate_id: candidate.id.clone(),
+                purpose: if selected {
+                    CandidatePurpose::ModelTable
+                } else {
+                    candidate.purpose.unwrap_or(CandidatePurpose::Skip)
+                },
+                selected,
+                table_name: selected.then(|| {
+                    only_table
+                        .map(str::to_string)
+                        .or_else(|| inferred_table.map(str::to_string))
+                        .expect("selected model candidate has a table name")
+                }),
+                display_name: None,
+                alias: None,
+            }
+        })
+        .collect();
+    let confirmation = app
+        .state
+        .data_resource_service
+        .confirm_upload(
+            user,
+            batch.id.parse().unwrap(),
+            decisions,
+            None,
+            expected,
+            Some(client_id),
+        )
+        .await
+        .unwrap();
+    assert_eq!(confirmation.model_status, "published", "{confirmation:?}");
+    let workspace = app
+        .state
+        .version_service
+        .workspace(user, session_id)
+        .await
+        .unwrap();
+    let draft = workspace.draft.expect("model publication creates a draft");
+    zjudss::db::models::DraftRef {
+        id: draft.draft.id,
+        revision: draft.draft.revision,
     }
 }
 

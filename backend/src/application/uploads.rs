@@ -17,7 +17,16 @@ use crate::ingestion::{
 };
 use crate::storage::{ParquetInspector, StageLimits};
 
-use super::{ArtifactError, ArtifactMetadata, ArtifactService, UploadFile, now_ms};
+use super::{ArtifactError, ArtifactMetadata, ArtifactService, now_ms};
+
+#[derive(Debug)]
+pub struct UploadFile {
+    pub client_file_id: String,
+    pub file_name: String,
+    pub relative_path: Option<String>,
+    pub media_type: Option<String>,
+    pub staged: crate::storage::StagedArtifact,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -602,6 +611,77 @@ impl UploadBatchService {
                 "必须为每个候选提交一次用途决定".into(),
             ));
         }
+        for decision in &decisions {
+            let existing = known[decision.candidate_id.as_str()];
+            let existing_purpose = existing
+                .purpose
+                .as_deref()
+                .and_then(CandidatePurpose::parse);
+            let model_side_published = batch.batch.model_publish_status == "published"
+                && (existing_purpose == Some(CandidatePurpose::ModelTable)
+                    || decision.purpose == CandidatePurpose::ModelTable);
+            let resource_side_published = batch.batch.resource_publish_status == "published"
+                && (existing_purpose == Some(CandidatePurpose::DataResource)
+                    || decision.purpose == CandidatePurpose::DataResource);
+            let published_child = model_side_published || resource_side_published;
+            if published_child {
+                let requested_alias = decision
+                    .alias
+                    .as_deref()
+                    .or(decision.table_name.as_deref())
+                    .or(existing.proposed_alias.as_deref())
+                    .map(normalize_alias);
+                let existing_alias = existing.proposed_alias.as_deref().map(normalize_alias);
+                let display_changed = decision
+                    .display_name
+                    .as_deref()
+                    .is_some_and(|display| display != existing.display_name);
+                if decision.purpose != existing_purpose.unwrap()
+                    || decision.selected != existing.selected
+                    || requested_alias != existing_alias
+                    || display_changed
+                {
+                    return Err(UploadBatchError::Invalid(
+                        "upload_candidate_invalid".into(),
+                        "已发布子事务的候选决定不可修改".into(),
+                    ));
+                }
+            }
+            if !decision.selected || decision.purpose == CandidatePurpose::Skip {
+                continue;
+            }
+            let contract_kind = existing
+                .inferred_schema_ref
+                .as_deref()
+                .and_then(|schema_ref| self.snapshot.schemas.resolve(schema_ref).ok())
+                .map(|contract| &contract.kind);
+            let purpose_matches_contract = matches!(
+                (decision.purpose, contract_kind),
+                (
+                    CandidatePurpose::ModelTable,
+                    Some(DataFrameContractKind::Model)
+                ) | (CandidatePurpose::ModelTable, None)
+                    | (
+                        CandidatePurpose::DataResource,
+                        Some(DataFrameContractKind::Struct)
+                    )
+                    | (
+                        CandidatePurpose::DataResource,
+                        Some(DataFrameContractKind::Data)
+                    )
+                    | (
+                        CandidatePurpose::DataResource,
+                        Some(DataFrameContractKind::Result)
+                    )
+                    | (CandidatePurpose::DataResource, None)
+            );
+            if !purpose_matches_contract {
+                return Err(UploadBatchError::Invalid(
+                    "upload_candidate_invalid".into(),
+                    "候选用途与当前引擎 schema 的 input kind 不一致".into(),
+                ));
+            }
+        }
         let values = decisions
             .into_iter()
             .map(|d| {
@@ -657,16 +737,6 @@ impl UploadBatchService {
         let cleanup = self.repo.settle(&user.id, id, status, now_ms()).await?;
         for path in cleanup.staged_paths {
             let _ = std::fs::remove_file(self.data_dir.join(path));
-        }
-        for artifact in cleanup
-            .normalized_artifact_ids
-            .into_iter()
-            .collect::<BTreeSet<_>>()
-        {
-            let _ = self
-                .artifacts
-                .release(user.storage_scope_id, artifact)
-                .await;
         }
         Ok(())
     }

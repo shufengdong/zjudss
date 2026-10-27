@@ -8,7 +8,10 @@ use rig::tool::{Tool, ToolContext};
 use tokio::sync::{Mutex, Semaphore};
 use zjudss::adapters::StubEngine;
 use zjudss::agent::knowledge::AgentKnowledge;
-use zjudss::application::{ArtifactMetadata, EventWriter};
+use zjudss::application::{
+    AnalysisInput, AnalysisInputSource, AnalysisRequest, ArtifactMetadata, CandidateDecision,
+    CandidatePurpose, EventWriter, UploadFile, UploadSourceKind,
+};
 use zjudss::auth::CurrentUser;
 use zjudss::storage::StageLimits;
 use zjudss::tools::{self, ToolServices};
@@ -20,15 +23,23 @@ fn principal(key: &str) -> CurrentUser {
 }
 
 fn services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
+    services_for_session(app, principal, 0)
+}
+
+fn services_for_session(
+    app: &TestApp,
+    principal: CurrentUser,
+    session_id: i32,
+) -> Arc<ToolServices> {
     Arc::new(ToolServices {
         engine: Arc::new(StubEngine),
         writer: EventWriter::new(
             principal.id.clone(),
-            0,
+            session_id,
             app.state.message_repo.clone(),
             app.state.events.clone(),
         ),
-        session_id: 0,
+        session_id,
         request_message_id: 0,
         semaphore: Arc::new(Semaphore::new(1)),
         scope: principal.id.clone(),
@@ -48,7 +59,133 @@ fn services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
         comparisons: app.state.comparison_service.clone(),
         history: app.state.history_service.clone(),
         artifact_service: app.state.artifact_service.clone(),
+        data_resources: app.state.data_resource_service.clone(),
     })
+}
+
+#[tokio::test]
+async fn data_resource_tools_list_read_rename_and_promote_owned_session_resources() {
+    let app = TestApp::spawn().await;
+    let user = principal("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "resource tools", 1)
+        .await
+        .unwrap();
+    let staged = app
+        .state
+        .artifact_service
+        .store()
+        .stage(Cursor::new(b"x,value\n1,2\n"), StageLimits::default())
+        .unwrap();
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            &user,
+            session.id,
+            "tool-resource".into(),
+            UploadSourceKind::Upload,
+            vec![UploadFile {
+                client_file_id: "tool-resource".into(),
+                file_name: "tool-resource.csv".into(),
+                relative_path: Some("tool-resource.csv".into()),
+                media_type: Some("text/csv".into()),
+                staged,
+            }],
+        )
+        .await
+        .unwrap();
+    let published = app
+        .state
+        .data_resource_service
+        .publish_candidates(
+            &user,
+            batch.id.parse().unwrap(),
+            vec![CandidateDecision {
+                candidate_id: batch.candidates[0].id.clone(),
+                purpose: CandidatePurpose::DataResource,
+                selected: true,
+                table_name: None,
+                display_name: Some("工具数据".into()),
+                alias: Some("tool_data".into()),
+            }],
+        )
+        .await
+        .unwrap();
+    let resource_id = published.resources[0].id.clone();
+    let tool_services = services_for_session(&app, user.clone(), session.id);
+    let mut context = ToolContext::new();
+
+    let listed = tools::list_data_resources::ListDataResourcesTool::new(tool_services.clone())
+        .call(
+            &mut context,
+            tools::list_data_resources::Args {
+                cursor: None,
+                limit: Some(10),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(listed["resources"][0]["id"], resource_id);
+    let read = tools::read_data_resource::ReadDataResourceTool::new(tool_services.clone())
+        .call(
+            &mut context,
+            tools::read_data_resource::Args {
+                resource_id: resource_id.clone(),
+                columns: vec!["value".into()],
+                limit: Some(10),
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(read["page"]["rows"][0][0], "2");
+    let renamed =
+        tools::update_data_resource_alias::UpdateDataResourceAliasTool::new(tool_services.clone())
+            .call(
+                &mut context,
+                tools::update_data_resource_alias::Args {
+                    resource_id: resource_id.clone(),
+                    alias: "renamed_tool_data".into(),
+                },
+            )
+            .await
+            .unwrap();
+    assert_eq!(renamed["alias"], "renamed_tool_data");
+
+    let analysis = app
+        .state
+        .analysis_service
+        .run(AnalysisRequest {
+            principal: user.clone(),
+            session_id: session.id,
+            request_message_id: None,
+            intent: serde_json::json!({"goal":"copy"}),
+            script: "result = source".into(),
+            inputs: vec![AnalysisInput {
+                source: AnalysisInputSource::DataResourceId(resource_id),
+                alias: "source".into(),
+            }],
+            expected_outputs: vec!["result".into()],
+            initial_views: Default::default(),
+            skill_refs: vec![],
+        })
+        .await
+        .unwrap();
+    let promoted = tools::promote_result_dataset::PromoteResultDatasetTool::new(tool_services)
+        .call(
+            &mut context,
+            tools::promote_result_dataset::Args {
+                dataset_id: analysis.datasets[0].id,
+                display_name: "提升结果".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(promoted["sourceKind"], "analysis");
+    assert_eq!(promoted["lineage"]["datasetId"], analysis.datasets[0].id);
 }
 
 #[test]
@@ -66,11 +203,11 @@ fn manifest_allowed_tools_equal_runtime_registry() {
 
     assert_eq!(
         runtime.len(),
-        18,
-        "runtime registry must contain 18 unique tools"
+        22,
+        "runtime registry must contain 22 unique tools"
     );
     runtime.dedup();
-    assert_eq!(runtime.len(), 18, "runtime tool names must be unique");
+    assert_eq!(runtime.len(), 22, "runtime tool names must be unique");
     assert_eq!(
         manifest, runtime,
         "manifest and runtime tool registries must be bidirectionally equal"

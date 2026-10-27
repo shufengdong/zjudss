@@ -10,8 +10,8 @@ fn production_router_and_manifest_share_one_declaration() {
         .map(|route| (route.method, route.path))
         .collect::<HashSet<_>>();
 
-    assert_eq!(routes.len(), 50);
-    assert_eq!(unique.len(), 50);
+    assert_eq!(routes.len(), 60);
+    assert_eq!(unique.len(), 60);
     assert!(unique.contains(&("GET", "/health")));
     assert!(unique.contains(&("POST", "/api/auth/login")));
     assert!(unique.contains(&("POST", "/api/auth/logout")));
@@ -21,6 +21,26 @@ fn production_router_and_manifest_share_one_declaration() {
     assert!(unique.contains(&("PUT", "/api/upload-batches/{id}/candidates")));
     assert!(unique.contains(&("DELETE", "/api/upload-batches/{id}")));
     assert!(unique.contains(&("POST", "/api/data-resources/{id}/replacement-batches")));
+    for route in [
+        ("POST", "/api/upload-batches/{id}/confirm"),
+        ("GET", "/api/sessions/{id}/data-resources"),
+        ("GET", "/api/data-resources/{id}"),
+        ("PATCH", "/api/data-resources/{id}"),
+        ("DELETE", "/api/data-resources/{id}"),
+        ("GET", "/api/data-resources/{id}/rows"),
+        ("GET", "/api/data-resources/{id}/download"),
+        ("POST", "/api/data-resources/{id}/deletion-preview"),
+        (
+            "POST",
+            "/api/data-resources/{id}/structured-replacement-previews",
+        ),
+        (
+            "POST",
+            "/api/data-resource-replacement-previews/{id}/confirm",
+        ),
+    ] {
+        assert!(unique.contains(&route), "missing {route:?}");
+    }
     assert!(
         !unique
             .iter()
@@ -52,7 +72,8 @@ fn contract_manifest_contains_all_public_enums() {
         [
             "dynamic_study_facades",
             "bounded_engine_execution",
-            "recoverable_upload_batches"
+            "recoverable_upload_batches",
+            "independent_data_resources"
         ]
     );
 
@@ -70,8 +91,16 @@ fn contract_manifest_contains_all_public_enums() {
             "script",
         ]
     );
-    assert_eq!(manifest.tool_names.len(), 18);
+    assert_eq!(manifest.tool_names.len(), 22);
     assert!(manifest.tool_names.contains(&"plan_study"));
+    for tool in [
+        "list_data_resources",
+        "read_data_resource",
+        "update_data_resource_alias",
+        "promote_result_dataset",
+    ] {
+        assert!(manifest.tool_names.contains(&tool));
+    }
     assert_eq!(
         manifest.skill_ids,
         [

@@ -8,12 +8,12 @@ pub mod artifacts;
 pub mod case_import;
 pub mod chat;
 pub mod comparisons;
+pub mod data_resources;
 pub(crate) mod dataframe_reader;
 pub mod datasets;
 mod events;
 pub mod history;
 pub mod model_dataframes;
-pub mod model_import;
 pub mod model_patch;
 pub mod runs;
 pub mod scheduler;
@@ -35,7 +35,7 @@ use crate::auth::AuthService;
 use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
-    AnalysisRepo, ArtifactRepo, ComparisonRepo, HistoryRepo, MessageRepo, ModelImportRepo,
+    AnalysisRepo, ArtifactRepo, ComparisonRepo, DataResourceRepo, HistoryRepo, MessageRepo,
     ResultRepo, RunRepo, ScriptRepo, SessionRepo, StorageScopeRepo, UploadRepo, VersionRepo,
 };
 use crate::engine_resources::{EngineKnowledge, EngineResourceSnapshot};
@@ -43,7 +43,8 @@ use crate::ingestion::ArchiveLimits;
 use crate::storage::ArtifactStore;
 
 pub use analysis::{
-    AnalysisError, AnalysisInput, AnalysisOutcome, AnalysisRequest, AnalysisService,
+    AnalysisError, AnalysisInput, AnalysisInputSource, AnalysisOutcome, AnalysisRequest,
+    AnalysisService,
 };
 pub use artifacts::{
     ArtifactError, ArtifactMetadata, ArtifactRef, ArtifactService, GcReport, StorageLimits,
@@ -52,6 +53,11 @@ pub use artifacts::{
 pub use case_import::{CaseImportError, CaseImportService};
 pub use chat::ChatService;
 pub use comparisons::{ComparisonError, ComparisonService};
+pub use data_resources::{
+    DataResourceDeletionPreview, DataResourceDownload, DataResourceError, DataResourcePage,
+    DataResourceRows, DataResourceService, DataResourceView, DeletedDataResource,
+    ReplacementAction, StructuredReplacementPreview, UploadConfirmation,
+};
 pub use datasets::{DatasetError, DatasetService};
 pub use events::{
     AppEvent, AttachmentFile, DatasetViewRef, EventBus, EventWriter, MESSAGE_TYPES, ModelAmbiguity,
@@ -64,9 +70,6 @@ pub use model_dataframes::{
     DraftReadExpectation, ModelDataFrameQuery, ModelDataFrameQueryResult, ModelDataFrameReadError,
     ModelDataFrameReadService, ModelReadScope,
 };
-pub use model_import::{
-    ModelImportError, ModelImportService, ModelImportView, UploadBatch, UploadFile,
-};
 pub use model_patch::{ModelChange, ModelMutationError, ModelPatch, ModelPatchService};
 pub use runs::{CreateRunRequest, RunError, RunService, RunSubmission, RunSummary};
 pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
@@ -77,7 +80,8 @@ pub use scripts::{
 pub use study_planning::StudyPlanningService;
 pub use uploads::{
     CandidateDecision, CandidatePurpose, ChildPublishStatus, ParseSettings, UploadBatchError,
-    UploadBatchService, UploadBatchStatus, UploadBatchView, UploadCandidateView, UploadSourceKind,
+    UploadBatchService, UploadBatchStatus, UploadBatchView, UploadCandidateView, UploadFile,
+    UploadSourceKind,
 };
 pub use versions::{
     ActivateVersionRequest, PublishDraftRequest, PublishedVersion, VersionDeletionPreview,
@@ -95,8 +99,8 @@ pub struct AppState {
     pub message_repo: MessageRepo,
     pub artifact_service: ArtifactService,
     pub version_service: VersionService,
-    pub model_import_service: ModelImportService,
     pub upload_batch_service: UploadBatchService,
+    pub data_resource_service: DataResourceService,
     pub model_dataframe_read_service: ModelDataFrameReadService,
     pub script_service: ScriptService,
     pub run_service: RunService,
@@ -510,13 +514,6 @@ impl AppState {
             VersionRepo::new(pool.clone()),
             artifact_service.clone(),
         );
-        let model_import_service = ModelImportService::new(
-            ModelImportRepo::new(pool.clone()),
-            artifact_service.clone(),
-            engine.clone(),
-            data_dir.clone(),
-            archive_limits,
-        );
         let upload_batch_service = UploadBatchService::new(
             UploadRepo::new(pool.clone()),
             artifact_service.clone(),
@@ -525,6 +522,14 @@ impl AppState {
             data_dir.clone(),
             upload_staging_ttl_hours,
             archive_limits,
+        );
+        let data_resource_service = DataResourceService::new(
+            DataResourceRepo::new(pool.clone()),
+            UploadRepo::new(pool.clone()),
+            upload_batch_service.clone(),
+            artifact_service.clone(),
+            engine_snapshot.clone(),
+            data_dir.clone(),
         );
         let script_service = ScriptService::new(scripts::ScriptServiceDependencies {
             repo: ScriptRepo::new(pool.clone()),
@@ -548,7 +553,6 @@ impl AppState {
         });
         let case_import_service = CaseImportService::new(
             engine_snapshot.clone(),
-            model_import_service.clone(),
             upload_batch_service.clone(),
             upload_single_file_limit_bytes,
         );
@@ -572,6 +576,7 @@ impl AppState {
             engine.clone(),
             agent_knowledge.clone(),
             data_dir.clone(),
+            DataResourceRepo::new(pool.clone()),
         );
         let comparison_service = ComparisonService::new(
             ComparisonRepo::new(pool.clone()),
@@ -594,8 +599,8 @@ impl AppState {
             artifact_service,
             version_service,
             model_dataframe_read_service,
-            model_import_service,
             upload_batch_service,
+            data_resource_service,
             script_service,
             run_service,
             case_import_service,

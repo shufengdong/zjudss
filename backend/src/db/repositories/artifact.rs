@@ -1,4 +1,5 @@
 use diesel::prelude::*;
+use std::collections::BTreeMap;
 
 use crate::db::models::{
     Artifact, ArtifactGcFailure, NewArtifact, StorageScope, StorageScopeArtifact,
@@ -6,6 +7,60 @@ use crate::db::models::{
 use crate::db::{DbPool, schema};
 
 use super::{RepoError, RepoResult};
+
+pub(super) fn release_refs(
+    conn: &mut SqliteConnection,
+    scope_id: i32,
+    artifact_ids: impl IntoIterator<Item = i32>,
+    now_ms: i64,
+) -> RepoResult<()> {
+    let mut counts = BTreeMap::<i32, i64>::new();
+    for artifact_id in artifact_ids {
+        *counts.entry(artifact_id).or_default() += 1;
+    }
+    let mut removed_artifacts = 0_i64;
+    let mut removed_bytes = 0_i64;
+    for (artifact_id, release_count) in counts {
+        let link = schema::storage_scope_artifacts::table
+            .find((scope_id, artifact_id))
+            .first::<StorageScopeArtifact>(conn)
+            .optional()?
+            .ok_or(RepoError::NotFound)?;
+        if release_count > link.ref_count {
+            return Err(RepoError::InvalidState(
+                "artifact 引用释放次数超过持有次数".into(),
+            ));
+        }
+        if release_count < link.ref_count {
+            diesel::update(schema::storage_scope_artifacts::table.find((scope_id, artifact_id)))
+                .set(schema::storage_scope_artifacts::ref_count.eq(link.ref_count - release_count))
+                .execute(conn)?;
+        } else {
+            let size_bytes = schema::artifacts::table
+                .find(artifact_id)
+                .select(schema::artifacts::size_bytes)
+                .first::<i64>(conn)?;
+            diesel::delete(schema::storage_scope_artifacts::table.find((scope_id, artifact_id)))
+                .execute(conn)?;
+            removed_artifacts += 1;
+            removed_bytes = removed_bytes
+                .checked_add(size_bytes)
+                .ok_or_else(|| RepoError::InvalidState("artifact 大小溢出".into()))?;
+        }
+    }
+    if removed_artifacts > 0 {
+        diesel::update(schema::storage_scopes::table.find(scope_id))
+            .set((
+                schema::storage_scopes::used_artifacts
+                    .eq(schema::storage_scopes::used_artifacts - removed_artifacts),
+                schema::storage_scopes::used_bytes
+                    .eq(schema::storage_scopes::used_bytes - removed_bytes),
+                schema::storage_scopes::updated_at_ms.eq(now_ms),
+            ))
+            .execute(conn)?;
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone)]
 pub struct ArtifactDraft {
@@ -53,11 +108,86 @@ impl ArtifactRepo {
     where
         F: FnOnce(&str) -> Result<(), RepoError> + Send + 'static,
     {
+        self.commit_with_publish_for_upload(scope_id, draft, None, publish)
+            .await
+    }
+
+    pub async fn commit_upload_source_with_publish<F>(
+        &self,
+        scope_id: i32,
+        draft: ArtifactDraft,
+        upload_file_id: String,
+        publish: F,
+    ) -> RepoResult<Artifact>
+    where
+        F: FnOnce(&str) -> Result<(), RepoError> + Send + 'static,
+    {
+        self.commit_with_publish_for_upload(scope_id, draft, Some(upload_file_id), publish)
+            .await
+    }
+
+    async fn commit_with_publish_for_upload<F>(
+        &self,
+        scope_id: i32,
+        draft: ArtifactDraft,
+        upload_file_id: Option<String>,
+        publish: F,
+    ) -> RepoResult<Artifact>
+    where
+        F: FnOnce(&str) -> Result<(), RepoError> + Send + 'static,
+    {
         let pool = self.pool.clone();
         tokio::task::spawn_blocking(move || -> RepoResult<Artifact> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let mut publish = Some(publish);
             conn.immediate_transaction::<Artifact, RepoError, _>(|conn| {
+                if let Some(file_id) = upload_file_id.as_deref() {
+                    let (existing_source, batch_status, resource_publish_status) =
+                        schema::upload_files::table
+                        .inner_join(
+                            schema::upload_batches::table
+                                .on(schema::upload_batches::id.eq(schema::upload_files::batch_id)),
+                        )
+                        .inner_join(
+                            schema::sessions::table
+                                .on(schema::sessions::id.eq(schema::upload_batches::session_id)),
+                        )
+                        .inner_join(
+                            schema::users::table
+                                .on(schema::users::id.eq(schema::sessions::user_id)),
+                        )
+                        .filter(schema::upload_files::id.eq(file_id))
+                        .filter(schema::users::storage_scope_id.eq(scope_id))
+                        .select((
+                            schema::upload_files::source_artifact_id,
+                            schema::upload_batches::status,
+                            schema::upload_batches::resource_publish_status,
+                        ))
+                        .first::<(Option<i32>, String, String)>(conn)
+                        .optional()?
+                        .ok_or(RepoError::NotFound)?;
+                    if !matches!(
+                        batch_status.as_str(),
+                        "ready_to_confirm" | "partially_confirmed"
+                    ) || (resource_publish_status == "published" && existing_source.is_none())
+                    {
+                        return Err(RepoError::InvalidState("upload_state_invalid".into()));
+                    }
+                    if let Some(artifact_id) = existing_source {
+                        let artifact = schema::artifacts::table
+                            .find(artifact_id)
+                            .first::<Artifact>(conn)?;
+                        if artifact.sha256 != draft.sha256
+                            || artifact.size_bytes != draft.size_bytes
+                        {
+                            return Err(RepoError::InvalidState(
+                                "上传原文件 artifact 与暂存内容不一致".into(),
+                            ));
+                        }
+                        publish.take().expect("publish once")(&artifact.storage_path)?;
+                        return Ok(artifact);
+                    }
+                }
                 let scope = schema::storage_scopes::table
                     .find(scope_id)
                     .first::<StorageScope>(conn)
@@ -82,6 +212,11 @@ impl ArtifactRepo {
                         )
                         .set(schema::storage_scope_artifacts::ref_count.eq(link.ref_count + 1))
                         .execute(conn)?;
+                        if let Some(file_id) = upload_file_id.as_deref() {
+                            diesel::update(schema::upload_files::table.find(file_id))
+                                .set(schema::upload_files::source_artifact_id.eq(Some(artifact.id)))
+                                .execute(conn)?;
+                        }
                         return Ok(artifact.clone());
                     }
                 }
@@ -132,6 +267,11 @@ impl ArtifactRepo {
                         schema::storage_scopes::updated_at_ms.eq(draft.created_at_ms),
                     ))
                     .execute(conn)?;
+                if let Some(file_id) = upload_file_id.as_deref() {
+                    diesel::update(schema::upload_files::table.find(file_id))
+                        .set(schema::upload_files::source_artifact_id.eq(Some(artifact.id)))
+                        .execute(conn)?;
+                }
                 Ok(artifact)
             })
         })
@@ -144,36 +284,7 @@ impl ArtifactRepo {
         tokio::task::spawn_blocking(move || -> RepoResult<()> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.immediate_transaction::<(), RepoError, _>(|conn| {
-                let link = schema::storage_scope_artifacts::table
-                    .find((scope_id, artifact_id))
-                    .first::<StorageScopeArtifact>(conn)
-                    .optional()?
-                    .ok_or(RepoError::NotFound)?;
-                if link.ref_count > 1 {
-                    diesel::update(
-                        schema::storage_scope_artifacts::table.find((scope_id, artifact_id)),
-                    )
-                    .set(schema::storage_scope_artifacts::ref_count.eq(link.ref_count - 1))
-                    .execute(conn)?;
-                    return Ok(());
-                }
-                let artifact = schema::artifacts::table
-                    .find(artifact_id)
-                    .first::<Artifact>(conn)?;
-                diesel::delete(
-                    schema::storage_scope_artifacts::table.find((scope_id, artifact_id)),
-                )
-                .execute(conn)?;
-                diesel::update(schema::storage_scopes::table.find(scope_id))
-                    .set((
-                        schema::storage_scopes::used_artifacts
-                            .eq(schema::storage_scopes::used_artifacts - 1),
-                        schema::storage_scopes::used_bytes
-                            .eq(schema::storage_scopes::used_bytes - artifact.size_bytes),
-                        schema::storage_scopes::updated_at_ms.eq(now_ms),
-                    ))
-                    .execute(conn)?;
-                Ok(())
+                release_refs(conn, scope_id, [artifact_id], now_ms)
             })
         })
         .await

@@ -62,11 +62,32 @@ commit 在一个 immediate transaction 中检查配额、去重并增加引用�
 幂等 release，并由 GC 清理零引用 blob；历史冻结输入通过 artifact 引用或墓碑继续可审计。
 
 `upload_batches` 以 `(session_id, client_batch_id)` 幂等，保存总状态、model/resource 两个子发布状态以及重新上传时
-受同会话所有权约束的 `replacement_resource_id`；
+受同会话所有权约束的 `replacement_resource_id`；确认时保存可选 `confirm_operation_id`，同批不同操作 ID 被拒绝；
 `upload_files` 保存服务端私有暂存位置和来源 hash，公共 DTO 不返回路径；`upload_candidates` 保存 sheet、规范
 Parquet artifact、实际 schema/hash/行数、目录推断证据和用户用途决定。接收前在 immediate transaction 中增加
-`storage_scopes.reserved_bytes`，并发批次不能超卖。Task 4 的 `ready_to_confirm` 仍未发布任何模型或资源，Task 5
-将以同一批次执行两个可独立诊断的发布子事务。
+`storage_scopes.reserved_bytes`，并发批次不能超卖。`ready_to_confirm` 不包含已发布业务资源；确认后 model/resource
+两个子事务独立原子提交，成功侧 receipt 不会在部分重试中重写。部分成功后只保留失败侧候选引用的暂存文件、来源
+artifact 和规范 artifact；Skip 候选立即回收，成功侧立即结算 reservation，且候选不能从 Skip 或另一用途迁入已发布侧。
+确认响应分别返回两个
+可空 receipt，幂等重放复用已持久化内容。
+
+`data_resources` 保存 opaque ID、会话唯一 normalized alias、可选 schemaRef、来源、schema/hash/行数、不可变
+normalized/source artifact 和 replacement/lineage。`live|needs_rename` 参与当前 alias 唯一索引；`replaced` 只供
+历史血缘按 ID 读取；`deleted` tombstone 的两个 artifact 外键必须为空。删除事务先使未确认研究配置失效，再清空
+直接 artifact 外键；冻结工作流、分析输入和已物化输出各自保存 artifact 引用或完整 schema/content hash 快照。
+同一上传文件产生的多个资源共享 source artifact，并按资源引用数计数；发布事务把 `upload_files` 持有的原文件引用
+转移给首个资源，额外资源增加引用，随后清空文件指针。这样会话删除只按实际持有者释放一次；同一 storage scope 的
+其他会话即使复用相同 hash 也仍可读取。原文件 CAS commit 与 `upload_files` 指针写入在同一 immediate transaction
+中完成，并发 confirm 重放只获得同一引用。候选/文件/preview 所有权指针的清理与逻辑 refcount 递减也在同一事务中
+逐引用结算，不按 artifact ID 去重；进程退出或 repository 失败会整体回滚。只有最后一个引用删除后才允许 GC。
+
+`data_resource_replacement_previews` 保存尚未发布的规范 artifact、待用资源 ID、Struct schema/values、expected hash、
+影响摘要和过期 token；preview 本身不写 `data_resources`。确认才建立新资源并执行 Replace/SaveAsNew，Cancel 释放
+待用 artifact；同一用户、同一资源的新 preview 会删除并释放被取代 preview 的 artifact；服务启动及每分钟后台任务
+批量删除过期 preview 并按用户 storage scope 释放 artifact，过期确认也会同步回收。重新上传的 Replace
+与参数卡 Replace 都使引用旧资源的未确认研究配置失效，并在新资源 lineage 中记录 action、源资源 ID、被替换资源 ID
+及原 schema/content hash。`result_analysis_inputs` 和 `dataset_lineage_snapshots` 使用 dataset/resource 二选一来源，始终保存
+来源 schema hash 与 content hash，源资源后续替换或删除不会改变既有派生血缘。
 
 ## Search and recovery
 

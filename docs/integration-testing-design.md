@@ -1,4 +1,4 @@
-# V3 集成测试与功能追溯
+# V4 集成测试与功能追溯
 
 ## Test lanes
 
@@ -16,7 +16,18 @@
 一次；注册表枚举测试不能单独证明行为。PR 路由合同还必须由关联 Playwright 用例产生 2xx/3xx 请求证据。
 
 覆盖范围包括 BOOT、AUTH、SESSION、MESSAGE、SSE、SCHED、UPLOAD、MODEL-IMPORT、WORKSPACE、MODEL-DATAFRAME-READ、VERSION、
-EXAMPLE、AGENT、SCRIPT、RUN、DATASET、ANALYSIS、VIEW、COMPARE、HISTORY、STORAGE、UI、RECOVERY、ENGINE。
+EXAMPLE、DATA-RESOURCE、AGENT、SCRIPT、RUN、DATASET、ANALYSIS、VIEW、COMPARE、HISTORY、STORAGE、UI、RECOVERY、ENGINE。
+
+DATA-RESOURCE-001 的 Rust 行为测试覆盖：无 schemaRef 的通用资源、静态 `para` 与模型草稿分离且不能改判为模型、
+未决用途禁止确认、双子事务部分成功重试、成功侧空间结算与决定冻结、操作 ID 幂等及两个子 receipt、替换不改写旧
+artifact 并使未确认研究配置失效、Struct preview/confirm 与被取代 artifact 回收、影响 token 删除和配额释放、跨用户 404、
+schema 资源的 SaveAsNew alias 分配、过期/跨路径失效 preview 回收、同用户跨会话去重原文件的引用隔离、普通资源
+分析输入/冻结血缘、并发 confirm 原文件幂等提交、confirm/discard 与 parse/discard 竞争不复活终态、模型替换
+原子释放旧草稿引用、活动版本克隆按逻辑表计数去重 artifact 引用、重复候选逐引用结算、结果提升、普通资源
+物化视图，以及 4 个 Agent
+工具的真实调用行为。合同测试同时追踪 10 条资源路由、4 个 Agent 工具和
+稳定错误码；公共 API 的 Playwright 旅程覆盖发布、读取、改名、替换、Struct 覆盖和删除，Task 12 再补真实界面的
+数据文件工作区旅程。
 
 ## Deterministic journeys
 

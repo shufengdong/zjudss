@@ -2,7 +2,6 @@
 
 mod common;
 
-use std::io::Cursor;
 use std::sync::Arc;
 
 use axum::body::{Body, to_bytes};
@@ -11,13 +10,12 @@ use diesel::prelude::*;
 use diesel::sql_types::Integer;
 use serde_json::{Value, json};
 use tower::ServiceExt;
+use zjudss::application::PublishDraftRequest;
 use zjudss::application::study_planning::{
     MotorDynamicsRequest, SolverPreference, StudyRequest, TransientSubtype,
 };
-use zjudss::application::{PublishDraftRequest, UploadBatch, UploadFile};
 use zjudss::auth::CurrentUser;
 use zjudss::db::models::DraftRef;
-use zjudss::storage::StageLimits;
 use zjudss::testing::{ScriptScenario, ScriptTurn, ScriptedAgentFactory};
 use zjudss::tools::ReadyStudyPlanRegistry;
 
@@ -126,115 +124,45 @@ async fn apply_csv(
     sequence: usize,
 ) -> DraftRef {
     let client_id = format!("agent-study-{session_id}-{table_name}-{sequence}");
-    let staged = app
-        .state
-        .artifact_service
-        .store()
-        .stage(Cursor::new(csv), StageLimits::default())
-        .unwrap();
-    let accepted = app
-        .state
-        .model_import_service
-        .accept(
-            user,
-            session_id,
-            client_id.clone(),
-            expected,
-            UploadBatch {
-                client_batch_id: client_id.clone(),
-                files: vec![UploadFile {
-                    client_file_id: client_id,
-                    file_name: format!("{table_name}.csv"),
-                    relative_path: None,
-                    media_type: Some("text/csv".into()),
-                    staged,
-                }],
-            },
-        )
-        .await
-        .unwrap();
-    let import_id = accepted.id.parse().unwrap();
-    let ready = app
-        .state
-        .model_import_service
-        .process(user, import_id)
-        .await
-        .unwrap();
-    let candidate = ready
-        .candidates
-        .into_iter()
-        .find(|candidate| candidate.table_name.as_deref() == Some(table_name))
-        .unwrap();
-    app.state
-        .model_import_service
-        .resolve_and_apply(user, import_id, expected, vec![candidate.id])
-        .await
-        .unwrap()
+    common::publish_model_bytes(
+        app,
+        user,
+        session_id,
+        &client_id,
+        &format!("{table_name}.csv"),
+        csv,
+        expected,
+        Some(table_name),
+    )
+    .await
 }
 
 async fn seed_canonical_draft(app: &TestApp, user: &CurrentUser, session_id: i32) -> DraftRef {
     let client_id = format!("agent-study-{session_id}-canonical");
-    let staged = app
-        .state
-        .artifact_service
-        .store()
-        .stage(
-            Cursor::new(b"New Circuit.Test\n".to_vec()),
-            StageLimits::default(),
-        )
-        .unwrap();
-    let accepted = app
-        .state
-        .model_import_service
-        .accept(
-            user,
-            session_id,
-            client_id.clone(),
-            None,
-            UploadBatch {
-                client_batch_id: client_id.clone(),
-                files: vec![UploadFile {
-                    client_file_id: client_id,
-                    file_name: "master.dss".into(),
-                    relative_path: Some("master.dss".into()),
-                    media_type: Some("text/plain".into()),
-                    staged,
-                }],
-            },
-        )
-        .await
-        .unwrap();
-    let import_id = accepted.id.parse().unwrap();
-    let ready = app
-        .state
-        .model_import_service
-        .process(user, import_id)
-        .await
-        .unwrap();
-    app.state
-        .model_import_service
-        .resolve_and_apply(
-            user,
-            import_id,
-            None,
-            ready
-                .candidates
-                .into_iter()
-                .map(|candidate| candidate.id)
-                .collect(),
-        )
-        .await
-        .unwrap()
+    common::publish_model_bytes(
+        app,
+        user,
+        session_id,
+        &client_id,
+        "master.dss",
+        b"New Circuit.Test\n",
+        None,
+        None,
+    )
+    .await
 }
 
 async fn publish_agent_study_model(app: &TestApp, session_id: i32) {
     let user = common::test_user("instance");
-    let tables: [(&str, &[u8]); 5] = [
+    let tables: [(&str, &[u8]); 8] = [
         ("bus", b"id\nsource\nb1\n"),
         ("line", b"name,bus_from,bus_to\nl1,source,b1\n"),
         ("voltage_source", b"name,bus\nsource,source\n"),
         ("motor", b"name,bus,motor_marker\nm1,b1,present\n"),
         ("spectrum", b"name,harmonic\ndefault,1\n"),
+        ("fuse", b"name\n"),
+        ("recloser", b"name\n"),
+        ("relay", b"name\n"),
     ];
     let mut draft = Some(seed_canonical_draft(app, &user, session_id).await);
     for (sequence, (table_name, csv)) in tables.into_iter().enumerate() {
@@ -284,7 +212,14 @@ async fn ready_plan_id(app: &TestApp, session_id: i32, request: StudyRequest) ->
         .await
         .unwrap();
     let mut registry = ReadyStudyPlanRegistry::default();
-    registry.insert(next_message_id(app).await, plan.ready.unwrap())
+    let ready = match plan.ready {
+        Some(ready) => ready,
+        None => panic!(
+            "expected ready study plan, got status {:#?}: {:#?}",
+            plan.status, plan.missing_parameters
+        ),
+    };
+    registry.insert(next_message_id(app).await, ready)
 }
 
 fn tool_names(events: &[Value]) -> Vec<&str> {
@@ -410,7 +345,7 @@ async fn study_power_flow_uses_ready_plan_before_creating_the_planned_script() {
 }
 
 #[tokio::test]
-async fn planned_agent_script_cannot_reimport_the_active_model() {
+async fn agent_script_validation_is_deferred_to_tensoreval() {
     let factory = Arc::new(ScriptedAgentFactory::default());
     let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
     let session = create_session(&app).await;
@@ -455,7 +390,7 @@ async fn planned_agent_script_cannot_reimport_the_active_model() {
                 }),
             },
             ScriptTurn::Text {
-                text: "脚本被静态校验拒绝，需要直接使用 active 模型输入。".into(),
+                text: "脚本已保存，实际语法与运行可行性将在 tensoreval 执行时判定。".into(),
             },
         ],
     });
@@ -465,23 +400,28 @@ async fn planned_agent_script_cannot_reimport_the_active_model() {
         StatusCode::ACCEPTED
     );
     let events = messages(&app, &session).await;
-    assert_no_script_or_run(&events);
+    assert!(events.iter().any(|event| {
+        event["type"] == "script"
+            && event["script"]["validationStatus"] == "valid"
+            && event["script"]["diagnostics"]["validation"] == "deferred_to_tensoreval"
+    }));
+    assert!(runs(&app, &session).await.is_empty());
     assert!(
         events.iter().any(|event| {
             event["type"] == "tool-call"
                 && event["toolName"] == "create_script"
-                && event["status"] == "failed"
-                && event.to_string().contains("inputAliases")
+                && event["status"] == "success"
         }),
         "events: {events:#?}"
     );
-    assert!(
+    assert_eq!(
         app.state
             .script_service
             .list(&common::test_user("instance"), session_id)
             .await
             .unwrap()
-            .is_empty()
+            .len(),
+        1
     );
 }
 
@@ -659,7 +599,7 @@ async fn transient_study_supports_motor_dynamics_and_rejects_emt() {
     let script = events
         .iter()
         .find(|event| event["type"] == "script")
-        .expect("motor dynamics script");
+        .unwrap_or_else(|| panic!("motor dynamics script; events: {events:#?}"));
     assert!(script.to_string().contains("ds_motor_dynamics"));
     assert!(runs(&app, &session).await.is_empty());
 
@@ -745,7 +685,7 @@ async fn scripted_tool_call_runs_registered_tool_and_persists_events() {
     );
     let trace = factory.trace();
     assert_eq!(trace[0].scenario_id, "storage");
-    assert_eq!(trace[0].tool_names.len(), 18);
+    assert_eq!(trace[0].tool_names.len(), 22);
     assert!(trace[0].system_prompt.contains("# Engine resources"));
     assert_eq!(trace[0].calls.len(), 2);
 }
@@ -891,7 +831,7 @@ async fn successful_script_creation_is_not_overwritten_by_a_later_provider_error
     let script_index = events
         .iter()
         .position(|event| event["type"] == "script")
-        .expect("script message");
+        .unwrap_or_else(|| panic!("script message; events: {events:#?}"));
     let tool_success_index = events
         .iter()
         .position(|event| {

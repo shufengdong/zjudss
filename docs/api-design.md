@@ -1,6 +1,6 @@
 # V4 HTTP 与 SSE API（实施中）
 
-> 本文跟随已实现的 V4 公共接口逐任务更新。Task 4 已替换上传协议；独立数据资源发布、受管研究、运行删除和运行到脚本消息定位接口仍待后续任务实现。已确认的行为边界见
+> 本文跟随已实现的 V4 公共接口逐任务更新。Task 5 已实现独立数据资源发布和管理；受管研究、运行删除和运行到脚本消息定位接口仍待后续任务实现。已确认的行为边界见
 > [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)；
 > 路由和 DTO 将在实施方案中确定，当前接口表不提前声明未实现能力。
 
@@ -32,7 +32,16 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 | GET/DELETE | `/api/upload-batches/{id}` | 读取/放弃上传批次 |
 | PUT | `/api/upload-batches/{id}/parse-settings` | 提交受控解析设置并重新解析 |
 | PUT | `/api/upload-batches/{id}/candidates` | 确认每个候选的模型表/数据资源/跳过用途 |
+| POST | `/api/upload-batches/{id}/confirm` | 按两个独立原子子事务发布模型候选和普通数据资源 |
 | POST | `/api/data-resources/{id}/replacement-batches` | 为已有资源建立替换候选批次 |
+| GET | `/api/sessions/{id}/data-resources` | cursor 分页列出当前普通数据资源 |
+| GET/PATCH | `/api/data-resources/{id}` | 读取元数据或修改 display name/alias |
+| GET | `/api/data-resources/{id}/rows` | 受控列投影和 cursor 分页 |
+| GET | `/api/data-resources/{id}/download` | 下载 `original` 或规范 Parquet |
+| POST | `/api/data-resources/{id}/structured-replacement-previews` | 校验 Struct 参数覆盖并生成短期预览 token |
+| POST | `/api/data-resource-replacement-previews/{token}/confirm` | 以 Replace/SaveAsNew/Cancel 确认参数覆盖 |
+| POST | `/api/data-resources/{id}/deletion-preview` | 生成资源引用影响和短期删除 token |
+| DELETE | `/api/data-resources/{id}` | 以 impact token 幂等删除并释放直接 artifact 引用 |
 | GET/POST | `/api/sessions/{id}/scripts` | 列表/上传单个 `.rss` |
 | POST | `/api/sessions/{id}/scripts/text` | 以文本创建脚本 |
 | GET | `/api/scripts/{id}` | 懒加载脚本全文 |
@@ -62,11 +71,42 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 
 上传字段为 `clientBatchId`、可选 `relativePaths`，以及一个或多个 `file.<clientFileId>`。批次状态为
 `processing|awaiting_parse_settings|awaiting_purpose|ready_to_confirm|partially_confirmed|confirmed|failed|discarded|expired`。
-Task 4 只解析并保存候选，不修改草稿或发布数据资源；确认发布接口由 Task 5 和真实双发布事务一同加入。
+解析阶段只保存候选，不修改草稿或发布数据资源；`confirm` 才执行真实双发布事务。
 CSV/Parquet 每文件一个候选；Excel 只读取可见非空 worksheet 的缓存值，不执行公式、宏或外部链接。候选用途只有
 `model_table|data_resource|skip`。静态 DSS/案例固定拆成 20 个模型候选和一个普通 `para` 数据候选；其他模型
 schema 从当前 engine snapshot 的有效门面动态取得，并按实际列名推断。暂存默认保留 24 小时，配额以
 `used_bytes + reserved_bytes` 原子检查；失败、放弃和到期幂等释放。
+
+确认请求为 `{decisions,replacementAction?,expectedDraft?,clientOperationId?}`。ModelTable 候选在一个草稿事务中
+发布，DataResource 候选在另一个资源事务中发布；任一侧失败不回滚已成功的另一侧，批次进入
+`partially_confirmed`，重试只处理失败侧。两侧均失败回到 `ready_to_confirm`，两侧成功才进入 `confirmed` 并释放
+剩余 reservation；只有失败侧仍引用的暂存文件和 artifact 会继续占用空间，成功侧完成后立即结算，Skip 候选及
+已完成侧候选的暂存引用也会回收。成功子事务涉及的既有和新用途决定都被冻结，不能在重试时把 Skip 候选补入已发布侧。响应显式返回
+`modelStatus`、`resourceStatus`、可空的 `modelReceipt`、可空的 `resourceReceipt`、`diagnostics` 和新发布的
+`resources`，因此部分成功及其重放不需要根据状态猜测已提交对象。`clientOperationId` 在批次上持久化；相同值重放返回既有 receipt，不同值返回
+`409 idempotency_conflict`。提交 `expectedDraft` 时必须与当前草稿 ID/revision 一致，否则模型子事务返回
+`draft_revision_conflict` 诊断。
+
+## Independent data resources
+
+资源 ID 为 opaque 字符串，alias 在会话内按大小写归一后唯一。默认 alias 冲突时服务端生成 `data_<shortId>`；
+用户明确指定的冲突 alias 返回 `resource_alias_conflict`。当前引擎 snapshot 新增保留名后，资源读取/列表会把冲突
+资源标为 `needs_rename`，改名后恢复 `live`。静态导入的 `para` 是带 `schemaRef` 和来源血缘的普通资源，不进入
+模型草稿。其他模型表范围完全由当前 catalog 的 Model schema 决定。
+
+上传资源同时保存原文件和 Snappy Parquet；多个 worksheet 可共享原文件 artifact。结果或分析提升的资源复用
+既有规范 artifact，没有原文件入口。`rows` 只接受 limit/cursor/columns；下载不返回服务器路径。普通资源可直接
+作为 `run_result_analysis` 和 `create_dataset_view` 的稳定 `resourceId` 来源，派生血缘冻结资源 ID、schema hash 和
+content hash。
+
+重新上传与 Struct 参数卡覆盖都创建新 artifact。重新上传确认必须显式提交 Replace、SaveAsNew 或 Cancel；Replace
+原子转移当前 alias、使依赖旧资源的未确认研究配置失效，并把旧资源保留为历史 replacement；
+SaveAsNew 在默认 alias 冲突时分配 `data_<shortId>`，显式冲突仍返回错误；Cancel 不发布。Struct preview 校验当前
+schemaRef、规范字段和 expected content hash，确认前不创建资源，内容变化或其他路径已替换原资源时返回
+`resource_stale`；同一资源的新 preview 会回收被取代的未确认 artifact，过期 preview 由启动恢复和后台清理回收。
+删除先生成 impact token，并统计未确认配置、冻结工作流、分析输入及数据集血缘引用；
+确认后资源立即从普通读取隐藏、使未确认配置失效、清空 tombstone 行的 artifact 外键并释放直接引用。冻结工作流和
+已物化派生结果持有自己的引用或快照，因此删除不破坏历史；重复 DELETE 不重复释放。
 
 发布请求携带 `expectedDraftId`、`expectedDraftRevision`、`clientPublishId`。成功冻结版本、清空草稿并自动激活。
 激活历史版本只移动 active 指针；存在草稿时必须提交 `discardDraft=true` 以及准确 expected draft。

@@ -339,7 +339,7 @@ impl VersionRepo {
                     if let Some(version_id) = workspace.active_version_id {
                         diesel::sql_query("INSERT INTO draft_dataframes(draft_id,table_name,artifact_id,schema_json,row_count,content_hash,created_at_ms) SELECT ?1,table_name,artifact_id,schema_json,row_count,content_hash,?2 FROM model_dataframes WHERE version_id=?3")
                             .bind::<Integer,_>(draft_id).bind::<BigInt,_>(now_ms).bind::<Integer,_>(version_id).execute(conn)?;
-                        diesel::sql_query("UPDATE storage_scope_artifacts SET ref_count=ref_count+1 WHERE storage_scope_id=(SELECT storage_scope_id FROM users WHERE id=?1) AND artifact_id IN(SELECT artifact_id FROM model_dataframes WHERE version_id=?2)")
+                        diesel::sql_query("UPDATE storage_scope_artifacts SET ref_count=ref_count+(SELECT count(*) FROM model_dataframes WHERE version_id=?2 AND artifact_id=storage_scope_artifacts.artifact_id) WHERE storage_scope_id=(SELECT storage_scope_id FROM users WHERE id=?1) AND artifact_id IN(SELECT artifact_id FROM model_dataframes WHERE version_id=?2)")
                             .bind::<Text,_>(&user).bind::<Integer,_>(version_id).execute(conn)?;
                     }
                     (draft_id, 1)
@@ -412,6 +412,40 @@ impl VersionRepo {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let version = scoped_version(&mut conn, &user, version_id, true)?;
             load_version_snapshot(&mut conn, version)
+        })
+        .await
+        .map_err(|error| VersionRepoError::Repository(RepoError::Join(error)))?
+    }
+
+    pub async fn find_publish_receipt(
+        &self,
+        user: &UserId,
+        session_id: i32,
+        expected: DraftRef,
+        client_publish_id: &str,
+    ) -> Result<Option<i32>, VersionRepoError> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        let client_publish_id = client_publish_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            let workspace = load_workspace_by_session(&mut conn, &user, session_id)?;
+            #[derive(QueryableByName)]
+            struct Receipt {
+                #[diesel(sql_type = Integer)]
+                version_id: i32,
+            }
+            diesel::sql_query(
+                "SELECT r.version_id FROM publish_receipts r JOIN model_versions v ON v.id=r.version_id WHERE r.draft_id=?1 AND r.draft_revision=?2 AND r.client_publish_id=?3 AND v.workspace_id=?4 AND v.deleted_at_ms IS NULL",
+            )
+            .bind::<Integer, _>(expected.id)
+            .bind::<BigInt, _>(expected.revision)
+            .bind::<Text, _>(client_publish_id)
+            .bind::<Integer, _>(workspace.id)
+            .get_result::<Receipt>(&mut conn)
+            .optional()
+            .map(|receipt| receipt.map(|receipt| receipt.version_id))
+            .map_err(Into::into)
         })
         .await
         .map_err(|error| VersionRepoError::Repository(RepoError::Join(error)))?

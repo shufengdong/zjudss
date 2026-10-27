@@ -3,9 +3,10 @@ mod common;
 use std::io::Cursor;
 
 use zjudss::application::{
-    CandidateDecision, CandidatePurpose, ParseSettings, UploadBatchStatus, UploadFile,
-    UploadSourceKind,
+    CandidateDecision, CandidatePurpose, ParseSettings, PublishDraftRequest, UploadBatchStatus,
+    UploadFile, UploadSourceKind,
 };
+use zjudss::db::repositories::UploadRepo;
 use zjudss::storage::StageLimits;
 
 use common::TestApp;
@@ -34,6 +35,56 @@ async fn session(app: &TestApp, title: &str) -> (zjudss::auth::CurrentUser, i32)
         .await
         .unwrap();
     (user, session.id)
+}
+
+#[tokio::test]
+async fn completed_parse_cannot_revive_a_discarded_batch() {
+    let app = TestApp::spawn().await;
+    let (user, session_id) = session(&app, "discard-parse-race").await;
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            &user,
+            session_id,
+            "discard-parse-race".into(),
+            UploadSourceKind::Upload,
+            vec![file(&app, "source", "source.csv", b"x\n1\n".to_vec())],
+        )
+        .await
+        .unwrap();
+    let batch_id = batch.id.parse().unwrap();
+    app.state
+        .upload_batch_service
+        .discard(&user, batch_id)
+        .await
+        .unwrap();
+
+    let error = UploadRepo::new(app.pool.clone())
+        .replace_candidates(
+            batch_id,
+            Vec::new(),
+            "ready_to_confirm",
+            "{}".into(),
+            "[]".into(),
+            zjudss::application::now_ms(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        zjudss::db::repositories::RepoError::InvalidState(ref message)
+            if message == "upload_state_invalid"
+    ));
+    assert_eq!(
+        app.state
+            .upload_batch_service
+            .get(&user, batch_id)
+            .await
+            .unwrap()
+            .status,
+        UploadBatchStatus::Discarded
+    );
 }
 
 #[tokio::test]
@@ -112,7 +163,7 @@ async fn case_import_never_puts_para_in_the_draft() {
 }
 
 #[tokio::test]
-async fn catalog_model_schema_outside_network20_creates_model_candidate() {
+async fn catalog_model_schema_outside_network20_publishes_to_draft_and_version() {
     let app = TestApp::spawn().await;
     let (user, session_id) = session(&app, "fuse").await;
     let batch = app
@@ -139,6 +190,59 @@ async fn catalog_model_schema_outside_network20_creates_model_candidate() {
     assert_eq!(
         batch.candidates[0].inferred_schema_ref.as_deref(),
         Some("frames.fuse")
+    );
+    let confirmation = app
+        .state
+        .data_resource_service
+        .publish_candidates(
+            &user,
+            batch.id.parse().unwrap(),
+            vec![CandidateDecision {
+                candidate_id: batch.candidates[0].id.clone(),
+                purpose: CandidatePurpose::ModelTable,
+                selected: true,
+                table_name: Some("fuse".into()),
+                display_name: None,
+                alias: None,
+            }],
+        )
+        .await
+        .unwrap();
+    assert_eq!(confirmation.model_status, "published");
+    let workspace = app
+        .state
+        .version_service
+        .workspace(&user, session_id)
+        .await
+        .unwrap();
+    let draft = workspace.draft.unwrap();
+    assert!(
+        draft
+            .dataframes
+            .iter()
+            .any(|frame| frame.table_name == "fuse")
+    );
+    let published = app
+        .state
+        .version_service
+        .publish(
+            &user,
+            session_id,
+            PublishDraftRequest {
+                expected_draft_id: draft.draft.id,
+                expected_draft_revision: draft.draft.revision,
+                client_publish_id: "publish-fuse".into(),
+                description: Some("动态门面模型表".into()),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        published
+            .version
+            .dataframes
+            .iter()
+            .any(|frame| frame.table_name == "fuse")
     );
 }
 

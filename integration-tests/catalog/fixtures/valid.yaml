@@ -6,7 +6,7 @@
   tests:
     - runner: rust
       file: backend/tests/app_bootstrap.rs
-      name: config_defaults_are_safe
+      name: runtime_config_uses_v4_defaults_and_rejects_zero_or_inconsistent_limits
   assertions:
     - 启动配置使用设计规定的并发、上传和存储默认值
   fixtures: []

@@ -278,7 +278,8 @@ const REBUILD_DOCUMENTS_SQL: [&str; 5] = [
      SELECT session_id,'message',id,content,created_at_ms FROM messages \
      WHERE role IN ('user','assistant')",
     "INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) \
-     SELECT session_id,'model_import',id,source_summary_json,created_at_ms FROM model_imports",
+     SELECT session_id,'upload_batch',id,client_batch_id||' '||diagnostics_json,updated_at_ms FROM upload_batches \
+     UNION ALL SELECT session_id,'data_resource',rowid,display_name||' '||alias,updated_at_ms FROM data_resources WHERE status<>'deleted'",
     "INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) \
      SELECT session_id,'script',id,name,created_at_ms FROM script_resources",
     "INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) \

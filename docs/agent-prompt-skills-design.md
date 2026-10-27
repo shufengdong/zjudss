@@ -13,7 +13,7 @@ engine contract、允许工具和文件 SHA-256；启动时完整验证。Agent 
 
 ## Tool authority
 
-允许工具共 18 个：
+允许工具共 22 个：
 
 ```text
 inspect_workspace       read_model_dataframe     plan_study
@@ -24,9 +24,13 @@ run_result_analysis     create_dataset_view      compare_simulations
 list_simulation_history search_chat_history      read_chat_context
 get_storage_usage       load_agent_skill         search_engine_docs
 read_engine_doc_section
+list_data_resources     read_data_resource       update_data_resource_alias
+promote_result_dataset
 ```
 
-Agent 可以检查工作区、修改 draft、创建脚本、读取运行/结果并创建派生分析或比较。Agent 不能确认导入、应用案例、
+Agent 可以检查工作区、查询普通数据资源、按用户明确要求修改 alias、把用户明确选定的结果提升为普通资源、修改
+draft、创建脚本、读取运行/结果并创建派生分析或比较。规划或分析普通 Data/Struct 输入前必须先列出资源，再按稳定
+`resourceId` 读取，不能从历史名称猜测。提升候选不唯一时必须让用户选择 `datasetId`。Agent 不能确认导入、应用案例、
 发布/激活/删除版本、删除结果或创建运行。生成脚本后的回复必须提示用户检查代码并点击脚本卡片“运行”；tool 调用
 成功即表示本轮脚本生成任务完成，但不代表仿真发生。`create_script` 成功后如果后续模型收尾失败，服务端发出确定性的检查/运行提示，
 不再用通用 Agent 失败消息覆盖已持久化的脚本成功。

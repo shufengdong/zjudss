@@ -4,12 +4,9 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use common::TestApp;
 use serde_json::{Value, json};
-use std::io::Cursor;
 use tower::ServiceExt;
-use zjudss::application::{UploadBatch, UploadFile};
 use zjudss::auth::CurrentUser;
 use zjudss::db::models::DraftRef;
-use zjudss::storage::StageLimits;
 
 async fn import_table(
     app: &TestApp,
@@ -19,54 +16,17 @@ async fn import_table(
     expected: Option<DraftRef>,
     csv: &[u8],
 ) -> DraftRef {
-    let staged = app
-        .state
-        .artifact_service
-        .store()
-        .stage(Cursor::new(csv), StageLimits::default())
-        .unwrap();
-    let accepted = app
-        .state
-        .model_import_service
-        .accept(
-            user,
-            session_id,
-            client_id.into(),
-            expected,
-            UploadBatch {
-                client_batch_id: client_id.into(),
-                files: vec![UploadFile {
-                    client_file_id: "bus".into(),
-                    file_name: "bus.csv".into(),
-                    relative_path: None,
-                    media_type: Some("text/csv".into()),
-                    staged,
-                }],
-            },
-        )
-        .await
-        .unwrap();
-    let ready = app
-        .state
-        .model_import_service
-        .process(user, accepted.id.parse().unwrap())
-        .await
-        .unwrap();
-    assert_eq!(ready.status, "ready_to_apply", "{:#?}", ready.diagnostics);
-    app.state
-        .model_import_service
-        .resolve_and_apply(
-            user,
-            accepted.id.parse().unwrap(),
-            expected,
-            ready
-                .candidates
-                .iter()
-                .map(|item| item.id.clone())
-                .collect(),
-        )
-        .await
-        .unwrap()
+    common::publish_model_bytes(
+        app,
+        user,
+        session_id,
+        client_id,
+        "bus.csv",
+        csv,
+        expected,
+        Some("bus"),
+    )
+    .await
 }
 
 async fn json_body(response: axum::response::Response) -> Value {
@@ -201,7 +161,15 @@ async fn workspace_and_versions_are_user_scoped_and_publish_checks_revision() {
         .create(&user.id, "scope", 1)
         .await
         .unwrap();
-    let draft = import_table(&app, &user, session.id, "scope", None, b"id\n1\n").await;
+    let draft = import_table(
+        &app,
+        &user,
+        session.id,
+        "scope",
+        None,
+        b"id,name\n1,scope\n",
+    )
+    .await;
     let response = app.router.clone().oneshot(Request::post(format!("/api/sessions/{}/versions", session.id)).header("cookie", &cookie).header("content-type", "application/json").body(Body::from(json!({"expectedDraftId":draft.id,"expectedDraftRevision":draft.revision+1,"clientPublishId":"stale"}).to_string())).unwrap()).await.unwrap();
     assert_eq!(response.status(), StatusCode::CONFLICT);
     for path in [

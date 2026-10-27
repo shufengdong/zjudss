@@ -55,6 +55,7 @@ pub struct ChatService {
     history: crate::application::HistoryService,
     artifact_service: crate::application::ArtifactService,
     study_planning: crate::application::StudyPlanningService,
+    data_resources: crate::application::DataResourceService,
 }
 
 impl ChatService {
@@ -80,6 +81,7 @@ impl ChatService {
             history: state.history_service.clone(),
             artifact_service: state.artifact_service.clone(),
             study_planning: state.study_planning_service.clone(),
+            data_resources: state.data_resource_service.clone(),
         }
     }
 
@@ -118,6 +120,7 @@ impl ChatService {
             comparisons: self.comparisons.clone(),
             history: self.history.clone(),
             artifact_service: self.artifact_service.clone(),
+            data_resources: self.data_resources.clone(),
         });
         let tools = tools::build_tools(services);
 

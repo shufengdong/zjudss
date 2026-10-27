@@ -5,16 +5,14 @@ use diesel::RunQueryDsl;
 use diesel::sql_types::Text;
 use rig::tool::{Tool, ToolContext};
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Cursor;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 use zjudss::adapters::StubEngine;
 use zjudss::application::EventWriter;
 use zjudss::application::study_planning::{ResolvedSolver, StudyRequest};
-use zjudss::application::{ModelChange, ModelPatch, PublishDraftRequest, UploadBatch, UploadFile};
+use zjudss::application::{ModelChange, ModelPatch, PublishDraftRequest};
 use zjudss::auth::CurrentUser;
 use zjudss::db::models::DraftRef;
-use zjudss::storage::StageLimits;
 use zjudss::tools::{self, ToolServices};
 
 fn tool_services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
@@ -46,6 +44,7 @@ fn tool_services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
         comparisons: app.state.comparison_service.clone(),
         history: app.state.history_service.clone(),
         artifact_service: app.state.artifact_service.clone(),
+        data_resources: app.state.data_resource_service.clone(),
     })
 }
 
@@ -69,109 +68,33 @@ async fn apply_csv(
     expected: Option<DraftRef>,
 ) -> DraftRef {
     let user = common::test_user("alice@example.com");
-    let staged = app
-        .state
-        .artifact_service
-        .store()
-        .stage(Cursor::new(bytes), StageLimits::default())
-        .unwrap();
-    let accepted = app
-        .state
-        .model_import_service
-        .accept(
-            &user,
-            session_id,
-            client_id.into(),
-            expected,
-            UploadBatch {
-                client_batch_id: client_id.into(),
-                files: vec![UploadFile {
-                    client_file_id: client_id.into(),
-                    file_name: file_name.into(),
-                    relative_path: None,
-                    media_type: Some("text/csv".into()),
-                    staged,
-                }],
-            },
-        )
-        .await
-        .unwrap();
-    let ready = app
-        .state
-        .model_import_service
-        .process(&user, accepted.id.parse().unwrap())
-        .await
-        .unwrap();
-    app.state
-        .model_import_service
-        .resolve_and_apply(
-            &user,
-            accepted.id.parse().unwrap(),
-            expected,
-            ready
-                .candidates
-                .into_iter()
-                .map(|candidate| candidate.id)
-                .collect(),
-        )
-        .await
-        .unwrap()
+    common::publish_model_bytes(
+        app,
+        &user,
+        session_id,
+        client_id,
+        file_name,
+        bytes,
+        expected,
+        file_name.strip_suffix(".csv"),
+    )
+    .await
 }
 
 async fn seed_canonical_draft(app: &TestApp, session_id: i32) -> DraftRef {
     let user = common::test_user("alice@example.com");
     let client_id = format!("workspace-{session_id}-canonical");
-    let staged = app
-        .state
-        .artifact_service
-        .store()
-        .stage(
-            Cursor::new(b"New Circuit.Test\n".to_vec()),
-            StageLimits::default(),
-        )
-        .unwrap();
-    let accepted = app
-        .state
-        .model_import_service
-        .accept(
-            &user,
-            session_id,
-            client_id.clone(),
-            None,
-            UploadBatch {
-                client_batch_id: client_id.clone(),
-                files: vec![UploadFile {
-                    client_file_id: client_id,
-                    file_name: "master.dss".into(),
-                    relative_path: Some("master.dss".into()),
-                    media_type: Some("text/plain".into()),
-                    staged,
-                }],
-            },
-        )
-        .await
-        .unwrap();
-    let import_id = accepted.id.parse().unwrap();
-    let ready = app
-        .state
-        .model_import_service
-        .process(&user, import_id)
-        .await
-        .unwrap();
-    app.state
-        .model_import_service
-        .resolve_and_apply(
-            &user,
-            import_id,
-            None,
-            ready
-                .candidates
-                .into_iter()
-                .map(|candidate| candidate.id)
-                .collect(),
-        )
-        .await
-        .unwrap()
+    common::publish_model_bytes(
+        app,
+        &user,
+        session_id,
+        &client_id,
+        "master.dss",
+        b"New Circuit.Test\n",
+        None,
+        None,
+    )
+    .await
 }
 
 #[tokio::test]
@@ -336,7 +259,7 @@ async fn plan_study_preserves_explicit_newton_and_issues_request_local_ready_ids
         .unwrap();
     assert_eq!(ready["status"], "ready");
     let aliases = ready["inputAliases"].as_array().unwrap();
-    assert_eq!(aliases.len(), zjudss::adapters::STATIC_MODEL_TABLES.len());
+    assert_eq!(aliases.len(), zjudss::adapters::MODEL_TABLE_OUTPUTS.len());
     assert!(
         aliases
             .windows(2)
@@ -344,7 +267,7 @@ async fn plan_study_preserves_explicit_newton_and_issues_request_local_ready_ids
     );
     assert_eq!(
         ready["modelInputOrder"],
-        serde_json::json!(zjudss::adapters::STATIC_MODEL_TABLES)
+        serde_json::json!(zjudss::adapters::MODEL_TABLE_OUTPUTS)
     );
     assert_eq!(ready["solver"], serde_json::json!(ResolvedSolver::Newton));
     assert_eq!(ready["ready"]["request"]["solverPreference"], "newton");
@@ -355,7 +278,7 @@ async fn plan_study_preserves_explicit_newton_and_issues_request_local_ready_ids
     assert_eq!(stored.function, "ds_newton_raphson_pf");
     assert_eq!(
         stored.model_input_order,
-        zjudss::adapters::STATIC_MODEL_TABLES
+        zjudss::adapters::MODEL_TABLE_OUTPUTS
             .into_iter()
             .map(str::to_string)
             .collect::<Vec<_>>()
@@ -380,7 +303,7 @@ async fn plan_study_preserves_explicit_newton_and_issues_request_local_ready_ids
 }
 
 #[tokio::test]
-async fn create_script_requires_a_matching_fresh_plan_for_governed_agent_calls() {
+async fn create_script_accepts_unplanned_text_and_validates_supplied_plan_freshness() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
     let session = app
@@ -451,14 +374,7 @@ async fn create_script_requires_a_matching_fresh_plan_for_governed_agent_calls()
         .await
         .unwrap();
     let plan_id = planned["studyPlanId"].as_str().unwrap().to_string();
-    let usage_before = app
-        .state
-        .artifact_service
-        .usage_for(user.storage_scope_id)
-        .await
-        .unwrap();
-
-    let missing = tools::create_script::CreateScriptTool::new(services.clone())
+    let unplanned = tools::create_script::CreateScriptTool::new(services.clone())
         .call(
             &mut context,
             tools::create_script::Args {
@@ -468,8 +384,12 @@ async fn create_script_requires_a_matching_fresh_plan_for_governed_agent_calls()
             },
         )
         .await
-        .unwrap_err();
-    assert_eq!(missing.code, "study_plan_required");
+        .unwrap();
+    assert_eq!(unplanned["validationStatus"], "valid");
+    assert_eq!(
+        unplanned["diagnostics"]["validation"],
+        "deferred_to_tensoreval"
+    );
 
     let unknown = tools::create_script::CreateScriptTool::new(services.clone())
         .call(
@@ -483,37 +403,6 @@ async fn create_script_requires_a_matching_fresh_plan_for_governed_agent_calls()
         .await
         .unwrap_err();
     assert_eq!(unknown.code, "study_plan_not_found");
-
-    let mismatch = tools::create_script::CreateScriptTool::new(services.clone())
-        .call(
-            &mut context,
-            tools::create_script::Args {
-                name: "mismatch.rss".into(),
-                content: "voltage = ds_newton_raphson_pf(bus);".into(),
-                study_plan_id: Some(plan_id.clone()),
-            },
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(mismatch.code, "study_plan_function_mismatch");
-    assert!(
-        app.state
-            .script_service
-            .list(&user, session.id)
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    let usage_after_rejections = app
-        .state
-        .artifact_service
-        .usage_for(user.storage_scope_id)
-        .await
-        .unwrap();
-    assert_eq!(
-        usage_after_rejections.artifact_count,
-        usage_before.artifact_count
-    );
 
     let created = tools::create_script::CreateScriptTool::new(services.clone())
         .call(
@@ -605,7 +494,7 @@ async fn create_script_requires_a_matching_fresh_plan_for_governed_agent_calls()
             .await
             .unwrap()
             .len(),
-        1
+        2
     );
 }
 

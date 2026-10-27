@@ -100,7 +100,7 @@ fn one_live_data_alias_and_one_nonterminal_workflow_are_database_constraints() {
         "INSERT INTO managed_workflows(id,session_id,status,intent_json,created_at_ms,updated_at_ms)
          VALUES(2,1,'executing','{}',1,1)"
     ).is_err());
-    conn.batch_execute("UPDATE data_resources SET status='deleted',deleted_at_ms=2 WHERE id='r1'; UPDATE managed_workflows SET status='failed',finished_at_ms=2 WHERE id=1;").unwrap();
+    conn.batch_execute("UPDATE data_resources SET status='deleted',normalized_artifact_id=NULL,source_artifact_id=NULL,deleted_at_ms=2 WHERE id='r1'; UPDATE managed_workflows SET status='failed',finished_at_ms=2 WHERE id=1;").unwrap();
     conn.batch_execute(
         "INSERT INTO data_resources(id,session_id,display_name,alias,normalized_alias,status,source_kind,normalized_artifact_id,schema_json,schema_hash,row_count,lineage_json,created_at_ms,updated_at_ms)
          VALUES('r2',1,'Two','load_profile','load_profile','live','upload',3,'[]',printf('%064d',2),1,'{}',2,2);

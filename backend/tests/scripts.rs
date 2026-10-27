@@ -4,75 +4,30 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use common::TestApp;
 use serde_json::Value;
-use std::io::Cursor;
 use tower::ServiceExt;
-use zjudss::adapters::STATIC_MODEL_TABLES;
+use zjudss::adapters::MODEL_TABLE_OUTPUTS;
 use zjudss::application::study_planning::{
     ReadyStudyPlan, ResolvedSolver, SolverPreference, StudyRequest,
 };
-use zjudss::application::{
-    CreateScriptRequest, PublishDraftRequest, ScriptSource, UploadBatch, UploadFile,
-};
+use zjudss::application::{CreateScriptRequest, PublishDraftRequest, ScriptSource};
 use zjudss::auth::CurrentUser;
-use zjudss::storage::StageLimits;
 
 async fn publish_canonical_model(
     app: &TestApp,
     user: &CurrentUser,
     session_id: i32,
 ) -> ReadyStudyPlan {
-    let staged = app
-        .state
-        .artifact_service
-        .store()
-        .stage(
-            Cursor::new(b"New Circuit.Test\n".to_vec()),
-            StageLimits::default(),
-        )
-        .unwrap();
-    let accepted = app
-        .state
-        .model_import_service
-        .accept(
-            user,
-            session_id,
-            "script-canonical".into(),
-            None,
-            UploadBatch {
-                client_batch_id: "script-canonical".into(),
-                files: vec![UploadFile {
-                    client_file_id: "master".into(),
-                    file_name: "master.dss".into(),
-                    relative_path: Some("master.dss".into()),
-                    media_type: Some("text/plain".into()),
-                    staged,
-                }],
-            },
-        )
-        .await
-        .unwrap();
-    let import_id = accepted.id.parse().unwrap();
-    let ready = app
-        .state
-        .model_import_service
-        .process(user, import_id)
-        .await
-        .unwrap();
-    let draft = app
-        .state
-        .model_import_service
-        .resolve_and_apply(
-            user,
-            import_id,
-            None,
-            ready
-                .candidates
-                .into_iter()
-                .map(|candidate| candidate.id)
-                .collect(),
-        )
-        .await
-        .unwrap();
+    let draft = common::publish_model_bytes(
+        app,
+        user,
+        session_id,
+        "script-canonical",
+        "master.dss",
+        b"New Circuit.Test\n",
+        None,
+        None,
+    )
+    .await;
     let published = app
         .state
         .version_service
@@ -92,13 +47,13 @@ async fn publish_canonical_model(
         model_version_id: published.version.version.id,
         model_content_hash: published.version.version.content_hash,
         engine_snapshot_id: app.state.engine_snapshot.id.clone(),
-        input_aliases: STATIC_MODEL_TABLES
+        input_aliases: MODEL_TABLE_OUTPUTS
             .into_iter()
             .map(str::to_string)
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect(),
-        model_input_order: STATIC_MODEL_TABLES
+        model_input_order: MODEL_TABLE_OUTPUTS
             .into_iter()
             .map(str::to_string)
             .collect(),
@@ -298,7 +253,7 @@ async fn generic_agent_and_manual_or_uploaded_study_scripts_remain_compatible() 
 }
 
 #[tokio::test]
-async fn planned_agent_script_cannot_overwrite_an_active_input_alias() {
+async fn planned_agent_script_validation_is_deferred_to_tensoreval() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
     let session = app
@@ -310,7 +265,7 @@ async fn planned_agent_script_cannot_overwrite_an_active_input_alias() {
     let plan = publish_canonical_model(&app, &user, session.id).await;
     let content = DIRECT_POWER_FLOW_CALL.replacen("[bus_phase, summary]", "bus", 1);
 
-    let error = app
+    let summary = app
         .state
         .script_service
         .create(
@@ -326,17 +281,20 @@ async fn planned_agent_script_cannot_overwrite_an_active_input_alias() {
             },
         )
         .await
-        .unwrap_err();
+        .unwrap();
 
-    assert_eq!(error.code(), "script_error");
-    assert!(error.to_string().contains("bus"));
-    assert!(
+    assert_eq!(summary.validation_status, "valid");
+    assert_eq!(summary.diagnostics["validation"], "deferred_to_tensoreval");
+    assert!(summary.can_run);
+    assert_eq!(summary.disabled_reason, None);
+    assert_eq!(
         app.state
             .script_service
             .list(&user, session.id)
             .await
             .unwrap()
-            .is_empty()
+            .len(),
+        1
     );
     assert!(
         app.state
@@ -345,7 +303,7 @@ async fn planned_agent_script_cannot_overwrite_an_active_input_alias() {
             .await
             .unwrap()
             .iter()
-            .all(|message| message.kind != "script")
+            .any(|message| message.kind == "script")
     );
 }
 

@@ -226,6 +226,21 @@ impl VersionService {
                 "clientPublishId 必须为 1 到 128 个字符".into(),
             ));
         }
+        let expected = DraftRef {
+            id: request.expected_draft_id,
+            revision: request.expected_draft_revision,
+        };
+        if let Some(version_id) = self
+            .repo
+            .find_publish_receipt(&user.id, session_id, expected, &request.client_publish_id)
+            .await?
+        {
+            return Ok(PublishedVersion {
+                version: self.repo.find_version(&user.id, version_id).await?,
+                deduplicated: false,
+                replayed: true,
+            });
+        }
         let description = normalize_version_description(request.description.as_deref())
             .map_err(VersionError::Invalid)?;
         let description = match description {
@@ -233,14 +248,7 @@ impl VersionService {
             None => {
                 let (previous, current) = self
                     .repo
-                    .description_inputs(
-                        &user.id,
-                        session_id,
-                        DraftRef {
-                            id: request.expected_draft_id,
-                            revision: request.expected_draft_revision,
-                        },
-                    )
+                    .description_inputs(&user.id, session_id, expected)
                     .await?;
                 let previous = previous
                     .iter()
@@ -259,10 +267,7 @@ impl VersionService {
                 &user.id,
                 session_id,
                 PublishCommand {
-                    expected: DraftRef {
-                        id: request.expected_draft_id,
-                        revision: request.expected_draft_revision,
-                    },
+                    expected,
                     client_publish_id: request.client_publish_id,
                     description,
                     engine_contract: ENGINE_CONTRACT_VERSION.into(),

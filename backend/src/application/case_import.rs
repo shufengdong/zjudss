@@ -1,17 +1,10 @@
-use std::io::Read;
 use std::sync::Arc;
 
-use sha2::{Digest, Sha256};
-
 use crate::auth::CurrentUser;
-use crate::db::models::DraftRef;
 use crate::engine_resources::{EngineExample, EngineResourceSnapshot};
 use crate::storage::StageLimits;
 
-use super::{
-    ModelImportError, ModelImportService, ModelImportView, UploadBatch, UploadBatchError,
-    UploadBatchService, UploadBatchView, UploadFile, UploadSourceKind,
-};
+use super::{UploadBatchError, UploadBatchService, UploadBatchView, UploadFile, UploadSourceKind};
 
 #[derive(Debug)]
 pub enum CaseImportError {
@@ -19,7 +12,6 @@ pub enum CaseImportError {
     SnapshotMismatch,
     NotModelizable,
     SourceChanged,
-    ModelImport(ModelImportError),
     Upload(UploadBatchError),
 }
 
@@ -30,18 +22,12 @@ impl std::fmt::Display for CaseImportError {
             Self::SnapshotMismatch => write!(formatter, "引擎资源快照不匹配"),
             Self::NotModelizable => write!(formatter, "案例不能转换为 DataFrame 模型"),
             Self::SourceChanged => write!(formatter, "案例源文件已变化"),
-            Self::ModelImport(error) => write!(formatter, "{error}"),
             Self::Upload(error) => write!(formatter, "{error}"),
         }
     }
 }
 
 impl std::error::Error for CaseImportError {}
-impl From<ModelImportError> for CaseImportError {
-    fn from(value: ModelImportError) -> Self {
-        Self::ModelImport(value)
-    }
-}
 impl From<UploadBatchError> for CaseImportError {
     fn from(value: UploadBatchError) -> Self {
         Self::Upload(value)
@@ -51,7 +37,6 @@ impl From<UploadBatchError> for CaseImportError {
 #[derive(Clone)]
 pub struct CaseImportService {
     snapshot: Arc<EngineResourceSnapshot>,
-    model_imports: ModelImportService,
     uploads: UploadBatchService,
     max_file_bytes: u64,
 }
@@ -59,13 +44,11 @@ pub struct CaseImportService {
 impl CaseImportService {
     pub fn new(
         snapshot: Arc<EngineResourceSnapshot>,
-        model_imports: ModelImportService,
         uploads: UploadBatchService,
         max_file_bytes: u64,
     ) -> Self {
         Self {
             snapshot,
-            model_imports,
             uploads,
             max_file_bytes,
         }
@@ -144,107 +127,6 @@ impl CaseImportService {
                 .iter()
                 .any(|file| file.virtual_path.to_ascii_lowercase().ends_with(".dss"))
     }
-
-    pub async fn accept(
-        &self,
-        user: &CurrentUser,
-        session_id: i32,
-        example_id: &str,
-        snapshot_id: &str,
-        client_import_id: String,
-        expected_draft: Option<DraftRef>,
-    ) -> Result<ModelImportView, CaseImportError> {
-        if snapshot_id != self.snapshot.id {
-            return Err(CaseImportError::SnapshotMismatch);
-        }
-        let example = self
-            .snapshot
-            .examples
-            .iter()
-            .find(|example| example.id == example_id)
-            .ok_or(CaseImportError::NotFound)?;
-        if !Self::is_modelizable(example) {
-            return Err(CaseImportError::NotModelizable);
-        }
-        let manifest = example
-            .manifest
-            .as_ref()
-            .ok_or(CaseImportError::NotModelizable)?;
-        for source in &example.files {
-            let path = safe_snapshot_file(&self.snapshot.engine_root, &source.source_path)?;
-            let file = std::fs::File::open(path).map_err(|_| CaseImportError::SourceChanged)?;
-            if sha256_reader(file).map_err(|_| CaseImportError::SourceChanged)? != source.sha256 {
-                return Err(CaseImportError::SourceChanged);
-            }
-        }
-
-        let mut files = Vec::with_capacity(example.files.len());
-        for (index, source) in example.files.iter().enumerate() {
-            let path = safe_snapshot_file(&self.snapshot.engine_root, &source.source_path)?;
-            let file = std::fs::File::open(path).map_err(|_| CaseImportError::SourceChanged)?;
-            let staged = self
-                .model_imports
-                .artifact_store()
-                .stage(
-                    file,
-                    StageLimits {
-                        max_bytes: self.max_file_bytes,
-                    },
-                )
-                .map_err(|error| {
-                    CaseImportError::ModelImport(ModelImportError::Invalid(error.to_string()))
-                })?;
-            if staged.sha256 != source.sha256 {
-                return Err(CaseImportError::SourceChanged);
-            }
-            files.push(UploadFile {
-                client_file_id: format!("case-{index}"),
-                file_name: std::path::Path::new(&source.virtual_path)
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or("case-file")
-                    .to_string(),
-                relative_path: Some(source.virtual_path.clone()),
-                media_type: None,
-                staged,
-            });
-        }
-        self.model_imports
-            .accept_case(
-                user,
-                session_id,
-                client_import_id,
-                expected_draft,
-                UploadBatch {
-                    client_batch_id: "case".into(),
-                    files,
-                },
-                serde_json::json!({
-                    "exampleId": example.id,
-                    "title": example.title,
-                    "categoryPath": example.category_path,
-                    "bundlePath": example.bundle_path,
-                    "engineResourceSnapshot": self.snapshot.id,
-                    "manifestSchemaVersion": manifest.schema_version,
-                    "sourceTreeHash": manifest.source.tree_sha256,
-                    "caseTreeHash": example.tree_hash,
-                    "fileCount": example.files.len(),
-                }),
-            )
-            .await
-            .map_err(Into::into)
-    }
-
-    pub async fn process(
-        &self,
-        user: &CurrentUser,
-        import_id: i32,
-    ) -> Result<ModelImportView, CaseImportError> {
-        self.model_imports
-            .process(user, import_id)
-            .await
-            .map_err(Into::into)
-    }
 }
 
 fn safe_snapshot_file(
@@ -271,51 +153,4 @@ fn safe_snapshot_file(
         return Err(CaseImportError::SourceChanged);
     }
     Ok(canonical)
-}
-
-fn sha256_reader(mut reader: impl Read) -> std::io::Result<String> {
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = reader.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-    }
-    Ok(hex::encode(hasher.finalize()))
-}
-
-#[cfg(test)]
-mod tests {
-    use std::io::{self, Read};
-
-    struct BoundedReadProbe {
-        remaining: usize,
-        largest_buffer: usize,
-    }
-
-    impl Read for BoundedReadProbe {
-        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-            self.largest_buffer = self.largest_buffer.max(buffer.len());
-            let count = self.remaining.min(buffer.len());
-            buffer[..count].fill(b'x');
-            self.remaining -= count;
-            Ok(count)
-        }
-    }
-
-    #[test]
-    fn hashes_case_sources_in_bounded_chunks() {
-        let mut reader = BoundedReadProbe {
-            remaining: 3 * 1024 * 1024,
-            largest_buffer: 0,
-        };
-
-        let digest = super::sha256_reader(&mut reader).unwrap();
-
-        assert_eq!(digest.len(), 64);
-        assert_eq!(reader.remaining, 0);
-        assert!(reader.largest_buffer <= 64 * 1024);
-    }
 }

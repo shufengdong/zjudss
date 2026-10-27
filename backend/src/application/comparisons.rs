@@ -109,8 +109,8 @@ impl ComparisonService {
             intent: json!({"kind":"run_comparison","baselineRunId":baseline_run_id.to_string(),"candidateRunId":candidate_run_id.to_string(),"compatibility":compatibility}),
             script: comparison_script(&compatibility),
             inputs: vec![
-                AnalysisInput { dataset_id: left.id, alias: "baseline".into() },
-                AnalysisInput { dataset_id: right.id, alias: "candidate".into() },
+                AnalysisInput { source: crate::application::AnalysisInputSource::DatasetId(left.id), alias: "baseline".into() },
+                AnalysisInput { source: crate::application::AnalysisInputSource::DatasetId(right.id), alias: "candidate".into() },
             ],
             expected_outputs: vec!["result".into()],
             initial_views: HashMap::new(),

@@ -113,6 +113,30 @@ fn accepts_independent_supported_catalog_versions() {
 }
 
 #[test]
+fn accepts_paired_presence_as_an_executable_dataframe_rule() {
+    let fixture = fixture();
+    rewrite_catalog(&fixture, "dataframes.json", |root| {
+        root["frames"]["bus"]["rules"] = json!([
+            {
+                "type": "paired_presence",
+                "fields": ["id", "terminals"]
+            },
+            {
+                "type": "equal_length",
+                "fields": ["id", "terminals"],
+                "minimumLength": 1
+            }
+        ]);
+    });
+    let snapshot = fixture.load();
+    assert_eq!(
+        snapshot.facades.enabled_count(),
+        snapshot.facades.catalog_entry_count()
+    );
+    assert!(snapshot.facades.diagnostics().is_empty());
+}
+
+#[test]
 fn rejects_each_unsupported_catalog_or_dtype_grammar_version() {
     let cases = [
         ("functions.json", vec!["schema_version"]),

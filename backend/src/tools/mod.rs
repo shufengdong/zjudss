@@ -12,12 +12,15 @@ pub mod create_script;
 pub mod get_storage_usage;
 pub mod inspect_example;
 pub mod inspect_workspace;
+pub mod list_data_resources;
 pub mod list_result_datasets;
 pub mod list_simulation_history;
 pub mod load_agent_skill;
 pub mod modify_model;
 pub mod plan_study;
+pub mod promote_result_dataset;
 pub mod read_chat_context;
+pub mod read_data_resource;
 pub mod read_engine_doc_section;
 pub mod read_model_dataframe;
 pub mod run_result_analysis;
@@ -25,6 +28,7 @@ pub mod search_chat_history;
 pub mod search_engine_docs;
 pub mod search_examples;
 mod support;
+pub mod update_data_resource_alias;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -35,9 +39,9 @@ use tokio::sync::{Mutex, Semaphore};
 use crate::adapters::SimEngine;
 use crate::agent::knowledge::AgentKnowledge;
 use crate::application::{
-    AnalysisService, ArtifactService, ComparisonService, DatasetService, EventWriter,
-    HistoryService, ModelDataFrameReadService, ModelPatchService, RunService, ScriptService,
-    StudyPlanningService, VersionService,
+    AnalysisService, ArtifactService, ComparisonService, DataResourceService, DatasetService,
+    EventWriter, HistoryService, ModelDataFrameReadService, ModelPatchService, RunService,
+    ScriptService, StudyPlanningService, VersionService,
 };
 use crate::auth::{CurrentUser, UserId};
 use crate::engine_resources::EngineResourceSnapshot;
@@ -69,6 +73,7 @@ pub struct ToolServices {
     pub comparisons: ComparisonService,
     pub history: HistoryService,
     pub artifact_service: ArtifactService,
+    pub data_resources: DataResourceService,
 }
 
 impl ToolServices {
@@ -123,4 +128,8 @@ define_tool_registry!(
     load_agent_skill::LoadAgentSkillTool,
     search_engine_docs::SearchEngineDocsTool,
     read_engine_doc_section::ReadEngineDocSectionTool,
+    list_data_resources::ListDataResourcesTool,
+    read_data_resource::ReadDataResourceTool,
+    update_data_resource_alias::UpdateDataResourceAliasTool,
+    promote_result_dataset::PromoteResultDatasetTool,
 );

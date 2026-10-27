@@ -158,6 +158,37 @@ impl ArtifactService {
             .map_err(Into::into)
     }
 
+    pub async fn commit_upload_source(
+        &self,
+        scope_id: i32,
+        upload_file_id: String,
+        staged: StagedArtifact,
+        metadata: ArtifactMetadata,
+    ) -> Result<ArtifactRef, ArtifactError> {
+        let size_bytes =
+            i64::try_from(staged.size_bytes).map_err(|_| ArtifactError::SizeOverflow)?;
+        let relative_path = ArtifactStore::relative_path(&staged.sha256);
+        let draft = ArtifactDraft {
+            sha256: staged.sha256.clone(),
+            size_bytes,
+            storage_path: relative_path,
+            format: metadata.format,
+            media_type: metadata.media_type,
+            created_at_ms: now_ms(),
+        };
+        let store = self.store.clone();
+        let mut staged = staged;
+        self.artifacts
+            .commit_upload_source_with_publish(scope_id, draft, upload_file_id, move |path| {
+                store
+                    .publish(&mut staged, path)
+                    .map_err(|error| RepoError::Storage(error.to_string()))
+            })
+            .await
+            .map(ArtifactRef::from)
+            .map_err(Into::into)
+    }
+
     pub async fn get_usage(&self, scope_id: i32) -> Result<StorageUsage, ArtifactError> {
         self.scopes.usage(scope_id).await.map_err(Into::into)
     }

@@ -5,13 +5,13 @@
 use super::schema::{
     artifacts, auth_sessions, data_resource_deletion_previews, data_resource_replacement_previews,
     data_resources, dataset_lineage_snapshots, dataset_views, draft_dataframes,
-    engine_resource_snapshots, managed_workflows, messages, model_import_candidates,
-    model_import_selections, model_imports, publish_receipts, result_analysis_inputs,
-    result_analysis_runs, result_datasets, retry_previews, run_comparisons, run_deletion_previews,
-    script_resources, session_deletion_previews, sessions, storage_scope_artifacts, storage_scopes,
-    study_configurations, study_input_bindings, study_result_selections, study_struct_values,
-    upload_batches, upload_candidates, upload_files, users, version_deletion_previews,
-    workflow_attempts, workflow_input_snapshots, workspace_drafts, workspaces,
+    engine_resource_snapshots, managed_workflows, messages, publish_receipts,
+    result_analysis_inputs, result_analysis_runs, result_datasets, retry_previews, run_comparisons,
+    run_deletion_previews, script_resources, session_deletion_previews, sessions,
+    storage_scope_artifacts, storage_scopes, study_configurations, study_input_bindings,
+    study_result_selections, study_struct_values, upload_batches, upload_candidates, upload_files,
+    users, version_deletion_previews, workflow_attempts, workflow_input_snapshots,
+    workspace_drafts, workspaces,
 };
 #[allow(deprecated)]
 use diesel::{Insertable, Queryable};
@@ -232,92 +232,6 @@ pub struct NewDraftDataframe {
     pub created_at_ms: i64,
 }
 
-#[derive(Queryable, Debug, Clone)]
-#[diesel(table_name = model_imports)]
-pub struct ModelImport {
-    pub id: i32,
-    pub workspace_id: i32,
-    pub session_id: i32,
-    pub client_import_id: String,
-    pub source_kind: String,
-    pub source_summary_json: String,
-    pub source_sha256: String,
-    pub base_draft_id: Option<i32>,
-    pub base_draft_revision: Option<i64>,
-    pub status: String,
-    pub stages_json: String,
-    pub diagnostics_json: String,
-    pub error_code: Option<String>,
-    pub error_message: Option<String>,
-    pub created_at_ms: i64,
-    pub updated_at_ms: i64,
-}
-
-#[derive(Insertable, Debug, Clone)]
-#[diesel(table_name = model_imports)]
-pub struct NewModelImport {
-    pub workspace_id: i32,
-    pub session_id: i32,
-    pub client_import_id: String,
-    pub source_kind: String,
-    pub source_summary_json: String,
-    pub source_sha256: String,
-    pub base_draft_id: Option<i32>,
-    pub base_draft_revision: Option<i64>,
-    pub status: String,
-    pub stages_json: String,
-    pub diagnostics_json: String,
-    pub error_code: Option<String>,
-    pub error_message: Option<String>,
-    pub created_at_ms: i64,
-    pub updated_at_ms: i64,
-}
-
-#[derive(Queryable, Debug, Clone)]
-#[diesel(table_name = model_import_candidates)]
-pub struct ModelImportCandidate {
-    pub id: i32,
-    pub import_id: i32,
-    pub candidate_id: String,
-    pub candidate_kind: String,
-    pub display_name: String,
-    pub table_name: Option<String>,
-    pub artifact_id: Option<i32>,
-    pub schema_json: Option<String>,
-    pub row_count: Option<i64>,
-    pub content_hash: Option<String>,
-    pub evidence_json: String,
-    pub selected: bool,
-    pub created_at_ms: i64,
-}
-
-#[derive(Insertable, Debug, Clone)]
-#[diesel(table_name = model_import_candidates)]
-pub struct NewModelImportCandidate {
-    pub import_id: i32,
-    pub candidate_id: String,
-    pub candidate_kind: String,
-    pub display_name: String,
-    pub table_name: Option<String>,
-    pub artifact_id: Option<i32>,
-    pub schema_json: Option<String>,
-    pub row_count: Option<i64>,
-    pub content_hash: Option<String>,
-    pub evidence_json: String,
-    pub selected: bool,
-    pub created_at_ms: i64,
-}
-
-#[derive(Queryable, Insertable, Debug, Clone)]
-#[diesel(table_name = model_import_selections)]
-pub struct ModelImportSelection {
-    pub import_id: i32,
-    pub candidate_id: String,
-    pub table_name: Option<String>,
-    pub selected: bool,
-    pub created_at_ms: i64,
-}
-
 #[derive(Queryable, Insertable, Debug, Clone)]
 #[diesel(table_name = publish_receipts)]
 pub struct PublishReceipt {
@@ -404,10 +318,12 @@ pub struct SimulationRun {
 pub struct DatasetLineageSnapshot {
     pub id: i32,
     pub derived_dataset_id: i32,
-    pub source_dataset_id: i32,
+    pub source_dataset_id: Option<i32>,
+    pub source_resource_id: Option<String>,
     pub source_name: String,
     pub source_schema_json: String,
     pub source_schema_hash: String,
+    pub source_content_hash: String,
     pub source_producer_json: String,
     pub created_at_ms: i64,
 }
@@ -507,16 +423,18 @@ pub struct NewResultAnalysisRun {
     pub finished_at_ms: Option<i64>,
 }
 
-#[derive(Queryable, Insertable, Debug, Clone)]
+#[derive(Insertable, Debug, Clone)]
 #[diesel(table_name = result_analysis_inputs)]
 pub struct ResultAnalysisInput {
     pub analysis_run_id: i32,
-    pub dataset_id: i32,
+    pub dataset_id: Option<i32>,
+    pub resource_id: Option<String>,
     pub alias: String,
     pub ordinal: i32,
     pub source_name: String,
     pub source_schema_json: String,
     pub source_schema_hash: String,
+    pub source_content_hash: String,
     pub source_producer_json: String,
 }
 
@@ -612,6 +530,7 @@ pub struct UploadBatchRecord {
     pub client_batch_id: String,
     pub source_kind: String,
     pub replacement_resource_id: Option<String>,
+    pub confirm_operation_id: Option<String>,
     pub status: String,
     pub model_publish_status: String,
     pub resource_publish_status: String,
@@ -675,7 +594,7 @@ pub struct DataResourceRecord {
     pub status: String,
     pub declared_schema_ref: Option<String>,
     pub source_kind: String,
-    pub normalized_artifact_id: i32,
+    pub normalized_artifact_id: Option<i32>,
     pub source_artifact_id: Option<i32>,
     pub schema_json: String,
     pub schema_hash: String,
@@ -831,7 +750,15 @@ pub struct DataResourceReplacementPreviewRecord {
     pub token_hash: String,
     pub user_id: String,
     pub old_resource_id: String,
-    pub new_resource_id: String,
+    pub pending_artifact_id: i32,
+    pub pending_resource_id: String,
+    pub expected_content_hash: String,
+    pub schema_ref: String,
+    pub schema_json: String,
+    pub schema_hash: String,
+    pub values_json: String,
+    pub display_name: String,
+    pub proposed_alias: String,
     pub impact_hash: String,
     pub impact_json: String,
     pub expires_at_ms: i64,

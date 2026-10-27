@@ -4,12 +4,8 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use common::TestApp;
 use serde_json::{Value, json};
-use std::io::Cursor;
 use tower::ServiceExt;
-use zjudss::application::{
-    CreateScriptRequest, PublishDraftRequest, ScriptSource, UploadBatch, UploadFile,
-};
-use zjudss::storage::StageLimits;
+use zjudss::application::{CreateScriptRequest, PublishDraftRequest, ScriptSource};
 
 #[cfg(feature = "e2e-test")]
 use zjudss::testing::{EngineScenario, ScenarioEngine};
@@ -23,54 +19,17 @@ async fn setup(app: &TestApp) -> (zjudss::auth::CurrentUser, String, i32, String
         .create(&user.id, "runs", 1)
         .await
         .unwrap();
-    let staged = app
-        .state
-        .artifact_service
-        .store()
-        .stage(Cursor::new(b"id,name\n1,bus\n"), StageLimits::default())
-        .unwrap();
-    let accepted = app
-        .state
-        .model_import_service
-        .accept(
-            &user,
-            session.id,
-            "run-model".into(),
-            None,
-            UploadBatch {
-                client_batch_id: "unused".into(),
-                files: vec![UploadFile {
-                    client_file_id: "bus".into(),
-                    file_name: "bus.csv".into(),
-                    relative_path: None,
-                    media_type: Some("text/csv".into()),
-                    staged,
-                }],
-            },
-        )
-        .await
-        .unwrap();
-    let ready = app
-        .state
-        .model_import_service
-        .process(&user, accepted.id.parse().unwrap())
-        .await
-        .unwrap();
-    let draft = app
-        .state
-        .model_import_service
-        .resolve_and_apply(
-            &user,
-            accepted.id.parse().unwrap(),
-            None,
-            ready
-                .candidates
-                .into_iter()
-                .map(|candidate| candidate.id)
-                .collect(),
-        )
-        .await
-        .unwrap();
+    let draft = common::publish_model_bytes(
+        app,
+        &user,
+        session.id,
+        "run-model",
+        "bus.csv",
+        b"id,name\n1,bus\n",
+        None,
+        Some("bus"),
+    )
+    .await;
     let published = app
         .state
         .version_service

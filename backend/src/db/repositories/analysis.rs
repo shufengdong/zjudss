@@ -37,7 +37,29 @@ impl AnalysisRepo {
                     .optional()?
                     .ok_or(RepoError::NotFound)?;
                 for input in &inputs {
-                    owned_live_dataset(conn, &user, run.session_id, input.dataset_id)?;
+                    match (input.dataset_id, input.resource_id.as_deref()) {
+                        (Some(dataset_id), None) => {
+                            owned_live_dataset(conn, &user, run.session_id, dataset_id)?;
+                        }
+                        (None, Some(resource_id)) => {
+                            let found = schema::data_resources::table
+                                .inner_join(schema::sessions::table.on(
+                                    schema::sessions::id.eq(schema::data_resources::session_id),
+                                ))
+                                .filter(schema::data_resources::id.eq(resource_id))
+                                .filter(schema::data_resources::session_id.eq(run.session_id))
+                                .filter(schema::sessions::user_id.eq(&user))
+                                .filter(schema::data_resources::status.ne("deleted"))
+                                .select(schema::data_resources::id)
+                                .first::<String>(conn)
+                                .optional()?
+                                .is_some();
+                            if !found {
+                                return Err(RepoError::NotFound);
+                            }
+                        }
+                        _ => return Err(RepoError::InvalidState("分析输入来源无效".into())),
+                    }
                 }
                 diesel::insert_into(schema::result_analysis_runs::table)
                     .values(&run)
@@ -80,7 +102,7 @@ impl AnalysisRepo {
                         .execute(conn)?;
                     let derived_id = last_id(conn)?;
                     diesel::sql_query(
-                        "INSERT INTO dataset_lineage_snapshots(derived_dataset_id,source_dataset_id,source_name,source_schema_json,source_schema_hash,source_producer_json,created_at_ms) SELECT ?1,dataset_id,source_name,source_schema_json,source_schema_hash,source_producer_json,?2 FROM result_analysis_inputs WHERE analysis_run_id=?3",
+                        "INSERT INTO dataset_lineage_snapshots(derived_dataset_id,source_dataset_id,source_resource_id,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json,created_at_ms) SELECT ?1,dataset_id,resource_id,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json,?2 FROM result_analysis_inputs WHERE analysis_run_id=?3",
                     )
                     .bind::<diesel::sql_types::Integer, _>(derived_id)
                     .bind::<diesel::sql_types::BigInt, _>(now)

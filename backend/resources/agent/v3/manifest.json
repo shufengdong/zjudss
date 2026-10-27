@@ -1,7 +1,7 @@
 {
   "agentBundleVersion": "v3.3.3",
   "engineContractVersion": "tensoreval-parquet-v3",
-  "systemSha256": "14d062913849d69514c6a7931831f8b5ed98e145a988e59e926712b0929a2d02",
+  "systemSha256": "0d93ed66081c1639703593806d4966d168faaf5334e0fe5056605358516ab8d6",
   "skillIndexSha256": "a3b7be89334ef2067986b2853d8592cc447b049cfd9fedff3a0c86963b7bd138",
   "allowedTools": [
     "inspect_workspace",
@@ -21,6 +21,10 @@
     "get_storage_usage",
     "load_agent_skill",
     "search_engine_docs",
-    "read_engine_doc_section"
+    "read_engine_doc_section",
+    "list_data_resources",
+    "read_data_resource",
+    "update_data_resource_alias",
+    "promote_result_dataset"
   ]
 }

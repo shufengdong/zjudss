@@ -21,6 +21,7 @@ const ARGON2_PARALLELISM: u32 = 1;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserSeedSummary {
     pub user_count: usize,
+    pub user_ids: Vec<String>,
     pub seed_sha256: String,
     pub initialized: bool,
 }
@@ -94,6 +95,7 @@ pub fn seed_users(
         }
         return Ok(UserSeedSummary {
             user_count: rows.len(),
+            user_ids: rows.iter().map(|row| row.id.clone()).collect(),
             seed_sha256,
             initialized: false,
         });
@@ -154,6 +156,7 @@ pub fn seed_users(
 
     Ok(UserSeedSummary {
         user_count: rows.len(),
+        user_ids: rows.iter().map(|row| row.id.clone()).collect(),
         seed_sha256,
         initialized: true,
     })

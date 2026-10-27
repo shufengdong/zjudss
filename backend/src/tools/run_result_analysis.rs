@@ -1,4 +1,4 @@
-use crate::application::{AnalysisInput, AnalysisRequest};
+use crate::application::{AnalysisInput, AnalysisInputSource, AnalysisRequest};
 use crate::tools::{
     ToolServices,
     support::{DomainToolError, object_schema},
@@ -11,7 +11,8 @@ use std::{collections::HashMap, sync::Arc};
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InputArg {
-    dataset_id: i32,
+    dataset_id: Option<i32>,
+    resource_id: Option<String>,
     alias: String,
 }
 #[derive(Deserialize)]
@@ -47,7 +48,7 @@ impl Tool for RunResultAnalysisTool {
     }
     fn parameters(&self) -> Value {
         object_schema(
-            json!({"intent":{"type":"object"},"script":{"type":"string"},"inputs":{"type":"array","items":{"type":"object","properties":{"datasetId":{"type":"integer"},"alias":{"type":"string"}},"required":["datasetId","alias"]}},"expectedOutputs":{"type":"array","items":{"type":"string"}},"initialViews":{"type":"object"}}),
+            json!({"intent":{"type":"object"},"script":{"type":"string"},"inputs":{"type":"array","items":{"type":"object","properties":{"datasetId":{"type":["integer","null"]},"resourceId":{"type":["string","null"]},"alias":{"type":"string"}},"required":["alias"],"oneOf":[{"required":["datasetId"]},{"required":["resourceId"]}]}},"expectedOutputs":{"type":"array","items":{"type":"string"}},"initialViews":{"type":"object"}}),
             &["intent", "script", "inputs", "expectedOutputs"],
         )
     }
@@ -66,7 +67,25 @@ impl Tool for RunResultAnalysisTool {
             .into_iter()
             .map(|(k, v)| (k, v.into_iter().map(|x| (x.name, x.spec)).collect()))
             .collect();
-        let out=self.services.analysis.run(AnalysisRequest{principal:self.services.principal.clone(),session_id:self.services.session_id,request_message_id:Some(self.services.request_message_id),intent:args.intent,script:args.script,inputs:args.inputs.into_iter().map(|v|AnalysisInput{dataset_id:v.dataset_id,alias:v.alias}).collect(),expected_outputs:args.expected_outputs,initial_views:views,skill_refs:vec![json!({"id":skill.metadata.id,"version":skill.metadata.version,"sha256":skill.metadata.sha256})]}).await?;
+        let inputs = args
+            .inputs
+            .into_iter()
+            .map(|value| {
+                let source = match (value.dataset_id, value.resource_id) {
+                    (Some(id), None) => Ok(AnalysisInputSource::DatasetId(id)),
+                    (None, Some(id)) => Ok(AnalysisInputSource::DataResourceId(id)),
+                    _ => Err(DomainToolError::new(
+                        "analysis_inputs_invalid",
+                        "每个输入必须且只能提供 datasetId 或 resourceId",
+                    )),
+                }?;
+                Ok(AnalysisInput {
+                    source,
+                    alias: value.alias,
+                })
+            })
+            .collect::<Result<Vec<_>, DomainToolError>>()?;
+        let out=self.services.analysis.run(AnalysisRequest{principal:self.services.principal.clone(),session_id:self.services.session_id,request_message_id:Some(self.services.request_message_id),intent:args.intent,script:args.script,inputs,expected_outputs:args.expected_outputs,initial_views:views,skill_refs:vec![json!({"id":skill.metadata.id,"version":skill.metadata.version,"sha256":skill.metadata.sha256})]}).await?;
         Ok(
             json!({"analysisRunId":out.run.id.to_string(),"status":out.run.status,"datasets":out.datasets.into_iter().map(|d|json!({"datasetId":d.id.to_string(),"name":d.result_name})).collect::<Vec<_>>() }),
         )

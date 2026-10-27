@@ -3,6 +3,7 @@
 mod analysis;
 mod auth;
 mod comparisons;
+mod data_resources;
 mod datasets;
 mod events;
 mod examples;
@@ -28,10 +29,10 @@ use crate::application::AppState;
 use crate::application::ArtifactError;
 use crate::application::CaseImportError;
 use crate::application::ComparisonError;
+use crate::application::DataResourceError;
 use crate::application::DatasetError;
 use crate::application::HistoryError;
 use crate::application::ModelDataFrameReadError;
-use crate::application::ModelImportError;
 use crate::application::RunError;
 use crate::application::ScriptError;
 use crate::application::UploadBatchError;
@@ -156,34 +157,6 @@ impl From<ArtifactError> for ApiError {
     }
 }
 
-impl From<ModelImportError> for ApiError {
-    fn from(error: ModelImportError) -> Self {
-        match error {
-            ModelImportError::NotFound => Self::not_found("资源不存在"),
-            ModelImportError::IdempotencyConflict => Self {
-                status: StatusCode::CONFLICT,
-                message: error.to_string(),
-                code: "idempotency_conflict",
-                details: None,
-            },
-            ModelImportError::DraftRevisionConflict => Self {
-                status: StatusCode::CONFLICT,
-                message: error.to_string(),
-                code: "draft_revision_conflict",
-                details: None,
-            },
-            ModelImportError::Invalid(message) => Self {
-                status: StatusCode::UNPROCESSABLE_ENTITY,
-                message,
-                code: "model_import_unsupported",
-                details: None,
-            },
-            ModelImportError::Artifact(error) => error.into(),
-            ModelImportError::Repository(error) => error.into(),
-        }
-    }
-}
-
 impl From<UploadBatchError> for ApiError {
     fn from(error: UploadBatchError) -> Self {
         let status = match error.code() {
@@ -205,6 +178,29 @@ impl From<UploadBatchError> for ApiError {
             "storage_quota_exceeded" => "storage_quota_exceeded",
             "excel_formula_value_missing" => "excel_formula_value_missing",
             _ => "upload_invalid",
+        };
+        Self {
+            status,
+            message: error.to_string(),
+            code,
+            details: None,
+        }
+    }
+}
+
+impl From<DataResourceError> for ApiError {
+    fn from(error: DataResourceError) -> Self {
+        let code = error.code();
+        let status = match code {
+            "not_found" => StatusCode::NOT_FOUND,
+            "storage_quota_exceeded" => StatusCode::PAYLOAD_TOO_LARGE,
+            "resource_alias_conflict"
+            | "resource_stale"
+            | "draft_revision_conflict"
+            | "idempotency_conflict"
+            | "deletion_impact_changed"
+            | "invalid_deletion_impact_token" => StatusCode::CONFLICT,
+            _ => StatusCode::UNPROCESSABLE_ENTITY,
         };
         Self {
             status,
@@ -302,7 +298,6 @@ impl From<CaseImportError> for ApiError {
                 code: "case_not_modelizable",
                 details: None,
             },
-            CaseImportError::ModelImport(error) => error.into(),
             CaseImportError::Upload(error) => error.into(),
         }
     }
@@ -558,6 +553,48 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
         "/api/upload-batches/{id}/candidates",
         put(uploads::candidates),
         ["PUT"]
+    );
+    add_route!(
+        "/api/upload-batches/{id}/confirm",
+        post(data_resources::confirm_upload),
+        ["POST"]
+    );
+    add_route!(
+        "/api/sessions/{id}/data-resources",
+        get(data_resources::list),
+        ["GET"]
+    );
+    add_route!(
+        "/api/data-resources/{id}",
+        get(data_resources::get)
+            .patch(data_resources::update)
+            .delete(data_resources::delete_resource),
+        ["GET", "PATCH", "DELETE"]
+    );
+    add_route!(
+        "/api/data-resources/{id}/rows",
+        get(data_resources::rows),
+        ["GET"]
+    );
+    add_route!(
+        "/api/data-resources/{id}/download",
+        get(data_resources::download),
+        ["GET"]
+    );
+    add_route!(
+        "/api/data-resources/{id}/deletion-preview",
+        post(data_resources::deletion_preview),
+        ["POST"]
+    );
+    add_route!(
+        "/api/data-resources/{id}/structured-replacement-previews",
+        post(data_resources::structured_preview),
+        ["POST"]
+    );
+    add_route!(
+        "/api/data-resource-replacement-previews/{id}/confirm",
+        post(data_resources::confirm_structured_preview),
+        ["POST"]
     );
     add_route!(
         "/api/data-resources/{id}/replacement-batches",

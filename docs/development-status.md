@@ -6,8 +6,8 @@
 > 详细实施步骤见
 > [`2026-10-27-v4-independent-data-resources-managed-studies.md`](superpowers/plans/2026-10-27-v4-independent-data-resources-managed-studies.md)。
 > 当前 eig-rs 已提供全部门面的完整传递输入、Struct 参数卡和结果 schema，外部机器合同门禁已经满足。V4 Task 1
-> 的空库持久化合同、Task 2 的动态研究门面目录、Task 3 的有界进程执行边界和 Task 4 的可恢复统一上传批次已经实现；
-> 独立数据资源发布和受管研究工作流尚未实现。
+> 的空库持久化合同、Task 2 的动态研究门面目录、Task 3 的有界进程执行边界、Task 4 的可恢复统一上传批次和
+> Task 5 的独立数据资源发布/管理已经实现；受管研究工作流尚未实现。
 > 本文未明确标为 V4 已完成的其余内容仍描述进入 V4 前已验证的 V3 产品行为。
 
 ## V4 implementation progress
@@ -18,11 +18,11 @@
 | Task 2：动态 DataFrame 研究门面 | complete | 独立 catalog 版本、15 门面真实目录门禁、隔离诊断、传递 schema/hash、current snapshot 事务 |
 | Task 3：统一 tensoreval 进程边界 | complete | 双流有界捕获/完整 hash、运行中结果监控、进程组超时与取消、最终严格扫描、无部分结果 |
 | Task 4：统一上传、解析设置与用途确认 | complete | upload batch API、24h 可配置 TTL、并发 reservation、CSV/Excel/Parquet/DSS/案例候选、20+para 拆分、动态 catalog 表头推断 |
-| Tasks 5–15 | planned | 以 V4 实施计划为准 |
+| Task 5：独立数据资源发布与管理 | complete | model/resource 双子事务、普通 Data/Struct 资源、替换/删除/提升、资源分析与物化视图、4 个 Agent 工具 |
+| Tasks 6–15 | planned | 以 V4 实施计划为准 |
 
-Task 4 的后端聚焦测试和新增 upload batch API Playwright 旅程已通过。完整旧版 Playwright 套件仍依赖已删除的
-`/model-imports` 协议和“确认合并”界面，当前失败属于 Task 5 发布事务与 Task 12 前端迁移尚未实施的预期中间状态，
-不恢复旧协议作为兼容层。
+Task 5 的完整后端测试和统一上传/独立数据资源公共 API Playwright 旅程已通过。完整旧版 Playwright 套件仍依赖已删除的
+`/model-imports` 协议和“确认合并”界面，剩余迁移属于 Task 12 前端工作区任务，不恢复旧协议作为兼容层。
 
 ## Current release
 
@@ -32,14 +32,15 @@ Task 4 的后端聚焦测试和新增 upload batch API Playwright 旅程已通�
 | Area | Status | Evidence |
 |---|---|---|
 | 固定用户与隔离 | complete | Argon2id、HttpOnly Cookie、跨用户 404、SSE 撤销 |
-| 统一上传 | transitioning | Task 4 已实现 DSS/ZIP/CSV/Excel/Parquet/案例的可恢复候选、解析设置/用途确认与放弃；Task 5 接入模型/数据双发布确认 |
+| 统一上传 | complete | DSS/ZIP/CSV/Excel/Parquet/案例的可恢复候选、解析设置/用途确认、model/resource 双发布、部分成功重试与确认幂等 |
+| 独立数据资源 | complete | 会话唯一 alias、原文件/规范 Parquet、Struct 覆盖预览、重新上传替换、删除影响、结果提升、分析/物化视图输入 |
 | 草稿与版本 | complete | expected revision、整表覆盖、显式发布/激活、影响预览删除 |
 | 案例库 | complete | rssbundle 目录树、manifest 详情/搜索、无效叶诊断、严格清单导入、窄屏浏览 |
 | 脚本 | transitioning | 上传/Agent 创建已改为保存候选并把语法/运行可行性交给 tensoreval；V4 受管确认与结果合同在 Tasks 9–11 完成 |
 | 运行 | complete | 仅按钮创建、active race、含脚本名的冻结快照、私有输入树、可展开失败详情与多 Parquet 结果 |
 | 结果与派生 | complete | 单结果删除、分析、物化视图、比较、tombstone 血缘 |
 | 前端 | complete | 三列/窄屏、运行摘要与失败原因/耗时/全结果选择、结果数据表/图表、active/draft/历史模型表只读工作台、登录用户菜单 |
-| Agent V3 | complete | 18 工具、6 skills、五类研究确定性规划、active 动态输入 alias、模型行读取、按需引擎知识、无运行/发布/删除权 |
+| Agent V3 | complete | 22 工具、6 skills、普通资源查询/改名/结果提升、五类研究确定性规划、active 动态输入 alias、按需引擎知识、无运行/发布/删除权 |
 | 发布门禁 | complete | deterministic Rust/Vitest/build/Playwright/coverage；真实依赖另行执行 |
 
 ## Runtime contracts
@@ -52,7 +53,7 @@ Task 4 的后端聚焦测试和新增 upload batch API Playwright 旅程已通�
 - 每次 tensoreval 调用均由统一 adapter 流式排空 stdout/stderr；每流按 `ENGINE_PROCESS_OUTPUT_MAX_BYTES` 保留等额首尾并
   记录完整 hash/总字节数。运行中和退出后都检查结果数量、单文件/总量、普通文件和路径边界；失败、超时或取消会
   终止整个进程组并清理未发布目录。
-- 公共合同：50 条路由、9 类消息、18 个工具、6 个 skills、8 个上传来源、6 类视图。
+- 公共合同：60 条路由、9 类消息、22 个工具、6 个 skills、8 个上传来源、6 类视图。
 - 静态 DSS adapter profile 固定输出 21 张规范 DataFrame；统一上传把其中 20 张网络表作为模型候选，把 `para`
   作为普通 Data resource 候选。其他模型表完全由当前 engine snapshot 的有效 model schema 和实际表头推断。
 - 研究规划：潮流、QSTS、短路、谐波和暂态只基于 active 模型的实际表清单与当前 engine snapshot；

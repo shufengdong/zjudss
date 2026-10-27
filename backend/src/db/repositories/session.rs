@@ -170,14 +170,20 @@ impl SessionRepo {
                        JOIN workspaces w ON w.id=v.workspace_id
                        WHERE w.session_id=?1
                        UNION ALL
-                       SELECT pending.artifact_id FROM (
-                         SELECT DISTINCT i.id,c.artifact_id
-                         FROM model_imports i
-                         JOIN model_import_candidates c ON c.import_id=i.id
-                         WHERE i.session_id=?1
-                           AND i.status NOT IN ('applied','discarded','failed')
-                           AND c.artifact_id IS NOT NULL
-                       ) pending
+                       SELECT c.normalized_artifact_id FROM upload_candidates c
+                       JOIN upload_batches b ON b.id=c.batch_id
+                       WHERE b.session_id=?1 AND c.normalized_artifact_id IS NOT NULL
+                       UNION ALL
+                       SELECT f.source_artifact_id FROM upload_files f
+                       JOIN upload_batches b ON b.id=f.batch_id
+                       WHERE b.session_id=?1 AND f.source_artifact_id IS NOT NULL
+                       UNION ALL
+                       SELECT normalized_artifact_id FROM data_resources WHERE session_id=?1
+                       UNION ALL
+                       SELECT source_artifact_id FROM data_resources WHERE session_id=?1 AND source_artifact_id IS NOT NULL
+                       UNION ALL
+                       SELECT p.pending_artifact_id FROM data_resource_replacement_previews p
+                       JOIN data_resources d ON d.id=p.old_resource_id WHERE d.session_id=?1
                        UNION ALL
                        SELECT artifact_id FROM script_resources WHERE session_id=?1
                        UNION ALL
@@ -197,6 +203,16 @@ impl SessionRepo {
                 .into_iter()
                 .map(|row| row.artifact_id)
                 .collect::<Vec<_>>();
+                let scope_id = schema::users::table
+                    .filter(schema::users::id.eq(&user_id.0))
+                    .select(schema::users::storage_scope_id)
+                    .first::<i32>(conn)?;
+                super::artifact::release_refs(
+                    conn,
+                    scope_id,
+                    artifact_ids,
+                    crate::application::now_ms(),
+                )?;
 
                 diesel::sql_query(
                     "UPDATE workspaces SET active_version_id=NULL WHERE session_id=?1",
@@ -278,7 +294,7 @@ impl SessionRepo {
                 )
                 .execute(conn)?;
                 debug_assert_eq!(deleted, 1);
-                Ok(artifact_ids)
+                Ok(Vec::new())
             })
         })
         .await

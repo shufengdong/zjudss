@@ -76,7 +76,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         warning_ratio: runtime.storage_warning_ratio,
     };
     let pool = db::establish_pool(&runtime.database_url)?;
-    {
+    let seeded = {
         let mut conn = pool.get()?;
         db::run_migrations(&mut conn)?;
         db::recover_interrupted_runs(&mut conn, zjudss::application::now_ms())?;
@@ -91,7 +91,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             seeded.user_count,
             &seeded.seed_sha256[..12]
         );
-    }
+        seeded
+    };
     zjudss::db::repositories::EngineResourceSnapshotRepo::new(pool.clone())
         .publish_current(&engine_resources, zjudss::application::now_ms())
         .await?;
@@ -132,6 +133,25 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         },
     );
     state.upload_batch_service.recover_startup().await?;
+    state
+        .data_resource_service
+        .cleanup_expired_structured_previews()
+        .await?;
+    for user_id in seeded.user_ids {
+        state
+            .data_resource_service
+            .revalidate_user_aliases(&zjudss::auth::UserId(user_id))
+            .await?;
+    }
+    let preview_cleanup = state.data_resource_service.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            if let Err(error) = preview_cleanup.cleanup_expired_structured_previews().await {
+                eprintln!("[data-resource] 清理过期参数预览失败: {error}");
+            }
+        }
+    });
 
     let addr = runtime.bind_addr;
     let listener = tokio::net::TcpListener::bind(addr).await?;

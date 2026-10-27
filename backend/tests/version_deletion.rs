@@ -5,10 +5,7 @@ use axum::http::{Request, StatusCode};
 use common::TestApp;
 use diesel::prelude::*;
 use serde_json::{Value, json};
-use std::io::Cursor;
 use tower::ServiceExt;
-use zjudss::application::{UploadBatch, UploadFile};
-use zjudss::storage::StageLimits;
 
 async fn published_version(app: &TestApp, cookie: &str) -> (i32, i32) {
     let user = common::test_user("alice@example.com");
@@ -18,54 +15,17 @@ async fn published_version(app: &TestApp, cookie: &str) -> (i32, i32) {
         .create(&user.id, "delete", 1)
         .await
         .unwrap();
-    let staged = app
-        .state
-        .artifact_service
-        .store()
-        .stage(Cursor::new(b"id,name\n1,bus\n"), StageLimits::default())
-        .unwrap();
-    let accepted = app
-        .state
-        .model_import_service
-        .accept(
-            &user,
-            session.id,
-            "delete-model".into(),
-            None,
-            UploadBatch {
-                client_batch_id: "unused".into(),
-                files: vec![UploadFile {
-                    client_file_id: "bus".into(),
-                    file_name: "bus.csv".into(),
-                    relative_path: None,
-                    media_type: Some("text/csv".into()),
-                    staged,
-                }],
-            },
-        )
-        .await
-        .unwrap();
-    let ready = app
-        .state
-        .model_import_service
-        .process(&user, accepted.id.parse().unwrap())
-        .await
-        .unwrap();
-    let draft = app
-        .state
-        .model_import_service
-        .resolve_and_apply(
-            &user,
-            accepted.id.parse().unwrap(),
-            None,
-            ready
-                .candidates
-                .iter()
-                .map(|item| item.id.clone())
-                .collect(),
-        )
-        .await
-        .unwrap();
+    let draft = common::publish_model_bytes(
+        app,
+        &user,
+        session.id,
+        "delete-model",
+        "bus.csv",
+        b"id,name\n1,bus\n",
+        None,
+        Some("bus"),
+    )
+    .await;
     let response = app.router.clone().oneshot(Request::post(format!("/api/sessions/{}/versions", session.id)).header("cookie", cookie).header("content-type", "application/json").body(Body::from(json!({"expectedDraftId":draft.id,"expectedDraftRevision":draft.revision,"clientPublishId":"delete-publish"}).to_string())).unwrap()).await.unwrap();
     assert!(response.status().is_success());
     let body: Value =
@@ -146,7 +106,7 @@ async fn deletion_tombstones_version_runs_and_raw_results_but_keeps_derived_line
     diesel::sql_query("INSERT INTO result_datasets(run_id,artifact_id,result_name,schema_json,schema_hash,row_count,size_bytes,created_at_ms) SELECT r.id,r.script_artifact_id,'raw','{}',r.script_content_hash,1,1,4 FROM simulation_runs r WHERE r.client_run_id='run'").execute(&mut conn).unwrap();
     diesel::sql_query("INSERT INTO result_analysis_runs(session_id,intent_json,script_artifact_id,status,stage,agent_bundle_version,agent_skill_refs_json,engine_contract_version,created_at_ms) SELECT ?1,'{}',artifact_id,'succeeded','completed','test','[]','test',5 FROM script_resources WHERE session_id=?1 LIMIT 1").bind::<diesel::sql_types::Integer,_>(session_id).execute(&mut conn).unwrap();
     diesel::sql_query("INSERT INTO result_datasets(analysis_run_id,artifact_id,result_name,schema_json,schema_hash,row_count,size_bytes,created_at_ms) SELECT ar.id,s.artifact_id,'derived','{}',s.content_hash,1,1,6 FROM result_analysis_runs ar JOIN script_resources s ON s.session_id=ar.session_id WHERE ar.session_id=?1 LIMIT 1").bind::<diesel::sql_types::Integer,_>(session_id).execute(&mut conn).unwrap();
-    diesel::sql_query("INSERT INTO dataset_lineage_snapshots(derived_dataset_id,source_dataset_id,source_name,source_schema_json,source_schema_hash,source_producer_json,created_at_ms) SELECT d.id,r.id,r.result_name,r.schema_json,r.schema_hash,'{}',7 FROM result_datasets d JOIN result_datasets r WHERE d.analysis_run_id IS NOT NULL AND r.run_id IS NOT NULL LIMIT 1").execute(&mut conn).unwrap();
+    diesel::sql_query("INSERT INTO dataset_lineage_snapshots(derived_dataset_id,source_dataset_id,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json,created_at_ms) SELECT d.id,r.id,r.result_name,r.schema_json,r.schema_hash,r.schema_hash,'{}',7 FROM result_datasets d JOIN result_datasets r WHERE d.analysis_run_id IS NOT NULL AND r.run_id IS NOT NULL LIMIT 1").execute(&mut conn).unwrap();
     drop(conn);
 
     let response = preview(&app, &cookie, version_id).await;

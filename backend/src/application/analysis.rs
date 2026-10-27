@@ -20,13 +20,21 @@ use crate::db::models::{
     DatasetView, NewDatasetView, NewResultAnalysisRun, NewResultDataset, ResultAnalysisInput,
     ResultAnalysisRun,
 };
-use crate::db::repositories::{AnalysisRepo, MessageRepo, ResultRepo, RunDataset};
+use crate::db::repositories::{
+    AnalysisRepo, DataResourceRepo, MessageRepo, ResultRepo, RunDataset,
+};
 use crate::storage::{ParquetInspector, StageLimits};
 
 #[derive(Debug, Clone)]
 pub struct AnalysisInput {
-    pub dataset_id: i32,
+    pub source: AnalysisInputSource,
     pub alias: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum AnalysisInputSource {
+    DatasetId(i32),
+    DataResourceId(String),
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +95,7 @@ pub struct AnalysisService {
     engine: Arc<dyn SimEngine>,
     knowledge: Arc<AgentKnowledge>,
     data_dir: PathBuf,
+    data_resources: DataResourceRepo,
 }
 
 impl AnalysisService {
@@ -100,6 +109,7 @@ impl AnalysisService {
         engine: Arc<dyn SimEngine>,
         knowledge: Arc<AgentKnowledge>,
         data_dir: PathBuf,
+        data_resources: DataResourceRepo,
     ) -> Self {
         Self {
             repo,
@@ -110,6 +120,7 @@ impl AnalysisService {
             engine,
             knowledge,
             data_dir,
+            data_resources,
         }
     }
 
@@ -194,34 +205,68 @@ impl AnalysisService {
     ) -> Result<Vec<ResultAnalysisInput>, AnalysisError> {
         let mut rows = Vec::with_capacity(request.inputs.len());
         for (ordinal, input) in request.inputs.iter().enumerate() {
-            let dataset = self
-                .results
-                .find_live(&request.principal.id, input.dataset_id)
-                .await
-                .map_err(|_| AnalysisError::new("analysis_input_not_found", "资源不存在"))?;
-            let session_id = self
-                .results
-                .session_id(&request.principal.id, dataset.id)
-                .await
-                .map_err(|_| AnalysisError::new("analysis_input_not_found", "资源不存在"))?;
-            if session_id != request.session_id {
-                return Err(AnalysisError::new("analysis_input_not_found", "资源不存在"));
+            match &input.source {
+                AnalysisInputSource::DatasetId(dataset_id) => {
+                    let dataset = self
+                        .results
+                        .find_live(&request.principal.id, *dataset_id)
+                        .await
+                        .map_err(|_| {
+                            AnalysisError::new("analysis_input_not_found", "资源不存在")
+                        })?;
+                    if self
+                        .results
+                        .session_id(&request.principal.id, dataset.id)
+                        .await
+                        .map_err(|_| AnalysisError::new("analysis_input_not_found", "资源不存在"))?
+                        != request.session_id
+                    {
+                        return Err(AnalysisError::new("analysis_input_not_found", "资源不存在"));
+                    }
+                    let artifact = self
+                        .artifacts
+                        .find_owned(
+                            request.principal.storage_scope_id,
+                            dataset.artifact_id.ok_or_else(|| {
+                                AnalysisError::new("analysis_input_not_found", "资源不存在")
+                            })?,
+                        )
+                        .await
+                        .map_err(|_| {
+                            AnalysisError::new("analysis_input_not_found", "资源不存在")
+                        })?;
+                    let producer = if let Some(run_id) = dataset.run_id {
+                        json!({"kind":"run","runId":run_id.to_string()})
+                    } else {
+                        json!({"kind":"analysis","analysisRunId":dataset.analysis_run_id.map(|id|id.to_string())})
+                    };
+                    rows.push(ResultAnalysisInput {
+                        analysis_run_id: 0,
+                        dataset_id: Some(dataset.id),
+                        resource_id: None,
+                        alias: input.alias.clone(),
+                        ordinal: ordinal as i32,
+                        source_name: dataset.result_name,
+                        source_schema_json: dataset.schema_json,
+                        source_schema_hash: dataset.schema_hash,
+                        source_content_hash: artifact.sha256,
+                        source_producer_json: producer.to_string(),
+                    });
+                }
+                AnalysisInputSource::DataResourceId(resource_id) => {
+                    let resource = self
+                        .data_resources
+                        .find(&request.principal.id, resource_id, false)
+                        .await
+                        .map_err(|_| {
+                            AnalysisError::new("analysis_input_not_found", "资源不存在")
+                        })?;
+                    if resource.resource.session_id != request.session_id {
+                        return Err(AnalysisError::new("analysis_input_not_found", "资源不存在"));
+                    }
+                    rows.push(ResultAnalysisInput{analysis_run_id:0,dataset_id:None,resource_id:Some(resource.resource.id.clone()),alias:input.alias.clone(),ordinal:ordinal as i32,source_name:resource.resource.display_name,source_schema_json:resource.resource.schema_json,source_schema_hash:resource.resource.schema_hash,source_content_hash:resource.normalized_sha256.clone(),source_producer_json:json!({"kind":"data_resource","resourceId":resource.resource.id,"contentHash":resource.normalized_sha256}).to_string()});
+                }
             }
-            let producer = if let Some(run_id) = dataset.run_id {
-                json!({"kind":"run","runId":run_id.to_string()})
-            } else {
-                json!({"kind":"analysis","analysisRunId":dataset.analysis_run_id.map(|id|id.to_string())})
-            };
-            rows.push(ResultAnalysisInput {
-                analysis_run_id: 0,
-                dataset_id: dataset.id,
-                alias: input.alias.clone(),
-                ordinal: ordinal as i32,
-                source_name: dataset.result_name,
-                source_schema_json: dataset.schema_json,
-                source_schema_hash: dataset.schema_hash,
-                source_producer_json: producer.to_string(),
-            });
         }
         Ok(rows)
     }
@@ -257,21 +302,41 @@ impl AnalysisService {
             .map_err(|error| AnalysisError::new("analysis_staging_failed", error.to_string()))?;
         let mut named_inputs = Vec::new();
         for input in &request.inputs {
-            let dataset = self
-                .results
-                .find_live(&request.principal.id, input.dataset_id)
-                .await
-                .map_err(|error| {
-                    AnalysisError::new("analysis_input_not_found", error.to_string())
-                })?;
+            let (artifact_id, input_key) = match &input.source {
+                AnalysisInputSource::DatasetId(dataset_id) => {
+                    let dataset = self
+                        .results
+                        .find_live(&request.principal.id, *dataset_id)
+                        .await
+                        .map_err(|error| {
+                            AnalysisError::new("analysis_input_not_found", error.to_string())
+                        })?;
+                    (
+                        dataset.artifact_id.ok_or_else(|| {
+                            AnalysisError::new("analysis_input_not_found", "资源不存在")
+                        })?,
+                        format!("dataset-{dataset_id}"),
+                    )
+                }
+                AnalysisInputSource::DataResourceId(resource_id) => {
+                    let resource = self
+                        .data_resources
+                        .find(&request.principal.id, resource_id, false)
+                        .await
+                        .map_err(|error| {
+                            AnalysisError::new("analysis_input_not_found", error.to_string())
+                        })?;
+                    (
+                        resource.resource.normalized_artifact_id.ok_or_else(|| {
+                            AnalysisError::new("analysis_input_not_found", "资源不存在")
+                        })?,
+                        format!("resource-{resource_id}"),
+                    )
+                }
+            };
             let artifact = self
                 .artifacts
-                .find_owned(
-                    scope_id,
-                    dataset.artifact_id.ok_or_else(|| {
-                        AnalysisError::new("analysis_input_not_found", "资源不存在")
-                    })?,
-                )
+                .find_owned(scope_id, artifact_id)
                 .await
                 .map_err(|error| {
                     AnalysisError::new("analysis_input_not_found", error.to_string())
@@ -283,7 +348,7 @@ impl AnalysisService {
                 .map_err(|error| {
                     AnalysisError::new("analysis_input_not_found", error.to_string())
                 })?;
-            let relative_path = PathBuf::from(format!("inputs/{}.parquet", dataset.id));
+            let relative_path = PathBuf::from(format!("inputs/{input_key}.parquet"));
             std::fs::copy(source, tree.join(&relative_path)).map_err(|error| {
                 AnalysisError::new("analysis_staging_failed", error.to_string())
             })?;
@@ -514,9 +579,9 @@ impl AnalysisService {
             agent_skill_refs_json: "[]".into(), engine_contract_version: ENGINE_CONTRACT_VERSION.into(),
             created_at_ms: now_ms(), started_at_ms: Some(now_ms()), finished_at_ms: None,
         }, vec![ResultAnalysisInput {
-            analysis_run_id: 0, dataset_id, alias: "source".into(), ordinal: 0,
+            analysis_run_id: 0, dataset_id:Some(dataset_id), resource_id:None, alias: "source".into(), ordinal: 0,
             source_name: source.result_name.clone(), source_schema_json: source.schema_json.clone(),
-            source_schema_hash: source.schema_hash.clone(), source_producer_json: producer.to_string(),
+            source_schema_hash: source.schema_hash.clone(), source_content_hash:self.artifacts.find_owned(principal.storage_scope_id,source.artifact_id.unwrap()).await.map_err(|error|AnalysisError::new("view_materialization_failed",error.to_string()))?.sha256, source_producer_json: producer.to_string(),
         }]).await.map_err(|error| AnalysisError::new("view_materialization_failed", error.to_string()))?;
         let (_, datasets) = self
             .repo
@@ -577,6 +642,162 @@ impl AnalysisService {
             .await
             .map_err(|error| AnalysisError::new("analysis_event_failed", error.to_string()))?;
         Ok(view)
+    }
+
+    pub async fn create_resource_view(
+        &self,
+        principal: &CurrentUser,
+        resource_id: &str,
+        name: String,
+        spec: Value,
+    ) -> Result<DatasetView, AnalysisError> {
+        let source = self
+            .data_resources
+            .find(&principal.id, resource_id, false)
+            .await
+            .map_err(|error| AnalysisError::new("data_resource_not_found", error.to_string()))?;
+        let columns: Vec<crate::application::datasets::DatasetColumn> =
+            serde_json::from_str(&source.resource.schema_json)
+                .map_err(|error| AnalysisError::new("dataset_schema_invalid", error.to_string()))?;
+        VisualizationValidator::parse_and_validate(
+            &columns,
+            source.resource.row_count as u64,
+            &spec,
+            VisualizationBudgets::default(),
+        )
+        .map_err(|error| AnalysisError {
+            code: error.code,
+            message: error.message,
+            details: error.details,
+            run_id: None,
+        })?;
+
+        let scope = self
+            .artifacts
+            .resolve_scope(principal.storage_scope_id)
+            .await
+            .map_err(|error| AnalysisError::new("storage_unavailable", error.to_string()))?;
+        let source_artifact = self
+            .artifacts
+            .find_owned(
+                scope.id,
+                source
+                    .resource
+                    .normalized_artifact_id
+                    .ok_or_else(|| AnalysisError::new("data_resource_not_found", "资源不存在"))?,
+            )
+            .await
+            .map_err(|error| AnalysisError::new("data_resource_not_found", error.to_string()))?;
+        let source_path = self
+            .artifacts
+            .store()
+            .resolve(&source_artifact.storage_path)
+            .map_err(|error| AnalysisError::new("data_resource_not_found", error.to_string()))?;
+        let staged = self
+            .artifacts
+            .store()
+            .stage(
+                std::fs::File::open(source_path).map_err(|error| {
+                    AnalysisError::new("view_materialization_failed", error.to_string())
+                })?,
+                StageLimits {
+                    max_bytes: 500 * 1024 * 1024,
+                },
+            )
+            .map_err(|error| {
+                AnalysisError::new("view_materialization_failed", error.to_string())
+            })?;
+        let materialized = self
+            .artifacts
+            .commit(scope.id, staged, ArtifactMetadata::parquet())
+            .await
+            .map_err(|error| {
+                AnalysisError::new("view_materialization_failed", error.to_string())
+            })?;
+        let script = self
+            .commit_bytes(
+                scope.id,
+                format!("# materialized view source resource {resource_id}\n").as_bytes(),
+                "rss",
+                "text/plain",
+            )
+            .await
+            .map_err(|error| {
+                AnalysisError::new("view_materialization_failed", error.to_string())
+            })?;
+        let analysis = self
+            .repo
+            .create(
+                &principal.id,
+                NewResultAnalysisRun {
+                    session_id: source.resource.session_id,
+                    request_message_id: None,
+                    intent_json: json!({
+                        "kind": "materialized_view",
+                        "sourceResourceId": resource_id,
+                        "spec": spec,
+                    })
+                    .to_string(),
+                    script_artifact_id: script.id,
+                    status: "running".into(),
+                    stage: "present".into(),
+                    error_json: None,
+                    agent_bundle_version: self.knowledge.manifest.agent_bundle_version.clone(),
+                    agent_skill_refs_json: "[]".into(),
+                    engine_contract_version: ENGINE_CONTRACT_VERSION.into(),
+                    created_at_ms: now_ms(),
+                    started_at_ms: Some(now_ms()),
+                    finished_at_ms: None,
+                },
+                vec![ResultAnalysisInput {
+                    analysis_run_id: 0,
+                    dataset_id: None,
+                    resource_id: Some(source.resource.id.clone()),
+                    alias: "source".into(),
+                    ordinal: 0,
+                    source_name: source.resource.display_name.clone(),
+                    source_schema_json: source.resource.schema_json.clone(),
+                    source_schema_hash: source.resource.schema_hash.clone(),
+                    source_content_hash: source.normalized_sha256.clone(),
+                    source_producer_json: json!({
+                        "kind": "data_resource",
+                        "resourceId": resource_id,
+                        "contentHash": source.normalized_sha256,
+                    })
+                    .to_string(),
+                }],
+            )
+            .await
+            .map_err(|error| {
+                AnalysisError::new("view_materialization_failed", error.to_string())
+            })?;
+        let (_, datasets) = self
+            .repo
+            .complete(
+                &principal.id,
+                analysis.id,
+                vec![NewResultDataset {
+                    run_id: None,
+                    analysis_run_id: Some(analysis.id),
+                    artifact_id: Some(materialized.id),
+                    result_name: format!("resource_{}_{}", &resource_id[..8], analysis.id),
+                    schema_json: source.resource.schema_json,
+                    schema_hash: source.resource.schema_hash,
+                    row_count: source.resource.row_count,
+                    size_bytes: source.normalized_size_bytes,
+                    created_at_ms: now_ms(),
+                }],
+                now_ms(),
+            )
+            .await
+            .map_err(|error| {
+                AnalysisError::new("view_materialization_failed", error.to_string())
+            })?;
+        let dataset = datasets
+            .into_iter()
+            .next()
+            .ok_or_else(|| AnalysisError::new("view_materialization_failed", "未生成视图数据集"))?;
+        self.create_view(principal, dataset.id, name, spec).await
     }
 
     pub async fn find(

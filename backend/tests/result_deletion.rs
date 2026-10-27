@@ -9,8 +9,8 @@ use diesel::prelude::*;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use zjudss::application::{
-    AnalysisInput, AnalysisRequest, CreateRunRequest, CreateScriptRequest, PublishDraftRequest,
-    ScriptSource, UploadBatch, UploadFile,
+    AnalysisInput, AnalysisRequest, CandidateDecision, CandidatePurpose, CreateRunRequest,
+    CreateScriptRequest, PublishDraftRequest, ScriptSource, UploadFile, UploadSourceKind,
 };
 use zjudss::storage::StageLimits;
 
@@ -31,46 +31,48 @@ async fn create_completed_run(app: &TestApp) -> (zjudss::auth::CurrentUser, Stri
         .unwrap();
     let accepted = app
         .state
-        .model_import_service
+        .upload_batch_service
         .accept(
             &user,
             session.id,
             "result-model".into(),
-            None,
-            UploadBatch {
-                client_batch_id: "unused".into(),
-                files: vec![UploadFile {
-                    client_file_id: "bus".into(),
-                    file_name: "bus.csv".into(),
-                    relative_path: None,
-                    media_type: Some("text/csv".into()),
-                    staged,
-                }],
-            },
+            UploadSourceKind::Upload,
+            vec![UploadFile {
+                client_file_id: "bus".into(),
+                file_name: "bus.csv".into(),
+                relative_path: None,
+                media_type: Some("text/csv".into()),
+                staged,
+            }],
         )
         .await
         .unwrap();
-    let ready = app
-        .state
-        .model_import_service
-        .process(&user, accepted.id.parse().unwrap())
+    let candidate = &accepted.candidates[0];
+    app.state
+        .data_resource_service
+        .publish_candidates(
+            &user,
+            accepted.id.parse().unwrap(),
+            vec![CandidateDecision {
+                candidate_id: candidate.id.clone(),
+                purpose: CandidatePurpose::ModelTable,
+                selected: true,
+                table_name: Some("bus".into()),
+                display_name: None,
+                alias: None,
+            }],
+        )
         .await
         .unwrap();
     let draft = app
         .state
-        .model_import_service
-        .resolve_and_apply(
-            &user,
-            accepted.id.parse().unwrap(),
-            None,
-            ready
-                .candidates
-                .into_iter()
-                .map(|candidate| candidate.id)
-                .collect(),
-        )
+        .version_service
+        .workspace(&user, session.id)
         .await
-        .unwrap();
+        .unwrap()
+        .draft
+        .unwrap()
+        .draft;
     let version = app
         .state
         .version_service
@@ -251,7 +253,7 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
         ))
         .get_result(&mut conn)
         .unwrap();
-        diesel::sql_query("INSERT INTO result_analysis_inputs(analysis_run_id,dataset_id,alias,ordinal,source_name,source_schema_json,source_schema_hash,source_producer_json) VALUES(?1,?2,'source',0,?3,?4,?5,?6)")
+        diesel::sql_query("INSERT INTO result_analysis_inputs(analysis_run_id,dataset_id,alias,ordinal,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json) VALUES(?1,?2,'source',0,?3,?4,?5,?5,?6)")
             .bind::<diesel::sql_types::Integer,_>(id)
             .bind::<diesel::sql_types::Integer,_>(source_id)
             .bind::<diesel::sql_types::Text,_>(&source.name)
@@ -291,7 +293,7 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
         ))
         .get_result(&mut conn)
         .unwrap();
-        diesel::sql_query("INSERT INTO dataset_lineage_snapshots(derived_dataset_id,source_dataset_id,source_name,source_schema_json,source_schema_hash,source_producer_json,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,1)")
+        diesel::sql_query("INSERT INTO dataset_lineage_snapshots(derived_dataset_id,source_dataset_id,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json,created_at_ms) VALUES(?1,?2,?3,?4,?5,?5,?6,1)")
             .bind::<diesel::sql_types::Integer,_>(derived)
             .bind::<diesel::sql_types::Integer,_>(source_id)
             .bind::<diesel::sql_types::Text,_>(&source.name)
@@ -340,7 +342,7 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
             intent: json!({}),
             script: "result = source".into(),
             inputs: vec![zjudss::application::AnalysisInput {
-                dataset_id: source_id,
+                source: zjudss::application::AnalysisInputSource::DatasetId(source_id),
                 alias: "source".into(),
             }],
             expected_outputs: vec!["result".into()],
@@ -373,7 +375,7 @@ async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outpu
             intent: json!({"goal":"derive a stable result"}),
             script: "result = source".into(),
             inputs: vec![AnalysisInput {
-                dataset_id: source_id,
+                source: zjudss::application::AnalysisInputSource::DatasetId(source_id),
                 alias: "source".into(),
             }],
             expected_outputs: vec!["result".into()],
@@ -389,7 +391,10 @@ async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outpu
         .metadata(&user, analysis.datasets[0].id)
         .await
         .unwrap();
-    assert_eq!(derived.lineage[0].source_dataset_id, source_id.to_string());
+    assert_eq!(
+        derived.lineage[0].source_dataset_id,
+        Some(source_id.to_string())
+    );
     assert!(!derived.lineage[0].deleted);
 
     let view = app

@@ -195,7 +195,10 @@ fn is_numeric(v: &str) -> bool {
     ["Int", "UInt", "Float", "Decimal"]
         .iter()
         .any(|p| v.starts_with(p))
-        || ["int64", "float64"].contains(&v)
+        || [
+            "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "int64", "float64",
+        ]
+        .contains(&v)
 }
 fn unsafe_value(v: &Value) -> bool {
     match v {

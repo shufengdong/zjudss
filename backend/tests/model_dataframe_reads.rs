@@ -1,16 +1,12 @@
 mod common;
 
-use std::io::Cursor;
-
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use diesel::prelude::*;
 use serde_json::{Value, json};
 use tower::ServiceExt;
-use zjudss::application::{UploadBatch, UploadFile};
 use zjudss::auth::CurrentUser;
 use zjudss::db::models::DraftRef;
-use zjudss::storage::StageLimits;
 
 use common::{CountRow, TestApp};
 
@@ -39,49 +35,17 @@ async fn import_table(
     expected: Option<DraftRef>,
     csv: &[u8],
 ) -> DraftRef {
-    let staged = app
-        .state
-        .artifact_service
-        .store()
-        .stage(Cursor::new(csv), StageLimits::default())
-        .unwrap();
-    let accepted = app
-        .state
-        .model_import_service
-        .accept(
-            user,
-            session_id,
-            client_id.into(),
-            expected,
-            UploadBatch {
-                client_batch_id: client_id.into(),
-                files: vec![UploadFile {
-                    client_file_id: "bus".into(),
-                    file_name: "bus.csv".into(),
-                    relative_path: None,
-                    media_type: Some("text/csv".into()),
-                    staged,
-                }],
-            },
-        )
-        .await
-        .unwrap();
-    let ready = app
-        .state
-        .model_import_service
-        .process(user, accepted.id.parse().unwrap())
-        .await
-        .unwrap();
-    app.state
-        .model_import_service
-        .resolve_and_apply(
-            user,
-            accepted.id.parse().unwrap(),
-            expected,
-            ready.candidates.into_iter().map(|item| item.id).collect(),
-        )
-        .await
-        .unwrap()
+    common::publish_model_bytes(
+        app,
+        user,
+        session_id,
+        client_id,
+        "bus.csv",
+        csv,
+        expected,
+        Some("bus"),
+    )
+    .await
 }
 
 async fn workspace(app: &TestApp, cookie: &str, session_id: i32) -> Value {
@@ -257,12 +221,46 @@ async fn historical_version_dataframe_is_readable_without_activation_and_deleted
         .create(&user.id, "history", 1)
         .await
         .unwrap();
-    let first_draft = import_table(&app, &user, session.id, "first", None, b"id\n1\n").await;
+    let first_draft = import_table(
+        &app,
+        &user,
+        session.id,
+        "first",
+        None,
+        b"id,name\n1,first\n",
+    )
+    .await;
     let first = publish(&app, &cookie, session.id, first_draft, "publish-first").await;
     let first_version = first["id"].as_str().unwrap();
     let first_dataframe = first["tables"][0]["id"].as_str().unwrap();
-    let second_draft = import_table(&app, &user, session.id, "second", None, b"id\n2\n").await;
-    publish(&app, &cookie, session.id, second_draft, "publish-second").await;
+    let second_draft = import_table(
+        &app,
+        &user,
+        session.id,
+        "second",
+        None,
+        b"id,name\n2,second\n",
+    )
+    .await;
+    let second = publish(&app, &cookie, session.id, second_draft, "publish-second").await;
+    let second_version = second["id"].as_str().unwrap();
+    assert_ne!(
+        first_version, second_version,
+        "second model must create a version"
+    );
+    let activated = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/versions/{second_version}/activate"))
+                .header("cookie", &cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(activated.status(), StatusCode::OK);
 
     assert_eq!(
         request(
@@ -286,11 +284,10 @@ async fn historical_version_dataframe_is_readable_without_activation_and_deleted
         )
         .await
         .unwrap();
-    assert_eq!(preview.status(), StatusCode::OK);
-    let token = json_body(preview).await["impactToken"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let preview_status = preview.status();
+    let preview = json_body(preview).await;
+    assert_eq!(preview_status, StatusCode::OK, "{preview}");
+    let token = preview["impactToken"].as_str().unwrap().to_string();
     let deleted = app
         .router
         .clone()
@@ -411,7 +408,15 @@ async fn model_dataframe_ids_are_private_and_missing_or_foreign_ids_are_indistin
         .create(&owner.id, "private", 1)
         .await
         .unwrap();
-    let draft = import_table(&app, &owner, session.id, "private", None, b"id\n1\n").await;
+    let draft = import_table(
+        &app,
+        &owner,
+        session.id,
+        "private",
+        None,
+        b"id,name\n1,private\n",
+    )
+    .await;
     let version = publish(&app, &owner_cookie, session.id, draft, "publish-private").await;
     let version_dataframe = version["tables"][0]["id"].as_str().unwrap();
     let live_draft = import_table(
@@ -420,7 +425,7 @@ async fn model_dataframe_ids_are_private_and_missing_or_foreign_ids_are_indistin
         session.id,
         "private-live-draft",
         None,
-        b"id\n2\n",
+        b"id,name\n2,live\n",
     )
     .await;
     let view = workspace(&app, &owner_cookie, session.id).await;

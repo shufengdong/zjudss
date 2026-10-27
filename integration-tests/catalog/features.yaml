@@ -240,7 +240,7 @@
   tests:
     - runner: playwright
       file: integration-tests/e2e/upload-batches-v4.spec.ts
-      name: unified upload routes preserve recoverable decisions and owned replacement context
+      name: unified upload publishes and manages independent data resources through public routes
     - runner: playwright
       file: integration-tests/e2e/auth-isolation.spec.ts
       name: two users cannot enumerate or guess each other session, message, SSE, run, or dataset resources
@@ -255,7 +255,7 @@
       name: static_import_splits_twenty_model_tables_from_para_resource
     - runner: rust
       file: backend/tests/upload_batches.rs
-      name: catalog_model_schema_outside_network20_creates_model_candidate
+      name: catalog_model_schema_outside_network20_publishes_to_draft_and_version
     - runner: rust
       file: backend/tests/upload_batches.rs
       name: ambiguous_parse_requires_settings
@@ -265,6 +265,9 @@
     - runner: rust
       file: backend/tests/upload_batches.rs
       name: staging_reservation_survives_restart_and_expires_once
+    - runner: rust
+      file: backend/tests/upload_batches.rs
+      name: completed_parse_cannot_revive_a_discarded_batch
     - runner: rust
       file: backend/tests/quota_concurrency.rs
       name: concurrent_upload_reservations_never_overbook_the_scope
@@ -297,6 +300,107 @@
     - "error:upload_parse_settings_invalid"
     - "error:upload_staging_missing"
     - "error:upload_state_invalid"
+
+- id: DATA-RESOURCE-001
+  source: docs/superpowers/specs/2026-10-26-independent-data-resources-design.md#resource-identity-and-naming
+  title: Independent DataFrame resources publish, replace, read, analyze, promote, and delete by stable ID
+  layers: [api, application, agent, database]
+  lanes: [pr]
+  tests:
+    - runner: playwright
+      file: integration-tests/e2e/upload-batches-v4.spec.ts
+      name: unified upload publishes and manages independent data resources through public routes
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: generic_dataframe_publishes_as_readable_resource_without_schema_ref
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: deleting_one_session_keeps_deduplicated_original_owned_by_another_session
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: confirmed_batch_releases_skipped_candidate_artifacts
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: concurrent_confirmation_commits_each_original_reference_once
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: confirm_and_discard_race_never_revives_a_terminal_batch
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: model_replacement_releases_old_draft_artifact_reference_atomically
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: active_model_clone_counts_every_deduplicated_dataframe_reference
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: discarding_duplicate_candidates_releases_every_logical_reference
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: static_para_is_a_resource_and_never_a_model_dataframe
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: repeated_schema_bound_para_requires_an_explicit_replacement_choice
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: schema_bound_replacement_can_be_saved_as_a_new_resource
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: replacement_transfers_alias_and_preserves_old_artifact
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: structured_replacement_preview_does_not_publish_until_confirmed
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: partial_confirmation_keeps_only_failed_child_retryable
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: ordinary_resource_can_feed_existing_analysis_pipeline_with_frozen_lineage
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: foreign_resource_is_hidden_and_deletion_requires_current_impact_token
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: para_contract_cannot_be_reclassified_as_a_renamed_model_table
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: unresolved_upload_cannot_be_confirmed_or_lose_its_reservation
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: partial_confirmation_releases_completed_files_and_freezes_published_decisions
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: discarding_a_failed_resource_publish_releases_original_and_normalized_artifacts
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: expired_and_stale_structured_previews_release_pending_artifacts
+    - runner: rust
+      file: backend/tests/tool_manifest.rs
+      name: data_resource_tools_list_read_rename_and_promote_owned_session_resources
+  assertions: [mixed upload confirmation uses independent atomic model and resource transactions and returns both receipts, completed child files release reservation while failed child decisions remain retryable and published-side decisions stay frozen, concurrent confirmation commits an original reference once, ordinary Data resources may omit schemaRef, para stays outside model versions and cannot be reclassified, unresolved uploads cannot be confirmed, skipped normalized artifacts and untransferred originals are released atomically per logical reference even when hashes deduplicate, deduplicated originals remain owned across sessions, replacement transfers aliases and invalidates pending configurations without rewriting historical artifacts, schema-bound replacement supports SaveAsNew fallback aliases, structured preview is nonpublishing stale-safe and reclaims superseded expired and cross-path stale artifacts, analysis lineage freezes resource ID and content hash and is included in deletion impact, four data-resource Agent tools have behavior coverage, deletion uses a short-lived impact token, cross-user access is 404]
+  fixtures: [DSS static import, CSV, Struct values, mixed confirmation]
+  contracts:
+    - "route:POST /api/upload-batches/{id}/confirm"
+    - "route:GET /api/sessions/{id}/data-resources"
+    - "route:GET /api/data-resources/{id}"
+    - "route:PATCH /api/data-resources/{id}"
+    - "route:DELETE /api/data-resources/{id}"
+    - "route:GET /api/data-resources/{id}/rows"
+    - "route:GET /api/data-resources/{id}/download"
+    - "route:POST /api/data-resources/{id}/deletion-preview"
+    - "route:POST /api/data-resources/{id}/structured-replacement-previews"
+    - "route:POST /api/data-resource-replacement-previews/{id}/confirm"
+    - "tool:list_data_resources"
+    - "tool:read_data_resource"
+    - "tool:update_data_resource_alias"
+    - "tool:promote_result_dataset"
+    - "error:resource_alias_conflict"
+    - "error:original_unavailable"
+    - "error:replacement_preview_invalid"
+    - "error:resource_alias_invalid"
+    - "error:resource_alias_reserved"
+    - "error:resource_stale"
+    - "error:structured_schema_mismatch"
+    - "error:structured_values_invalid"
 
 - id: WORKSPACE-001
   source: docs/integration-testing-design.md#coverage-matrix
@@ -546,15 +650,15 @@
       name: turn_limit_failure_explains_that_no_script_was_created
     - runner: rust
       file: backend/tests/scripted_agent.rs
-      name: planned_agent_script_cannot_reimport_the_active_model
+      name: agent_script_validation_is_deferred_to_tensoreval
     - runner: rust
       file: backend/tests/scripts.rs
-      name: planned_agent_script_cannot_overwrite_an_active_input_alias
+      name: planned_agent_script_validation_is_deferred_to_tensoreval
     - runner: release
       file: scripts/test-release-integration
       name: real DeepSeek and tensoreval complete the semantic release journey
-  assertions: [all five study families call the deterministic planner, camelCase tool arguments preserve every explicit study parameter, an explicit Newton request uses Newton even for a radial network, incomplete and unsupported requests create no script or run, input aliases and their canonical argument order come from the actual active tables and are frozen into the ready plan, every missing canonical table is reported together, ready scripts directly consume planned aliases without repeated order lookups, imports and input rebinding are rejected before persistence, ready scripts match the planned function and require an opaque request-local plan ID, turn-budget exhaustion reports that no script was created]
-  fixtures: [published 21-table active model, radial topology, motor table, current engine function catalog]
+  assertions: [all five study families call the deterministic planner, camelCase tool arguments preserve every explicit study parameter, an explicit Newton request uses Newton even for a radial network, incomplete and unsupported requests create no script or run, input aliases and their canonical argument order come from the actual active tables and are frozen into the ready plan, every missing canonical table is reported together, ready scripts directly consume planned aliases without repeated order lookups, RSS syntax and runtime viability are deferred to tensoreval, supplied plan IDs remain request-local and stale model snapshots are rejected, turn-budget exhaustion reports that no script was created]
+  fixtures: [published active model plus independent para resource, radial topology, motor table, current engine function catalog]
   contracts:
     - "tool:plan_study"
     - "skill:study-planning"

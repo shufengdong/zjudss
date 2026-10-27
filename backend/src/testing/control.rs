@@ -301,7 +301,7 @@ async fn seed_data_resource(
                 status: "live".into(),
                 declared_schema_ref: None,
                 source_kind: "upload".into(),
-                normalized_artifact_id: artifact_id,
+                normalized_artifact_id: Some(artifact_id),
                 source_artifact_id: None,
                 schema_json: "[]".into(),
                 schema_hash: "0".repeat(64),
