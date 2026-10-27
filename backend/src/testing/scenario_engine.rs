@@ -10,6 +10,7 @@ use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::Notify;
 
 use crate::adapters::StubEngine;
@@ -32,7 +33,21 @@ pub enum EngineScenario {
     Success(Vec<DatasetFixture>),
     InspectFailure,
     RunFailure,
-    Timeout { barrier_id: String },
+    Failure {
+        code: String,
+        stderr: Vec<u8>,
+        exit_code: i32,
+    },
+    ContractError {
+        details: serde_json::Value,
+    },
+    MonitorError,
+    Cancelled {
+        barrier_id: String,
+    },
+    Timeout {
+        barrier_id: String,
+    },
     Empty,
     CorruptParquet,
     Oversize,
@@ -43,8 +58,10 @@ pub enum EngineScenario {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordedEngineCall {
+    pub sequence: usize,
     pub operation: String,
     pub mode: Option<String>,
+    pub scenario: String,
     pub input_tree: PathBuf,
     pub result_dir: PathBuf,
 }
@@ -107,7 +124,9 @@ impl ScenarioEngine {
     }
 
     pub fn enqueue(&self, scenario: EngineScenario) {
-        if let EngineScenario::Timeout { barrier_id } = &scenario {
+        if let EngineScenario::Timeout { barrier_id } | EngineScenario::Cancelled { barrier_id } =
+            &scenario
+        {
             self.inner
                 .barriers
                 .lock()
@@ -160,16 +179,6 @@ impl ScenarioEngine {
 
     async fn run_scenario(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError> {
         spec.validate()?;
-        self.inner
-            .calls
-            .lock()
-            .expect("engine calls")
-            .push(RecordedEngineCall {
-                operation: "run".into(),
-                mode: Some(format!("{:?}", spec.mode).to_ascii_lowercase()),
-                input_tree: spec.input_tree.clone(),
-                result_dir: spec.result_dir.clone(),
-            });
         let scenario = self
             .inner
             .scenarios
@@ -177,6 +186,19 @@ impl ScenarioEngine {
             .expect("engine scenarios")
             .pop_front()
             .ok_or_else(|| failure("scenario_missing", "没有可用的 engine 场景"))?;
+        let scenario_name = scenario_name(&scenario);
+        {
+            let mut calls = self.inner.calls.lock().expect("engine calls");
+            let sequence = calls.len() + 1;
+            calls.push(RecordedEngineCall {
+                sequence,
+                operation: "run".into(),
+                mode: Some(format!("{:?}", spec.mode).to_ascii_lowercase()),
+                scenario: scenario_name.into(),
+                input_tree: spec.input_tree.clone(),
+                result_dir: spec.result_dir.clone(),
+            });
+        }
         std::fs::create_dir_all(&spec.result_dir)
             .map_err(|error| io_failure("result_dir_create_failed", error))?;
         match scenario {
@@ -195,6 +217,37 @@ impl ScenarioEngine {
                 "RSS parse error: unexpected token\nat /srv/private/runs/secret/input/script.rss:12:4",
             )
             .with_diagnostics(serde_json::json!({"exitCode": 7}))),
+            EngineScenario::Failure {
+                code,
+                stderr,
+                exit_code,
+            } => Err(failure(code, "仿真按场景失败").with_diagnostics(
+                serde_json::json!({
+                    "exitCode": exit_code,
+                    "stderr": captured_stream(stderr),
+                }),
+            )),
+            EngineScenario::ContractError { details } => Err(failure(
+                "result_contract_invalid",
+                "结果合同按场景失败",
+            )
+            .with_diagnostics(details)),
+            EngineScenario::MonitorError => Err(failure(
+                "result_monitor_failed",
+                "结果监控按场景失败",
+            )),
+            EngineScenario::Cancelled { barrier_id } => {
+                let barrier = self
+                    .inner
+                    .barriers
+                    .lock()
+                    .expect("engine barriers")
+                    .get(&barrier_id)
+                    .cloned()
+                    .ok_or_else(|| failure("scenario_barrier_missing", barrier_id))?;
+                barrier.block().await;
+                Err(failure("engine_cancelled", "仿真按场景取消"))
+            }
             EngineScenario::Timeout { barrier_id } => {
                 let barrier = self
                     .inner
@@ -252,16 +305,17 @@ impl ScenarioEngine {
 impl SimEngine for ScenarioEngine {
     async fn inspect(&self, spec: InspectSpec) -> Result<InspectOutcome, AdapterError> {
         spec.validate()?;
-        self.inner
-            .calls
-            .lock()
-            .expect("engine calls")
-            .push(RecordedEngineCall {
-                operation: "inspect".into(),
-                mode: None,
-                input_tree: spec.input_tree,
-                result_dir: PathBuf::new(),
-            });
+        let mut calls = self.inner.calls.lock().expect("engine calls");
+        let sequence = calls.len() + 1;
+        calls.push(RecordedEngineCall {
+            sequence,
+            operation: "inspect".into(),
+            mode: None,
+            scenario: "inspect".into(),
+            input_tree: spec.input_tree,
+            result_dir: PathBuf::new(),
+        });
+        drop(calls);
         let is_failure = matches!(
             self.inner
                 .scenarios
@@ -372,4 +426,33 @@ fn failure(code: impl Into<String>, message: impl Into<String>) -> AdapterError 
 
 fn io_failure(code: impl Into<String>, error: std::io::Error) -> AdapterError {
     AdapterError::new(code, ErrorCategory::Io, error.to_string())
+}
+
+fn scenario_name(scenario: &EngineScenario) -> &'static str {
+    match scenario {
+        EngineScenario::Success(_) => "success",
+        EngineScenario::InspectFailure => "inspect_failure",
+        EngineScenario::RunFailure => "run_failure",
+        EngineScenario::Failure { .. } => "failure",
+        EngineScenario::ContractError { .. } => "contract_error",
+        EngineScenario::MonitorError => "monitor_error",
+        EngineScenario::Cancelled { .. } => "cancelled",
+        EngineScenario::Timeout { .. } => "timeout",
+        EngineScenario::Empty => "empty",
+        EngineScenario::CorruptParquet => "corrupt_parquet",
+        EngineScenario::Oversize => "oversize",
+        EngineScenario::EscapingPath => "escaping_path",
+        EngineScenario::Symlink => "symlink",
+    }
+}
+
+fn captured_stream(retained: Vec<u8>) -> crate::adapters::CapturedStream {
+    let hash = hex::encode(Sha256::digest(&retained));
+    crate::adapters::CapturedStream {
+        total_bytes: retained.len() as u64,
+        retained,
+        full_sha256: hash.clone(),
+        retained_sha256: hash,
+        truncated: false,
+    }
 }

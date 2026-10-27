@@ -93,16 +93,16 @@ manifest、角色化文件哈希和验证诊断。两个工具只读，Agent 无
 ## Scripts and runs
 
 上传脚本 multipart 只接受字段 `file` 的单个 UTF-8 `.rss`；`POST /api/sessions/{id}/scripts/text` 接受 JSON
-`{name, content}` 直接以文本创建（`sourceKind: "manual"`）。两条路径共用同一静态校验与不可变落盘。脚本详情
-返回全文；列表和消息只返回有界预览。运行请求为 `{modelVersionId, clientRunId}`。服务端要求该版本仍为
-active，重新检查脚本静态有效性和所需 DataFrame alias，再异步执行。DataFrame 脚本只允许变量声明；函数结果
-绑定的叶变量直接成为结果，末尾裸变量表达式在创建时以 `script_validation_failed` 拒绝。Agent 没有运行、激活或删除工具。
+`{name, content}` 直接以文本创建（`sourceKind: "manual"`）。两条路径只做名称、UTF-8 和大小校验后不可变落盘，
+不使用 zjudss RSS 静态语法校验器；语法和运行可行性以用户点击运行后 tensoreval 的退出码、stderr 和结果为准。
+脚本详情返回全文；列表和消息只返回有界预览。V4 受管研究的结构合同、确认和自动执行接口由 Tasks 9–11 补充；
+当前过渡运行请求仍为 `{modelVersionId, clientRunId}`。Agent 没有普通运行、激活或删除工具。
 
 运行创建响应、session 运行列表和单运行详情中的 `SimulationRun` 都包含必填 `scriptName`；它来自运行所绑定的
 不可变脚本资源，不由前端按 ID 二次猜测。运行快照继续冻结模型、脚本 artifact/hash、engine contract、Agent bundle
 和 skill refs；`GET /api/runs/{id}/datasets` 只列出该运行当前仍存活的全部结果数据集。失败时保留实际执行阶段；API 将内部
-adapter/IO/校验错误映射为受控 `error.code`/`error.message`。tensoreval 以非零状态退出时，运行同时保存退出码，并通过可选
-`error.engineOutput` 返回最多 16,384 个字符的多行错误输出；服务端在持久化和出网时都隐藏绝对路径并清理控制字符。没有该标记的
+adapter/IO/校验错误映射为受控 `error.code`/`error.message`。adapter 对 stdout/stderr 分别持续排空、保留有界首尾并
+记录完整 hash；tensoreval 以非零状态退出时保留实际退出码。原始有界 stderr 只供后续受限审计，普通 API 继续只返回脱敏摘要；没有该标记的
 旧记录仍丢弃原始 message，因此不会返回历史调用栈或服务器路径。四个既有运行路由、
 跨用户 404、显式按钮创建和运行不可删除的语义不变。
 
@@ -114,6 +114,7 @@ adapter/IO/校验错误映射为受控 `error.code`/`error.message`。tensoreval
 Agent 在创建脚本前耗尽单轮模型调用预算时，assistant 明确提示本轮尚未生成脚本并可重新发送请求；后台日志记录
 session ID 和失败类别，消息正文不暴露 provider 诊断。
 
-主要稳定错误包括认证/隔离、配额与上传、导入与草稿冲突、模型表分页/读取/受控查询、脚本校验/兼容、active race、运行队列、版本删除
-影响变化、结果 busy、分析/比较/视图校验、历史索引不可用、engine snapshot/contract 不匹配。权威枚举由
+主要稳定错误包括认证/隔离、配额与上传、导入与草稿冲突、模型表分页/读取/受控查询、脚本输入兼容、active race、
+运行队列、版本删除影响变化、结果 busy、分析/比较/视图校验、历史索引不可用、engine snapshot/contract 不匹配，
+以及引擎超时、结果监控/容量/路径失败。权威枚举由
 `cargo run --bin contract-manifest` 产生，并由功能目录逐项覆盖。

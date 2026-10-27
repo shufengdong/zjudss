@@ -29,7 +29,6 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "model_import_unsupported",
     "model_import_resolution_required",
     "invalid_script",
-    "script_validation_failed",
     "active_model_changed",
     "script_static_invalid",
     "script_model_incompatible",
@@ -104,6 +103,13 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "facade_contract_invalid",
     "facade_schema_invalid",
     "facade_unsupported_input_kind",
+    "engine_timeout",
+    "result_monitor_failed",
+    "result_file_limit",
+    "result_file_too_large",
+    "result_total_too_large",
+    "result_symlink_rejected",
+    "result_path_escape",
 ];
 
 #[derive(Debug, Serialize)]
@@ -130,7 +136,7 @@ pub fn contract_manifest() -> Result<ContractManifest, KnowledgeError> {
 
     Ok(ContractManifest {
         version: "v4",
-        changes: vec!["dynamic_study_facades"],
+        changes: vec!["dynamic_study_facades", "bounded_engine_execution"],
         routes: route_manifest(),
         message_types: MESSAGE_TYPES.to_vec(),
         tool_names: registered_tool_names().to_vec(),

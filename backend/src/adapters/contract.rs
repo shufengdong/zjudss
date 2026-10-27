@@ -3,7 +3,6 @@ use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::time::Duration;
 
 use arrow_array::{RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
@@ -26,7 +25,6 @@ pub struct EngineCapabilities {
     pub named_parquet_inputs: bool,
     pub static_dss_import: bool,
     pub single_solve_import: bool,
-    pub script_validation: bool,
 }
 
 impl EngineCapabilities {
@@ -62,7 +60,6 @@ impl EngineCapabilities {
         let single_solve_import = result_dir
             && output_format_parquet
             && model_import_smoke(binary, "import_dss_execution");
-        let script_validation = script_validation_smoke();
         Ok(Self {
             contract_version: ENGINE_CONTRACT_VERSION.into(),
             result_dir,
@@ -70,7 +67,6 @@ impl EngineCapabilities {
             named_parquet_inputs,
             static_dss_import,
             single_solve_import,
-            script_validation,
         })
     }
 
@@ -122,13 +118,6 @@ impl EngineCapabilities {
                 "tensoreval 缺少 single-Solve import profile",
             ));
         }
-        if !self.script_validation {
-            return Err(AdapterError::new(
-                "engine_script_validation_unsupported",
-                ErrorCategory::Internal,
-                "adapter 缺少 V3 RSS 静态校验",
-            ));
-        }
         Ok(())
     }
 
@@ -137,7 +126,6 @@ impl EngineCapabilities {
             ("named_parquet_inputs", self.named_parquet_inputs),
             ("static_dss_import", self.static_dss_import),
             ("single_solve_import", self.single_solve_import),
-            ("script_validation", self.script_validation),
         ]
         .into_iter()
         .filter(|(_, available)| *available)
@@ -266,36 +254,6 @@ fn write_probe_parquet(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     writer.write(&batch)?;
     writer.close()?;
     Ok(())
-}
-
-fn script_validation_smoke() -> bool {
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|value| value.as_nanos())
-        .unwrap_or_default();
-    let root = std::env::temp_dir().join(format!(
-        "zjudss-script-validation-probe-{}-{nonce}",
-        std::process::id()
-    ));
-    let result = (|| -> Result<bool, AdapterError> {
-        std::fs::create_dir_all(&root).map_err(|error| {
-            AdapterError::new("engine_probe_failed", ErrorCategory::Io, error.to_string())
-        })?;
-        std::fs::write(root.join("probe.rss"), "result = select(col(id), bus);\n").map_err(
-            |error| AdapterError::new("engine_probe_failed", ErrorCategory::Io, error.to_string()),
-        )?;
-        Ok(
-            super::script::validate_script_source(&super::ScriptValidationSpec {
-                input_tree: root.clone(),
-                script_path: "probe.rss".into(),
-                timeout: Duration::from_secs(1),
-            })?
-            .valid,
-        )
-    })()
-    .unwrap_or(false);
-    let _ = std::fs::remove_dir_all(root);
-    result
 }
 
 pub(crate) fn binary_sha256(path: &Path) -> Result<String, AdapterError> {

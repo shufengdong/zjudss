@@ -18,6 +18,38 @@ use zjudss::storage::ParquetInspector;
 #[cfg(unix)]
 static ENGINE_PROBE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[cfg(unix)]
+fn write_executable(path: &Path, source: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::write(path, source).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[cfg(unix)]
+fn process_test_engine(
+    binary: PathBuf,
+    timeout: Duration,
+    process_output_max_bytes: usize,
+    output_limits: OutputLimits,
+) -> ProcessEngine {
+    ProcessEngine::new(EngineConfig {
+        bin: binary,
+        binary_sha256: "fixture".into(),
+        default_timeout: timeout,
+        process_output_max_bytes,
+        output_limits,
+        capabilities: EngineCapabilities {
+            contract_version: ENGINE_CONTRACT_VERSION.into(),
+            result_dir: true,
+            output_format_parquet: true,
+            named_parquet_inputs: true,
+            static_dss_import: true,
+            single_solve_import: true,
+        },
+    })
+}
+
 fn write_parquet(path: &Path, rows: usize, compression: Compression) {
     let schema = Arc::new(Schema::new(vec![
         Field::new("bus", DataType::Utf8, false),
@@ -393,7 +425,6 @@ fn output_validation_rejects_symlinks_and_capability_probe_fails_closed() {
     assert_eq!(capabilities.contract_version, ENGINE_CONTRACT_VERSION);
     assert!(capabilities.static_dss_import);
     assert!(capabilities.single_solve_import);
-    assert!(capabilities.script_validation);
     capabilities.require_v3().unwrap();
     assert!(
         capabilities
@@ -407,7 +438,6 @@ fn output_validation_rejects_symlinks_and_capability_probe_fails_closed() {
         named_parquet_inputs: true,
         static_dss_import: true,
         single_solve_import: true,
-        script_validation: true,
     };
     assert_eq!(
         mismatched.require_v3().unwrap_err().code,
@@ -876,5 +906,334 @@ async fn real_tensoreval_smoke_writes_snappy_parquet() {
             .datasets
             .iter()
             .all(|dataset| dataset.metadata.snappy)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn streams_over_one_mib_are_drained_bounded_and_hashed_without_utf8_assumptions() {
+    let (root, input_tree) = tree();
+    let binary = root.path().join("stream-engine.sh");
+    write_executable(
+        &binary,
+        r#"#!/bin/sh
+result_dir=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in --result-dir) shift; result_dir="$1";; --output-format|--input) shift;; esac
+  shift
+done
+head -c 1100000 /dev/zero | tr '\000' A
+head -c 1100000 /dev/zero | tr '\000' B
+head -c 1100000 /dev/zero | tr '\000' C >&2
+printf '\377\376' >&2
+mkdir -p "$result_dir"
+cp input.parquet "$result_dir/result.parquet"
+"#,
+    );
+    let engine = process_test_engine(
+        binary,
+        Duration::from_secs(5),
+        1024 * 1024,
+        OutputLimits::default(),
+    );
+
+    let output = engine
+        .run_analysis(spec(root.path(), &input_tree, RunMode::Analysis))
+        .await
+        .unwrap();
+
+    assert_eq!(output.exit_code, 0);
+    assert_eq!(output.stdout.total_bytes, 2_200_000);
+    assert_eq!(output.stdout.retained.len(), 1024 * 1024);
+    assert!(output.stdout.truncated);
+    assert!(
+        output.stdout.retained[..512 * 1024]
+            .iter()
+            .all(|byte| *byte == b'A')
+    );
+    assert!(
+        output.stdout.retained[512 * 1024..]
+            .iter()
+            .all(|byte| *byte == b'B')
+    );
+    assert_ne!(output.stdout.full_sha256, output.stdout.retained_sha256);
+    assert_eq!(output.stderr.total_bytes, 1_100_002);
+    assert_eq!(output.stderr.retained.len(), 1024 * 1024);
+    assert!(output.stderr.truncated);
+    assert_eq!(
+        &output.stderr.retained[output.stderr.retained.len() - 2..],
+        &[0xff, 0xfe]
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn nonzero_exit_keeps_actual_code_and_bounded_binary_stderr_without_partial_datasets() {
+    let (root, input_tree) = tree();
+    let binary = root.path().join("failing-engine.sh");
+    write_executable(
+        &binary,
+        r#"#!/bin/sh
+result_dir=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in --result-dir) shift; result_dir="$1";; --output-format|--input) shift;; esac
+  shift
+done
+mkdir -p "$result_dir"
+cp input.parquet "$result_dir/partial.parquet"
+printf 'parse failed: \377\376\n' >&2
+exit 23
+"#,
+    );
+    let engine = process_test_engine(
+        binary,
+        Duration::from_secs(5),
+        1024,
+        OutputLimits::default(),
+    );
+    let run = spec(root.path(), &input_tree, RunMode::Analysis);
+    let result_dir = run.result_dir.clone();
+
+    let error = engine.run_analysis(run).await.unwrap_err();
+
+    assert_eq!(error.diagnostics.as_deref().unwrap()["exitCode"], 23);
+    assert_eq!(
+        error.diagnostics.as_deref().unwrap()["stderr"]["totalBytes"],
+        17
+    );
+    assert!(!result_dir.exists(), "失败不得保留或发布部分数据集");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn timeout_and_future_cancellation_terminate_the_whole_process_group() {
+    async fn wait_for(path: &Path) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !path.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    let (root, input_tree) = tree();
+    let binary = root.path().join("group-engine.sh");
+    write_executable(
+        &binary,
+        r#"#!/bin/sh
+(while :; do printf x >> child.heartbeat; sleep 0.02; done) &
+echo $! > child.pid
+wait
+"#,
+    );
+    let heartbeat = input_tree.join("child.heartbeat");
+    let engine = process_test_engine(
+        binary.clone(),
+        // Process startup competes with the other process-engine cases when the
+        // integration binary runs tests in parallel. Keep enough time for the
+        // helper to create its child before exercising the timeout path.
+        Duration::from_secs(5),
+        1024,
+        OutputLimits::default(),
+    );
+    let mut timeout_run = spec(root.path(), &input_tree, RunMode::Analysis);
+    timeout_run.timeout = Duration::ZERO;
+    let timeout_result_dir = timeout_run.result_dir.clone();
+    let error = engine.run_analysis(timeout_run).await.unwrap_err();
+    assert_eq!(error.code, "engine_timeout");
+    assert!(!timeout_result_dir.exists());
+    wait_for(&heartbeat).await;
+    let timeout_size = std::fs::metadata(&heartbeat).unwrap().len();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(std::fs::metadata(&heartbeat).unwrap().len(), timeout_size);
+
+    std::fs::remove_file(&heartbeat).unwrap();
+    let cancelled_engine = process_test_engine(
+        binary,
+        Duration::from_secs(30),
+        1024,
+        OutputLimits::default(),
+    );
+    let cancelled_run = spec(root.path(), &input_tree, RunMode::Analysis);
+    let cancelled_result_dir = cancelled_run.result_dir.clone();
+    let task = tokio::spawn(async move { cancelled_engine.run_analysis(cancelled_run).await });
+    wait_for(&heartbeat).await;
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    let cancelled_size = std::fs::metadata(&heartbeat).unwrap().len();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(std::fs::metadata(&heartbeat).unwrap().len(), cancelled_size);
+    assert!(!cancelled_result_dir.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn live_result_monitor_enforces_file_count_file_size_and_total_size() {
+    for (name, body, limits, expected) in [
+        (
+            "count",
+            "touch \"$result_dir/a.parquet\" \"$result_dir/b.parquet\"",
+            OutputLimits {
+                max_files: 1,
+                max_file_bytes: 100,
+                max_total_bytes: 100,
+            },
+            "result_file_limit",
+        ),
+        (
+            "file",
+            "head -c 20 /dev/zero > \"$result_dir/a.parquet\"",
+            OutputLimits {
+                max_files: 2,
+                max_file_bytes: 10,
+                max_total_bytes: 100,
+            },
+            "result_file_too_large",
+        ),
+        (
+            "total",
+            "head -c 8 /dev/zero > \"$result_dir/a.parquet\"; head -c 8 /dev/zero > \"$result_dir/b.parquet\"",
+            OutputLimits {
+                max_files: 2,
+                max_file_bytes: 10,
+                max_total_bytes: 12,
+            },
+            "result_total_too_large",
+        ),
+    ] {
+        let (root, input_tree) = tree();
+        let binary = root.path().join(format!("{name}-engine.sh"));
+        write_executable(
+            &binary,
+            &format!(
+                "#!/bin/sh\nresult_dir=''\nwhile [ \"$#\" -gt 0 ]; do case \"$1\" in --result-dir) shift; result_dir=\"$1\";; --output-format|--input) shift;; esac; shift; done\nmkdir -p \"$result_dir\"\n{body}\nsleep 5\n"
+            ),
+        );
+        let engine = process_test_engine(binary, Duration::from_secs(2), 1024, limits);
+        let run = spec(root.path(), &input_tree, RunMode::Analysis);
+        let result_dir = run.result_dir.clone();
+        let error = engine.run_analysis(run).await.unwrap_err();
+        assert_eq!(error.code, expected, "{name}");
+        assert!(!result_dir.exists(), "{name} 失败后必须清理结果目录");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn monitor_rejects_symlink_directory_and_monitor_failure_then_final_scan_rechecks() {
+    for (name, body, expected) in [
+        (
+            "symlink",
+            "ln -s ../input.parquet \"$result_dir/link.parquet\"; sleep 5",
+            "result_symlink_rejected",
+        ),
+        (
+            "directory",
+            "mkdir \"$result_dir/nested.parquet\"; sleep 5",
+            "result_file_invalid",
+        ),
+        (
+            "monitor",
+            "rmdir \"$result_dir\"; sleep 5",
+            "result_monitor_failed",
+        ),
+        (
+            "final",
+            "head -c 20 /dev/zero > \"$result_dir/late.parquet\"",
+            "result_file_too_large",
+        ),
+    ] {
+        let (root, input_tree) = tree();
+        let binary = root.path().join(format!("{name}-engine.sh"));
+        write_executable(
+            &binary,
+            &format!(
+                "#!/bin/sh\nresult_dir=''\nwhile [ \"$#\" -gt 0 ]; do case \"$1\" in --result-dir) shift; result_dir=\"$1\";; --output-format|--input) shift;; esac; shift; done\nmkdir -p \"$result_dir\"\n{body}\n"
+            ),
+        );
+        let engine = process_test_engine(
+            binary,
+            Duration::from_secs(2),
+            1024,
+            OutputLimits {
+                max_files: 5,
+                max_file_bytes: 10,
+                max_total_bytes: 20,
+            },
+        );
+        let run = spec(root.path(), &input_tree, RunMode::Analysis);
+        let result_dir = run.result_dir.clone();
+        let error = engine.run_analysis(run).await.unwrap_err();
+        assert_eq!(error.code, expected, "{name}");
+        assert!(!result_dir.exists(), "{name} 失败后必须清理结果目录");
+    }
+}
+
+#[tokio::test]
+async fn scenario_engine_queues_stderr_contract_monitor_and_cancellation_with_ordered_trace() {
+    use zjudss::testing::{EngineScenario, ScenarioEngine};
+
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::Failure {
+        code: "engine_error".into(),
+        stderr: vec![0xff, b'x'],
+        exit_code: 9,
+    });
+    engine.enqueue(EngineScenario::ContractError {
+        details: serde_json::json!({"missing": ["summary"]}),
+    });
+    engine.enqueue(EngineScenario::MonitorError);
+    engine.enqueue(EngineScenario::Cancelled {
+        barrier_id: "cancel-run".into(),
+    });
+
+    let (root, input_tree) = tree();
+    let first = engine
+        .run_analysis(spec(root.path(), &input_tree, RunMode::Analysis))
+        .await
+        .unwrap_err();
+    assert_eq!(first.code, "engine_error");
+    assert_eq!(first.diagnostics.as_deref().unwrap()["exitCode"], 9);
+    assert_eq!(
+        first.diagnostics.as_deref().unwrap()["stderr"]["retained"],
+        serde_json::json!([255, 120])
+    );
+
+    let second = engine
+        .run_analysis(spec(root.path(), &input_tree, RunMode::Analysis))
+        .await
+        .unwrap_err();
+    assert_eq!(second.code, "result_contract_invalid");
+    let third = engine
+        .run_analysis(spec(root.path(), &input_tree, RunMode::Analysis))
+        .await
+        .unwrap_err();
+    assert_eq!(third.code, "result_monitor_failed");
+
+    let cancelled_engine = engine.clone();
+    let cancelled_input = input_tree.clone();
+    let cancelled_root = root.path().to_path_buf();
+    let task = tokio::spawn(async move {
+        cancelled_engine
+            .run_analysis(spec(&cancelled_root, &cancelled_input, RunMode::Analysis))
+            .await
+    });
+    assert!(engine.wait_until_blocked("cancel-run").await);
+    assert!(engine.release("cancel-run"));
+    assert_eq!(task.await.unwrap().unwrap_err().code, "engine_cancelled");
+
+    let calls = engine.calls();
+    assert_eq!(calls.len(), 4);
+    assert_eq!(
+        calls.iter().map(|call| call.sequence).collect::<Vec<_>>(),
+        [1, 2, 3, 4]
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .map(|call| call.scenario.as_str())
+            .collect::<Vec<_>>(),
+        ["failure", "contract_error", "monitor_error", "cancelled"]
     );
 }

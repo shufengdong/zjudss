@@ -120,7 +120,7 @@ const DIRECT_POWER_FLOW_CALL: &str = r#"[bus_phase, summary] = ds_radial_pf(
 );"#;
 
 #[tokio::test]
-async fn scripts_are_immutable_independent_validated_and_lazy_readable() {
+async fn scripts_are_immutable_and_lazy_readable_without_static_rss_validation() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
     let session = app
@@ -182,7 +182,7 @@ async fn scripts_are_immutable_independent_validated_and_lazy_readable() {
         .await
         .unwrap();
     assert_eq!(detail.content, long);
-    let invalid = app
+    let unchecked = app
         .state
         .script_service
         .create(
@@ -199,11 +199,11 @@ async fn scripts_are_immutable_independent_validated_and_lazy_readable() {
         )
         .await
         .unwrap();
-    assert_eq!(invalid.validation_status, "invalid");
+    assert_eq!(unchecked.validation_status, "valid");
     assert_eq!(
         app.state
             .script_service
-            .detail(&user, invalid.id.parse().unwrap())
+            .detail(&user, unchecked.id.parse().unwrap())
             .await
             .unwrap()
             .content,
@@ -429,7 +429,7 @@ async fn script_routes_accept_only_single_rss_and_have_no_edit_or_delete() {
 }
 
 #[tokio::test]
-async fn script_text_endpoint_creates_a_manual_source_script() {
+async fn script_text_endpoint_defers_rss_syntax_to_tensoreval() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
     let session = app
@@ -447,7 +447,7 @@ async fn script_text_endpoint_creates_a_manual_source_script() {
                 .header("cookie", &cookie)
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    r#"{"name":"manual.rss","content":"result = bus"}"#,
+                    r#"{"name":"manual.rss","content":"this is not valid RSS {{{"}"#,
                 ))
                 .unwrap(),
         )

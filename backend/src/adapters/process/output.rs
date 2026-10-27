@@ -1,8 +1,12 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::adapters::{AdapterError, EngineDatasetOutput, EngineRunOutput, ErrorCategory};
+use crate::adapters::{
+    AdapterError, CapturedStream, EngineDatasetOutput, EngineRunOutput, ErrorCategory,
+};
 use crate::storage::ParquetInspector;
+
+use super::monitor::{limit_error, scan_result_limits};
 
 #[derive(Debug, Clone, Copy)]
 pub struct OutputLimits {
@@ -24,6 +28,7 @@ pub fn validate_outputs(
     result_dir: &Path,
     limits: OutputLimits,
 ) -> Result<EngineRunOutput, AdapterError> {
+    scan_result_limits(result_dir, limits, false)?;
     let root = result_dir
         .canonicalize()
         .map_err(|error| output_error("result_dir_invalid", error.to_string()))?;
@@ -33,7 +38,12 @@ pub fn validate_outputs(
         .map_err(|error| output_error("result_dir_invalid", error.to_string()))?;
     entries.sort_by_key(|entry| entry.file_name());
     if entries.len() > limits.max_files {
-        return Err(output_error("result_file_limit", "结果文件数超限"));
+        return Err(limit_error(
+            "result_file_limit",
+            "结果文件数超限",
+            entries.len() as u64,
+            limits.max_files as u64,
+        ));
     }
     let mut total = 0_u64;
     let mut names = HashSet::new();
@@ -86,16 +96,23 @@ pub fn validate_outputs(
             .map_err(|error| output_error("result_file_invalid", error.to_string()))?
             .len();
         if size > limits.max_file_bytes {
-            return Err(output_error(
+            return Err(limit_error(
                 "result_file_too_large",
-                format!("{name} 超过单文件限制"),
+                "结果文件超过单文件限制",
+                size,
+                limits.max_file_bytes,
             ));
         }
         total = total
             .checked_add(size)
             .ok_or_else(|| output_error("result_total_too_large", "结果总大小溢出"))?;
         if total > limits.max_total_bytes {
-            return Err(output_error("result_total_too_large", "结果总大小超限"));
+            return Err(limit_error(
+                "result_total_too_large",
+                "结果总大小超限",
+                total,
+                limits.max_total_bytes,
+            ));
         }
         let metadata = ParquetInspector::metadata(&canonical)
             .map_err(|error| output_error(error.code(), error.to_string()))?;
@@ -117,7 +134,12 @@ pub fn validate_outputs(
             "tensoreval 未生成 Parquet 结果",
         ));
     }
-    Ok(EngineRunOutput { datasets })
+    Ok(EngineRunOutput {
+        exit_code: 0,
+        stdout: CapturedStream::empty(),
+        stderr: CapturedStream::empty(),
+        datasets,
+    })
 }
 
 fn valid_name(name: &str) -> bool {

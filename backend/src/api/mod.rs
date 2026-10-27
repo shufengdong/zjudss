@@ -194,12 +194,6 @@ impl From<ScriptError> for ApiError {
                 details: None,
             },
             ScriptError::Artifact(error) => error.into(),
-            ScriptError::Adapter(error) => Self {
-                status: StatusCode::UNPROCESSABLE_ENTITY,
-                message: error.to_string(),
-                code: "script_validation_failed",
-                details: None,
-            },
             ScriptError::Repository(error) => Self::internal(error.to_string()),
             ScriptError::Io(error) => Self::internal(error.to_string()),
             ScriptError::StudyPlan { code, message } => Self {

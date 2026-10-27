@@ -1,8 +1,10 @@
+mod capture;
 mod command;
+mod control;
+mod monitor;
 mod output;
 
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::time::Duration;
 use std::{fs::OpenOptions, io::Write};
 
@@ -10,9 +12,9 @@ use async_trait::async_trait;
 use tokio::process::Command;
 
 use super::{
-    AdapterError, EXECUTION_IMPORT_TABLES, EngineCapabilities, EngineRunOutput, ErrorCategory,
-    ImportProfile, ImportSpec, ImportedModel, InspectOutcome, InspectSpec, RunMode, RunSpec,
-    STATIC_MODEL_TABLES, SimEngine,
+    AdapterError, EXECUTION_IMPORT_TABLES, EngineCapabilities, EngineFailureDiagnostic,
+    EngineRunOutput, ErrorCategory, ImportProfile, ImportSpec, ImportedModel, InspectOutcome,
+    InspectSpec, RunMode, RunSpec, STATIC_MODEL_TABLES, SimEngine,
 };
 pub use command::{EngineCommand, build_command};
 pub use output::{OutputLimits, validate_outputs};
@@ -22,6 +24,7 @@ pub struct EngineConfig {
     pub bin: PathBuf,
     pub binary_sha256: String,
     pub default_timeout: Duration,
+    pub process_output_max_bytes: usize,
     pub output_limits: OutputLimits,
     pub capabilities: EngineCapabilities,
 }
@@ -36,6 +39,7 @@ impl EngineConfig {
             bin,
             binary_sha256,
             default_timeout,
+            process_output_max_bytes: 1024 * 1024,
             output_limits: OutputLimits::default(),
             capabilities,
         })
@@ -99,10 +103,20 @@ impl ProcessEngine {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(120_000);
-        Ok(Self::new(EngineConfig::probe(
-            bin,
-            Duration::from_millis(timeout),
-        )?))
+        let mut config = EngineConfig::probe(bin, Duration::from_millis(timeout))?;
+        config.process_output_max_bytes = env_usize(
+            "ENGINE_PROCESS_OUTPUT_MAX_BYTES",
+            config.process_output_max_bytes,
+        )?;
+        config.output_limits = OutputLimits {
+            max_files: env_usize("RESULT_MAX_FILES", config.output_limits.max_files)?,
+            max_file_bytes: env_u64("RESULT_MAX_FILE_BYTES", config.output_limits.max_file_bytes)?,
+            max_total_bytes: env_u64(
+                "RESULT_MAX_TOTAL_BYTES",
+                config.output_limits.max_total_bytes,
+            )?,
+        };
+        Ok(Self::new(config))
     }
 
     pub fn capabilities(&self) -> &EngineCapabilities {
@@ -130,13 +144,7 @@ impl ProcessEngine {
             ));
         }
         let built = build_command(&self.config.bin, &spec)?;
-        std::fs::create_dir_all(&spec.result_dir).map_err(|error| {
-            AdapterError::new(
-                "result_dir_create_failed",
-                ErrorCategory::Io,
-                error.to_string(),
-            )
-        })?;
+        prepare_result_dir(&spec.result_dir)?;
         let timeout = if spec.timeout.is_zero() {
             self.config.default_timeout
         } else {
@@ -144,29 +152,35 @@ impl ProcessEngine {
         };
         self.ensure_binary_available()?;
         let mut command = Command::new(&built.program);
-        command
-            .args(&built.args)
-            .current_dir(&built.cwd)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        let output = tokio::time::timeout(timeout, command.output())
-            .await
-            .map_err(|_| {
-                AdapterError::new("timeout", ErrorCategory::Timeout, "tensoreval 执行超时")
-            })?
-            .map_err(|error| {
-                AdapterError::new(
-                    "spawn_failed",
-                    ErrorCategory::Io,
-                    format!("无法启动 tensoreval: {error}"),
-                )
-            })?;
-        if !output.status.success() {
-            return Err(exit_error(&output));
+        command.args(&built.args).current_dir(&built.cwd);
+        let outcome = control::run_command(
+            &mut command,
+            timeout,
+            self.config.process_output_max_bytes,
+            Some((&spec.result_dir, self.config.output_limits)),
+        )
+        .await?;
+        if !outcome.status.success() {
+            cleanup_result_dir(&spec.result_dir);
+            return Err(exit_error(&outcome));
         }
-        validate_outputs(&spec.result_dir, self.config.output_limits)
+        let validated = match validate_outputs(&spec.result_dir, self.config.output_limits) {
+            Ok(output) => output,
+            Err(error) => {
+                cleanup_result_dir(&spec.result_dir);
+                return Err(with_captured_stderr(
+                    error,
+                    &outcome.stderr,
+                    outcome.status.code(),
+                ));
+            }
+        };
+        Ok(EngineRunOutput {
+            exit_code: outcome.status.code().unwrap_or_default(),
+            stdout: outcome.stdout,
+            stderr: outcome.stderr,
+            datasets: validated.datasets,
+        })
     }
 }
 
@@ -185,30 +199,27 @@ impl SimEngine for ProcessEngine {
         let mut command = Command::new(&self.config.bin);
         command
             .args(["--dss-to-rss", "--check", "--study", "snapshot", model])
-            .current_dir(&spec.input_tree)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+            .current_dir(&spec.input_tree);
         let timeout = if spec.timeout.is_zero() {
             self.config.default_timeout
         } else {
             spec.timeout
         };
-        let output = tokio::time::timeout(timeout, command.output())
-            .await
-            .map_err(|_| {
-                AdapterError::new("timeout", ErrorCategory::Timeout, "tensoreval 检查超时")
-            })?
-            .map_err(|error| {
-                AdapterError::new("spawn_failed", ErrorCategory::Io, error.to_string())
-            })?;
+        let output = control::run_command(
+            &mut command,
+            timeout,
+            self.config.process_output_max_bytes,
+            None,
+        )
+        .await?;
         if !output.status.success() {
             return Err(exit_error(&output));
         }
         Ok(InspectOutcome {
             ok: true,
-            summary: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            summary: String::from_utf8_lossy(&output.stdout.retained)
+                .trim()
+                .to_string(),
             diagnostics: None,
         })
     }
@@ -386,10 +397,10 @@ fn ensure_binary_available(path: &std::path::Path) -> Result<(), AdapterError> {
     }
 }
 
-fn exit_error(output: &std::process::Output) -> AdapterError {
+fn exit_error(output: &control::ProcessOutcome) -> AdapterError {
     const MAX_ERROR_OUTPUT_CHARS: usize = 16_384;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr.retained);
+    let stdout = String::from_utf8_lossy(&output.stdout.retained);
     let raw_output = if stderr.trim().is_empty() {
         stdout.trim()
     } else {
@@ -403,13 +414,96 @@ fn exit_error(output: &std::process::Output) -> AdapterError {
     } else {
         ("engine_error", ErrorCategory::Internal)
     };
+    let diagnostic = EngineFailureDiagnostic {
+        code: code.into(),
+        exit_code: output.status.code(),
+        stderr: output.stderr.clone(),
+        details: serde_json::json!({"stdout": output.stdout}),
+    };
     AdapterError::new(
         code,
         category,
         bounded_text(raw_output, MAX_ERROR_OUTPUT_CHARS)
             .unwrap_or_else(|| "tensoreval 执行失败".into()),
     )
-    .with_diagnostics(serde_json::json!({"exitCode":output.status.code()}))
+    .with_diagnostics(serde_json::to_value(diagnostic).expect("engine diagnostic serializes"))
+}
+
+fn with_captured_stderr(
+    mut error: AdapterError,
+    stderr: &super::CapturedStream,
+    exit_code: Option<i32>,
+) -> AdapterError {
+    let mut details = error
+        .diagnostics
+        .take()
+        .map(|value| *value)
+        .unwrap_or_else(|| serde_json::json!({}));
+    if let Some(object) = details.as_object_mut() {
+        object.insert("exitCode".into(), serde_json::json!(exit_code));
+        object.insert(
+            "stderr".into(),
+            serde_json::to_value(stderr).expect("captured stderr serializes"),
+        );
+    }
+    error.with_diagnostics(details)
+}
+
+fn prepare_result_dir(path: &std::path::Path) -> Result<(), AdapterError> {
+    if path.exists() {
+        std::fs::remove_dir_all(path).map_err(|error| {
+            AdapterError::new(
+                "result_dir_create_failed",
+                ErrorCategory::Io,
+                error.to_string(),
+            )
+        })?;
+    }
+    std::fs::create_dir_all(path).map_err(|error| {
+        AdapterError::new(
+            "result_dir_create_failed",
+            ErrorCategory::Io,
+            error.to_string(),
+        )
+    })
+}
+
+fn cleanup_result_dir(path: &std::path::Path) {
+    let _ = std::fs::remove_dir_all(path);
+}
+
+fn env_usize(name: &'static str, default: usize) -> Result<usize, AdapterError> {
+    match std::env::var(name) {
+        Ok(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|value| *value > 0)
+            .ok_or_else(|| {
+                AdapterError::new(
+                    "engine_config_invalid",
+                    ErrorCategory::Internal,
+                    format!("{name} 必须是大于零的整数"),
+                )
+            }),
+        Err(_) => Ok(default),
+    }
+}
+
+fn env_u64(name: &'static str, default: u64) -> Result<u64, AdapterError> {
+    match std::env::var(name) {
+        Ok(value) => value
+            .parse::<u64>()
+            .ok()
+            .filter(|value| *value > 0)
+            .ok_or_else(|| {
+                AdapterError::new(
+                    "engine_config_invalid",
+                    ErrorCategory::Internal,
+                    format!("{name} 必须是大于零的整数"),
+                )
+            }),
+        Err(_) => Ok(default),
+    }
 }
 
 fn bounded_text(value: &str, limit: usize) -> Option<String> {

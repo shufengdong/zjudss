@@ -55,7 +55,6 @@
     - "error:model_import_unsupported"
     - "error:model_import_resolution_required"
     - "error:invalid_script"
-    - "error:script_validation_failed"
     - "error:active_model_changed"
     - "error:script_static_invalid"
     - "error:script_model_incompatible"
@@ -261,7 +260,7 @@
       file: backend/tests/model_import_adapter.rs
       name: include_graph_reports_missing_normalized_dependency
     - runner: rust
-      file: backend/tests/process_engine_v3.rs
+      file: backend/tests/process_engine_v4.rs
       name: process_engine_import_uses_input_root_wrapper_for_nested_entry
   assertions: [imports persist candidates, supported lifecycles become drafts, unsupported lifecycles do not mutate, safe normalized DSS includes stay within the private input tree, unsafe or missing DSS includes remain structured failures, discard releases resources]
   fixtures: [DSS source, single-Solve bundle, unsupported lifecycle bundles, malicious archives]
@@ -599,9 +598,9 @@
       file: backend/tests/scripted_agent.rs
       name: successful_script_creation_is_not_overwritten_by_a_later_provider_error
     - runner: rust
-      file: backend/tests/script_validation_adapter.rs
-      name: static_validation_rejects_a_trailing_bare_output_expression
-  assertions: [scripts list independently, full text loads on demand, Agent creation does not run, successful script creation remains successful if provider finalization fails, DataFrame scripts reject trailing bare output expressions before persistence]
+      file: backend/tests/scripts.rs
+      name: script_text_endpoint_defers_rss_syntax_to_tensoreval
+  assertions: [scripts list independently, full text loads on demand, Agent creation does not run, successful script creation remains successful if provider finalization fails, script syntax and runtime viability are decided by tensoreval rather than a zjudss static parser]
   fixtures: [long RSS script]
   contracts:
     - "route:GET /api/sessions/{id}/scripts"
@@ -801,7 +800,7 @@
   lanes: [pr, release]
   tests:
     - runner: rust
-      file: backend/tests/process_engine_v3.rs
+      file: backend/tests/process_engine_v4.rs
       name: four_commands_use_private_cwd_parquet_results_and_safe_named_inputs
     - runner: rust
       file: backend/tests/engine_resources.rs
@@ -810,16 +809,41 @@
       file: backend/tests/engine_resources.rs
       name: all_resource_limits_fail_with_one_stable_code
     - runner: rust
-      file: backend/tests/process_engine_v3.rs
+      file: backend/tests/process_engine_v4.rs
       name: capability_probe_exercises_each_model_import_profile
     - runner: rust
-      file: backend/tests/process_engine_v3.rs
+      file: backend/tests/process_engine_v4.rs
       name: process_engine_accepts_binary_replacement_and_rejects_only_a_missing_binary
+    - runner: rust
+      file: backend/tests/process_engine_v4.rs
+      name: streams_over_one_mib_are_drained_bounded_and_hashed_without_utf8_assumptions
+    - runner: rust
+      file: backend/tests/process_engine_v4.rs
+      name: nonzero_exit_keeps_actual_code_and_bounded_binary_stderr_without_partial_datasets
+    - runner: rust
+      file: backend/tests/process_engine_v4.rs
+      name: timeout_and_future_cancellation_terminate_the_whole_process_group
+    - runner: rust
+      file: backend/tests/process_engine_v4.rs
+      name: live_result_monitor_enforces_file_count_file_size_and_total_size
+    - runner: rust
+      file: backend/tests/process_engine_v4.rs
+      name: monitor_rejects_symlink_directory_and_monitor_failure_then_final_scan_rechecks
+    - runner: rust
+      file: backend/tests/process_engine_v4.rs
+      name: scenario_engine_queues_stderr_contract_monitor_and_cancellation_with_ordered_trace
     - runner: release
       file: scripts/test-release-engine
       name: real_engine_imports_all_examples_and_runs_representative_studies
-  assertions: [process commands are controlled, current resources are published immutably, limits fail closed, binary replacement takes effect on the next call, release gate discovers only rssbundle cases and runs one representative for every present supported study kind]
+  assertions: [process commands are controlled, stdout and stderr are drained with bounded retained bytes and full hashes, timeout cancellation and monitor failures terminate the process group, result limits and path safety are enforced during execution and after exit without partial datasets, current resources are published immutably, binary replacement takes effect on the next call, release gate discovers only rssbundle cases and runs one representative for every present supported study kind]
   fixtures: [fake process engine, dynamic rssbundle resource tree, current real eig-rs rssbundle catalog]
   contracts:
     - "tool:search_engine_docs"
     - "tool:read_engine_doc_section"
+    - "error:engine_timeout"
+    - "error:result_monitor_failed"
+    - "error:result_file_limit"
+    - "error:result_file_too_large"
+    - "error:result_total_too_large"
+    - "error:result_symlink_rejected"
+    - "error:result_path_escape"

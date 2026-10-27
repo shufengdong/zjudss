@@ -1,11 +1,10 @@
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::adapters::{ScriptValidationSpec, SimEngine};
+use crate::adapters::SimEngine;
 use crate::application::study_planning::ReadyStudyPlan;
 use crate::auth::CurrentUser;
 use crate::db::models::{NewScriptResource, ScriptResource};
@@ -78,7 +77,6 @@ pub enum ScriptError {
     NotFound,
     Invalid(String),
     Artifact(ArtifactError),
-    Adapter(crate::adapters::AdapterError),
     Repository(RepoError),
     Io(std::io::Error),
     StudyPlan { code: &'static str, message: String },
@@ -106,7 +104,6 @@ impl std::fmt::Display for ScriptError {
             Self::NotFound => write!(f, "资源不存在"),
             Self::Invalid(v) => write!(f, "{v}"),
             Self::Artifact(v) => write!(f, "{v}"),
-            Self::Adapter(v) => write!(f, "{v}"),
             Self::Repository(v) => write!(f, "{v}"),
             Self::Io(v) => write!(f, "{v}"),
             Self::StudyPlan { message, .. } => write!(f, "{message}"),
@@ -117,11 +114,6 @@ impl std::error::Error for ScriptError {}
 impl From<ArtifactError> for ScriptError {
     fn from(v: ArtifactError) -> Self {
         Self::Artifact(v)
-    }
-}
-impl From<crate::adapters::AdapterError> for ScriptError {
-    fn from(v: crate::adapters::AdapterError) -> Self {
-        Self::Adapter(v)
     }
 }
 impl From<RepoError> for ScriptError {
@@ -138,8 +130,8 @@ impl From<RepoError> for ScriptError {
 pub struct ScriptService {
     repo: ScriptRepo,
     artifacts: ArtifactService,
-    engine: Arc<dyn SimEngine>,
-    data_dir: PathBuf,
+    _engine: Arc<dyn SimEngine>,
+    _data_dir: PathBuf,
     messages: MessageRepo,
     events: EventBus,
     versions: VersionRepo,
@@ -162,8 +154,8 @@ impl ScriptService {
         Self {
             repo: dependencies.repo,
             artifacts: dependencies.artifacts,
-            engine: dependencies.engine,
-            data_dir: dependencies.data_dir,
+            _engine: dependencies.engine,
+            _data_dir: dependencies.data_dir,
             messages: dependencies.messages,
             events: dependencies.events,
             versions: dependencies.versions,
@@ -186,86 +178,16 @@ impl ScriptService {
         if request.content.is_empty() || request.content.len() as u64 > SCRIPT_MAX_BYTES {
             return Err(ScriptError::Invalid("脚本内容为空或超过大小限制".into()));
         }
-        let validation_root = self.data_dir.join("script-validation").join(format!(
-            "{}-{}",
-            now_ms(),
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&validation_root).map_err(ScriptError::Io)?;
-        let script_path = PathBuf::from("script.rss");
-        std::fs::write(
-            validation_root.join(&script_path),
-            request.content.as_bytes(),
-        )
-        .map_err(ScriptError::Io)?;
-        let validation = self
-            .engine
-            .validate_script(ScriptValidationSpec {
-                input_tree: validation_root.clone(),
-                script_path,
-                timeout: std::time::Duration::from_secs(10),
-            })
-            .await;
-        let _ = std::fs::remove_dir_all(validation_root);
-        let validation = validation?;
+        let mut required_aliases = Vec::new();
+        let mut outputs = Vec::new();
         let mut agent_skill_refs = request.agent_skill_refs;
-        if request.source == ScriptSource::Agent
-            && (!validation.called_functions.is_empty() || request.study_plan.is_some())
-        {
+        if request.source == ScriptSource::Agent && request.study_plan.is_some() {
             let plan = request.study_plan.as_ref().ok_or_else(|| {
                 ScriptError::study_plan(
                     "study_plan_required",
                     "受管研究脚本必须提供本次请求生成的 studyPlanId",
                 )
             })?;
-            if !validation.valid {
-                let diagnostic = validation
-                    .diagnostics
-                    .get("code")
-                    .and_then(Value::as_str)
-                    .unwrap_or("script_static_invalid");
-                let guidance = if diagnostic == "script_bare_output_rejected" {
-                    "DataFrame 脚本只能包含变量声明；请删除末尾裸变量表达式后重新生成"
-                } else {
-                    "请直接使用计划中的 inputAliases 重新生成脚本"
-                };
-                return Err(ScriptError::Invalid(format!(
-                    "受管研究脚本静态校验失败（{diagnostic}），{guidance}"
-                )));
-            }
-            let planned_aliases = plan.input_aliases.iter().collect::<BTreeSet<_>>();
-            let unknown_aliases = validation
-                .required_aliases
-                .iter()
-                .filter(|alias| !planned_aliases.contains(alias))
-                .cloned()
-                .collect::<Vec<_>>();
-            if !unknown_aliases.is_empty() {
-                return Err(ScriptError::Invalid(format!(
-                    "受管研究脚本使用了计划外输入 alias：{}",
-                    unknown_aliases.join(", ")
-                )));
-            }
-            let overwritten_aliases = validation
-                .outputs
-                .iter()
-                .filter(|alias| planned_aliases.contains(alias))
-                .cloned()
-                .collect::<Vec<_>>();
-            if !overwritten_aliases.is_empty() {
-                return Err(ScriptError::Invalid(format!(
-                    "受管研究脚本不能覆盖 active 模型输入 alias：{}",
-                    overwritten_aliases.join(", ")
-                )));
-            }
-            if validation.called_functions.len() != 1
-                || validation.called_functions.first() != Some(&plan.function)
-            {
-                return Err(ScriptError::study_plan(
-                    "study_plan_function_mismatch",
-                    "脚本调用的受管研究函数与 ready plan 不一致",
-                ));
-            }
             if plan.engine_snapshot_id != self.engine_snapshot_id {
                 return Err(ScriptError::study_plan(
                     "study_plan_stale",
@@ -314,6 +236,8 @@ impl ScriptService {
                 "engineSnapshotId": plan.engine_snapshot_id,
                 "function": plan.function,
             }));
+            required_aliases = plan.input_aliases.clone();
+            outputs = plan.results.clone();
         }
         let staged = self
             .artifacts
@@ -342,14 +266,15 @@ impl ScriptService {
             name: name.to_string(),
             source_kind: request.source.as_str().into(),
             content_hash: artifact.sha256,
-            validation_status: if validation.valid {
-                "valid".into()
-            } else {
-                "invalid".into()
-            },
-            required_aliases_json: serde_json::to_string(&validation.required_aliases).unwrap(),
-            outputs_json: serde_json::to_string(&validation.outputs).unwrap(),
-            diagnostics_json: validation.diagnostics.to_string(),
+            // `valid` now means accepted for execution; RSS syntax and runtime
+            // viability are intentionally deferred to tensoreval.
+            validation_status: "valid".into(),
+            required_aliases_json: serde_json::to_string(&required_aliases).unwrap(),
+            outputs_json: serde_json::to_string(&outputs).unwrap(),
+            diagnostics_json: serde_json::json!({
+                "validation": "deferred_to_tensoreval"
+            })
+            .to_string(),
             agent_bundle_version: request.agent_bundle_version,
             agent_skill_refs_json: serde_json::to_string(&agent_skill_refs).unwrap(),
             created_at_ms: now_ms(),
@@ -437,7 +362,7 @@ impl ScriptService {
             .repo
             .active_aliases(&user.id, script.session_id)
             .await?;
-        let (can_run, disabled_reason) = if script.validation_status != "valid" {
+        let (can_run, disabled_reason) = if script.validation_status == "invalid" {
             (false, Some("script_static_invalid".into()))
         } else if let Some(aliases) = active {
             let missing = required_aliases

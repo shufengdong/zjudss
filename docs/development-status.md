@@ -6,7 +6,8 @@
 > 详细实施步骤见
 > [`2026-10-27-v4-independent-data-resources-managed-studies.md`](superpowers/plans/2026-10-27-v4-independent-data-resources-managed-studies.md)。
 > 当前 eig-rs 已提供全部门面的完整传递输入、Struct 参数卡和结果 schema，外部机器合同门禁已经满足。V4 Task 1
-> 的空库持久化合同和 Task 2 的动态研究门面目录已经实现；后续上传、独立数据资源和受管研究工作流尚未实现。
+> 的空库持久化合同、Task 2 的动态研究门面目录和 Task 3 的有界进程执行边界已经实现；后续上传、独立数据资源
+> 和受管研究工作流尚未实现。
 > 本文未明确标为 V4 已完成的其余内容仍描述进入 V4 前已验证的 V3 产品行为。
 
 ## V4 implementation progress
@@ -15,7 +16,8 @@
 |---|---|---|
 | Task 1：空库 schema、配置与合同基线 | complete | `6607387`，V4 schema/config/manifest 聚焦测试 |
 | Task 2：动态 DataFrame 研究门面 | complete | 独立 catalog 版本、15 门面真实目录门禁、隔离诊断、传递 schema/hash、current snapshot 事务 |
-| Tasks 3–15 | planned | 以 V4 实施计划为准 |
+| Task 3：统一 tensoreval 进程边界 | complete | 双流有界捕获/完整 hash、运行中结果监控、进程组超时与取消、最终严格扫描、无部分结果 |
+| Tasks 4–15 | planned | 以 V4 实施计划为准 |
 
 ## Current release
 
@@ -28,7 +30,7 @@
 | 模型导入 | complete | DSS/bundle/ZIP/CSV/Excel/Parquet、异步状态、确认/放弃、失败释放 |
 | 草稿与版本 | complete | expected revision、整表覆盖、显式发布/激活、影响预览删除 |
 | 案例库 | complete | rssbundle 目录树、manifest 详情/搜索、无效叶诊断、严格清单导入、窄屏浏览 |
-| 脚本 | complete | 上传/Agent 创建、静态校验、预览/全文/复制、无编辑删除 |
+| 脚本 | transitioning | 上传/Agent 创建已改为保存候选并把语法/运行可行性交给 tensoreval；V4 受管确认与结果合同在 Tasks 9–11 完成 |
 | 运行 | complete | 仅按钮创建、active race、含脚本名的冻结快照、私有输入树、可展开失败详情与多 Parquet 结果 |
 | 结果与派生 | complete | 单结果删除、分析、物化视图、比较、tombstone 血缘 |
 | 前端 | complete | 三列/窄屏、运行摘要与失败原因/耗时/全结果选择、结果数据表/图表、active/draft/历史模型表只读工作台、登录用户菜单 |
@@ -42,6 +44,9 @@
 - Agent bundle：`v3.3.3`，目录 `backend/resources/agent/v3`。
 - Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `SPARROWZZ_DIR` 动态发现并验证
   `dss/docs/catalog` 与 `dss/rssbundle` manifest，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
+- 每次 tensoreval 调用均由统一 adapter 流式排空 stdout/stderr；每流按 `ENGINE_PROCESS_OUTPUT_MAX_BYTES` 保留等额首尾并
+  记录完整 hash/总字节数。运行中和退出后都检查结果数量、单文件/总量、普通文件和路径边界；失败、超时或取消会
+  终止整个进程组并清理未发布目录。
 - 公共合同：48 条路由、9 类消息、18 个工具、6 个 skills、8 个上传来源、6 类视图。
 - 模型表：adapter 固定输出 21 张规范 DataFrame，包含合法的零行表。
 - 研究规划：潮流、QSTS、短路、谐波和暂态只基于 active 模型的实际表清单与当前 engine snapshot；
@@ -87,7 +92,7 @@ LLM 不接触物理路径。脚本创建不运行，模型修改不发布，案�
 其中服务器绝对路径和控制字符在持久化与出网两层清理。删除单个数据集会失效同会话运行结果缓存，
 不会删除运行或自动启动新运行。
 
-启动会功能性探测当前 `TENSOREVAL_BIN` 的命名 Parquet、两种模型导入和脚本校验能力；启动后替换 binary
+启动会功能性探测当前 `TENSOREVAL_BIN` 的命名 Parquet 和两种模型导入能力；启动后替换 binary
 无需重启，下一次调用直接使用路径上的当前普通文件，只有文件不存在或不再是普通文件时才拒绝。资源扫描限制为 512 篇
 Markdown、单篇 4 MiB、文档合计 64 MiB、2,048 个案例、每案例 10,000 文件/2 GiB、依赖深度 64；变更资源树
 后也必须重启。案例只发现 `SPARROWZZ_DIR/dss/rssbundle` 下直接含 manifest 的 `.rssbundle` 目录；运行时允许没有案例，

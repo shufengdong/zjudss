@@ -50,15 +50,14 @@ Agent 在修改前先用 `inspect_workspace` 确定 active/draft 范围，再用
 ## Script lifecycle
 
 脚本是 session 下可随时新增的不可编辑资源，可由上传或 Agent `create_script` 创建；没有版本历史和单独删除。
-adapter 静态校验禁止 import、路径、URL 和外部读取，并提取 required aliases/outputs；输出绑定同时支持
-`result = ...` 和 eig-rs 的 `[result, _, summary] = ...` 解构语法，其中 `_` 只占位、不注册输出。无 active
-时也允许保存，全文通过详情 API 读取。用户可复制、修改后以新 `.rss` 再上传。
+V4 创建时只验证名称、UTF-8 和大小，RSS 语法与运行可行性完全以 tensoreval 为准；受管研究另由冻结配置做结构
+一致性检查。无 active 时也允许保存，全文通过详情 API 读取。用户可复制、修改后以新 `.rss` 再上传。
 
 ## Run lifecycle
 
 只有 `POST /api/scripts/{id}/runs`（脚本卡片按钮）创建 SimulationRun。创建事务验证脚本/session、当前 active
-版本、静态状态和 required aliases，并冻结模型/脚本 hash。worker 在私有输入树中按表名物化 DataFrame，
-调用 adapter `RunMode::Dataframe`，验证全部 Snappy Parquet 输出后一次性发布结果；失败不暴露部分结果。
+版本和当前输入，并冻结模型/脚本 hash。worker 在私有输入树中按表名物化 DataFrame，调用 adapter
+`RunMode::Dataframe`；adapter 在运行中和退出后验证全部 Snappy Parquet 输出并一次性返回，失败清理整个未发布目录。
 
 运行不可删除。历史版本删除会在 impact token 校验后 tombstone 该版本、绑定运行和原始结果。
 

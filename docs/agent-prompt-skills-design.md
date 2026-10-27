@@ -51,11 +51,10 @@ adapter 合同排列为 `modelInputOrder`，写入响应和 ready plan，与 mod
 运行时按表名向脚本注入 active DataFrame。受管脚本直接引用 `inputAliases` 并按 `modelInputOrder` 放置规范模型
 参数，可以用新变量派生参数和保存结果。静态潮流不得再查询模型输入顺序；需要确认参数或结果语法时最多执行
 一次文档搜索和一次章节读取，避免在保存脚本前耗尽 8 次模型调用预算。DataFrame 模式只接受变量声明；函数
-结果绑定中的未消费叶变量就是结果，脚本末尾不得追加裸变量表达式。静态校验以
-`script_bare_output_rejected` 在持久化前拒绝该语法。受管脚本
-不得重新导入、读取模型文件或覆盖输入 alias。`create_script` 在持久化前核对 plan ID、active 模型 hash、引擎
-snapshot、实际函数、静态校验、输入集合和输出绑定；失败返回 `script_error`，不保存 artifact、脚本记录或脚本
-消息。计划或模型变化后旧 ID 失效，且任何研究脚本创建仍不产生运行。手工文本和上传脚本维持既有兼容行为。
+结果绑定中的未消费叶变量就是结果，脚本末尾不得追加裸变量表达式。V4 不在执行前运行 zjudss RSS 静态语法
+校验器；语法和运行可行性由 tensoreval 决定。Task 9 的受管工作流会依据冻结配置做结构一致性检查，阻止更换门面、
+输入、Struct 参数或结果集合，但该检查不解释一般 RSS 语法。计划或模型变化后旧配置失效；手工文本和上传脚本
+保存后仅在用户点击运行时执行一次，也不进入自动修正。
 
 模型修改遵循 `inspect_workspace -> read_model_dataframe -> modify_model`。`read_model_dataframe` 只在加载
 `model-intake` skill 后可用，scope 只能是 active 或携带准确 expected draft 的 draft；查询只允许表名、最多

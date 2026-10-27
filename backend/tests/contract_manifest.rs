@@ -37,7 +37,10 @@ fn contract_manifest_contains_all_public_enums() {
     let manifest = contract_manifest().expect("embedded contract manifest");
 
     assert_eq!(manifest.version, "v4");
-    assert_eq!(manifest.changes, ["dynamic_study_facades"]);
+    assert_eq!(
+        manifest.changes,
+        ["dynamic_study_facades", "bounded_engine_execution"]
+    );
 
     assert_eq!(
         manifest.message_types,
@@ -118,6 +121,13 @@ fn contract_manifest_contains_all_public_enums() {
         "facade_contract_invalid",
         "facade_schema_invalid",
         "facade_unsupported_input_kind",
+        "engine_timeout",
+        "result_monitor_failed",
+        "result_file_limit",
+        "result_file_too_large",
+        "result_total_too_large",
+        "result_symlink_rejected",
+        "result_path_escape",
     ] {
         assert!(
             manifest.stable_error_codes.contains(&code),

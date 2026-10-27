@@ -10,8 +10,8 @@ migration。`backend/resources/init_users.csv` 必须为 `ID,NAME`；初始密�
 
 生产必须配置 `DATABASE_URL`、持久化 `DATA_DIR`、`TENSOREVAL_BIN`、`SPARROWZZ_DIR` 和 DeepSeek secret。
 监听地址由 `BIND_ADDR` 设置，默认 `127.0.0.1:8080`，DellServer 使用 `127.0.0.1:809`。
-binary 必须支持命名 Parquet input、`--result-dir`、`--output-format parquet`、两种模型 import profile 与脚本
-校验；资源目录必须包含受支持 schema 的 catalog、可安全读取的文档与案例。启动从当前目录动态计算资源
+binary 必须支持命名 Parquet input、`--result-dir`、`--output-format parquet` 与两种模型 import profile；RSS
+语法不由 zjudss 静态校验。资源目录必须包含受支持 schema 的 catalog、可安全读取的文档与案例。启动从当前目录动态计算资源
 snapshot，不固定 eig-rs/sparrowzz commit、binary SHA、资源 hash 或案例数量。生产没有 stub 回退，也不会自动
 checkout、pull、reset、clean、构建或改写配置的 eig-rs 工作树。
 
@@ -66,7 +66,7 @@ SSE 关闭缓冲。前端构建使用 VITE_BASE_PATH=/zjudss/、VITE_API_BASE_PA
 
 安装 unit 后执行 systemctl daemon-reload 与 systemctl enable --now zjudss.service。
 809 属于低位端口，unit 通过 CAP_NET_BIND_SERVICE 允许 sgoolweb 绑定；.env 中的同名设置会覆盖 unit 的 Environment。
-启动会通过 adapter 验证 tensoreval 的 Parquet、导入和脚本校验能力；不兼容时应更新引擎。
+启动会通过 adapter 验证 tensoreval 的 Parquet 与两种导入能力；不兼容时应更新引擎。
 
 后续在当前 Linux x86_64 开发机运行 `./scripts/deploy`，默认连接 SSH 别名 DellServer；
 也可用 `./scripts/deploy 用户@主机` 指定目标。脚本本地执行 Cargo release、npm ci 和前端构建，
@@ -78,6 +78,9 @@ SSE 关闭缓冲。前端构建使用 VITE_BASE_PATH=/zjudss/、VITE_API_BASE_PA
 普通 CI 继续使用测试 CSV；真实依赖发布门禁使用 INIT_USERS_CSV Secret。
 
 ## Deterministic gate
+
+V4 Task 3 起，候选发布还必须通过 `process_engine_v4`：stdout/stderr 有界流式捕获、运行中结果目录监控、超时/取消
+进程组终止和退出后严格扫描均属于 adapter 发布门禁。RSS 脚本不再依赖 zjudss 静态语法校验能力。
 
 ```bash
 cd backend

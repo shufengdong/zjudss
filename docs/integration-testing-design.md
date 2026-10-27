@@ -37,7 +37,10 @@ RUN-001 在 Rust 层验证创建、重放、列表和详情都返回绑定脚本
 `create_script` 不会被误判为成功；并用“计算潮流”等原始短指令覆盖五类研究统一规划、一次性缺参追问、
 active 模型决定的 ready/missing 分支、电机动态和 EMT 边界，以及所有脚本都必须由用户显式运行。
 
-ScenarioEngine 场景由控制端按调用顺序排队，不使用 sleep；timeout 使用 barrier。测试证据写入
+ScenarioEngine 场景由控制端按调用顺序排队，不使用 sleep；timeout/cancel 使用 barrier，并能排队提供二进制 stderr、
+结果合同错误和监控错误。进程 adapter 的 Rust 测试使用独立 helper process 验证双流超过 1 MiB 仍持续排空、完整 hash、
+非 UTF-8、非零退出码、进程组超时/取消、运行中三类结果限额、符号链接/目录、监控失败和退出后最终扫描；所有失败
+都断言未发布目录被清理。测试证据写入
 `target/functional-coverage/e2e-routes.ndjson`，包含通过的测试名及实际 method/path/status。
 
 ## Commands

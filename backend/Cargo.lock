@@ -8071,6 +8071,7 @@ dependencies = [
  "futures",
  "getrandom 0.4.3",
  "hex",
+ "nix",
  "parquet",
  "rig",
  "serde",

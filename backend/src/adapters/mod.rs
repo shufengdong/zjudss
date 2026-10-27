@@ -3,7 +3,6 @@
 mod contract;
 mod import;
 mod process;
-mod script;
 mod stub;
 
 use std::fmt;
@@ -11,6 +10,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use sha2::Digest;
 
 pub use contract::{ENGINE_CONTRACT_VERSION, EngineCapabilities};
 pub use import::{
@@ -20,7 +20,6 @@ pub use import::{
 pub use process::{
     EngineCommand, EngineConfig, OutputLimits, ProcessEngine, build_command, validate_outputs,
 };
-pub use script::{GOVERNED_STUDY_FUNCTIONS, ScriptValidationSpec, StaticScriptValidation};
 pub use stub::StubEngine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -181,9 +180,47 @@ pub struct EngineDatasetOutput {
     pub path: PathBuf,
     pub metadata: crate::storage::ParquetMetadata,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapturedStream {
+    pub retained: Vec<u8>,
+    pub full_sha256: String,
+    pub retained_sha256: String,
+    pub total_bytes: u64,
+    pub truncated: bool,
+}
+
+impl CapturedStream {
+    pub fn empty() -> Self {
+        let hash = hex::encode(sha2::Sha256::digest([]));
+        Self {
+            retained: Vec::new(),
+            full_sha256: hash.clone(),
+            retained_sha256: hash,
+            total_bytes: 0,
+            truncated: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-pub struct EngineRunOutput {
+pub struct EngineExecution {
+    pub exit_code: i32,
+    pub stdout: CapturedStream,
+    pub stderr: CapturedStream,
     pub datasets: Vec<EngineDatasetOutput>,
+}
+
+pub type EngineRunOutput = EngineExecution;
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineFailureDiagnostic {
+    pub code: String,
+    pub exit_code: Option<i32>,
+    pub stderr: CapturedStream,
+    pub details: serde_json::Value,
 }
 
 fn valid_alias(value: &str) -> bool {
@@ -250,12 +287,6 @@ pub trait SimEngine: Send + Sync {
             ErrorCategory::Internal,
             "当前引擎未实现模型导入",
         ))
-    }
-    async fn validate_script(
-        &self,
-        spec: ScriptValidationSpec,
-    ) -> Result<StaticScriptValidation, AdapterError> {
-        script::validate_script_source(&spec)
     }
 }
 
