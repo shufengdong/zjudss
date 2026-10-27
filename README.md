@@ -87,7 +87,7 @@ npm run dev       # http://localhost:5173，/api 代理到 127.0.0.1:8080
 `SESSION_COOKIE_SECURE=true`。完整变量、空库重置、artifact 布局和发布门禁见
 [V3 部署与发布验收](docs/v3-deployment.md)。
 
-在当前开发机执行 `./scripts/deploy`，本地编译后通过 SSH 更新 DellServer；也可传入其他 SSH 主机。
+在当前开发机执行 `./scripts/deploy`，本地编译并下载 tensoreval 与 Sparrowzz 后通过 SSH 一并更新 DellServer；也可传入其他 SSH 主机。
 
 ## 验证
 

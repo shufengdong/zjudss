@@ -10,6 +10,7 @@ use zjudss::{adapters, build_router, db};
 
 #[tokio::main]
 async fn main() {
+    eprintln!("[version] zjudss backend git = {}", env!("ZJUDSS_GIT_HASH"));
     if let Err(err) = run().await {
         eprintln!("错误: {err}");
         std::process::exit(1);

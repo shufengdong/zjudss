@@ -70,11 +70,16 @@ SSE 关闭缓冲。前端构建使用 VITE_BASE_PATH=/zjudss/、VITE_API_BASE_PA
 
 后续在当前 Linux x86_64 开发机运行 `./scripts/deploy`，默认连接 SSH 别名 DellServer；
 也可用 `./scripts/deploy 用户@主机` 指定目标。脚本本地执行 Cargo release、npm ci 和前端构建，
-只经 SSH 上传 zjudss 与 www/，沿用远端 .env、tensoreval、sparrowzz/、数据库和 data/。
-上传完成后通过 SSH 终端执行 sudo 停服、替换和启动；健康检查失败恢复旧程序与前端，持久化数据不回退。
+同时用 curl 从指定 WebDAV DailyBuild 下载 tensoreval、从 GitHub shufengdong/sparrowzz 的 master 下载资源，
+经 SSH 上传 zjudss、www/、tensoreval 与 sparrowzz/，沿用远端 .env、数据库和 data/。
+WebDAV 凭据读取本机 deploy/update.conf 中的 WEBDAV_USER、WEBDAV_PASSWORD，也可通过环境变量提供；
+配置使用 Bash 赋值语法，特殊字符密码用单引号包裹，不写入运行 .env，也不上传目标机。
+下载失败不操作远端；上传完成后通过 SSH 终端执行 sudo 停服、替换和启动；
+健康检查失败恢复旧程序、前端、引擎和资源，持久化数据不回退。
 临时上传目录会在正常完成或成功回退后清理。无需在目标机保存更新脚本、配置或构建工具。
 编译前准备真实 backend/resources/init_users.csv；本机与目标机需兼容 CPU、glibc 和 SQLite 运行库。
 可通过 DEPLOY_DIR、SERVICE、HEALTH_URL、HEALTH_TIMEOUT、VITE_BASE_PATH 和 VITE_API_BASE_PATH 覆盖默认值。
+下载地址可通过 TENSOREVAL_URL（完整二进制 URL）和 SPARROWZZ_URL（资源树 tar.gz）覆盖。
 普通 CI 继续使用测试 CSV；真实依赖发布门禁使用 INIT_USERS_CSV Secret。
 
 ## Deterministic gate
