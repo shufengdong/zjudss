@@ -71,8 +71,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     eprintln!("[config] tensoreval sha256 = {binary_sha256}");
 
     let storage_limits = StorageLimits {
-        artifact_limit: i64::try_from(runtime.owner_artifact_limit)?,
-        byte_limit: i64::try_from(runtime.owner_storage_limit_bytes)?,
+        artifact_limit: i64::try_from(runtime.user_artifact_limit)?,
+        byte_limit: i64::try_from(runtime.user_storage_limit_bytes)?,
         warning_ratio: runtime.storage_warning_ratio,
     };
     let pool = db::establish_pool(&runtime.database_url)?;
@@ -105,7 +105,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .map_err(|_| std::io::Error::other("无法清理过期认证会话"))?;
     let scheduler = RunScheduler::new(
         runtime.agent_max_concurrent_runs,
-        runtime.agent_max_owner_runs,
+        runtime.agent_max_user_runs,
         runtime.agent_queue_capacity,
     );
     let state = AppState::new_with_resources_and_agent_factory(

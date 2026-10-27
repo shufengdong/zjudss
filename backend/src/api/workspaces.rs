@@ -142,6 +142,7 @@ fn draft_json(snapshot: DraftSnapshot) -> Value {
 fn version_json(snapshot: VersionSnapshot) -> Value {
     json!({
         "id":snapshot.version.id.to_string(),"workspaceId":snapshot.version.workspace_id.to_string(),
+        "description":snapshot.version.description,
         "contentHash":snapshot.version.content_hash,
         "sourceSummary":serde_json::from_str::<Value>(&snapshot.version.source_summary_json).unwrap_or_else(|_| json!({})),
         "engineContractVersion":snapshot.version.engine_contract_version,

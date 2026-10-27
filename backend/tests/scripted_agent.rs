@@ -250,6 +250,7 @@ async fn publish_agent_study_model(app: &TestApp, session_id: i32) {
                 expected_draft_id: draft.id,
                 expected_draft_revision: draft.revision,
                 client_publish_id: format!("publish-agent-study-{session_id}"),
+                description: None,
             },
         )
         .await

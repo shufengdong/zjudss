@@ -28,9 +28,9 @@ pub use session::SessionRepo;
 pub use storage_scope::{StorageLimits, StorageScopeRepo, StorageUsage};
 pub use user::UserRepo;
 pub use version::{
-    DeleteResult, DeletionImpact, DraftDataFrameReadRow, DraftSnapshot, PublishResult,
-    VersionDataFrameReadRow, VersionDataframeRow, VersionRepo, VersionRepoError, VersionRow,
-    VersionSnapshot, WorkspaceRow, WorkspaceSnapshot,
+    DeleteResult, DeletionImpact, DraftDataFrameReadRow, DraftSnapshot, PublishCommand,
+    PublishResult, VersionDataFrameReadRow, VersionDataframeRow, VersionRepo, VersionRepoError,
+    VersionRow, VersionSnapshot, WorkspaceRow, WorkspaceSnapshot,
 };
 
 #[derive(Debug)]

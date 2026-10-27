@@ -81,6 +81,7 @@ async fn create_completed_run(app: &TestApp) -> (zjudss::auth::CurrentUser, Stri
                 expected_draft_id: draft.id,
                 expected_draft_revision: draft.revision,
                 client_publish_id: "result-version".into(),
+                description: None,
             },
         )
         .await
@@ -437,7 +438,7 @@ async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outpu
             &user,
             baseline.script_resource_id,
             CreateRunRequest {
-                model_version_id: baseline.model_version_id.to_string(),
+                model_version_id: baseline.model_version_id.unwrap().to_string(),
                 client_run_id: "comparison-candidate".into(),
             },
         )
@@ -471,7 +472,7 @@ async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outpu
             &user,
             baseline.script_resource_id,
             CreateRunRequest {
-                model_version_id: baseline.model_version_id.to_string(),
+                model_version_id: baseline.model_version_id.unwrap().to_string(),
                 client_run_id: "comparison-baseline".into(),
             },
         )

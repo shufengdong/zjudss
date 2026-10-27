@@ -1,6 +1,6 @@
 - id: BOOT-001
   source: docs/integration-testing-design.md#coverage-matrix
-  title: V3 starts from one empty-database schema and exposes health
+  title: V4 starts from one empty-database schema and exposes health
   layers: [database, api]
   lanes: [pr]
   tests:
@@ -11,8 +11,17 @@
       file: integration-tests/e2e/session-recovery.spec.ts
       name: session CRUD renders optimistic user, tool-call, and assistant messages
     - runner: rust
-      file: backend/tests/v3_schema.rs
-      name: v3_replaces_v2_lifecycle_tables
+      file: backend/tests/v4_schema.rs
+      name: v4_initial_schema_contains_only_current_tables
+    - runner: rust
+      file: backend/tests/v4_schema.rs
+      name: one_live_data_alias_and_one_nonterminal_workflow_are_database_constraints
+    - runner: rust
+      file: backend/tests/v4_schema.rs
+      name: run_and_result_tombstones_are_consistent
+    - runner: rust
+      file: backend/tests/app_bootstrap.rs
+      name: runtime_config_uses_v4_defaults_and_rejects_zero_or_inconsistent_limits
     - runner: rust
       file: backend/tests/auth_scope.rs
       name: invalid_credentials_and_missing_auth_have_stable_distinct_errors
@@ -31,7 +40,7 @@
     - runner: rust
       file: backend/tests/result_deletion.rs
       name: analysis_views_and_run_comparisons_use_snapshots_and_materialized_outputs
-  assertions: [health is reachable, HTTP bind address accepts configured IPv4 and IPv6 ports and rejects malformed values, V3 constraints and stable failures are exercised]
+  assertions: [health is reachable, HTTP bind address accepts configured IPv4 and IPv6 ports and rejects malformed values, V4 empty-schema constraints and runtime limits are exercised]
   fixtures: [empty temporary database]
   contracts:
     - "route:GET /health"
@@ -407,6 +416,12 @@
   layers: [api, application, browser]
   lanes: [pr]
   tests:
+    - runner: rust
+      file: backend/tests/model_versions.rs
+      name: model_version_description_defaults_from_canonical_diff
+    - runner: rust
+      file: backend/tests/model_versions.rs
+      name: duplicate_model_content_keeps_original_description
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
       name: CSV imports merge by whole table, stale runs are rejected, and history activation/deletion is explicit

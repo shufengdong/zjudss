@@ -11,7 +11,7 @@ use zjudss::config::RuntimeConfig;
 use common::TestApp;
 
 #[test]
-fn config_defaults_are_safe() {
+fn runtime_config_uses_v4_defaults_and_rejects_zero_or_inconsistent_limits() {
     let root = tempfile::tempdir().expect("create config root");
     let sparrowzz_dir = root.path().join("sparrowzz");
     std::fs::create_dir_all(sparrowzz_dir.join("dss/docs")).expect("create engine fixture");
@@ -30,17 +30,75 @@ fn config_defaults_are_safe() {
     );
     assert!(!config.session_cookie_secure);
     assert_eq!(config.agent_max_concurrent_runs, 8);
-    assert_eq!(config.agent_max_owner_runs, 2);
+    assert_eq!(config.agent_max_user_runs, 2);
     assert_eq!(config.agent_queue_capacity, 32);
     assert_eq!(config.upload_single_file_limit_bytes, 50 * 1024 * 1024);
     assert_eq!(config.upload_batch_limit_bytes, 500 * 1024 * 1024);
     assert_eq!(config.archive_max_entries, 1_000);
     assert_eq!(config.archive_max_expanded_bytes, 2 * 1024 * 1024 * 1024);
     assert_eq!(config.archive_max_compression_ratio, 100);
-    assert_eq!(config.owner_artifact_limit, 20_000);
-    assert_eq!(config.owner_storage_limit_bytes, 20 * 1024 * 1024 * 1024);
+    assert_eq!(config.user_artifact_limit, 20_000);
+    assert_eq!(config.user_storage_limit_bytes, 20 * 1024 * 1024 * 1024);
     assert_eq!(config.storage_warning_ratio, 0.8);
+    assert_eq!(config.upload_staging_ttl_hours, 24);
+    assert_eq!(config.result_max_files, 100);
+    assert_eq!(config.result_max_file_bytes, 512 * 1024 * 1024);
+    assert_eq!(config.result_max_total_bytes, 2 * 1024 * 1024 * 1024);
+    assert_eq!(config.engine_process_output_max_bytes, 1024 * 1024);
+    assert_eq!(config.script_repair_stderr_max_bytes, 64 * 1024);
+    assert_eq!(config.script_repair_max_attempts, 3);
+    assert_eq!(config.agent_model_retry_max, 2);
+    assert_eq!(config.tensoreval_timeout_ms, 120_000);
     assert_eq!(config.agent_bundle_version, "v3.3.3");
+
+    for name in [
+        "RESULT_MAX_FILES",
+        "SCRIPT_REPAIR_MAX_ATTEMPTS",
+        "TENSOREVAL_TIMEOUT_MS",
+    ] {
+        let error = RuntimeConfig::from_values(
+            root.path(),
+            BTreeMap::from([(name.into(), "0".into())]),
+            Some(sparrowzz_dir.clone()),
+        )
+        .expect_err("zero must fail");
+        assert_eq!(error.code(), "config_invalid_value");
+    }
+    let error = RuntimeConfig::from_values(
+        root.path(),
+        BTreeMap::from([
+            ("RESULT_MAX_FILE_BYTES".into(), "20".into()),
+            ("RESULT_MAX_TOTAL_BYTES".into(), "10".into()),
+        ]),
+        Some(sparrowzz_dir.clone()),
+    )
+    .expect_err("total result budget must cover one file");
+    assert_eq!(error.code(), "config_invalid_value");
+
+    let error = RuntimeConfig::from_values(
+        root.path(),
+        BTreeMap::from([
+            ("UPLOAD_SINGLE_FILE_LIMIT_BYTES".into(), "20".into()),
+            ("UPLOAD_BATCH_LIMIT_BYTES".into(), "10".into()),
+        ]),
+        Some(sparrowzz_dir.clone()),
+    )
+    .expect_err("upload batch budget must cover one file");
+    assert_eq!(error.code(), "config_invalid_value");
+
+    for obsolete in [
+        "OWNER_ARTIFACT_LIMIT",
+        "OWNER_STORAGE_LIMIT_BYTES",
+        "AGENT_MAX_OWNER_RUNS",
+    ] {
+        let error = RuntimeConfig::from_values(
+            root.path(),
+            BTreeMap::from([(obsolete.into(), "7".into())]),
+            Some(sparrowzz_dir.clone()),
+        )
+        .expect_err("V3 names must be rejected");
+        assert_eq!(error.code(), "config_obsolete_name");
+    }
 }
 
 #[test]

@@ -105,6 +105,8 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContractManifest {
+    pub version: &'static str,
+    pub changes: Vec<&'static str>,
     pub routes: Vec<RouteContract>,
     pub message_types: Vec<&'static str>,
     pub tool_names: Vec<&'static str>,
@@ -123,6 +125,8 @@ pub fn contract_manifest() -> Result<ContractManifest, KnowledgeError> {
     skill_ids.sort();
 
     Ok(ContractManifest {
+        version: "v4",
+        changes: Vec::new(),
         routes: route_manifest(),
         message_types: MESSAGE_TYPES.to_vec(),
         tool_names: registered_tool_names().to_vec(),

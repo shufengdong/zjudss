@@ -4,7 +4,8 @@ use crate::adapters::ENGINE_CONTRACT_VERSION;
 use crate::auth::CurrentUser;
 use crate::db::models::DraftRef;
 use crate::db::repositories::{
-    DeletionImpact, VersionRepo, VersionRepoError, VersionSnapshot, WorkspaceSnapshot,
+    DeletionImpact, PublishCommand, VersionRepo, VersionRepoError, VersionSnapshot,
+    WorkspaceSnapshot,
 };
 
 use super::{ArtifactError, ArtifactService, ms_to_iso, now_ms};
@@ -15,6 +16,75 @@ pub struct PublishDraftRequest {
     pub expected_draft_id: i32,
     pub expected_draft_revision: i64,
     pub client_publish_id: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+pub fn normalize_version_description(value: Option<&str>) -> Result<Option<String>, String> {
+    let Some(value) = value else { return Ok(None) };
+    let normalized = value.replace(['\r', '\n'], " ");
+    let normalized = normalized.trim();
+    if normalized.chars().any(char::is_control) {
+        return Err("description 不能包含控制字符".into());
+    }
+    if normalized.chars().count() > 200 {
+        return Err("description 最多 200 个 Unicode 字符".into());
+    }
+    Ok((!normalized.is_empty()).then(|| normalized.to_string()))
+}
+
+pub fn default_version_description(previous: &[(&str, &str)], current: &[(&str, &str)]) -> String {
+    use std::collections::BTreeMap;
+    if previous.is_empty() {
+        return format!("首次发布：{} 张模型表", current.len());
+    }
+    let previous = previous.iter().copied().collect::<BTreeMap<_, _>>();
+    let current = current.iter().copied().collect::<BTreeMap<_, _>>();
+    let added = current
+        .keys()
+        .filter(|name| !previous.contains_key(**name))
+        .copied()
+        .collect::<Vec<_>>();
+    let deleted = previous
+        .keys()
+        .filter(|name| !current.contains_key(**name))
+        .copied()
+        .collect::<Vec<_>>();
+    let modified = current
+        .iter()
+        .filter_map(|(name, hash)| previous.get(name).filter(|old| *old != hash).map(|_| *name))
+        .collect::<Vec<_>>();
+    let mut parts = Vec::new();
+    if !added.is_empty() {
+        parts.push(format!("新增 {} 张表：{}", added.len(), added.join("、")));
+    }
+    if !deleted.is_empty() {
+        parts.push(format!(
+            "删除 {} 张表：{}",
+            deleted.len(),
+            deleted.join("、")
+        ));
+    }
+    if !modified.is_empty() {
+        parts.push(format!(
+            "修改 {} 张表：{}",
+            modified.len(),
+            modified.join("、")
+        ));
+    }
+    if parts.is_empty() {
+        return "模型内容未变化".into();
+    }
+    truncate_description(&parts.join("；"))
+}
+
+fn truncate_description(value: &str) -> String {
+    if value.chars().count() <= 200 {
+        return value.to_string();
+    }
+    let mut truncated = value.chars().take(199).collect::<String>();
+    truncated.push('…');
+    truncated
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -156,18 +226,48 @@ impl VersionService {
                 "clientPublishId 必须为 1 到 128 个字符".into(),
             ));
         }
+        let description = normalize_version_description(request.description.as_deref())
+            .map_err(VersionError::Invalid)?;
+        let description = match description {
+            Some(value) => value,
+            None => {
+                let (previous, current) = self
+                    .repo
+                    .description_inputs(
+                        &user.id,
+                        session_id,
+                        DraftRef {
+                            id: request.expected_draft_id,
+                            revision: request.expected_draft_revision,
+                        },
+                    )
+                    .await?;
+                let previous = previous
+                    .iter()
+                    .map(|(name, hash)| (name.as_str(), hash.as_str()))
+                    .collect::<Vec<_>>();
+                let current = current
+                    .iter()
+                    .map(|(name, hash)| (name.as_str(), hash.as_str()))
+                    .collect::<Vec<_>>();
+                default_version_description(&previous, &current)
+            }
+        };
         let result = self
             .repo
             .publish(
                 &user.id,
                 session_id,
-                DraftRef {
-                    id: request.expected_draft_id,
-                    revision: request.expected_draft_revision,
+                PublishCommand {
+                    expected: DraftRef {
+                        id: request.expected_draft_id,
+                        revision: request.expected_draft_revision,
+                    },
+                    client_publish_id: request.client_publish_id,
+                    description,
+                    engine_contract: ENGINE_CONTRACT_VERSION.into(),
+                    now_ms: now_ms(),
                 },
-                request.client_publish_id,
-                ENGINE_CONTRACT_VERSION.into(),
-                now_ms(),
             )
             .await?;
         for artifact_id in result.release_artifact_ids {

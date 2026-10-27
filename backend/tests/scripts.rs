@@ -83,6 +83,7 @@ async fn publish_canonical_model(
                 expected_draft_id: draft.id,
                 expected_draft_revision: draft.revision,
                 client_publish_id: "publish-script-canonical".into(),
+                description: None,
             },
         )
         .await

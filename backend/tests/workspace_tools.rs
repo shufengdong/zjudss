@@ -204,6 +204,7 @@ async fn a_new_draft_copies_the_active_version_and_replaces_only_selected_tables
                 expected_draft_id: with_line.id,
                 expected_draft_revision: with_line.revision,
                 client_publish_id: "publish-two-tables".into(),
+                description: None,
             },
         )
         .await
@@ -309,6 +310,7 @@ async fn plan_study_preserves_explicit_newton_and_issues_request_local_ready_ids
                 expected_draft_id: source.id,
                 expected_draft_revision: source.revision,
                 client_publish_id: "publish-ready-study".into(),
+                description: None,
             },
         )
         .await
@@ -424,6 +426,7 @@ async fn create_script_requires_a_matching_fresh_plan_for_governed_agent_calls()
                 expected_draft_id: source.id,
                 expected_draft_revision: source.revision,
                 client_publish_id: "publish-proof-model".into(),
+                description: None,
             },
         )
         .await
@@ -578,6 +581,7 @@ async fn create_script_requires_a_matching_fresh_plan_for_governed_agent_calls()
                 expected_draft_id: changed.id,
                 expected_draft_revision: changed.revision,
                 client_publish_id: "publish-changed-proof-model".into(),
+                description: None,
             },
         )
         .await
@@ -715,6 +719,7 @@ async fn read_model_dataframe_reads_active_and_exact_draft_without_paths() {
                 expected_draft_id: initial.id,
                 expected_draft_revision: initial.revision,
                 client_publish_id: "publish-read-active".into(),
+                description: None,
             },
         )
         .await
@@ -922,6 +927,7 @@ async fn agent_reads_unique_old_value_before_modify_model_advances_only_the_draf
                 expected_draft_id: draft.id,
                 expected_draft_revision: draft.revision,
                 client_publish_id: "publish-modify-source".into(),
+                description: None,
             },
         )
         .await

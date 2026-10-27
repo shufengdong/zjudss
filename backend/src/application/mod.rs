@@ -76,7 +76,7 @@ pub use scripts::{
 pub use study_planning::StudyPlanningService;
 pub use versions::{
     ActivateVersionRequest, PublishDraftRequest, PublishedVersion, VersionDeletionPreview,
-    VersionError, VersionService,
+    VersionError, VersionService, default_version_description, normalize_version_description,
 };
 pub fn canonical_json(value: &serde_json::Value) -> String {
     serde_json::to_string(value).expect("JSON value is serializable")

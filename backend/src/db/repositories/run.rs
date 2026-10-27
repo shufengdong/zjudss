@@ -132,7 +132,7 @@ impl RunRepo {
                     .optional()?
                 {
                     if existing.script_resource_id != request.script_id
-                        || existing.model_version_id != request.model_version_id
+                        || existing.model_version_id != Some(request.model_version_id)
                     {
                         return Err(RunRepoError::IdempotencyConflict);
                     }
@@ -300,6 +300,9 @@ impl RunRepo {
         let version_id = run.model_version_id;
         let frames = tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
+            let Some(version_id) = version_id else {
+                return Ok(Vec::new());
+            };
             diesel::sql_query(
                 "SELECT table_name,artifact_id,content_hash FROM model_dataframes \
                  WHERE version_id=?1 ORDER BY table_name",

@@ -29,6 +29,8 @@ pub struct VersionRow {
     #[diesel(sql_type = Integer)]
     pub workspace_id: i32,
     #[diesel(sql_type = Text)]
+    pub description: String,
+    #[diesel(sql_type = Text)]
     pub content_hash: String,
     #[diesel(sql_type = Text)]
     pub source_summary_json: String,
@@ -131,6 +133,15 @@ pub struct PublishResult {
     pub release_artifact_ids: Vec<i32>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PublishCommand {
+    pub expected: DraftRef,
+    pub client_publish_id: String,
+    pub description: String,
+    pub engine_contract: String,
+    pub now_ms: i64,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeletionImpact {
@@ -178,6 +189,51 @@ pub struct VersionRepo {
 impl VersionRepo {
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
+    }
+
+    pub async fn description_inputs(
+        &self,
+        user: &UserId,
+        session_id: i32,
+        expected: DraftRef,
+    ) -> Result<(Vec<(String, String)>, Vec<(String, String)>), VersionRepoError> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            let workspace = load_workspace_by_session(&mut conn, &user, session_id)?;
+            let draft = schema::workspace_drafts::table
+                .filter(schema::workspace_drafts::workspace_id.eq(workspace.id))
+                .first::<WorkspaceDraft>(&mut conn)
+                .optional()?
+                .ok_or(VersionRepoError::DraftRequired)?;
+            if draft.id != expected.id || draft.revision != expected.revision {
+                return Err(VersionRepoError::DraftConflict);
+            }
+            let current = schema::draft_dataframes::table
+                .filter(schema::draft_dataframes::draft_id.eq(draft.id))
+                .order(schema::draft_dataframes::table_name.asc())
+                .load::<DraftDataframe>(&mut conn)?;
+            let previous = match draft.base_version_id {
+                Some(version_id) => diesel::sql_query(
+                    "SELECT * FROM model_dataframes WHERE version_id=?1 ORDER BY table_name",
+                )
+                .bind::<Integer, _>(version_id)
+                .load::<VersionDataframeRow>(&mut conn)?,
+                None => Vec::new(),
+            };
+            let previous = previous
+                .iter()
+                .map(|f| (f.table_name.clone(), f.content_hash.clone()))
+                .collect::<Vec<_>>();
+            let current = current
+                .iter()
+                .map(|f| (f.table_name.clone(), f.content_hash.clone()))
+                .collect::<Vec<_>>();
+            Ok((previous, current))
+        })
+        .await
+        .map_err(|error| VersionRepoError::Repository(RepoError::Join(error)))?
     }
 
     pub async fn find_version_dataframe(
@@ -365,13 +421,17 @@ impl VersionRepo {
         &self,
         user: &UserId,
         session_id: i32,
-        expected: DraftRef,
-        client_publish_id: String,
-        engine_contract: String,
-        now_ms: i64,
+        command: PublishCommand,
     ) -> Result<PublishResult, VersionRepoError> {
         let pool = self.pool.clone();
         let user = user.0.clone();
+        let PublishCommand {
+            expected,
+            client_publish_id,
+            description,
+            engine_contract,
+            now_ms,
+        } = command;
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.immediate_transaction::<PublishResult, VersionRepoError, _>(|conn| {
@@ -397,8 +457,8 @@ impl VersionRepo {
                     (version.id, true, frames.iter().map(|frame| frame.artifact_id).collect())
                 } else {
                     let summary = serde_json::json!({"draftId":draft.id,"draftRevision":draft.revision,"tables":frames.iter().map(|frame| &frame.table_name).collect::<Vec<_>>()}).to_string();
-                    diesel::sql_query("INSERT INTO model_versions(workspace_id,content_hash,source_summary_json,engine_contract_version,created_at_ms) VALUES(?1,?2,?3,?4,?5)")
-                        .bind::<Integer,_>(workspace.id).bind::<Text,_>(&content_hash).bind::<Text,_>(summary).bind::<Text,_>(&engine_contract).bind::<BigInt,_>(now_ms).execute(conn)?;
+                    diesel::sql_query("INSERT INTO model_versions(workspace_id,description,content_hash,source_summary_json,engine_contract_version,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6)")
+                        .bind::<Integer,_>(workspace.id).bind::<Text,_>(&description).bind::<Text,_>(&content_hash).bind::<Text,_>(summary).bind::<Text,_>(&engine_contract).bind::<BigInt,_>(now_ms).execute(conn)?;
                     let version_id = last_id(conn)?;
                     for frame in &frames {
                         diesel::sql_query("INSERT INTO model_dataframes(version_id,table_name,artifact_id,schema_json,row_count,content_hash,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7)")
@@ -408,7 +468,6 @@ impl VersionRepo {
                 };
                 diesel::sql_query("UPDATE workspaces SET active_version_id=?1,updated_at_ms=?2 WHERE id=?3")
                     .bind::<Integer,_>(version_id).bind::<BigInt,_>(now_ms).bind::<Integer,_>(workspace.id).execute(conn)?;
-                clear_import_draft_references(conn, draft.id)?;
                 diesel::delete(schema::workspace_drafts::table.find(draft.id)).execute(conn)?;
                 diesel::sql_query("INSERT INTO publish_receipts(draft_id,draft_revision,client_publish_id,version_id,created_at_ms) VALUES(?1,?2,?3,?4,?5)")
                     .bind::<Integer,_>(draft.id).bind::<BigInt,_>(draft.revision).bind::<Text,_>(client_publish_id).bind::<Integer,_>(version_id).bind::<BigInt,_>(now_ms).execute(conn)?;
@@ -453,7 +512,6 @@ impl VersionRepo {
                                 .filter(schema::draft_dataframes::draft_id.eq(draft.id))
                                 .select(schema::draft_dataframes::artifact_id)
                                 .load(conn)?;
-                            clear_import_draft_references(conn, draft.id)?;
                             diesel::delete(schema::workspace_drafts::table.find(draft.id))
                                 .execute(conn)?;
                         }
@@ -661,18 +719,6 @@ fn ensure_artifacts_owned(
             return Err(VersionRepoError::Repository(RepoError::NotFound));
         }
     }
-    Ok(())
-}
-
-fn clear_import_draft_references(
-    conn: &mut SqliteConnection,
-    draft_id: i32,
-) -> Result<(), VersionRepoError> {
-    diesel::sql_query(
-        "UPDATE model_imports SET base_draft_id=NULL,base_draft_revision=NULL WHERE base_draft_id=?1",
-    )
-    .bind::<Integer, _>(draft_id)
-    .execute(conn)?;
     Ok(())
 }
 

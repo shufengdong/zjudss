@@ -12,6 +12,8 @@ diesel::table! {
         updated_at_ms -> BigInt,
         user_id -> Text,
         title_source -> Text,
+        deletion_status -> Text,
+        deleted_at_ms -> Nullable<BigInt>,
     }
 }
 
@@ -63,6 +65,7 @@ diesel::table! {
         warning_ratio -> Double,
         used_artifacts -> BigInt,
         used_bytes -> BigInt,
+        reserved_bytes -> BigInt,
         updated_at_ms -> BigInt,
     }
 }
@@ -219,6 +222,11 @@ diesel::table! {
         diagnostics_json -> Text,
         agent_bundle_version -> Nullable<Text>,
         agent_skill_refs_json -> Text,
+        managed_workflow_id -> Nullable<Integer>,
+        source_script_resource_id -> Nullable<Integer>,
+        frozen_contract_json -> Nullable<Text>,
+        engine_snapshot_id -> Nullable<Text>,
+        facade_contract_hash -> Nullable<Text>,
         created_at_ms -> BigInt,
     }
 }
@@ -227,8 +235,8 @@ diesel::table! {
     simulation_runs (id) {
         id -> Integer,
         session_id -> Integer,
-        model_version_id -> Integer,
-        model_content_hash -> Text,
+        model_version_id -> Nullable<Integer>,
+        model_content_hash -> Nullable<Text>,
         script_resource_id -> Integer,
         script_artifact_id -> Integer,
         script_content_hash -> Text,
@@ -238,6 +246,11 @@ diesel::table! {
         engine_contract_version -> Text,
         agent_bundle_version -> Nullable<Text>,
         agent_skill_refs_json -> Text,
+        script_message_id -> Nullable<Integer>,
+        managed_workflow_id -> Nullable<Integer>,
+        run_kind -> Text,
+        input_snapshot_json -> Text,
+        result_contract_json -> Nullable<Text>,
         exit_code -> Nullable<Integer>,
         error_json -> Nullable<Text>,
         created_at_ms -> BigInt,
@@ -277,6 +290,7 @@ diesel::table! {
     model_versions (id) {
         id -> Integer,
         workspace_id -> Integer,
+        description -> Text,
         content_hash -> Text,
         source_summary_json -> Text,
         engine_contract_version -> Text,
@@ -374,6 +388,285 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    engine_resource_snapshots (id) {
+        id -> Text,
+        engine_contract_version -> Text,
+        catalog_hash -> Text,
+        snapshot_json -> Text,
+        created_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    upload_batches (id) {
+        id -> Integer,
+        session_id -> Integer,
+        client_batch_id -> Text,
+        source_kind -> Text,
+        status -> Text,
+        model_publish_status -> Text,
+        resource_publish_status -> Text,
+        model_receipt_json -> Nullable<Text>,
+        resource_receipt_json -> Nullable<Text>,
+        model_diagnostics_json -> Text,
+        resource_diagnostics_json -> Text,
+        parse_settings_json -> Text,
+        diagnostics_json -> Text,
+        reserved_bytes -> BigInt,
+        expires_at_ms -> BigInt,
+        created_at_ms -> BigInt,
+        updated_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    upload_files (id) {
+        id -> Text,
+        batch_id -> Integer,
+        client_file_id -> Text,
+        file_name -> Text,
+        relative_path -> Nullable<Text>,
+        media_type -> Nullable<Text>,
+        staged_path -> Text,
+        size_bytes -> BigInt,
+        sha256 -> Text,
+        source_artifact_id -> Nullable<Integer>,
+        created_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    upload_candidates (id) {
+        id -> Text,
+        batch_id -> Integer,
+        file_id -> Text,
+        sheet_name -> Nullable<Text>,
+        display_name -> Text,
+        proposed_alias -> Nullable<Text>,
+        normalized_alias -> Nullable<Text>,
+        purpose -> Nullable<Text>,
+        inferred_schema_ref -> Nullable<Text>,
+        normalized_artifact_id -> Nullable<Integer>,
+        schema_json -> Nullable<Text>,
+        schema_hash -> Nullable<Text>,
+        row_count -> Nullable<BigInt>,
+        evidence_json -> Text,
+        selected -> Bool,
+        created_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    data_resources (id) {
+        id -> Text,
+        session_id -> Integer,
+        display_name -> Text,
+        alias -> Text,
+        normalized_alias -> Text,
+        status -> Text,
+        declared_schema_ref -> Nullable<Text>,
+        source_kind -> Text,
+        normalized_artifact_id -> Integer,
+        source_artifact_id -> Nullable<Integer>,
+        schema_json -> Text,
+        schema_hash -> Text,
+        row_count -> BigInt,
+        source_batch_id -> Nullable<Integer>,
+        source_model_version_id -> Nullable<Integer>,
+        replaced_by_resource_id -> Nullable<Text>,
+        lineage_json -> Text,
+        created_at_ms -> BigInt,
+        updated_at_ms -> BigInt,
+        deleted_at_ms -> Nullable<BigInt>,
+        tombstone_json -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    data_resource_deletion_previews (token_hash) {
+        token_hash -> Text,
+        user_id -> Text,
+        resource_id -> Text,
+        impact_hash -> Text,
+        impact_json -> Text,
+        expires_at_ms -> BigInt,
+        created_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    data_resource_replacement_previews (token_hash) {
+        token_hash -> Text,
+        user_id -> Text,
+        old_resource_id -> Text,
+        new_resource_id -> Text,
+        impact_hash -> Text,
+        impact_json -> Text,
+        expires_at_ms -> BigInt,
+        created_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    session_deletion_previews (token_hash) {
+        token_hash -> Text,
+        user_id -> Text,
+        session_id -> Integer,
+        impact_hash -> Text,
+        impact_json -> Text,
+        expires_at_ms -> BigInt,
+        created_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    run_deletion_previews (token_hash) {
+        token_hash -> Text,
+        user_id -> Text,
+        run_id -> Integer,
+        impact_hash -> Text,
+        impact_json -> Text,
+        expires_at_ms -> BigInt,
+        created_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    study_configurations (id) {
+        id -> Integer,
+        session_id -> Integer,
+        facade_id -> Text,
+        facade_hash -> Text,
+        engine_snapshot_id -> Text,
+        status -> Text,
+        revision -> BigInt,
+        intent_json -> Text,
+        confirmed_at_ms -> Nullable<BigInt>,
+        created_at_ms -> BigInt,
+        updated_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    study_input_bindings (configuration_id, input_name) {
+        configuration_id -> Integer,
+        input_name -> Text,
+        input_kind -> Text,
+        model_table_name -> Nullable<Text>,
+        resource_id -> Nullable<Text>,
+        mapping_json -> Nullable<Text>,
+        ordinal -> Integer,
+    }
+}
+
+diesel::table! {
+    study_struct_values (configuration_id, input_name) {
+        configuration_id -> Integer,
+        input_name -> Text,
+        values_json -> Text,
+        schema_ref -> Text,
+    }
+}
+
+diesel::table! {
+    study_result_selections (configuration_id, result_name) {
+        configuration_id -> Integer,
+        result_name -> Text,
+        ordinal -> Integer,
+    }
+}
+
+diesel::table! {
+    managed_workflows (id) {
+        id -> Integer,
+        session_id -> Integer,
+        configuration_id -> Nullable<Integer>,
+        configuration_revision -> Nullable<BigInt>,
+        source_workflow_id -> Nullable<Integer>,
+        status -> Text,
+        intent_json -> Text,
+        locked_contract_json -> Nullable<Text>,
+        input_diff_json -> Nullable<Text>,
+        engine_snapshot_id -> Nullable<Text>,
+        facade_contract_hash -> Nullable<Text>,
+        correction_budget -> Integer,
+        corrections_used -> Integer,
+        progress_message_id -> Nullable<Integer>,
+        final_script_resource_id -> Nullable<Integer>,
+        final_run_id -> Nullable<Integer>,
+        error_json -> Nullable<Text>,
+        created_at_ms -> BigInt,
+        updated_at_ms -> BigInt,
+        finished_at_ms -> Nullable<BigInt>,
+    }
+}
+
+diesel::table! {
+    workflow_input_snapshots (id) {
+        id -> Integer,
+        workflow_id -> Integer,
+        input_name -> Text,
+        input_kind -> Text,
+        resource_id -> Nullable<Text>,
+        model_version_id -> Nullable<Integer>,
+        artifact_id -> Nullable<Integer>,
+        input_alias -> Nullable<Text>,
+        schema_ref -> Nullable<Text>,
+        schema_hash -> Nullable<Text>,
+        content_hash -> Nullable<Text>,
+        snapshot_json -> Text,
+        created_at_ms -> BigInt,
+    }
+}
+
+diesel::table! {
+    workflow_attempts (id) {
+        id -> Integer,
+        workflow_id -> Integer,
+        attempt_number -> Integer,
+        parent_attempt_id -> Nullable<Integer>,
+        phase -> Text,
+        script_artifact_id -> Nullable<Integer>,
+        script_content_hash -> Nullable<Text>,
+        status -> Text,
+        exit_code -> Nullable<Integer>,
+        stderr_audit_artifact_id -> Nullable<Integer>,
+        stdout_audit_artifact_id -> Nullable<Integer>,
+        sanitized_stderr -> Nullable<Text>,
+        stderr_full_hash -> Nullable<Text>,
+        stderr_retained_hash -> Nullable<Text>,
+        stderr_sent_hash -> Nullable<Text>,
+        stderr_total_bytes -> Nullable<BigInt>,
+        stderr_sent_bytes -> Nullable<BigInt>,
+        stderr_truncated -> Bool,
+        stdout_full_hash -> Nullable<Text>,
+        stdout_retained_hash -> Nullable<Text>,
+        stdout_total_bytes -> Nullable<BigInt>,
+        stdout_truncated -> Bool,
+        result_diagnostics_json -> Nullable<Text>,
+        agent_bundle_version -> Nullable<Text>,
+        agent_skill_refs_json -> Text,
+        agent_model -> Nullable<Text>,
+        engine_snapshot_id -> Nullable<Text>,
+        created_at_ms -> BigInt,
+        started_at_ms -> Nullable<BigInt>,
+        finished_at_ms -> Nullable<BigInt>,
+    }
+}
+
+diesel::table! {
+    retry_previews (token_hash) {
+        token_hash -> Text,
+        user_id -> Text,
+        workflow_id -> Integer,
+        impact_hash -> Text,
+        impact_json -> Text,
+        expires_at_ms -> BigInt,
+        created_at_ms -> BigInt,
+    }
+}
+
 diesel::joinable!(sessions -> users (user_id));
 diesel::joinable!(users -> storage_scopes (storage_scope_id));
 diesel::joinable!(auth_sessions -> users (user_id));
@@ -415,4 +708,21 @@ diesel::allow_tables_to_appear_in_same_query!(
     dataset_views,
     run_comparisons,
     chat_search_documents,
+    engine_resource_snapshots,
+    upload_batches,
+    upload_files,
+    upload_candidates,
+    data_resources,
+    data_resource_deletion_previews,
+    data_resource_replacement_previews,
+    session_deletion_previews,
+    run_deletion_previews,
+    study_configurations,
+    study_input_bindings,
+    study_struct_values,
+    study_result_selections,
+    managed_workflows,
+    workflow_input_snapshots,
+    workflow_attempts,
+    retry_previews,
 );

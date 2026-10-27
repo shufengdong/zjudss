@@ -36,6 +36,9 @@ fn production_router_and_manifest_share_one_declaration() {
 fn contract_manifest_contains_all_public_enums() {
     let manifest = contract_manifest().expect("embedded contract manifest");
 
+    assert_eq!(manifest.version, "v4");
+    assert!(manifest.changes.is_empty());
+
     assert_eq!(
         manifest.message_types,
         [

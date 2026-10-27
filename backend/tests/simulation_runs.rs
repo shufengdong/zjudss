@@ -81,6 +81,7 @@ async fn setup(app: &TestApp) -> (zjudss::auth::CurrentUser, String, i32, String
                 expected_draft_id: draft.id,
                 expected_draft_revision: draft.revision,
                 client_publish_id: "run-version".into(),
+                description: None,
             },
         )
         .await
@@ -406,7 +407,7 @@ async fn only_explicit_click_route_creates_idempotent_frozen_runs_and_results() 
         .await
         .unwrap();
     assert_eq!(run.status, "succeeded", "{:?}", run.error_json);
-    assert_eq!(run.model_content_hash.len(), 64);
+    assert_eq!(run.model_content_hash.as_deref().map(str::len), Some(64));
     assert_eq!(run.script_content_hash.len(), 64);
     for path in [
         format!("/api/sessions/{session_id}/runs"),

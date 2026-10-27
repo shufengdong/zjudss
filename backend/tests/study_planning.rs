@@ -154,6 +154,7 @@ async fn publish_tables(
                 expected_draft_id: draft.id,
                 expected_draft_revision: draft.revision,
                 client_publish_id: format!("publish-study-{}", session.id),
+                description: None,
             },
         )
         .await
@@ -226,6 +227,7 @@ async fn planning_lists_every_missing_canonical_table_from_the_active_version() 
                 expected_draft_id: draft.id,
                 expected_draft_revision: draft.revision,
                 client_publish_id: "publish-incomplete-study".into(),
+                description: None,
             },
         )
         .await
@@ -320,6 +322,7 @@ async fn planning_skips_required_column_checks_for_zero_row_canonical_tables() {
                 expected_draft_id: draft.id,
                 expected_draft_revision: draft.revision,
                 client_publish_id: "publish-zero-row-model".into(),
+                description: None,
             },
         )
         .await

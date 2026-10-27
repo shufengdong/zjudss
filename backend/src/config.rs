@@ -18,16 +18,25 @@ pub struct RuntimeConfig {
     pub session_ttl: Duration,
     pub session_cookie_secure: bool,
     pub agent_max_concurrent_runs: usize,
-    pub agent_max_owner_runs: usize,
+    pub agent_max_user_runs: usize,
     pub agent_queue_capacity: usize,
     pub upload_single_file_limit_bytes: u64,
     pub upload_batch_limit_bytes: u64,
     pub archive_max_entries: usize,
     pub archive_max_expanded_bytes: u64,
     pub archive_max_compression_ratio: u64,
-    pub owner_artifact_limit: u64,
-    pub owner_storage_limit_bytes: u64,
+    pub upload_staging_ttl_hours: u64,
+    pub user_artifact_limit: u64,
+    pub user_storage_limit_bytes: u64,
     pub storage_warning_ratio: f64,
+    pub result_max_files: usize,
+    pub result_max_file_bytes: u64,
+    pub result_max_total_bytes: u64,
+    pub engine_process_output_max_bytes: u64,
+    pub script_repair_stderr_max_bytes: u64,
+    pub script_repair_max_attempts: usize,
+    pub agent_model_retry_max: usize,
+    pub tensoreval_timeout_ms: u64,
     pub agent_bundle_version: String,
 }
 
@@ -76,6 +85,18 @@ impl RuntimeConfig {
         values: BTreeMap<String, String>,
         test_sparrowzz_dir: Option<PathBuf>,
     ) -> Result<Self, ConfigError> {
+        for obsolete in [
+            "OWNER_ARTIFACT_LIMIT",
+            "OWNER_STORAGE_LIMIT_BYTES",
+            "AGENT_MAX_OWNER_RUNS",
+        ] {
+            if values.contains_key(obsolete) {
+                return Err(ConfigError::new(
+                    "config_obsolete_name",
+                    format!("{obsolete} 已由 V4 USER 配置名替代"),
+                ));
+            }
+        }
         let get = |name: &str| values.get(name).map(String::as_str);
         let bind_addr = get("BIND_ADDR")
             .unwrap_or("127.0.0.1:8080")
@@ -112,6 +133,26 @@ impl RuntimeConfig {
         );
         let session_cookie_secure = parse_bool(get("SESSION_COOKIE_SECURE").unwrap_or("false"))?;
 
+        let upload_single_file_limit_bytes =
+            positive_u64(&values, "UPLOAD_SINGLE_FILE_LIMIT_BYTES", 50 * MIB)?;
+        let upload_batch_limit_bytes =
+            positive_u64(&values, "UPLOAD_BATCH_LIMIT_BYTES", 500 * MIB)?;
+        if upload_batch_limit_bytes < upload_single_file_limit_bytes {
+            return Err(ConfigError::new(
+                "config_invalid_value",
+                "UPLOAD_BATCH_LIMIT_BYTES 不能小于 UPLOAD_SINGLE_FILE_LIMIT_BYTES",
+            ));
+        }
+        let result_max_file_bytes = positive_u64(&values, "RESULT_MAX_FILE_BYTES", 512 * MIB)?;
+        let result_max_total_bytes =
+            positive_u64(&values, "RESULT_MAX_TOTAL_BYTES", 2 * 1024 * MIB)?;
+        if result_max_total_bytes < result_max_file_bytes {
+            return Err(ConfigError::new(
+                "config_invalid_value",
+                "RESULT_MAX_TOTAL_BYTES 不能小于 RESULT_MAX_FILE_BYTES",
+            ));
+        }
+
         Ok(Self {
             bind_addr,
             database_url,
@@ -120,14 +161,10 @@ impl RuntimeConfig {
             session_ttl,
             session_cookie_secure,
             agent_max_concurrent_runs: positive_usize(&values, "AGENT_MAX_CONCURRENT_RUNS", 8)?,
-            agent_max_owner_runs: positive_usize(&values, "AGENT_MAX_OWNER_RUNS", 2)?,
+            agent_max_user_runs: positive_usize(&values, "AGENT_MAX_USER_RUNS", 2)?,
             agent_queue_capacity: positive_usize(&values, "AGENT_QUEUE_CAPACITY", 32)?,
-            upload_single_file_limit_bytes: positive_u64(
-                &values,
-                "UPLOAD_SINGLE_FILE_LIMIT_BYTES",
-                50 * MIB,
-            )?,
-            upload_batch_limit_bytes: positive_u64(&values, "UPLOAD_BATCH_LIMIT_BYTES", 500 * MIB)?,
+            upload_single_file_limit_bytes,
+            upload_batch_limit_bytes,
             archive_max_entries: positive_usize(&values, "ARCHIVE_MAX_ENTRIES", 1_000)?,
             archive_max_expanded_bytes: positive_u64(
                 &values,
@@ -139,13 +176,30 @@ impl RuntimeConfig {
                 "ARCHIVE_MAX_COMPRESSION_RATIO",
                 100,
             )?,
-            owner_artifact_limit: positive_u64(&values, "OWNER_ARTIFACT_LIMIT", 20_000)?,
-            owner_storage_limit_bytes: positive_u64(
+            upload_staging_ttl_hours: positive_u64(&values, "UPLOAD_STAGING_TTL_HOURS", 24)?,
+            user_artifact_limit: positive_u64(&values, "USER_ARTIFACT_LIMIT", 20_000)?,
+            user_storage_limit_bytes: positive_u64(
                 &values,
-                "OWNER_STORAGE_LIMIT_BYTES",
+                "USER_STORAGE_LIMIT_BYTES",
                 20 * 1024 * MIB,
             )?,
             storage_warning_ratio: ratio(&values, "STORAGE_WARNING_RATIO", 0.8)?,
+            result_max_files: positive_usize(&values, "RESULT_MAX_FILES", 100)?,
+            result_max_file_bytes,
+            result_max_total_bytes,
+            engine_process_output_max_bytes: positive_u64(
+                &values,
+                "ENGINE_PROCESS_OUTPUT_MAX_BYTES",
+                MIB,
+            )?,
+            script_repair_stderr_max_bytes: positive_u64(
+                &values,
+                "SCRIPT_REPAIR_STDERR_MAX_BYTES",
+                64 * 1024,
+            )?,
+            script_repair_max_attempts: positive_usize(&values, "SCRIPT_REPAIR_MAX_ATTEMPTS", 3)?,
+            agent_model_retry_max: positive_usize(&values, "AGENT_MODEL_RETRY_MAX", 2)?,
+            tensoreval_timeout_ms: positive_u64(&values, "TENSOREVAL_TIMEOUT_MS", 120_000)?,
             agent_bundle_version: get("AGENT_BUNDLE_VERSION").unwrap_or("v3.3.3").to_string(),
         })
     }
