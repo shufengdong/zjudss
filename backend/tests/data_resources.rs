@@ -208,10 +208,10 @@ async fn generic_dataframe_publishes_as_readable_resource_without_schema_ref() {
         .confirm_upload(
             &user,
             batch.id.parse().unwrap(),
-            decisions,
+            decisions.clone(),
             None,
             None,
-            Some("confirm-resource-1"),
+            "confirm-resource-1",
         )
         .await
         .unwrap();
@@ -240,10 +240,10 @@ async fn generic_dataframe_publishes_as_readable_resource_without_schema_ref() {
         .confirm_upload(
             &user,
             batch.id.parse().unwrap(),
-            vec![],
+            decisions,
             None,
             None,
-            Some("confirm-resource-1"),
+            "confirm-resource-1",
         )
         .await
         .unwrap();
@@ -257,7 +257,7 @@ async fn generic_dataframe_publishes_as_readable_resource_without_schema_ref() {
             vec![],
             None,
             None,
-            Some("different-operation"),
+            "different-operation",
         )
         .await
         .unwrap_err();
@@ -290,6 +290,43 @@ async fn deleting_one_session_keeps_deduplicated_original_owned_by_another_sessi
     )
     .await;
     assert_eq!(first.content_hash, second.content_hash);
+    let impact = app
+        .state
+        .session_repo
+        .preview_deletion(
+            &user.id,
+            first_session,
+            "0".repeat(64),
+            zjudss::application::now_ms() + 60_000,
+            zjudss::application::now_ms(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(impact.data_resource_count, 1);
+    app.state
+        .session_repo
+        .begin_delete(
+            &user.id,
+            first_session,
+            "0".repeat(64),
+            zjudss::application::now_ms(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        app.state
+            .data_resource_service
+            .get(&user, &first.id)
+            .await
+            .is_err()
+    );
+    assert!(
+        app.state
+            .data_resource_service
+            .update(&user, &first.id, Some("too late".into()), None)
+            .await
+            .is_err()
+    );
 
     let artifacts = app
         .state
@@ -363,13 +400,14 @@ async fn concurrent_confirmation_commits_each_original_reference_once() {
         display_name: None,
         alias: Some("concurrent_source".into()),
     }];
+    let replay_decisions = decisions.clone();
     let first = app.state.data_resource_service.confirm_upload(
         &user,
         batch.id.parse().unwrap(),
         decisions.clone(),
         None,
         None,
-        Some("same-operation"),
+        "same-operation",
     );
     let second = app.state.data_resource_service.confirm_upload(
         &user,
@@ -377,11 +415,46 @@ async fn concurrent_confirmation_commits_each_original_reference_once() {
         decisions,
         None,
         None,
-        Some("same-operation"),
+        "same-operation",
     );
     let (first, second) = tokio::join!(first, second);
     assert_eq!(first.unwrap().resources.len(), 1);
     assert_eq!(second.unwrap().resources.len(), 1);
+
+    diesel::sql_query("UPDATE upload_batches SET expires_at_ms=0 WHERE id=?1")
+        .bind::<diesel::sql_types::Integer, _>(batch.id.parse::<i32>().unwrap())
+        .execute(&mut app.pool.get().unwrap())
+        .unwrap();
+    let revision_after_expiry = zjudss::db::repositories::UploadRepo::new(app.pool.clone())
+        .find(&user.id, batch.id.parse().unwrap())
+        .await
+        .unwrap()
+        .batch
+        .revision;
+    let replay = app
+        .state
+        .data_resource_service
+        .confirm_upload(
+            &user,
+            batch.id.parse().unwrap(),
+            replay_decisions,
+            None,
+            None,
+            "same-operation",
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.status, "confirmed");
+    assert_eq!(replay.resources.len(), 1);
+    assert_eq!(
+        zjudss::db::repositories::UploadRepo::new(app.pool.clone())
+            .find(&user.id, batch.id.parse().unwrap())
+            .await
+            .unwrap()
+            .batch
+            .revision,
+        revision_after_expiry
+    );
 
     #[derive(diesel::QueryableByName)]
     struct RefCount {
@@ -396,6 +469,65 @@ async fn concurrent_confirmation_commits_each_original_reference_once() {
     .get_result::<RefCount>(&mut conn)
     .unwrap();
     assert_eq!(excessive.count, 0);
+}
+
+#[tokio::test]
+async fn concurrent_same_operation_with_different_decisions_never_drifts_inputs() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session_id = session(&app, &user, "concurrent-confirm-payload").await;
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            &user,
+            session_id,
+            "concurrent-confirm-payload".into(),
+            UploadSourceKind::Upload,
+            vec![csv(&app, "source", "source.csv", b"time,value\n0,1\n")],
+        )
+        .await
+        .unwrap();
+    let decision = |alias: &str| {
+        vec![CandidateDecision {
+            candidate_id: batch.candidates[0].id.clone(),
+            purpose: CandidatePurpose::DataResource,
+            selected: true,
+            table_name: None,
+            display_name: None,
+            alias: Some(alias.into()),
+        }]
+    };
+    let first = app.state.data_resource_service.confirm_upload(
+        &user,
+        batch.id.parse().unwrap(),
+        decision("first_payload"),
+        None,
+        None,
+        "shared-operation",
+    );
+    let second = app.state.data_resource_service.confirm_upload(
+        &user,
+        batch.id.parse().unwrap(),
+        decision("second_payload"),
+        None,
+        None,
+        "shared-operation",
+    );
+    let (first, second) = tokio::join!(first, second);
+    let outcomes = [first, second];
+    assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+    let failure = outcomes
+        .iter()
+        .find_map(|result| result.as_ref().err())
+        .unwrap();
+    assert_eq!(failure.code(), "idempotency_conflict");
+    let published = outcomes.into_iter().find_map(Result::ok).unwrap().resources;
+    assert_eq!(published.len(), 1);
+    assert!(matches!(
+        published[0].alias.as_str(),
+        "first_payload" | "second_payload"
+    ));
 }
 
 #[tokio::test]
@@ -431,7 +563,7 @@ async fn confirm_and_discard_race_never_revives_a_terminal_batch() {
         decisions,
         None,
         None,
-        Some("confirm-discard-race"),
+        "confirm-discard-race",
     );
     let discard = app.state.upload_batch_service.discard(&user, batch_id);
     let _ = tokio::join!(confirm, discard);
@@ -457,6 +589,136 @@ async fn confirm_and_discard_race_never_revives_a_terminal_batch() {
     .get_result::<common::CountRow>(&mut conn)
     .unwrap();
     assert_eq!(owned_candidate_artifacts.count, 0);
+    let published_resources = diesel::sql_query(
+        "SELECT count(*) count FROM data_resources WHERE source_batch_id=?1 AND status IN ('live','needs_rename')",
+    )
+    .bind::<diesel::sql_types::Integer, _>(batch_id)
+    .get_result::<common::CountRow>(&mut conn)
+    .unwrap();
+    match final_batch.status {
+        zjudss::application::UploadBatchStatus::Confirmed => {
+            assert_eq!(published_resources.count, 1)
+        }
+        zjudss::application::UploadBatchStatus::Discarded => {
+            assert_eq!(published_resources.count, 0)
+        }
+        other => panic!("unexpected terminal status: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn pending_upload_invalidates_a_session_deletion_preview() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session_id = session(&app, &user, "stale-session-preview").await;
+    let token_hash = "3".repeat(64);
+    app.state
+        .session_repo
+        .preview_deletion(
+            &user.id,
+            session_id,
+            token_hash.clone(),
+            zjudss::application::now_ms() + 60_000,
+            zjudss::application::now_ms(),
+        )
+        .await
+        .unwrap();
+    app.state
+        .upload_batch_service
+        .accept(
+            &user,
+            session_id,
+            "after-preview".into(),
+            UploadSourceKind::Upload,
+            vec![csv(&app, "pending", "pending.csv", b"x\n1\n")],
+        )
+        .await
+        .unwrap();
+    let error = app
+        .state
+        .session_repo
+        .begin_delete(
+            &user.id,
+            session_id,
+            token_hash,
+            zjudss::application::now_ms(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("deletion_impact_changed"));
+}
+
+#[tokio::test]
+async fn pending_upload_state_change_invalidates_preview_without_count_or_size_change() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session_id = session(&app, &user, "pending-state-preview").await;
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            &user,
+            session_id,
+            "pending-state-preview".into(),
+            UploadSourceKind::Upload,
+            vec![csv(&app, "pending", "pending.csv", b"x\n1\n")],
+        )
+        .await
+        .unwrap();
+    let token_hash = "4".repeat(64);
+    let before = app
+        .state
+        .session_repo
+        .preview_deletion(
+            &user.id,
+            session_id,
+            token_hash.clone(),
+            zjudss::application::now_ms() + 60_000,
+            zjudss::application::now_ms(),
+        )
+        .await
+        .unwrap();
+    app.state
+        .upload_batch_service
+        .update_candidates(
+            &user,
+            batch.id.parse().unwrap(),
+            vec![CandidateDecision {
+                candidate_id: batch.candidates[0].id.clone(),
+                purpose: CandidatePurpose::Skip,
+                selected: false,
+                table_name: None,
+                display_name: None,
+                alias: None,
+            }],
+        )
+        .await
+        .unwrap();
+    let after = app
+        .state
+        .session_repo
+        .preview_deletion(
+            &user.id,
+            session_id,
+            "5".repeat(64),
+            zjudss::application::now_ms() + 60_000,
+            zjudss::application::now_ms(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(before.logical_bytes, after.logical_bytes);
+    let error = app
+        .state
+        .session_repo
+        .begin_delete(
+            &user.id,
+            session_id,
+            token_hash,
+            zjudss::application::now_ms(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("deletion_impact_changed"));
 }
 
 #[tokio::test]
@@ -1065,6 +1327,33 @@ async fn foreign_resource_is_hidden_and_deletion_requires_current_impact_token()
             .await
             .is_err()
     );
+    let token_hash = "4".repeat(64);
+    app.state
+        .session_repo
+        .preview_deletion(
+            &user.id,
+            session_id,
+            token_hash.clone(),
+            zjudss::application::now_ms() + 60_000,
+            zjudss::application::now_ms(),
+        )
+        .await
+        .unwrap();
+    app.state
+        .session_repo
+        .begin_delete(
+            &user.id,
+            session_id,
+            token_hash,
+            zjudss::application::now_ms(),
+        )
+        .await
+        .unwrap();
+    app.state
+        .session_repo
+        .delete(&user.id, session_id)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -1709,6 +1998,101 @@ async fn repeated_default_alias_gets_a_stable_server_fallback() {
 }
 
 #[tokio::test]
+async fn explicit_alias_conflict_replay_keeps_the_frozen_failure() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session_id = session(&app, &user, "explicit-alias-replay").await;
+    publish_csv_resource(
+        &app,
+        &user,
+        session_id,
+        "existing-explicit-alias",
+        "reserved_alias",
+        b"x\n1\n",
+    )
+    .await;
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            &user,
+            session_id,
+            "conflicting-explicit-alias".into(),
+            UploadSourceKind::Upload,
+            vec![csv(&app, "conflict", "other.csv", b"x\n2\n")],
+        )
+        .await
+        .unwrap();
+    let decision = CandidateDecision {
+        candidate_id: batch.candidates[0].id.clone(),
+        purpose: CandidatePurpose::DataResource,
+        selected: true,
+        table_name: None,
+        display_name: None,
+        alias: Some("reserved_alias".into()),
+    };
+    let batch_id = batch.id.parse().unwrap();
+    let first = app
+        .state
+        .data_resource_service
+        .confirm_upload(
+            &user,
+            batch_id,
+            vec![decision.clone()],
+            None,
+            None,
+            "explicit-alias-operation",
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.resource_status, "failed");
+    assert_eq!(first.diagnostics[0]["code"], "resource_alias_conflict");
+    let upload_repo = zjudss::db::repositories::UploadRepo::new(app.pool.clone());
+    let revision_after_first = upload_repo
+        .find(&user.id, batch_id)
+        .await
+        .unwrap()
+        .batch
+        .revision;
+
+    let replay = app
+        .state
+        .data_resource_service
+        .confirm_upload(
+            &user,
+            batch_id,
+            vec![decision],
+            None,
+            None,
+            "explicit-alias-operation",
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.resource_status, "failed");
+    assert_eq!(replay.diagnostics[0]["code"], "resource_alias_conflict");
+    assert_eq!(
+        upload_repo
+            .find(&user.id, batch_id)
+            .await
+            .unwrap()
+            .batch
+            .revision,
+        revision_after_first,
+        "an exact operation replay must not execute the child transaction again"
+    );
+    assert_eq!(
+        app.state
+            .data_resource_service
+            .list(&user, session_id, None, 20)
+            .await
+            .unwrap()
+            .resources
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn para_contract_cannot_be_reclassified_as_a_renamed_model_table() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
@@ -1806,7 +2190,7 @@ async fn unresolved_upload_cannot_be_confirmed_or_lose_its_reservation() {
             vec![],
             None,
             None,
-            Some("must-not-claim"),
+            "must-not-claim",
         )
         .await
         .unwrap_err();
@@ -1882,7 +2266,7 @@ async fn partial_confirmation_releases_completed_files_and_freezes_published_dec
                 id: i32::MAX,
                 revision: 1,
             }),
-            Some("partial-settlement"),
+            "partial-settlement",
         )
         .await
         .unwrap();
@@ -1915,7 +2299,7 @@ async fn partial_confirmation_releases_completed_files_and_freezes_published_dec
             changed,
             None,
             None,
-            Some("partial-settlement"),
+            "partial-settlement-retry",
         )
         .await
         .unwrap_err();
@@ -1939,7 +2323,8 @@ async fn discarding_a_failed_resource_publish_releases_original_and_normalized_a
         )
         .await
         .unwrap();
-    app.state
+    let first_confirmation = app
+        .state
         .data_resource_service
         .publish_candidates(
             &user,
@@ -1955,6 +2340,7 @@ async fn discarding_a_failed_resource_publish_releases_original_and_normalized_a
         )
         .await
         .unwrap();
+    assert_eq!(first_confirmation.resources[0].alias, "occupied");
     let baseline = app
         .state
         .artifact_service
@@ -1976,7 +2362,7 @@ async fn discarding_a_failed_resource_publish_releases_original_and_normalized_a
     let confirmation = app
         .state
         .data_resource_service
-        .publish_candidates(
+        .confirm_upload(
             &user,
             failed.id.parse().unwrap(),
             vec![CandidateDecision {
@@ -1987,15 +2373,27 @@ async fn discarding_a_failed_resource_publish_releases_original_and_normalized_a
                 display_name: None,
                 alias: Some("occupied".into()),
             }],
+            None,
+            None,
+            "cleanup-failed-confirm",
         )
         .await
         .unwrap();
     assert_eq!(confirmation.resource_status, "failed");
-    app.state
-        .upload_batch_service
-        .discard(&user, failed.id.parse().unwrap())
+    let cancelled = app
+        .state
+        .data_resource_service
+        .confirm_upload(
+            &user,
+            failed.id.parse().unwrap(),
+            vec![],
+            Some(ReplacementAction::Cancel),
+            None,
+            "cleanup-failed-confirm",
+        )
         .await
         .unwrap();
+    assert_eq!(cancelled.status, "discarded");
     let after = app
         .state
         .artifact_service

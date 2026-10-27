@@ -174,6 +174,58 @@ async fn chinese_substring_short_query_filters_delete_and_scope_are_bounded() {
 }
 
 #[tokio::test]
+async fn durable_operation_card_summaries_survive_fts_rebuild() {
+    let app = TestApp::spawn().await;
+    let owner = p("instance");
+    let session = app
+        .state
+        .session_repo
+        .create(&owner.id, "operation search", 1)
+        .await
+        .unwrap();
+    let card = app
+        .state
+        .message_repo
+        .upsert_operation(
+            &owner.id,
+            "configuration-1".into(),
+            NewMessage {
+                session_id: session.id,
+                run_id: None,
+                role: "tool".into(),
+                kind: "study-config".into(),
+                content: "研究配置等待确认".into(),
+                payload_json: Some("{}".into()),
+                created_at_ms: 2,
+            },
+        )
+        .await
+        .unwrap();
+    app.state.history_service.rebuild_index().await.unwrap();
+    let hits = app
+        .state
+        .history_service
+        .search_sessions(
+            &owner,
+            "配置等待确认".into(),
+            SearchFilters {
+                script_name: None,
+                status: None,
+                from_ms: None,
+                to_ms: None,
+            },
+            20,
+        )
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(
+        hits[0].message_id.as_deref(),
+        Some(card.id.to_string().as_str())
+    );
+}
+
+#[tokio::test]
 async fn messages_support_latest_before_and_around_windows_with_hard_limits() {
     let app = TestApp::spawn().await;
     let owner = p("instance");
@@ -209,6 +261,8 @@ async fn messages_support_latest_before_and_around_windows_with_hard_limits() {
         .await
         .unwrap();
     assert!(around.iter().any(|m| m.id == ids[40]));
+    assert_eq!(around.len(), 11);
+    assert_eq!(around[5].id, ids[40]);
     assert!(
         app.state
             .history_service
@@ -218,4 +272,23 @@ async fn messages_support_latest_before_and_around_windows_with_hard_limits() {
             .code
             == "history_page_invalid"
     );
+
+    let foreign_session = app
+        .state
+        .session_repo
+        .create(&owner.id, "foreign page", 100)
+        .await
+        .unwrap();
+    let foreign_id = message(&app, &owner, foreign_session.id, "foreign", 101).await;
+    for target in [foreign_id, i32::MAX] {
+        assert_eq!(
+            app.state
+                .history_service
+                .list_messages(&owner, s.id, None, Some(target), 11)
+                .await
+                .unwrap_err()
+                .code,
+            "not_found"
+        );
+    }
 }

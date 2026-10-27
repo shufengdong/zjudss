@@ -252,7 +252,7 @@ impl VersionRepo {
                  JOIN workspaces w ON w.id=v.workspace_id \
                  JOIN sessions s ON s.id=w.session_id \
                  JOIN artifacts a ON a.id=md.artifact_id \
-                 WHERE md.id=?1 AND s.user_id=?2 AND v.deleted_at_ms IS NULL",
+                 WHERE md.id=?1 AND s.user_id=?2 AND s.deletion_status='live' AND v.deleted_at_ms IS NULL",
             )
             .bind::<Integer, _>(dataframe_id)
             .bind::<Text, _>(user)
@@ -282,7 +282,7 @@ impl VersionRepo {
                  JOIN workspaces w ON w.id=wd.workspace_id \
                  JOIN sessions s ON s.id=w.session_id \
                  JOIN artifacts a ON a.id=dd.artifact_id \
-                 WHERE dd.id=?1 AND s.user_id=?2",
+                 WHERE dd.id=?1 AND s.user_id=?2 AND s.deletion_status='live'",
             )
             .bind::<Integer, _>(dataframe_id)
             .bind::<Text, _>(user)
@@ -646,6 +646,7 @@ fn ensure_session(
     let found = schema::sessions::table
         .filter(schema::sessions::id.eq(session_id))
         .filter(schema::sessions::user_id.eq(user))
+        .filter(schema::sessions::deletion_status.eq("live"))
         .select(schema::sessions::id)
         .first::<i32>(conn)
         .optional()?;
@@ -659,7 +660,7 @@ fn load_workspace_by_session(
     user: &str,
     session_id: i32,
 ) -> Result<WorkspaceRow, VersionRepoError> {
-    diesel::sql_query("SELECT w.id,w.session_id,w.active_version_id,w.created_at_ms,w.updated_at_ms FROM workspaces w JOIN sessions s ON s.id=w.session_id WHERE w.session_id=?1 AND s.user_id=?2")
+    diesel::sql_query("SELECT w.id,w.session_id,w.active_version_id,w.created_at_ms,w.updated_at_ms FROM workspaces w JOIN sessions s ON s.id=w.session_id WHERE w.session_id=?1 AND s.user_id=?2 AND s.deletion_status='live'")
         .bind::<Integer,_>(session_id).bind::<Text,_>(user).get_result(conn).optional()?.ok_or(VersionRepoError::Repository(RepoError::NotFound))
 }
 
@@ -668,7 +669,7 @@ fn load_workspace_by_id(
     user: &str,
     workspace_id: i32,
 ) -> Result<WorkspaceRow, VersionRepoError> {
-    diesel::sql_query("SELECT w.id,w.session_id,w.active_version_id,w.created_at_ms,w.updated_at_ms FROM workspaces w JOIN sessions s ON s.id=w.session_id WHERE w.id=?1 AND s.user_id=?2")
+    diesel::sql_query("SELECT w.id,w.session_id,w.active_version_id,w.created_at_ms,w.updated_at_ms FROM workspaces w JOIN sessions s ON s.id=w.session_id WHERE w.id=?1 AND s.user_id=?2 AND s.deletion_status='live'")
         .bind::<Integer,_>(workspace_id).bind::<Text,_>(user).get_result(conn).optional()?.ok_or(VersionRepoError::Repository(RepoError::NotFound))
 }
 
@@ -683,7 +684,7 @@ fn scoped_version(
     } else {
         ""
     };
-    diesel::sql_query(format!("SELECT v.* FROM model_versions v JOIN workspaces w ON w.id=v.workspace_id JOIN sessions s ON s.id=w.session_id WHERE v.id=?1 AND s.user_id=?2{suffix}"))
+    diesel::sql_query(format!("SELECT v.* FROM model_versions v JOIN workspaces w ON w.id=v.workspace_id JOIN sessions s ON s.id=w.session_id WHERE v.id=?1 AND s.user_id=?2 AND s.deletion_status='live'{suffix}"))
         .bind::<Integer,_>(version_id).bind::<Text,_>(user).get_result(conn).optional()?.ok_or(VersionRepoError::Repository(RepoError::NotFound))
 }
 

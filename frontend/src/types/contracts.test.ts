@@ -8,6 +8,7 @@ describe('frontend public enum contracts', () => {
     expect(values).toEqual([
       'user', 'assistant', 'tool-call', 'progress',
       'result', 'attachment', 'model-status', 'comparison', 'script',
+      'upload-batch', 'study-config', 'workflow-progress',
     ])
   })
 

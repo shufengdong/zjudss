@@ -56,6 +56,7 @@ pub struct ChatService {
     artifact_service: crate::application::ArtifactService,
     study_configurations: crate::application::StudyConfigurationService,
     data_resources: crate::application::DataResourceService,
+    session_cancellations: crate::application::SessionCancellationRegistry,
 }
 
 impl ChatService {
@@ -82,11 +83,18 @@ impl ChatService {
             artifact_service: state.artifact_service.clone(),
             study_configurations: state.study_configuration_service.clone(),
             data_resources: state.data_resource_service.clone(),
+            session_cancellations: state.session_cancellations.clone(),
         }
     }
 
     /// 触发一次对话。`prompt_id` 是刚落库的 user 消息 id，历史只取比它更早的消息。
     pub async fn run(&self, session_id: i32, prompt_id: i32, prompt: String) {
+        let mut cancelled = self
+            .session_cancellations
+            .subscribe(&self.principal.id, session_id);
+        if *cancelled.borrow() {
+            return;
+        }
         let writer = EventWriter::new(
             self.principal.id.clone(),
             session_id,
@@ -147,14 +155,27 @@ impl ChatService {
             .max_turns(MAX_TURNS)
             .run_channel();
 
-        let handle = tokio::spawn(future);
+        let mut handle = tokio::spawn(future);
 
         // 5. 消费事件流 → 映射 → 落库 + 发布。
-        let outcome = self.consume(events, &writer).await;
+        let outcome = tokio::select! {
+            _ = cancelled.changed() => {
+                handle.abort();
+                return;
+            }
+            outcome = self.consume(events, &writer) => outcome,
+        };
 
         // 6. 等 agent future 收尾。create_script 已成功即完成本轮领域操作，
         // 后续生成收尾文本的 provider 错误不得覆盖已持久化的成功结果。
-        let failure_reply = match handle.await {
+        let agent_result = tokio::select! {
+            _ = cancelled.changed() => {
+                handle.abort();
+                return;
+            }
+            result = &mut handle => result,
+        };
+        let failure_reply = match agent_result {
             Ok(Ok(_response)) => None,
             Ok(Err(PromptError::MaxTurns { max_turns, .. })) => {
                 eprintln!(

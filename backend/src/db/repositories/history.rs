@@ -19,6 +19,7 @@ pub struct SearchFilters {
 #[serde(rename_all = "camelCase")]
 pub struct HistoryHit {
     pub session_id: String,
+    pub message_id: Option<String>,
     pub title: String,
     pub updated_at_ms: i64,
     pub score: f64,
@@ -28,6 +29,8 @@ pub struct HistoryHit {
 struct HitRow {
     #[diesel(sql_type = Integer)]
     session_id: i32,
+    #[diesel(sql_type = Nullable<Integer>)]
+    message_id: Option<i32>,
     #[diesel(sql_type = Text)]
     title: String,
     #[diesel(sql_type = BigInt)]
@@ -132,6 +135,7 @@ impl HistoryRepo {
             schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
                 .filter(schema::sessions::user_id.eq(scope.0))
+                .filter(schema::sessions::deletion_status.eq("live"))
                 .select(schema::sessions::id)
                 .first::<i32>(&mut c)
                 .optional()?
@@ -141,6 +145,15 @@ impl HistoryRepo {
                 return Err(RepoError::InvalidState(
                     "beforeId 与 aroundId 不能同时使用".into(),
                 ));
+            }
+            if let Some(id) = around {
+                schema::messages::table
+                    .filter(schema::messages::id.eq(id))
+                    .filter(schema::messages::session_id.eq(session_id))
+                    .select(schema::messages::id)
+                    .first::<i32>(&mut c)
+                    .optional()?
+                    .ok_or(RepoError::NotFound)?;
             }
             let mut rows = if let Some(id) = around {
                 schema::messages::table
@@ -200,6 +213,7 @@ impl From<HitRow> for HistoryHit {
     fn from(row: HitRow) -> Self {
         Self {
             session_id: row.session_id.to_string(),
+            message_id: row.message_id.map(|id| id.to_string()),
             title: row.title,
             updated_at_ms: row.updated_at_ms,
             score: row.score,
@@ -210,6 +224,7 @@ impl From<HitRow> for HistoryHit {
 
 const SEARCH_LIKE_SQL: &str = r#"
     SELECT s.id AS session_id,
+           CASE WHEN d.source_kind='message' THEN d.source_id ELSE NULL END AS message_id,
            s.title,
            s.updated_at_ms,
            0.0 AS score,
@@ -217,6 +232,7 @@ const SEARCH_LIKE_SQL: &str = r#"
       FROM chat_search_documents d
       JOIN sessions s ON s.id=d.session_id
      WHERE s.user_id=?
+       AND s.deletion_status='live'
        AND d.search_text LIKE ? ESCAPE '\'
        AND (? IS NULL OR s.updated_at_ms>=?)
        AND (? IS NULL OR s.updated_at_ms<=?)
@@ -241,6 +257,7 @@ const SEARCH_LIKE_SQL: &str = r#"
 
 const SEARCH_FTS_SQL: &str = r#"
     SELECT s.id AS session_id,
+           CASE WHEN d.source_kind='message' THEN d.source_id ELSE NULL END AS message_id,
            s.title,
            s.updated_at_ms,
            bm25(chat_search_fts) AS score,
@@ -250,6 +267,7 @@ const SEARCH_FTS_SQL: &str = r#"
       JOIN sessions s ON s.id=d.session_id
      WHERE chat_search_fts MATCH ?
        AND s.user_id=?
+       AND s.deletion_status='live'
        AND (? IS NULL OR s.updated_at_ms>=?)
        AND (? IS NULL OR s.updated_at_ms<=?)
        AND (? IS NULL OR EXISTS(
@@ -276,7 +294,7 @@ const REBUILD_DOCUMENTS_SQL: [&str; 5] = [
      SELECT id,'session_title',id,title,updated_at_ms FROM sessions",
     "INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) \
      SELECT session_id,'message',id,content,created_at_ms FROM messages \
-     WHERE role IN ('user','assistant')",
+     WHERE role IN ('user','assistant') OR kind IN ('upload-batch','study-config','workflow-progress')",
     "INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) \
      SELECT session_id,'upload_batch',id,client_batch_id||' '||diagnostics_json,updated_at_ms FROM upload_batches \
      UNION ALL SELECT session_id,'data_resource',rowid,display_name||' '||alias,updated_at_ms FROM data_resources WHERE status<>'deleted'",

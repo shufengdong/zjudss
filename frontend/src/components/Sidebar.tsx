@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { Session, SessionStatus } from '../types'
+import type { Session, SessionDeletionPreview, SessionStatus } from '../types'
 import { MoreIcon, PanelLeftIcon, PencilIcon, PlusIcon, TrashIcon } from './icons'
 
 interface SidebarProps {
@@ -9,7 +9,8 @@ interface SidebarProps {
   onSelect: (id: string) => void
   onNew: () => void
   onRename: (id: string, title: string) => void
-  onDelete: (id: string) => void
+  onPreviewDelete: (id: string) => Promise<SessionDeletionPreview>
+  onDelete: (id: string, impactToken: string) => Promise<void>
   onToggleCollapse: () => void
   footer?: ReactNode
   search?: ReactNode
@@ -47,6 +48,7 @@ export default function Sidebar({
   onSelect,
   onNew,
   onRename,
+  onPreviewDelete,
   onDelete,
   onToggleCollapse,
   footer,
@@ -56,6 +58,9 @@ export default function Sidebar({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [pendingDelete, setPendingDelete] = useState<Session | null>(null)
+  const [deletionPreview, setDeletionPreview] = useState<SessionDeletionPreview | null>(null)
+  const [deletionError, setDeletionError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     if (!pendingDelete) return
@@ -84,6 +89,22 @@ export default function Sidebar({
     const t = draft.trim()
     if (t) onRename(id, t)
     setEditingId(null)
+  }
+
+  const loadDeletionPreview = async (session:Session) => {
+    setPendingDelete(session);setDeletionPreview(null);setDeletionError(null)
+    try { setDeletionPreview(await onPreviewDelete(session.id)) }
+    catch(error) { setDeletionError(error instanceof Error?error.message:'无法读取删除影响') }
+  }
+
+  const confirmDelete = async () => {
+    if(!pendingDelete||!deletionPreview||deleting)return
+    setDeleting(true);setDeletionError(null)
+    try { await onDelete(pendingDelete.id,deletionPreview.impactToken);setPendingDelete(null);setDeletionPreview(null) }
+    catch(error) {
+      setDeletionError(error instanceof Error?error.message:'删除失败')
+      try { setDeletionPreview(await onPreviewDelete(pendingDelete.id)) } catch { setDeletionPreview(null) }
+    } finally { setDeleting(false) }
   }
 
   return (
@@ -200,7 +221,7 @@ export default function Sidebar({
                             aria-label={`删除“${sessionTitle(s)}”`}
                             onClick={() => {
                               setMenuId(null)
-                              setPendingDelete(s)
+                              void loadDeletionPreview(s)
                             }}
                             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50"
                           >
@@ -234,12 +255,21 @@ export default function Sidebar({
         >
           <h2 id="delete-session-title" className="text-base font-semibold text-slate-900">删除会话</h2>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            确定删除“{sessionTitle(pendingDelete)}”吗？该会话的聊天记录、模型、脚本、仿真运行和结果都会被删除，且无法恢复。
+            确定删除“{sessionTitle(pendingDelete)}”吗？该操作无法恢复。
           </p>
+          {!deletionPreview&&!deletionError&&<p className="mt-3 text-sm text-slate-500">正在计算删除影响…</p>}
+          {deletionPreview&&<ul className="mt-3 space-y-1 text-sm text-slate-600">
+            <li>{deletionPreview.modelCount} 个模型版本</li><li>{deletionPreview.dataResourceCount} 个数据资源</li>
+            <li>{deletionPreview.scriptCount} 个脚本</li><li>{deletionPreview.runCount} 条运行记录</li>
+            <li>{deletionPreview.resultCount} 个结果数据集</li><li>{deletionPreview.analysisArtifactCount} 个分析产物</li>
+            <li>{Math.ceil(deletionPreview.logicalBytes/1024)} KB 逻辑空间</li>
+          </ul>}
+          {deletionError&&<p role="alert" className="mt-3 text-sm text-red-600">{deletionError}</p>}
           <div className="mt-6 flex justify-end gap-2">
             <button
               type="button"
               autoFocus
+              disabled={deleting}
               onClick={() => setPendingDelete(null)}
               className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
             >
@@ -247,14 +277,11 @@ export default function Sidebar({
             </button>
             <button
               type="button"
-              onClick={() => {
-                const id = pendingDelete.id
-                setPendingDelete(null)
-                onDelete(id)
-              }}
+              disabled={!deletionPreview||deleting}
+              onClick={() => void confirmDelete()}
               className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
             >
-              确认删除
+              {deleting?'正在删除…':'确认删除'}
             </button>
           </div>
         </div>

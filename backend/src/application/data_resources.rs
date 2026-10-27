@@ -109,6 +109,19 @@ pub struct UploadConfirmation {
     pub diagnostics: Vec<Value>,
 }
 
+struct PublishRequest {
+    batch_id: i32,
+    decisions: Vec<CandidateDecision>,
+    action: Option<ReplacementAction>,
+    expected_draft: Option<crate::db::models::DraftRef>,
+    confirmation: Option<ConfirmationClaim>,
+}
+
+struct ConfirmationClaim {
+    operation_id: String,
+    payload_hash: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataResourceDeletionPreview {
@@ -332,7 +345,17 @@ impl DataResourceService {
         batch_id: i32,
         decisions: Vec<CandidateDecision>,
     ) -> Result<UploadConfirmation, DataResourceError> {
-        self.publish(user, batch_id, decisions, None, None).await
+        self.publish(
+            user,
+            PublishRequest {
+                batch_id,
+                decisions,
+                action: None,
+                expected_draft: None,
+                confirmation: None,
+            },
+        )
+        .await
     }
 
     pub async fn publish_replacement(
@@ -342,8 +365,17 @@ impl DataResourceService {
         decisions: Vec<CandidateDecision>,
         action: ReplacementAction,
     ) -> Result<UploadConfirmation, DataResourceError> {
-        self.publish(user, batch_id, decisions, Some(action), None)
-            .await
+        self.publish(
+            user,
+            PublishRequest {
+                batch_id,
+                decisions,
+                action: Some(action),
+                expected_draft: None,
+                confirmation: None,
+            },
+        )
+        .await
     }
 
     pub async fn confirm_upload(
@@ -353,47 +385,119 @@ impl DataResourceService {
         decisions: Vec<CandidateDecision>,
         action: Option<ReplacementAction>,
         expected_draft: Option<crate::db::models::DraftRef>,
-        client_operation_id: Option<&str>,
+        client_operation_id: &str,
     ) -> Result<UploadConfirmation, DataResourceError> {
-        if client_operation_id.is_some_and(|id| id.trim().is_empty() || id.len() > 128) {
+        if client_operation_id.trim().is_empty() || client_operation_id.len() > 128 {
             return Err(Self::invalid(
                 "idempotency_conflict",
                 "clientOperationId 必须为 1..=128 个字符",
             ));
         }
         let mut batch = self.upload_repo.find(&user.id, batch_id).await?;
-        if batch.batch.status == "awaiting_purpose" && !decisions.is_empty() {
-            self.uploads
-                .update_candidates(user, batch_id, decisions.clone())
-                .await?;
-            batch = self.upload_repo.find(&user.id, batch_id).await?;
+        if action == Some(ReplacementAction::Cancel) {
+            self.uploads.discard(user, batch_id).await?;
+            return self.confirmation(user, batch_id, vec![]).await;
+        }
+        let payload_hash = confirmation_payload_hash(&decisions, action, expected_draft);
+        if batch.batch.confirm_operation_id.as_deref() == Some(client_operation_id) {
+            if batch.batch.confirm_payload_hash.as_deref() != Some(payload_hash.as_str()) {
+                return Err(Self::invalid(
+                    "idempotency_conflict",
+                    "同一确认操作不能更换请求内容",
+                ));
+            }
+            if batch.batch.confirmation_started {
+                if batch.batch.confirmation_in_progress {
+                    return self
+                        .wait_for_confirmation(user, batch_id, client_operation_id)
+                        .await;
+                }
+                if matches!(
+                    batch.batch.status.as_str(),
+                    "ready_to_confirm" | "partially_confirmed" | "confirmed"
+                ) {
+                    return self.confirmation(user, batch_id, vec![]).await;
+                }
+            }
+        } else if batch.batch.confirmation_in_progress || batch.batch.status == "confirmed" {
+            return Err(Self::invalid(
+                "idempotency_conflict",
+                "上传批次已由另一确认操作认领",
+            ));
+        }
+        if batch.batch.expires_at_ms <= now_ms() {
+            return Err(Self::invalid("upload_batch_expired", "上传批次已过期"));
+        }
+        self.repo
+            .claim_confirmation(
+                &user.id,
+                batch_id,
+                client_operation_id,
+                &payload_hash,
+                now_ms(),
+            )
+            .await?;
+        batch = self.upload_repo.find(&user.id, batch_id).await?;
+        if batch.batch.confirm_operation_id.as_deref() == Some(client_operation_id)
+            && batch.batch.confirm_payload_hash.as_deref() == Some(payload_hash.as_str())
+            && batch.batch.confirmation_started
+        {
+            if batch.batch.confirmation_in_progress {
+                return self
+                    .wait_for_confirmation(user, batch_id, client_operation_id)
+                    .await;
+            }
+            if matches!(
+                batch.batch.status.as_str(),
+                "ready_to_confirm" | "partially_confirmed" | "confirmed"
+            ) {
+                return self.confirmation(user, batch_id, vec![]).await;
+            }
         }
         if !matches!(
             batch.batch.status.as_str(),
             "ready_to_confirm" | "partially_confirmed" | "confirmed"
-        ) {
+        ) && !(batch.batch.status == "awaiting_purpose" && !decisions.is_empty())
+        {
             return Err(Self::invalid(
                 "upload_state_invalid",
                 "上传批次尚未完成解析和用途确认",
             ));
         }
-        if let Some(operation_id) = client_operation_id {
-            self.repo
-                .claim_confirmation(&user.id, batch_id, operation_id, now_ms())
-                .await?;
-        }
-        self.publish(user, batch_id, decisions, action, expected_draft)
-            .await
+        self.publish(
+            user,
+            PublishRequest {
+                batch_id,
+                decisions,
+                action,
+                expected_draft,
+                confirmation: Some(ConfirmationClaim {
+                    operation_id: client_operation_id.to_owned(),
+                    payload_hash,
+                }),
+            },
+        )
+        .await
     }
 
     async fn publish(
         &self,
         user: &CurrentUser,
-        batch_id: i32,
-        mut decisions: Vec<CandidateDecision>,
-        action: Option<ReplacementAction>,
-        expected_draft: Option<crate::db::models::DraftRef>,
+        request: PublishRequest,
     ) -> Result<UploadConfirmation, DataResourceError> {
+        let PublishRequest {
+            batch_id,
+            mut decisions,
+            action,
+            expected_draft,
+            confirmation,
+        } = request;
+        let confirmation_operation_id = confirmation
+            .as_ref()
+            .map(|claim| claim.operation_id.as_str());
+        let confirmation_payload_hash = confirmation
+            .as_ref()
+            .map(|claim| claim.payload_hash.as_str());
         let before = self.upload_repo.find(&user.id, batch_id).await?;
         let explicit_aliases = decisions
             .iter()
@@ -474,13 +578,87 @@ impl DataResourceService {
                 )?;
             }
         }
-        if !decisions.is_empty() {
+        let decision_update = if decisions.is_empty() {
+            Ok(None)
+        } else if let (Some(operation_id), Some(payload_hash)) =
+            (confirmation_operation_id, confirmation_payload_hash)
+        {
             self.uploads
-                .update_candidates(user, batch_id, decisions.clone())
-                .await?;
+                .confirm_candidates(
+                    user,
+                    batch_id,
+                    decisions.clone(),
+                    operation_id,
+                    payload_hash,
+                    explicit_aliases,
+                )
+                .await
+                .map(Some)
+        } else {
+            self.uploads
+                .update_candidates_with_alias_intent(
+                    user,
+                    batch_id,
+                    decisions.clone(),
+                    explicit_aliases,
+                )
+                .await
+                .map(Some)
+        };
+        if let Err(error) = decision_update {
+            let latest = self.upload_repo.find(&user.id, batch_id).await?;
+            if let (Some(operation_id), Some(payload_hash)) =
+                (confirmation_operation_id, confirmation_payload_hash)
+                && latest.batch.confirm_operation_id.as_deref() == Some(operation_id)
+                && latest.batch.confirm_payload_hash.as_deref() == Some(payload_hash)
+            {
+                if latest.batch.confirmation_in_progress {
+                    return self
+                        .wait_for_confirmation(user, batch_id, operation_id)
+                        .await;
+                }
+                if latest.batch.confirmation_started
+                    && matches!(
+                        latest.batch.status.as_str(),
+                        "ready_to_confirm" | "partially_confirmed" | "confirmed"
+                    )
+                {
+                    return self.confirmation(user, batch_id, vec![]).await;
+                }
+            }
+            return Err(error.into());
         }
+        if decisions.is_empty()
+            && let (Some(operation_id), Some(payload_hash)) =
+                (confirmation_operation_id, confirmation_payload_hash)
+            && let Err(error) = self
+                .repo
+                .begin_confirmation(&user.id, batch_id, operation_id, payload_hash, now_ms())
+                .await
+        {
+            let latest = self.upload_repo.find(&user.id, batch_id).await?;
+            if latest.batch.confirm_operation_id.as_deref() == Some(operation_id)
+                && latest.batch.confirm_payload_hash.as_deref() == Some(payload_hash)
+            {
+                if latest.batch.confirmation_in_progress {
+                    return self
+                        .wait_for_confirmation(user, batch_id, operation_id)
+                        .await;
+                }
+                if latest.batch.confirmation_started
+                    && matches!(
+                        latest.batch.status.as_str(),
+                        "ready_to_confirm" | "partially_confirmed" | "confirmed"
+                    )
+                {
+                    return self.confirmation(user, batch_id, vec![]).await;
+                }
+            }
+            return Err(error.into());
+        }
+        let result = async {
         let record = self.upload_repo.find(&user.id, batch_id).await?;
-        if record.batch.expires_at_ms <= now_ms() {
+        if confirmation_operation_id.is_none() && record.batch.expires_at_ms <= now_ms() {
             return Err(DataResourceError::Invalid(
                 "upload_batch_expired",
                 "上传批次已过期".into(),
@@ -557,7 +735,7 @@ impl DataResourceService {
                     } else {
                         serde_json::json!({"uploadBatchId":batch_id,"candidateId":candidate.id,"sourceKind":refreshed.batch.source_kind}).to_string()
                     },
-                    alias_explicit: explicit_aliases.contains(&candidate.id),
+                    alias_explicit: candidate.alias_explicit,
                 }
             }).collect::<Vec<_>>();
             let replacement = refreshed.batch.replacement_resource_id.clone().map(|id| {
@@ -608,6 +786,42 @@ impl DataResourceService {
             views.push(self.get(user, &row.id).await?);
         }
         self.confirmation(user, batch_id, views).await
+        }
+        .await;
+        if result.is_err()
+            && let Some(operation_id) = confirmation_operation_id
+        {
+            let _ = self
+                .repo
+                .end_confirmation(&user.id, batch_id, operation_id, now_ms())
+                .await;
+        }
+        result
+    }
+
+    async fn wait_for_confirmation(
+        &self,
+        user: &CurrentUser,
+        batch_id: i32,
+        operation_id: &str,
+    ) -> Result<UploadConfirmation, DataResourceError> {
+        for _ in 0..300 {
+            let current = self.upload_repo.find(&user.id, batch_id).await?;
+            if current.batch.confirm_operation_id.as_deref() != Some(operation_id) {
+                return Err(Self::invalid(
+                    "idempotency_conflict",
+                    "上传批次已由另一确认操作认领",
+                ));
+            }
+            if !current.batch.confirmation_in_progress {
+                return self.confirmation(user, batch_id, vec![]).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        Err(Self::invalid(
+            "upload_state_invalid",
+            "相同确认操作仍在执行，请稍后重试",
+        ))
     }
 
     async fn confirmation(
@@ -1561,4 +1775,19 @@ fn dtype_label(dtype: &DataTypeContract) -> String {
             format!("{}<{}>", name, dtype_label(element))
         }
     }
+}
+
+fn confirmation_payload_hash(
+    decisions: &[CandidateDecision],
+    action: Option<ReplacementAction>,
+    expected_draft: Option<crate::db::models::DraftRef>,
+) -> String {
+    let mut decisions = decisions.to_vec();
+    decisions.sort_by(|left, right| left.candidate_id.cmp(&right.candidate_id));
+    let payload = serde_json::json!({
+        "decisions": decisions,
+        "replacementAction": action,
+        "expectedDraft": expected_draft,
+    });
+    hex::encode(Sha256::digest(payload.to_string().as_bytes()))
 }

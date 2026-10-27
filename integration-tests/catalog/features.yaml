@@ -68,6 +68,7 @@
     - "error:version_has_active_consumers"
     - "error:deletion_impact_changed"
     - "error:invalid_deletion_impact_token"
+    - "error:session_deleting"
     - "error:invalid_dataset_page"
     - "error:result_busy"
     - "error:history_error"
@@ -135,6 +136,12 @@
   layers: [api, browser]
   lanes: [pr]
   tests:
+    - runner: rust
+      file: backend/tests/auth_scope.rs
+      name: session_deletion_requires_a_current_impact_preview_and_hides_the_tombstone
+    - runner: vitest
+      file: frontend/src/components/Sidebar.test.tsx
+      name: loads an impact preview before confirmation and deletes only with its token
     - runner: playwright
       file: integration-tests/e2e/session-recovery.spec.ts
       name: an empty account bootstraps a session before message, upload, and example actions
@@ -151,6 +158,7 @@
     - "route:POST /api/sessions"
     - "route:PATCH /api/sessions/{id}"
     - "route:DELETE /api/sessions/{id}"
+    - "route:POST /api/sessions/{id}/deletion-preview"
 
 - id: MESSAGE-001
   source: docs/integration-testing-design.md#coverage-matrix
@@ -164,6 +172,12 @@
     - runner: vitest
       file: frontend/src/state/messageReducer.test.ts
       name: uses a result message to finish stale progress from an earlier server version
+    - runner: rust
+      file: backend/tests/sse_recovery.rs
+      name: durable_operation_messages_upsert_by_stable_id_and_replay_each_revision
+    - runner: vitest
+      file: frontend/src/state/sessionFeed.test.ts
+      name: keeps an anchored context window separate while live events update the latest cache
   assertions: [messages append only, the first user message updates the visible session title without refresh, every public message type has a renderer, terminal results reconcile stale progress snapshots]
   fixtures: [scripted agent]
   contracts:
@@ -178,6 +192,9 @@
     - "message:model-status"
     - "message:comparison"
     - "message:script"
+    - "message:upload-batch"
+    - "message:study-config"
+    - "message:workflow-progress"
 
 - id: SSE-001
   source: docs/integration-testing-design.md#coverage-matrix
@@ -267,7 +284,19 @@
       name: staging_reservation_survives_restart_and_expires_once
     - runner: rust
       file: backend/tests/upload_batches.rs
+      name: expiry_waits_for_an_active_confirmation_and_resumes_after_it_finishes
+    - runner: rust
+      file: backend/tests/upload_batches.rs
+      name: startup_recovery_finalizes_committed_children_before_expiry
+    - runner: rust
+      file: backend/tests/upload_batches.rs
+      name: startup_recovery_never_confirms_an_unstarted_idempotency_claim
+    - runner: rust
+      file: backend/tests/upload_batches.rs
       name: completed_parse_cannot_revive_a_discarded_batch
+    - runner: rust
+      file: backend/tests/upload_batches.rs
+      name: one_confirmation_claim_cannot_acquire_the_execution_lock_twice
     - runner: rust
       file: backend/tests/quota_concurrency.rs
       name: concurrent_upload_reservations_never_overbook_the_scope
@@ -280,7 +309,7 @@
     - runner: rust
       file: backend/tests/model_imports.rs
       name: replacement_batch_uses_the_owned_resource_session
-  assertions: [uploads persist recoverable candidates without publishing, static imports split twenty model tables from para Data, model inference follows the current catalog and actual headers, ambiguous parsing and purpose require user decisions, discard expiry and failure release reservations idempotently]
+  assertions: [uploads persist recoverable candidates without publishing, static imports split twenty model tables from para Data, model inference follows the current catalog and actual headers, ambiguous parsing and purpose require user decisions, active confirmation freezes candidates and returns a discard conflict while expiry waits, restart finalizes committed confirmation children before expiry, discard expiry and failure release reservations idempotently]
   fixtures: [DSS source, case bundle, CSV, Excel, Parquet, malicious archives]
   contracts:
     - "route:POST /api/sessions/{id}/upload-batches"
@@ -322,6 +351,12 @@
     - runner: rust
       file: backend/tests/data_resources.rs
       name: concurrent_confirmation_commits_each_original_reference_once
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: concurrent_same_operation_with_different_decisions_never_drifts_inputs
+    - runner: rust
+      file: backend/tests/data_resources.rs
+      name: explicit_alias_conflict_replay_keeps_the_frozen_failure
     - runner: rust
       file: backend/tests/data_resources.rs
       name: confirm_and_discard_race_never_revives_a_terminal_batch
@@ -376,7 +411,7 @@
     - runner: rust
       file: backend/tests/tool_manifest.rs
       name: data_resource_tools_list_read_rename_and_promote_owned_session_resources
-  assertions: [mixed upload confirmation uses independent atomic model and resource transactions and returns both receipts, completed child files release reservation while failed child decisions remain retryable and published-side decisions stay frozen, concurrent confirmation commits an original reference once, ordinary Data resources may omit schemaRef, para stays outside model versions and cannot be reclassified, unresolved uploads cannot be confirmed, skipped normalized artifacts and untransferred originals are released atomically per logical reference even when hashes deduplicate, deduplicated originals remain owned across sessions, replacement transfers aliases and invalidates pending configurations without rewriting historical artifacts, schema-bound replacement supports SaveAsNew fallback aliases, structured preview is nonpublishing stale-safe and reclaims superseded expired and cross-path stale artifacts, analysis lineage freezes resource ID and content hash and is included in deletion impact, four data-resource Agent tools have behavior coverage, deletion uses a short-lived impact token, cross-user access is 404]
+  assertions: [mixed upload confirmation uses independent atomic model and resource transactions and returns both receipts, completed child files release reservation while failed child decisions remain retryable and published-side decisions stay frozen, one confirmation claim has one executor and same-operation replays preserve explicit alias semantics and remain read-only after staging TTL, concurrent confirmation commits an original reference once, ordinary Data resources may omit schemaRef, para stays outside model versions and cannot be reclassified, unresolved uploads cannot be confirmed, skipped normalized artifacts and untransferred originals are released atomically per logical reference even when hashes deduplicate, deduplicated originals remain owned across sessions, replacement transfers aliases and invalidates pending configurations without rewriting historical artifacts, schema-bound replacement supports SaveAsNew fallback aliases, structured preview is nonpublishing stale-safe and reclaims superseded expired and cross-path stale artifacts, analysis lineage freezes resource ID and content hash and is included in deletion impact, four data-resource Agent tools have behavior coverage, deletion uses a short-lived impact token, cross-user access is 404]
   fixtures: [DSS static import, CSV, Struct values, mixed confirmation]
   contracts:
     - "route:POST /api/upload-batches/{id}/confirm"
@@ -884,7 +919,13 @@
     - runner: rust
       file: backend/tests/history_search.rs
       name: chinese_substring_short_query_filters_delete_and_scope_are_bounded
-  assertions: [search returns only owned committed content, context pagination is bounded]
+    - runner: rust
+      file: backend/tests/history_search.rs
+      name: messages_support_latest_before_and_around_windows_with_hard_limits
+    - runner: vitest
+      file: frontend/src/hooks/useSessionFeed.test.ts
+      name: loads a disjoint around window and returns to a live latest cache
+  assertions: [search returns only owned committed card summaries, context pagination is bounded and contains the exact owned target, an anchored history window remains separate from the latest SSE cache]
   fixtures: [Chinese message history]
   contracts:
     - "route:GET /api/history/search"

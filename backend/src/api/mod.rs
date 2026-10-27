@@ -133,6 +133,25 @@ impl From<RepoError> for ApiError {
                 code: "storage_quota_exceeded",
                 details: None,
             },
+            RepoError::InvalidState(code)
+                if matches!(
+                    code.as_str(),
+                    "deletion_impact_changed"
+                        | "invalid_deletion_impact_token"
+                        | "session_deleting"
+                ) =>
+            {
+                Self {
+                    status: StatusCode::CONFLICT,
+                    message: code.clone(),
+                    code: match code.as_str() {
+                        "deletion_impact_changed" => "deletion_impact_changed",
+                        "invalid_deletion_impact_token" => "invalid_deletion_impact_token",
+                        _ => "session_deleting",
+                    },
+                    details: None,
+                }
+            }
             other => ApiError::internal(other.to_string()),
         }
     }
@@ -163,7 +182,9 @@ impl From<UploadBatchError> for ApiError {
     fn from(error: UploadBatchError) -> Self {
         let status = match error.code() {
             "not_found" => StatusCode::NOT_FOUND,
-            "idempotency_conflict" | "upload_batch_expired" => StatusCode::CONFLICT,
+            "idempotency_conflict" | "upload_batch_expired" | "upload_state_invalid" => {
+                StatusCode::CONFLICT
+            }
             "upload_file_too_large"
             | "upload_batch_too_large"
             | "archive_limits_exceeded"
@@ -174,6 +195,7 @@ impl From<UploadBatchError> for ApiError {
             "not_found" => "not_found",
             "idempotency_conflict" => "idempotency_conflict",
             "upload_batch_expired" => "upload_batch_expired",
+            "upload_state_invalid" => "upload_state_invalid",
             "upload_file_too_large" => "upload_file_too_large",
             "upload_batch_too_large" => "upload_batch_too_large",
             "archive_limits_exceeded" => "archive_limits_exceeded",
@@ -547,6 +569,11 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
         "/api/sessions/{id}",
         patch(sessions::rename).delete(sessions::delete),
         ["PATCH", "DELETE"]
+    );
+    add_route!(
+        "/api/sessions/{id}/deletion-preview",
+        post(sessions::deletion_preview),
+        ["POST"]
     );
     add_route!(
         "/api/sessions/{id}/messages",

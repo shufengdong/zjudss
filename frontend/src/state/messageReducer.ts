@@ -48,6 +48,12 @@ function sameAggregate(left: Message, right: Message): boolean {
         left.runId === right.runId &&
         left.analysisRunId === right.analysisRunId
       )
+    case 'upload-batch':
+      return right.type === 'upload-batch' && left.card.batchId === right.card.batchId
+    case 'study-config':
+      return right.type === 'study-config' && left.card.configurationId === right.card.configurationId
+    case 'workflow-progress':
+      return right.type === 'workflow-progress' && left.card.workflowId === right.card.workflowId
     default:
       return false
   }
@@ -95,8 +101,15 @@ export function mergeMessage(messages: Message[], incoming: Message): Message[] 
       return next.sort((left, right) => messageOrder(left) - messageOrder(right))
     }
   }
-  if (messages.some((message) => message.id === incoming.id)) {
-    return reconcileCompletedProgress(messages)
+  const sameId = messages.findIndex((message) => message.id === incoming.id)
+  if (sameId >= 0) {
+    const current = messages[sameId]
+    if ((incoming.revision ?? 1) <= (current.revision ?? 1)) {
+      return reconcileCompletedProgress(messages)
+    }
+    const next = messages.slice()
+    next[sameId] = incoming
+    return reconcileCompletedProgress(next)
   }
   const next = messages.filter((message) => !sameAggregate(message, incoming))
   next.push(incoming)

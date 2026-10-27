@@ -119,6 +119,96 @@ impl DataResourceRepo {
         user: &UserId,
         batch_id: i32,
         operation_id: &str,
+        payload_hash: &str,
+        now_ms: i64,
+    ) -> RepoResult<()> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        let operation_id = operation_id.to_string();
+        let payload_hash = payload_hash.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            conn.immediate_transaction(|conn| {
+                let batch = owned_batch(conn, &user, batch_id)?;
+                if !matches!(
+                    batch.status.as_str(),
+                    "awaiting_purpose" | "ready_to_confirm" | "partially_confirmed" | "confirmed"
+                ) {
+                    return Err(RepoError::InvalidState("upload_state_invalid".into()));
+                }
+                if let Some(existing) = batch.confirm_operation_id {
+                    if existing == operation_id
+                        && batch.confirm_payload_hash.as_deref() == Some(payload_hash.as_str())
+                    {
+                        return Ok(());
+                    }
+                    if existing == operation_id
+                        || batch.confirmation_in_progress
+                        || batch.status == "confirmed"
+                    {
+                        return Err(RepoError::InvalidState("idempotency_conflict".into()));
+                    }
+                }
+                diesel::update(schema::upload_batches::table.find(batch_id))
+                    .set((
+                        schema::upload_batches::confirm_operation_id.eq(Some(operation_id)),
+                        schema::upload_batches::confirm_payload_hash.eq(Some(payload_hash)),
+                        schema::upload_batches::confirmation_started.eq(false),
+                        schema::upload_batches::updated_at_ms.eq(now_ms),
+                    ))
+                    .execute(conn)?;
+                Ok(())
+            })
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
+    pub async fn begin_confirmation(
+        &self,
+        user: &UserId,
+        batch_id: i32,
+        operation_id: &str,
+        payload_hash: &str,
+        now_ms: i64,
+    ) -> RepoResult<()> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        let operation_id = operation_id.to_string();
+        let payload_hash = payload_hash.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            conn.immediate_transaction(|conn| {
+                let batch = owned_batch(conn, &user, batch_id)?;
+                if batch.confirm_operation_id.as_deref() != Some(operation_id.as_str())
+                    || batch.confirm_payload_hash.as_deref() != Some(payload_hash.as_str())
+                    || batch.confirmation_in_progress
+                    || !matches!(
+                        batch.status.as_str(),
+                        "ready_to_confirm" | "partially_confirmed"
+                    )
+                {
+                    return Err(RepoError::InvalidState("upload_state_invalid".into()));
+                }
+                diesel::update(schema::upload_batches::table.find(batch_id))
+                    .set((
+                        schema::upload_batches::confirmation_started.eq(true),
+                        schema::upload_batches::confirmation_in_progress.eq(true),
+                        schema::upload_batches::updated_at_ms.eq(now_ms),
+                    ))
+                    .execute(conn)?;
+                Ok(())
+            })
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
+    pub async fn end_confirmation(
+        &self,
+        user: &UserId,
+        batch_id: i32,
+        operation_id: &str,
         now_ms: i64,
     ) -> RepoResult<()> {
         let pool = self.pool.clone();
@@ -126,28 +216,29 @@ impl DataResourceRepo {
         let operation_id = operation_id.to_string();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            conn.immediate_transaction(|conn| {
-                let batch = owned_batch(conn, &user, batch_id)?;
-                if !matches!(
-                    batch.status.as_str(),
-                    "ready_to_confirm" | "partially_confirmed" | "confirmed"
-                ) {
-                    return Err(RepoError::InvalidState("upload_state_invalid".into()));
-                }
-                if let Some(existing) = batch.confirm_operation_id {
-                    if existing != operation_id {
-                        return Err(RepoError::InvalidState("idempotency_conflict".into()));
-                    }
-                    return Ok(());
-                }
-                diesel::update(schema::upload_batches::table.find(batch_id))
-                    .set((
-                        schema::upload_batches::confirm_operation_id.eq(Some(operation_id)),
-                        schema::upload_batches::updated_at_ms.eq(now_ms),
-                    ))
-                    .execute(conn)?;
-                Ok(())
-            })
+            let changed = diesel::update(
+                schema::upload_batches::table
+                    .filter(schema::upload_batches::id.eq(batch_id))
+                    .filter(schema::upload_batches::confirm_operation_id.eq(operation_id))
+                    .filter(schema::upload_batches::confirmation_in_progress.eq(true))
+                    .filter(
+                        schema::upload_batches::session_id.eq_any(
+                            schema::sessions::table
+                                .filter(schema::sessions::user_id.eq(user))
+                                .filter(schema::sessions::deletion_status.eq("live"))
+                                .select(schema::sessions::id),
+                        ),
+                    ),
+            )
+            .set((
+                schema::upload_batches::confirmation_in_progress.eq(false),
+                schema::upload_batches::updated_at_ms.eq(now_ms),
+            ))
+            .execute(&mut conn)?;
+            if changed == 0 {
+                return Err(RepoError::NotFound);
+            }
+            Ok(())
         })
         .await
         .map_err(RepoError::Join)?
@@ -207,6 +298,7 @@ impl DataResourceRepo {
                         .on(schema::sessions::id.eq(schema::data_resources::session_id)),
                 )
                 .filter(schema::sessions::user_id.eq(user))
+                .filter(schema::sessions::deletion_status.eq("live"))
                 .filter(schema::data_resources::status.eq_any(["live", "needs_rename"]))
                 .select(schema::data_resources::all_columns)
                 .load(&mut conn)
@@ -335,6 +427,7 @@ impl DataResourceRepo {
                             .inner_join(schema::sessions::table.on(schema::sessions::id.eq(schema::data_resources::session_id)))
                             .filter(schema::data_resources::id.eq(old_id))
                             .filter(schema::sessions::user_id.eq(&user))
+                            .filter(schema::sessions::deletion_status.eq("live"))
                             .filter(schema::data_resources::status.eq_any(["live", "needs_rename"]))
                             .select(schema::data_resources::all_columns)
                             .first::<DataResourceRecord>(conn).optional()?.ok_or(RepoError::NotFound)?;
@@ -691,6 +784,7 @@ impl DataResourceRepo {
                 .inner_join(schema::users::table.on(schema::users::id.eq(schema::sessions::user_id)))
                 .filter(schema::sessions::id.eq(batch.session_id))
                 .filter(schema::sessions::user_id.eq(&user))
+                .filter(schema::sessions::deletion_status.eq("live"))
                 .select(schema::users::storage_scope_id)
                 .first::<i32>(conn)?;
             super::artifact::release_refs(conn, scope_id, release_artifact_ids, now_ms)?;
@@ -724,7 +818,7 @@ impl DataResourceRepo {
                 diesel::sql_query("UPDATE storage_scopes SET reserved_bytes=reserved_bytes-?1,updated_at_ms=?2 WHERE id=(SELECT u.storage_scope_id FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.id=?3)")
                     .bind::<BigInt,_>(released_bytes).bind::<BigInt,_>(now_ms).bind::<Integer,_>(batch.session_id).execute(conn)?;
             }
-            diesel::update(schema::upload_batches::table.find(batch_id)).set((schema::upload_batches::status.eq(status),schema::upload_batches::reserved_bytes.eq(retained_bytes),schema::upload_batches::updated_at_ms.eq(now_ms))).execute(conn)?;
+            diesel::update(schema::upload_batches::table.find(batch_id)).set((schema::upload_batches::status.eq(status),schema::upload_batches::confirmation_in_progress.eq(false),schema::upload_batches::reserved_bytes.eq(retained_bytes),schema::upload_batches::updated_at_ms.eq(now_ms))).execute(conn)?;
             Ok(FinishedUploadBatch { staged_paths: paths })
         }) }).await.map_err(RepoError::Join)?
     }
@@ -1378,6 +1472,7 @@ fn ensure_session(conn: &mut SqliteConnection, user: &str, session_id: i32) -> R
     let exists = schema::sessions::table
         .filter(schema::sessions::id.eq(session_id))
         .filter(schema::sessions::user_id.eq(user))
+        .filter(schema::sessions::deletion_status.eq("live"))
         .select(schema::sessions::id)
         .first::<i32>(conn)
         .optional()?
@@ -1395,6 +1490,7 @@ fn owned_batch(conn: &mut SqliteConnection, user: &str, id: i32) -> RepoResult<U
         )
         .filter(schema::upload_batches::id.eq(id))
         .filter(schema::sessions::user_id.eq(user))
+        .filter(schema::sessions::deletion_status.eq("live"))
         .select(schema::upload_batches::all_columns)
         .first(conn)
         .optional()?
@@ -1412,6 +1508,7 @@ fn owned_resource(
         )
         .filter(schema::data_resources::id.eq(id))
         .filter(schema::sessions::user_id.eq(user))
+        .filter(schema::sessions::deletion_status.eq("live"))
         .select(schema::data_resources::all_columns)
         .into_boxed();
     if !historical {

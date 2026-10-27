@@ -20,6 +20,9 @@ pub const MESSAGE_TYPES: &[&str] = &[
     "model-status",
     "comparison",
     "script",
+    "upload-batch",
+    "study-config",
+    "workflow-progress",
 ];
 
 /// 毫秒时间戳 → ISO 8601 字符串（前端 `timestamp` 字段用）。
@@ -201,6 +204,73 @@ pub enum UploadStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventDiagnostic {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadCandidateCard {
+    pub id: String,
+    pub name: String,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadBatchCard {
+    pub batch_id: String,
+    pub batch_revision: i64,
+    pub state: String,
+    pub candidates: Vec<UploadCandidateCard>,
+    pub model_transaction_state: String,
+    pub resource_transaction_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<EventDiagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudyConfigCard {
+    pub configuration_id: String,
+    pub revision: i64,
+    pub state: String,
+    pub action_card: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowAttemptCard {
+    pub execution_index: u32,
+    pub repair_index: u32,
+    pub state: String,
+    pub elapsed_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowProgressCard {
+    pub workflow_id: String,
+    pub state: String,
+    pub execution_index: u32,
+    pub execution_max: u32,
+    pub repair_index: u32,
+    pub repair_max: u32,
+    pub elapsed_ms: i64,
+    pub attempts: Vec<WorkflowAttemptCard>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output_dataset_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_code: Option<String>,
+}
+
 /// 推给前端的结构化消息（discriminated union，`type` 区分）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -208,17 +278,20 @@ pub enum AppEvent {
     User {
         id: String,
         timestamp: String,
+        revision: i32,
         content: String,
     },
     Assistant {
         id: String,
         timestamp: String,
+        revision: i32,
         content: String,
     },
     #[serde(rename = "tool-call", rename_all = "camelCase")]
     ToolCall {
         id: String,
         timestamp: String,
+        revision: i32,
         call_id: String,
         tool_name: String,
         args: serde_json::Value,
@@ -230,6 +303,7 @@ pub enum AppEvent {
     Progress {
         id: String,
         timestamp: String,
+        revision: i32,
         operation: OperationRef,
         stages: Vec<Stage>,
     },
@@ -237,6 +311,7 @@ pub enum AppEvent {
     Result {
         id: String,
         timestamp: String,
+        revision: i32,
         #[serde(skip_serializing_if = "Option::is_none")]
         run_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -248,6 +323,7 @@ pub enum AppEvent {
     Attachment {
         id: String,
         timestamp: String,
+        revision: i32,
         file: AttachmentFile,
         client_batch_id: String,
         client_file_id: String,
@@ -258,6 +334,7 @@ pub enum AppEvent {
     ModelStatus {
         id: String,
         timestamp: String,
+        revision: i32,
         workspace_id: String,
         scope: ModelScope,
         snapshot: Option<ModelVersionSnapshot>,
@@ -266,6 +343,7 @@ pub enum AppEvent {
     Comparison {
         id: String,
         timestamp: String,
+        revision: i32,
         comparison_id: String,
         baseline_run_id: String,
         candidate_run_id: String,
@@ -277,7 +355,29 @@ pub enum AppEvent {
     Script {
         id: String,
         timestamp: String,
+        revision: i32,
         script: serde_json::Value,
+    },
+    #[serde(rename = "upload-batch", rename_all = "camelCase")]
+    UploadBatch {
+        id: String,
+        timestamp: String,
+        revision: i32,
+        card: UploadBatchCard,
+    },
+    #[serde(rename = "study-config", rename_all = "camelCase")]
+    StudyConfig {
+        id: String,
+        timestamp: String,
+        revision: i32,
+        card: StudyConfigCard,
+    },
+    #[serde(rename = "workflow-progress", rename_all = "camelCase")]
+    WorkflowProgress {
+        id: String,
+        timestamp: String,
+        revision: i32,
+        card: WorkflowProgressCard,
     },
 }
 
@@ -354,71 +454,79 @@ impl AppEvent {
             ("user", _) => AppEvent::User {
                 id,
                 timestamp,
+                revision: msg.revision,
                 content: msg.content.clone(),
             },
             ("assistant", _) => AppEvent::Assistant {
                 id,
                 timestamp,
+                revision: msg.revision,
                 content: msg.content.clone(),
             },
             ("tool", "tool-call") => match parse_payload::<ToolCallPayload>(msg) {
                 Some(p) => AppEvent::ToolCall {
                     id,
                     timestamp,
+                    revision: msg.revision,
                     call_id: p.call_id,
                     tool_name: p.tool_name,
                     args: p.args,
                     status: p.status,
                     summary: p.summary,
                 },
-                None => fallback_assistant(id, timestamp, &msg.content),
+                None => fallback_assistant(id, timestamp, msg.revision, &msg.content),
             },
             ("tool", "progress") => match parse_payload::<ProgressPayload>(msg) {
                 Some(p) => AppEvent::Progress {
                     id,
                     timestamp,
+                    revision: msg.revision,
                     operation: p.operation,
                     stages: p.stages,
                 },
-                None => fallback_assistant(id, timestamp, &msg.content),
+                None => fallback_assistant(id, timestamp, msg.revision, &msg.content),
             },
             ("tool", "result") => match parse_payload::<ResultPayload>(msg) {
                 Some(p) => AppEvent::Result {
                     id,
                     timestamp,
+                    revision: msg.revision,
                     run_id: p.run_id,
                     analysis_run_id: p.analysis_run_id,
                     title: p.title,
                     outputs: p.outputs,
                 },
-                None => fallback_assistant(id, timestamp, &msg.content),
+                None => fallback_assistant(id, timestamp, msg.revision, &msg.content),
             },
             ("tool", "attachment") => match parse_payload::<AttachmentPayload>(msg) {
                 Some(p) => AppEvent::Attachment {
                     id,
                     timestamp,
+                    revision: msg.revision,
                     file: p.file,
                     client_batch_id: p.client_batch_id,
                     client_file_id: p.client_file_id,
                     ingestion_id: p.ingestion_id,
                     upload_status: p.upload_status,
                 },
-                None => fallback_assistant(id, timestamp, &msg.content),
+                None => fallback_assistant(id, timestamp, msg.revision, &msg.content),
             },
             ("tool", "model-status") => match parse_payload::<ModelStatusPayload>(msg) {
                 Some(p) => AppEvent::ModelStatus {
                     id,
                     timestamp,
+                    revision: msg.revision,
                     workspace_id: p.workspace_id,
                     scope: p.scope,
                     snapshot: p.snapshot,
                 },
-                None => fallback_assistant(id, timestamp, &msg.content),
+                None => fallback_assistant(id, timestamp, msg.revision, &msg.content),
             },
             ("tool", "comparison") => match parse_payload::<ComparisonPayload>(msg) {
                 Some(p) => AppEvent::Comparison {
                     id,
                     timestamp,
+                    revision: msg.revision,
                     comparison_id: p.comparison_id,
                     baseline_run_id: p.baseline_run_id,
                     candidate_run_id: p.candidate_run_id,
@@ -426,17 +534,45 @@ impl AppEvent {
                     title: p.title,
                     outputs: p.outputs,
                 },
-                None => fallback_assistant(id, timestamp, &msg.content),
+                None => fallback_assistant(id, timestamp, msg.revision, &msg.content),
             },
             ("tool", "script") => match parse_payload::<ScriptPayload>(msg) {
                 Some(payload) => AppEvent::Script {
                     id,
                     timestamp,
+                    revision: msg.revision,
                     script: payload.script,
                 },
-                None => fallback_assistant(id, timestamp, &msg.content),
+                None => fallback_assistant(id, timestamp, msg.revision, &msg.content),
             },
-            _ => fallback_assistant(id, timestamp, &msg.content),
+            ("tool", "upload-batch") => match parse_payload::<UploadBatchCard>(msg) {
+                Some(card) => AppEvent::UploadBatch {
+                    id,
+                    timestamp,
+                    revision: msg.revision,
+                    card,
+                },
+                None => fallback_assistant(id, timestamp, msg.revision, &msg.content),
+            },
+            ("tool", "study-config") => match parse_payload::<StudyConfigCard>(msg) {
+                Some(card) => AppEvent::StudyConfig {
+                    id,
+                    timestamp,
+                    revision: msg.revision,
+                    card,
+                },
+                None => fallback_assistant(id, timestamp, msg.revision, &msg.content),
+            },
+            ("tool", "workflow-progress") => match parse_payload::<WorkflowProgressCard>(msg) {
+                Some(card) => AppEvent::WorkflowProgress {
+                    id,
+                    timestamp,
+                    revision: msg.revision,
+                    card,
+                },
+                None => fallback_assistant(id, timestamp, msg.revision, &msg.content),
+            },
+            _ => fallback_assistant(id, timestamp, msg.revision, &msg.content),
         }
     }
 
@@ -449,10 +585,34 @@ impl AppEvent {
             | Self::Result { id, .. }
             | Self::Attachment { id, .. }
             | Self::ModelStatus { id, .. }
-            | Self::Comparison { id, .. } => id,
-            Self::Script { id, .. } => id,
+            | Self::Comparison { id, .. }
+            | Self::Script { id, .. }
+            | Self::UploadBatch { id, .. }
+            | Self::StudyConfig { id, .. }
+            | Self::WorkflowProgress { id, .. } => id,
         };
         id.parse().ok()
+    }
+
+    pub fn revision(&self) -> i32 {
+        match self {
+            Self::User { revision, .. }
+            | Self::Assistant { revision, .. }
+            | Self::ToolCall { revision, .. }
+            | Self::Progress { revision, .. }
+            | Self::Result { revision, .. }
+            | Self::Attachment { revision, .. }
+            | Self::ModelStatus { revision, .. }
+            | Self::Comparison { revision, .. }
+            | Self::Script { revision, .. }
+            | Self::UploadBatch { revision, .. }
+            | Self::StudyConfig { revision, .. }
+            | Self::WorkflowProgress { revision, .. } => *revision,
+        }
+    }
+
+    pub fn event_id(&self) -> Option<String> {
+        Some(format!("{}:{}", self.message_id()?, self.revision()))
     }
 }
 
@@ -462,10 +622,11 @@ fn parse_payload<T: for<'de> Deserialize<'de>>(msg: &Message) -> Option<T> {
         .and_then(|s| serde_json::from_str(s).ok())
 }
 
-fn fallback_assistant(id: String, timestamp: String, content: &str) -> AppEvent {
+fn fallback_assistant(id: String, timestamp: String, revision: i32, content: &str) -> AppEvent {
     AppEvent::Assistant {
         id,
         timestamp,
+        revision,
         content: content.to_string(),
     }
 }
@@ -539,6 +700,75 @@ impl EventWriter {
         let event = AppEvent::from_message(&msg);
         self.events.publish(self.session_id, event.clone());
         Ok(event)
+    }
+
+    async fn emit_operation<T: Serialize>(
+        &self,
+        kind: &str,
+        operation_id: &str,
+        content: String,
+        payload: &T,
+    ) -> Result<AppEvent, RepoError> {
+        let (msg, changed) = self
+            .message_repo
+            .upsert_operation_with_status(
+                &self.scope,
+                operation_id.to_string(),
+                NewMessage {
+                    session_id: self.session_id,
+                    run_id: None,
+                    role: "tool".into(),
+                    kind: kind.into(),
+                    content,
+                    payload_json: Some(
+                        serde_json::to_string(payload)
+                            .map_err(|error| RepoError::InvalidState(error.to_string()))?,
+                    ),
+                    created_at_ms: now_ms(),
+                },
+            )
+            .await?;
+        let event = AppEvent::from_message(&msg);
+        if changed {
+            self.events.publish(self.session_id, event.clone());
+        }
+        Ok(event)
+    }
+
+    pub async fn upload_batch(&self, card: UploadBatchCard) -> Result<AppEvent, RepoError> {
+        let operation_id = card.batch_id.clone();
+        self.emit_operation(
+            "upload-batch",
+            &operation_id,
+            format!("上传批次：{}", card.state),
+            &card,
+        )
+        .await
+    }
+
+    pub async fn study_config(&self, card: StudyConfigCard) -> Result<AppEvent, RepoError> {
+        let operation_id = card.configuration_id.clone();
+        self.emit_operation(
+            "study-config",
+            &operation_id,
+            format!("研究配置：{}", card.state),
+            &card,
+        )
+        .await
+    }
+
+    pub async fn workflow_progress(
+        &self,
+        card: WorkflowProgressCard,
+    ) -> Result<AppEvent, RepoError> {
+        let operation_id = card.workflow_id.clone();
+        self.emit_operation(
+            "workflow-progress",
+            &operation_id,
+            format!("研究工作流：{}", card.state),
+            &card,
+        )
+        .await
     }
 
     pub async fn assistant(&self, content: &str) -> Result<AppEvent, RepoError> {
@@ -788,6 +1018,7 @@ mod tests {
         let tool_call = AppEvent::ToolCall {
             id: "1".into(),
             timestamp: "t".into(),
+            revision: 1,
             call_id: "call-1".into(),
             tool_name: "inspect_model".into(),
             args: serde_json::json!({ "model_path": "/tmp/m.dss" }),
@@ -803,6 +1034,7 @@ mod tests {
         let progress = AppEvent::Progress {
             id: "2".into(),
             timestamp: "t".into(),
+            revision: 1,
             operation: OperationRef {
                 kind: OperationKind::Run,
                 id: "42".into(),
@@ -822,6 +1054,7 @@ mod tests {
         let result = AppEvent::Result {
             id: "3".into(),
             timestamp: "t".into(),
+            revision: 1,
             run_id: Some("42".into()),
             analysis_run_id: None,
             title: "仿真结果".into(),
@@ -837,6 +1070,7 @@ mod tests {
         let attachment = AppEvent::Attachment {
             id: "4".into(),
             timestamp: "t".into(),
+            revision: 1,
             file: AttachmentFile {
                 file_name: "report.pdf".into(),
                 file_size: "1.2 MB".into(),
@@ -856,6 +1090,7 @@ mod tests {
         let model_status = AppEvent::ModelStatus {
             id: "5".into(),
             timestamp: "t".into(),
+            revision: 1,
             workspace_id: "workspace-1".into(),
             scope: ModelScope::Draft,
             snapshot: None,
@@ -867,6 +1102,7 @@ mod tests {
         let comparison = AppEvent::Comparison {
             id: "6".into(),
             timestamp: "t".into(),
+            revision: 1,
             comparison_id: "comparison-1".into(),
             baseline_run_id: "1".into(),
             candidate_run_id: "2".into(),
@@ -882,11 +1118,13 @@ mod tests {
             AppEvent::User {
                 id: "7".into(),
                 timestamp: "t".into(),
+                revision: 1,
                 content: "u".into(),
             },
             AppEvent::Assistant {
                 id: "8".into(),
                 timestamp: "t".into(),
+                revision: 1,
                 content: "a".into(),
             },
         ] {

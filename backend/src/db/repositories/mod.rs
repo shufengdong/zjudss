@@ -32,7 +32,7 @@ pub use run::{
     RunRepoError,
 };
 pub use script::ScriptRepo;
-pub use session::SessionRepo;
+pub use session::{SessionDeletionImpact, SessionRepo};
 pub use storage_scope::{StorageLimits, StorageScopeRepo, StorageUsage};
 pub use study_configuration::{
     NewStudyConfiguration, StudyConfigurationAggregate, StudyConfigurationRepo,

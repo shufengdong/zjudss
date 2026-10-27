@@ -1,6 +1,6 @@
 # V4 HTTP 与 SSE API（实施中）
 
-> 本文跟随已实现的 V4 公共接口逐任务更新。Task 6 已实现目录驱动的研究配置；最终确认/自动执行、运行删除和运行到脚本消息定位接口仍待后续任务实现。已确认的行为边界见
+> 本文跟随已实现的 V4 公共接口逐任务更新。Task 7 已实现 revisioned durable message、历史锚定窗口和会话影响预览删除；最终确认/自动执行、运行删除和运行到脚本消息定位接口仍待后续任务实现。已确认的行为边界见
 > [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)；
 > 路由和 DTO 将在实施方案中确定，当前接口表不提前声明未实现能力。
 
@@ -24,10 +24,11 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 | GET | `/api/examples/{id}` | 规范 manifest 案例详情 |
 | POST | `/api/sessions/{id}/draft/example` | 案例进入统一上传候选批次 |
 | GET/POST | `/api/sessions` | 列表/新建会话 |
-| PATCH/DELETE | `/api/sessions/{id}` | 改名/删除整个会话 |
-| GET/POST | `/api/sessions/{id}/messages` | 分页消息/发送消息；POST 返回权威 `sessionTitle` 供界面立即同步自动标题 |
-| GET | `/api/sessions/{id}/events` | SSE replay + live |
-| GET | `/api/history/search` | 当前用户历史检索 |
+| PATCH/DELETE | `/api/sessions/{id}` | 改名/携带会话影响 token 幂等删除整个会话 |
+| POST | `/api/sessions/{id}/deletion-preview` | 返回删除影响统计和短期 impact token |
+| GET/POST | `/api/sessions/{id}/messages` | latest/before/around 连续窗口或发送消息；POST 返回权威 `sessionTitle` |
+| GET | `/api/sessions/{id}/events` | 以 `messageId:revision` 为游标的 SSE replay + live |
+| GET | `/api/history/search` | 当前用户存活会话的历史检索，消息命中返回稳定 message ID |
 | POST | `/api/sessions/{id}/upload-batches` | 上传 DSS/ZIP/CSV/Excel/Parquet 并建立可恢复候选批次 |
 | GET/DELETE | `/api/upload-batches/{id}` | 读取/放弃上传批次 |
 | PUT | `/api/upload-batches/{id}/parse-settings` | 提交受控解析设置并重新解析 |
@@ -83,14 +84,18 @@ CSV/Parquet 每文件一个候选；Excel 只读取可见非空 worksheet 的缓
 schema 从当前 engine snapshot 的有效门面动态取得，并按实际列名推断。暂存默认保留 24 小时，配额以
 `used_bytes + reserved_bytes` 原子检查；失败、放弃和到期幂等释放。
 
-确认请求为 `{decisions,replacementAction?,expectedDraft?,clientOperationId?}`。ModelTable 候选在一个草稿事务中
+确认请求为 `{decisions,replacementAction?,expectedDraft?,clientOperationId}`，其中 `clientOperationId` 必填且由客户端为本次确认生成。ModelTable 候选在一个草稿事务中
 发布，DataResource 候选在另一个资源事务中发布；任一侧失败不回滚已成功的另一侧，批次进入
 `partially_confirmed`，重试只处理失败侧。两侧均失败回到 `ready_to_confirm`，两侧成功才进入 `confirmed` 并释放
 剩余 reservation；只有失败侧仍引用的暂存文件和 artifact 会继续占用空间，成功侧完成后立即结算，Skip 候选及
 已完成侧候选的暂存引用也会回收。成功子事务涉及的既有和新用途决定都被冻结，不能在重试时把 Skip 候选补入已发布侧。响应显式返回
 `modelStatus`、`resourceStatus`、可空的 `modelReceipt`、可空的 `resourceReceipt`、`diagnostics` 和新发布的
-`resources`，因此部分成功及其重放不需要根据状态猜测已提交对象。`clientOperationId` 在批次上持久化；相同值重放返回既有 receipt，不同值返回
-`409 idempotency_conflict`。提交 `expectedDraft` 时必须与当前草稿 ID/revision 一致，否则模型子事务返回
+`resources`，因此部分成功及其重放不需要根据状态猜测已提交对象。非取消确认会持久化 `clientOperationId` 和规范请求 hash；相同操作和相同 payload 重放返回既有 receipt，相同操作携带不同 payload 返回
+`409 idempotency_conflict`。正在执行确认或批次已经全部确认后，更换操作也返回该冲突；一次确认已收敛为
+`ready_to_confirm` 或 `partially_confirmed` 后，可用新的操作 ID 重试失败侧，已成功侧的决定和 receipt 继续冻结。持久幂等键与短期执行锁分离：正在提交子事务时，候选修改和 DELETE 放弃返回
+`409 upload_state_invalid`，后台到期清理延后；尝试结束后仍可取消失败侧或清理到期批次。
+同操作、同 payload 的已开始请求优先于暂存 TTL 判断：执行中重放等待既有执行者，已结算重放只读返回既有 receipt，即使原暂存到期时间已经经过也不重新执行。
+候选决定写入、输入冻结标记和执行锁在一个事务完成。提交 `expectedDraft` 时必须与当前草稿 ID/revision 一致，否则模型子事务返回
 `draft_revision_conflict` 诊断。
 
 ## Independent data resources
@@ -179,10 +184,28 @@ adapter/IO/校验错误映射为受控 `error.code`/`error.message`。adapter �
 ## Messages and errors
 
 持久消息类型是 `user`、`assistant`、`tool-call`、`progress`、`result`、`attachment`、`model-status`、
-`comparison`、`script`。运行关联字段统一为 `runId`。成功的 `create_script` tool-call 和 `script` 消息是脚本生成的持久成功事实；
+`comparison`、`script`、`upload-batch`、`study-config`、`workflow-progress`。普通对话消息追加写入；后三种操作卡按
+`sessionId + kind + operationId` 更新同一稳定消息 ID，内容变化时递增正整数 `revision`，相同终态重放保持原 revision。
+上传卡携带数据库单调 `batchRevision`；仓储拒绝低于或等于已保存 batch/config revision、低于执行轮次的延迟状态，也不允许已经落库的终态被另一状态覆盖；GET upload/config
+会幂等补写当前事实，以修复领域事务成功而消息写入中断的窗口。EventWriter 必须先提交数据库再广播。SSE `id` 为
+`messageId:revision`，重连时同时按消息 ID 和 revision 去重；补发除游标后的普通消息外，还返回当前最新操作卡，即使该卡的
+稳定消息 ID 早于游标，避免错过旧卡的新 revision。旧的纯数字 `Last-Event-ID` 仍按 revision 1 解释。卡片只携稳定 ID、
+公共状态和脱敏诊断，不序列化服务器路径或原始 stderr；attempt
+详情由前端默认折叠。运行关联字段统一为 `runId`。成功的 `create_script` tool-call 和 `script` 消息是脚本生成的持久成功事实；
 后续模型收尾失败不追加通用 Agent 失败，缺少 assistant 收尾时由服务端补充检查并点击“运行”的提示。
 Agent 在创建脚本前耗尽单轮模型调用预算时，assistant 明确提示本轮尚未生成脚本并可重新发送请求；后台日志记录
 session ID 和失败类别，消息正文不暴露 provider 诊断。
+
+消息列表默认返回最新连续窗口，`beforeId` 向前分页；`aroundId` 必须精确属于当前用户的当前会话，否则统一 404，成功响应
+必须包含目标并返回前后有界的连续窗口。历史搜索只索引卡片可读摘要，不索引脚本全文或 stderr。
+
+删除会话必须先调用 deletion preview。预览返回模型、普通数据资源、脚本、运行、结果、分析 artifact 数和逻辑字节数；
+影响 hash 还覆盖可变草稿及其 DataFrame revision/artifact、尚未发布的上传 source/candidate artifact、资源替换 preview 及其批次状态，防止预览后内容或临时占用变化仍使用旧 token 删除。
+DELETE 携带 opaque `impactToken` 并在事务中重新计算影响。影响变化返回 `deletion_impact_changed`，无效或过期 token 返回
+`invalid_deletion_impact_token`。确认后会话立即进入 `deleting`，从普通读取隐藏且 repository 拒绝新消息和领域写入；服务取消
+该会话正在进行的 Agent/engine 工作，清理会话所有内容后保留最小 `deleted` tombstone。清理中断后只有同一已授权 token
+可以恢复清理；其他 token 不能接管。重复 DELETE 幂等成功，删除中或已删除
+会话的普通读取仍统一 404。
 
 主要稳定错误包括认证/隔离、配额与上传、导入与草稿冲突、模型表分页/读取/受控查询、脚本输入兼容、active race、
 运行队列、版本删除影响变化、结果 busy、分析/比较/视图校验、历史索引不可用、engine snapshot/contract 不匹配，

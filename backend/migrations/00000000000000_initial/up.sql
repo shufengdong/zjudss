@@ -156,6 +156,9 @@ CREATE TABLE upload_batches (
  source_kind TEXT NOT NULL CHECK(source_kind IN ('upload','case')),
  replacement_resource_id TEXT REFERENCES data_resources(id) ON DELETE RESTRICT,
  confirm_operation_id TEXT,
+ confirm_payload_hash TEXT CHECK(confirm_payload_hash IS NULL OR length(confirm_payload_hash)=64),
+ confirmation_started BOOLEAN NOT NULL DEFAULT 0,
+ confirmation_in_progress BOOLEAN NOT NULL DEFAULT 0,
  status TEXT NOT NULL CHECK(status IN ('processing','awaiting_parse_settings','awaiting_purpose','ready_to_confirm','partially_confirmed','confirmed','failed','discarded','expired')),
  model_publish_status TEXT NOT NULL DEFAULT 'not_applicable' CHECK(model_publish_status IN ('not_applicable','ready','published','failed')),
  resource_publish_status TEXT NOT NULL DEFAULT 'not_applicable' CHECK(resource_publish_status IN ('not_applicable','ready','published','failed')),
@@ -167,11 +170,15 @@ CREATE TABLE upload_batches (
  diagnostics_json TEXT NOT NULL DEFAULT '[]',
  reserved_bytes INTEGER NOT NULL DEFAULT 0 CHECK(reserved_bytes>=0),
  expires_at_ms INTEGER NOT NULL,
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
  created_at_ms INTEGER NOT NULL,
  updated_at_ms INTEGER NOT NULL,
  UNIQUE(session_id,client_batch_id)
 );
 CREATE INDEX idx_upload_batches_session_time ON upload_batches(session_id,created_at_ms DESC);
+CREATE TRIGGER upload_batch_revision AFTER UPDATE ON upload_batches
+WHEN NEW.revision=OLD.revision
+BEGIN UPDATE upload_batches SET revision=OLD.revision+1 WHERE id=NEW.id; END;
 CREATE TABLE upload_files (
  id TEXT PRIMARY KEY,
  batch_id INTEGER NOT NULL REFERENCES upload_batches(id) ON DELETE CASCADE,
@@ -194,6 +201,7 @@ CREATE TABLE upload_candidates (
  display_name TEXT NOT NULL,
  proposed_alias TEXT,
  normalized_alias TEXT,
+ alias_explicit BOOLEAN NOT NULL DEFAULT 0,
  purpose TEXT CHECK(purpose IN ('model_table','data_resource','skip')),
  inferred_schema_ref TEXT,
  normalized_artifact_id INTEGER REFERENCES artifacts(id) ON DELETE RESTRICT,
@@ -452,6 +460,8 @@ CREATE TABLE messages (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
  run_id INTEGER REFERENCES simulation_runs(id) ON DELETE SET NULL,
+ operation_id TEXT,
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0),
  role TEXT NOT NULL,
  kind TEXT NOT NULL,
  content TEXT NOT NULL DEFAULT '',
@@ -460,6 +470,8 @@ CREATE TABLE messages (
 );
 CREATE INDEX idx_messages_session_time ON messages(session_id,created_at_ms);
 CREATE INDEX idx_messages_run ON messages(run_id);
+CREATE UNIQUE INDEX uq_messages_operation ON messages(session_id,kind,operation_id)
+ WHERE operation_id IS NOT NULL;
 
 CREATE TABLE result_analysis_runs (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -602,6 +614,38 @@ CREATE VIRTUAL TABLE chat_search_fts USING fts5(search_text,content='chat_search
 CREATE TRIGGER validate_workspace_active_update BEFORE UPDATE OF active_version_id ON workspaces WHEN NEW.active_version_id IS NOT NULL BEGIN
  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM model_versions WHERE id=NEW.active_version_id AND workspace_id=NEW.id AND deleted_at_ms IS NULL) THEN RAISE(ABORT,'invalid active model version') END;
 END;
+CREATE TRIGGER live_session_messages_insert BEFORE INSERT ON messages WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_messages_update BEFORE UPDATE ON messages WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_workspaces_insert BEFORE INSERT ON workspaces WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_workspace_drafts_insert BEFORE INSERT ON workspace_drafts WHEN NOT EXISTS(SELECT 1 FROM workspaces w JOIN sessions s ON s.id=w.session_id WHERE w.id=NEW.workspace_id AND s.deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_workspace_drafts_update BEFORE UPDATE ON workspace_drafts WHEN NOT EXISTS(SELECT 1 FROM workspaces w JOIN sessions s ON s.id=w.session_id WHERE w.id=NEW.workspace_id AND s.deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_draft_dataframes_insert BEFORE INSERT ON draft_dataframes WHEN NOT EXISTS(SELECT 1 FROM workspace_drafts wd JOIN workspaces w ON w.id=wd.workspace_id JOIN sessions s ON s.id=w.session_id WHERE wd.id=NEW.draft_id AND s.deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_draft_dataframes_update BEFORE UPDATE ON draft_dataframes WHEN NOT EXISTS(SELECT 1 FROM workspace_drafts wd JOIN workspaces w ON w.id=wd.workspace_id JOIN sessions s ON s.id=w.session_id WHERE wd.id=NEW.draft_id AND s.deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_workspaces_update BEFORE UPDATE ON workspaces
+WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live')
+ AND NOT (
+   NEW.session_id=OLD.session_id
+   AND NEW.active_version_id IS NULL
+   AND OLD.active_version_id IS NOT NULL
+   AND NEW.created_at_ms=OLD.created_at_ms
+   AND NEW.updated_at_ms=OLD.updated_at_ms
+   AND EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='deleting')
+ )
+BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_uploads_insert BEFORE INSERT ON upload_batches WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_uploads_update BEFORE UPDATE ON upload_batches WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_resources_insert BEFORE INSERT ON data_resources WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_resources_update BEFORE UPDATE ON data_resources WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_configurations_insert BEFORE INSERT ON study_configurations WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_configurations_update BEFORE UPDATE ON study_configurations WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_scripts_insert BEFORE INSERT ON script_resources WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_runs_insert BEFORE INSERT ON simulation_runs WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_runs_update BEFORE UPDATE ON simulation_runs WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_analysis_insert BEFORE INSERT ON result_analysis_runs WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_analysis_update BEFORE UPDATE ON result_analysis_runs WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_workflows_insert BEFORE INSERT ON managed_workflows WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_workflows_update BEFORE UPDATE ON managed_workflows WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_comparisons_insert BEFORE INSERT ON run_comparisons WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
 CREATE TRIGGER immutable_model_versions BEFORE UPDATE OF workspace_id,description,content_hash,source_summary_json,engine_contract_version,created_at_ms ON model_versions BEGIN SELECT RAISE(ABORT,'model versions are immutable'); END;
 CREATE TRIGGER immutable_model_dataframes BEFORE UPDATE ON model_dataframes BEGIN SELECT RAISE(ABORT,'model dataframes are immutable'); END;
 CREATE TRIGGER validate_run_insert BEFORE INSERT ON simulation_runs BEGIN
@@ -653,7 +697,8 @@ CREATE TRIGGER chat_docs_au AFTER UPDATE ON chat_search_documents BEGIN
 END;
 CREATE TRIGGER chat_session_ai AFTER INSERT ON sessions BEGIN INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) VALUES(new.id,'session_title',new.id,new.title,new.updated_at_ms); END;
 CREATE TRIGGER chat_session_au AFTER UPDATE OF title ON sessions BEGIN UPDATE chat_search_documents SET search_text=new.title,updated_at_ms=new.updated_at_ms WHERE session_id=new.id AND source_kind='session_title' AND source_id=new.id; END;
-CREATE TRIGGER chat_message_ai AFTER INSERT ON messages WHEN new.role IN ('user','assistant') BEGIN INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) VALUES(new.session_id,'message',new.id,new.content,new.created_at_ms); END;
+CREATE TRIGGER chat_message_ai AFTER INSERT ON messages WHEN new.role IN ('user','assistant') OR new.kind IN ('upload-batch','study-config','workflow-progress') BEGIN INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms) VALUES(new.session_id,'message',new.id,new.content,new.created_at_ms); END;
+CREATE TRIGGER chat_message_au AFTER UPDATE OF content,revision ON messages WHEN new.role IN ('user','assistant') OR new.kind IN ('upload-batch','study-config','workflow-progress') BEGIN UPDATE chat_search_documents SET search_text=new.content,updated_at_ms=new.created_at_ms WHERE session_id=new.session_id AND source_kind='message' AND source_id=new.id; END;
 CREATE TRIGGER chat_message_ad AFTER DELETE ON messages BEGIN DELETE FROM chat_search_documents WHERE session_id=old.session_id AND source_kind='message' AND source_id=old.id; END;
 CREATE TRIGGER chat_upload_ai AFTER INSERT ON upload_batches BEGIN
  INSERT INTO chat_search_documents(session_id,source_kind,source_id,search_text,updated_at_ms)

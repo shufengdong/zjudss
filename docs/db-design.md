@@ -36,6 +36,13 @@ scope 引用的内容寻址 artifact；数据库保存所有权、状态、hash�
 发布版本的内容与 DataFrame 行由触发器禁止修改，同一 workspace 的存活 `content_hash` 唯一。active version
 必须属于当前 workspace。
 
+`messages` 的普通对话记录保持追加写入；可更新操作卡以非空 `operation_id` 在同一 `session_id + kind` 下唯一，内容变化时在
+原行递增 `revision`，相同终态重放不创建新行也不推进 revision。`upload_batches.revision` 由数据库在每次事实更新后单调递增；
+写入根据 upload/config revision、workflow 执行/修正序号和状态顺序
+拒绝延迟旧卡覆盖新卡；已经落库的终态不能被不同终态改写。消息搜索摘要由触发器随卡片更新。会话只有 `live` 时才允许
+写入消息、工作区、上传、资源、研究配置、脚本、运行、分析和工作流；进入 `deleting` 后数据库触发器阻止绕过 application 层的
+新领域写入。
+
 运行必须绑定同一 session 的脚本，模型版本/内容 hash 只在该门面实际需要模型时冻结，
 `(session_id, client_run_id)` 唯一；运行保存冻结输入、脚本 artifact/hash、engine contract、Agent bundle/skills。
 脚本消息锚点只能由服务写入同一 session 的 script 消息且设置后不可更换。结果只能有 run 或 analysis 一个生产者。
@@ -62,9 +69,15 @@ commit 在一个 immediate transaction 中检查配额、去重并增加引用�
 幂等 release，并由 GC 清理零引用 blob；历史冻结输入通过 artifact 引用或墓碑继续可审计。
 
 `upload_batches` 以 `(session_id, client_batch_id)` 幂等，保存总状态、model/resource 两个子发布状态以及重新上传时
-受同会话所有权约束的 `replacement_resource_id`；确认时保存可选 `confirm_operation_id`，同批不同操作 ID 被拒绝；
+受同会话所有权约束的 `replacement_resource_id`；确认时保存可选 `confirm_operation_id` 和规范请求 payload hash，操作 ID
+相同但请求不同会被拒绝。确认正在执行或批次已经全部确认时不能更换操作；一次确认收敛为非终态的
+`ready_to_confirm|partially_confirmed` 后，可由新操作重试失败侧，已发布侧的决定和 receipt 保持冻结。候选决定写入、`confirmation_started` 和
+`confirmation_in_progress` 在同一事务提交，确保确认输入与执行锁原子冻结；后者只在子事务执行期间作为互斥锁，汇总
+成功或失败以及异常返回时释放，启动恢复会清除遗留锁。候选替换和用途更新也检查该锁。活动确认期间 DELETE 放弃返回冲突，到期清理延后，均不会
+被持久幂等键永久阻塞；启动恢复只对 `confirmation_started` 的批次在判断过期前按已持久化的两个子事务状态执行一次 `finish_batch`，确保仅认领但尚未冻结输入的请求不会被误判，子事务已全部
+提交的批次收敛为 `confirmed` 并结算 reservation；
 `upload_files` 保存服务端私有暂存位置和来源 hash，公共 DTO 不返回路径；`upload_candidates` 保存 sheet、规范
-Parquet artifact、实际 schema/hash/行数、目录推断证据和用户用途决定。接收前在 immediate transaction 中增加
+Parquet artifact、实际 schema/hash/行数、目录推断证据和用户用途决定；`alias_explicit` 直接冻结 alias 是否由用户显式指定，重放不得根据已经更新的建议值重新推断。接收前在 immediate transaction 中增加
 `storage_scopes.reserved_bytes`，并发批次不能超卖。`ready_to_confirm` 不包含已发布业务资源；确认后 model/resource
 两个子事务独立原子提交，成功侧 receipt 不会在部分重试中重写。部分成功后只保留失败侧候选引用的暂存文件、来源
 artifact 和规范 artifact；Skip 候选立即回收，成功侧立即结算 reservation，且候选不能从 Skip 或另一用途迁入已发布侧。
@@ -102,5 +115,14 @@ Task 6 暴露；Task 9 才会同时重验 revision/snapshot/hash、发布 Struct
 
 ## Search and recovery
 
-会话标题、消息、上传摘要、脚本和运行摘要写入 FTS5 trigram 外部内容表。索引损坏只让搜索返回 503，不影响
-会话和消息读取。启动恢复将未完成上传、工作流及 queued/running 运行收敛到各自明确状态，不重写已提交资源。
+会话标题、消息中的可读摘要、上传摘要、脚本和运行摘要写入 FTS5 trigram 外部内容表；脚本全文、原始 stderr 和私有路径不进入
+搜索正文。消息命中保留稳定 message ID，以便 API 在同一存活会话中验证目标后读取精确的连续 around window。索引损坏只让
+搜索返回 503，不影响会话和消息读取。
+
+`session_deletion_previews` 保存短期 token hash、影响摘要/hash 和过期时间；确认删除必须在 immediate transaction 中重新计算
+当前影响；hash 同时计入可变草稿及其 DataFrame revision/artifact、未发布 upload batch、source/candidate artifact 和资源 replacement preview，不能以旧 token 绕过内容变化或新增占用。
+会话先转为 `deleting` 并立即从普通查询隐藏，再由统一 cancellation token 停止 Agent/engine 工作并清理其 artifact
+引用。清理中断时，同一预览 token 可恢复幂等清理，其他 token 仍被拒绝；nullable artifact 外键按实际非空引用释放，
+不会因已 tombstone 资源而卡住删除状态。清理完成后删除业务记录，最终保留标题为“已删除会话”的最小 `deleted`
+tombstone。重复删除不重复释放引用。启动恢复将未完成上传、
+工作流及 queued/running 运行收敛到各自明确状态，不重写已提交资源。

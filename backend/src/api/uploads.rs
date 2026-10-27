@@ -5,7 +5,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::application::{
-    AppState, CandidateDecision, ParseSettings, UploadBatchError, UploadFile, UploadSourceKind,
+    AppState, CandidateDecision, EventDiagnostic, EventWriter, ParseSettings, UploadBatchCard,
+    UploadBatchError, UploadBatchView, UploadCandidateCard, UploadFile, UploadSourceKind,
 };
 use crate::auth::CurrentUser;
 use crate::storage::StageLimits;
@@ -142,6 +143,7 @@ async fn accept_multipart(
             )
             .await?
     };
+    publish_upload(&state, &user, &view).await?;
     Ok((StatusCode::ACCEPTED, Json(json!({"uploadBatch":view}))))
 }
 
@@ -150,9 +152,9 @@ pub async fn get(
     user: CurrentUser,
     Path(id): Path<i32>,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        json!({"uploadBatch":state.upload_batch_service.get(&user,id).await?}),
-    ))
+    let view = state.upload_batch_service.get(&user, id).await?;
+    publish_upload(&state, &user, &view).await?;
+    Ok(Json(json!({"uploadBatch":view})))
 }
 
 pub async fn parse_settings(
@@ -161,9 +163,12 @@ pub async fn parse_settings(
     Path(id): Path<i32>,
     Json(settings): Json<ParseSettings>,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        json!({"uploadBatch":state.upload_batch_service.update_parse_settings(&user,id,settings).await?}),
-    ))
+    let view = state
+        .upload_batch_service
+        .update_parse_settings(&user, id, settings)
+        .await?;
+    publish_upload(&state, &user, &view).await?;
+    Ok(Json(json!({"uploadBatch":view})))
 }
 
 #[derive(Deserialize)]
@@ -177,9 +182,70 @@ pub async fn candidates(
     Path(id): Path<i32>,
     Json(body): Json<CandidateBody>,
 ) -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        json!({"uploadBatch":state.upload_batch_service.update_candidates(&user,id,body.decisions).await?}),
-    ))
+    let view = state
+        .upload_batch_service
+        .update_candidates(&user, id, body.decisions)
+        .await?;
+    publish_upload(&state, &user, &view).await?;
+    Ok(Json(json!({"uploadBatch":view})))
+}
+
+pub(super) async fn publish_upload(
+    state: &AppState,
+    user: &CurrentUser,
+    view: &UploadBatchView,
+) -> Result<(), ApiError> {
+    let state_name = serde_json::to_value(view.status)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "processing".into());
+    let child_state = |value| {
+        serde_json::to_value(value)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| "not_applicable".into())
+    };
+    let diagnostic = view
+        .diagnostics
+        .as_array()
+        .and_then(|items| items.first())
+        .and_then(|item| {
+            Some(EventDiagnostic {
+                code: item.get("code")?.as_str()?.to_string(),
+                message: item.get("message")?.as_str()?.to_string(),
+            })
+        });
+    EventWriter::new(
+        user.id.clone(),
+        view.session_id
+            .parse()
+            .map_err(|_| ApiError::internal("invalid upload session"))?,
+        state.message_repo.clone(),
+        state.events.clone(),
+    )
+    .upload_batch(UploadBatchCard {
+        batch_id: view.id.clone(),
+        batch_revision: view.revision,
+        state: state_name,
+        candidates: view
+            .candidates
+            .iter()
+            .map(|candidate| UploadCandidateCard {
+                id: candidate.id.clone(),
+                name: candidate.display_name.clone(),
+                state: if candidate.selected {
+                    "selected".into()
+                } else {
+                    "skipped".into()
+                },
+            })
+            .collect(),
+        model_transaction_state: child_state(view.model_publish_status),
+        resource_transaction_state: child_state(view.resource_publish_status),
+        diagnostic,
+    })
+    .await?;
+    Ok(())
 }
 pub async fn discard(
     State(state): State<AppState>,
@@ -187,6 +253,8 @@ pub async fn discard(
     Path(id): Path<i32>,
 ) -> Result<StatusCode, ApiError> {
     state.upload_batch_service.discard(&user, id).await?;
+    let view = state.upload_batch_service.get(&user, id).await?;
+    publish_upload(&state, &user, &view).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

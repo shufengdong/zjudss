@@ -29,7 +29,19 @@ export function useSessionFeed(sessionId:string|null){
     const page=await listMessages(sessionId,{beforeId:entry.nextBeforeId,limit:50})
     if(active.current===sessionId)dispatch({type:'older',sessionId,page})
   },[feeds,sessionId])
+  const loadAround=useCallback(async(messageId:string)=>{
+    if(!sessionId)return
+    const current=feeds[sessionId]
+    if(current?.messages.some(message=>message.id===messageId))return
+    dispatch({type:'loading',sessionId})
+    const page=await listMessages(sessionId,{aroundId:messageId,limit:50})
+    if(active.current===sessionId)dispatch({type:'anchored',sessionId,targetId:messageId,page})
+  },[feeds,sessionId])
+  const returnLatest=useCallback(()=>{
+    if(!sessionId)return
+    dispatch({type:'return-latest',sessionId})
+  },[sessionId])
   const add=(id:string,message:Message)=>dispatch({type:'event',sessionId:id,message})
   const remove=(id:string,messageId:string)=>dispatch({type:'remove',sessionId:id,messageId})
-  return{feed:sessionId?feeds[sessionId]:undefined,older,add,remove,reload}
+  return{feed:sessionId?feeds[sessionId]:undefined,older,loadAround,returnLatest,add,remove,reload}
 }

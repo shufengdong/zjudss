@@ -4,7 +4,7 @@ use rig::tool::{Tool, ToolContext};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::application::PrepareStudyRequest;
+use crate::application::{PrepareStudyRequest, StudyConfigCard};
 use crate::tools::{
     ToolServices,
     support::{DomainToolError, object_schema},
@@ -64,7 +64,23 @@ impl Tool for PrepareStudyTool {
                 },
             )
             .await?;
-        serde_json::to_value(configuration)
-            .map_err(|error| DomainToolError::new("serialization_error", error.to_string()))
+        let value = serde_json::to_value(&configuration)
+            .map_err(|error| DomainToolError::new("serialization_error", error.to_string()))?;
+        self.services
+            .writer
+            .study_config(StudyConfigCard {
+                configuration_id: configuration.id.to_string(),
+                revision: configuration.revision,
+                state: value["status"]
+                    .as_str()
+                    .unwrap_or("collecting_inputs")
+                    .to_string(),
+                action_card: value.clone(),
+            })
+            .await
+            .map_err(|error| {
+                DomainToolError::new("study_config_message_failed", error.to_string())
+            })?;
+        Ok(value)
     }
 }

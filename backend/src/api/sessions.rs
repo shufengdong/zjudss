@@ -5,6 +5,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::application::{AppEvent, AppState, EventWriter, ms_to_iso, now_ms};
 use crate::auth::CurrentUser;
@@ -99,12 +100,79 @@ pub async fn rename(
     })))
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDeletionPreview {
+    impact_token: String,
+    model_count: i64,
+    data_resource_count: i64,
+    script_count: i64,
+    run_count: i64,
+    result_count: i64,
+    analysis_artifact_count: i64,
+    logical_bytes: i64,
+    expires_at: String,
+}
+
+pub async fn deletion_preview(
+    State(state): State<AppState>,
+    principal: CurrentUser,
+    Path(session_id): Path<i32>,
+) -> Result<Json<SessionDeletionPreview>, ApiError> {
+    let token = random_token();
+    let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
+    let now = now_ms();
+    let expires_at = now + 5 * 60 * 1000;
+    let impact = state
+        .session_repo
+        .preview_deletion(&principal.id, session_id, token_hash, expires_at, now)
+        .await?;
+    Ok(Json(SessionDeletionPreview {
+        impact_token: token,
+        model_count: impact.model_count,
+        data_resource_count: impact.data_resource_count,
+        script_count: impact.script_count,
+        run_count: impact.run_count,
+        result_count: impact.result_count,
+        analysis_artifact_count: impact.analysis_artifact_count,
+        logical_bytes: impact.logical_bytes,
+        expires_at: ms_to_iso(expires_at),
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteSessionQuery {
+    impact_token: String,
+}
+
 /// `DELETE /api/sessions/{id}` → 204；未知会话 → 404。同时注销事件通道。
 pub async fn delete(
     State(state): State<AppState>,
     principal: CurrentUser,
     Path(session_id): Path<i32>,
+    Query(query): Query<DeleteSessionQuery>,
 ) -> Result<StatusCode, ApiError> {
+    if query.impact_token.len() != 64 {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            message: "删除影响令牌无效".into(),
+            code: "invalid_deletion_impact_token",
+            details: None,
+        });
+    }
+    let token_hash = hex::encode(Sha256::digest(query.impact_token.as_bytes()));
+    let should_delete = state
+        .session_repo
+        .begin_delete(&principal.id, session_id, token_hash, now_ms())
+        .await?;
+    if !should_delete {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    state
+        .session_cancellations
+        .cancel(&principal.id, session_id);
+    state.events.unregister(session_id);
     let artifacts = state.session_repo.delete(&principal.id, session_id).await?;
     for artifact_id in artifacts {
         let _ = state
@@ -112,8 +180,13 @@ pub async fn delete(
             .release(principal.storage_scope_id, artifact_id)
             .await;
     }
-    state.events.unregister(session_id);
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn random_token() -> String {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).expect("operating system random source unavailable");
+    hex::encode(bytes)
 }
 
 // ---- 消息 ----

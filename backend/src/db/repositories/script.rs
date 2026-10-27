@@ -29,6 +29,7 @@ impl ScriptRepo {
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(record.session_id))
                     .filter(schema::sessions::user_id.eq(user_id))
+                    .filter(schema::sessions::deletion_status.eq("live"))
                     .select(schema::sessions::id)
                     .first::<i32>(conn)
                     .optional()?
@@ -58,6 +59,7 @@ impl ScriptRepo {
                 )
                 .filter(schema::script_resources::id.eq(id))
                 .filter(schema::sessions::user_id.eq(user_id))
+                .filter(schema::sessions::deletion_status.eq("live"))
                 .select(schema::script_resources::all_columns)
                 .first(&mut conn)
                 .optional()?
@@ -75,6 +77,7 @@ impl ScriptRepo {
             let owns = schema::sessions::table
                 .filter(schema::sessions::id.eq(session_id))
                 .filter(schema::sessions::user_id.eq(user_id))
+                .filter(schema::sessions::deletion_status.eq("live"))
                 .select(schema::sessions::id)
                 .first::<i32>(&mut conn)
                 .optional()?
@@ -105,13 +108,13 @@ impl ScriptRepo {
             struct Alias { #[diesel(sql_type=diesel::sql_types::Text)] table_name: String }
             #[derive(diesel::QueryableByName)]
             struct Active { #[diesel(sql_type=diesel::sql_types::Nullable<diesel::sql_types::Integer>)] active_version_id: Option<i32> }
-            let active = diesel::sql_query("SELECT w.active_version_id FROM workspaces w JOIN sessions s ON s.id=w.session_id WHERE w.session_id=?1 AND s.user_id=?2")
+            let active = diesel::sql_query("SELECT w.active_version_id FROM workspaces w JOIN sessions s ON s.id=w.session_id WHERE w.session_id=?1 AND s.user_id=?2 AND s.deletion_status='live'")
                 .bind::<diesel::sql_types::Integer,_>(session_id)
-                .bind::<diesel::sql_types::Text,_>(user_id)
+                .bind::<diesel::sql_types::Text,_>(&user_id)
                 .get_result::<Active>(&mut conn)
                 .optional()?;
             let Some(active) = active else {
-                let owns = schema::sessions::table.find(session_id).select(schema::sessions::id).first::<i32>(&mut conn).optional()?;
+                let owns = schema::sessions::table.find(session_id).filter(schema::sessions::user_id.eq(&user_id)).filter(schema::sessions::deletion_status.eq("live")).select(schema::sessions::id).first::<i32>(&mut conn).optional()?;
                 return owns.map(|_| None).ok_or(RepoError::NotFound);
             };
             let Some(version_id) = active.active_version_id else { return Ok(None); };

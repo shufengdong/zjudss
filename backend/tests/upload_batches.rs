@@ -2,11 +2,15 @@ mod common;
 
 use std::io::Cursor;
 
+use axum::body::{Body, to_bytes};
+use axum::http::{Request, StatusCode};
+use diesel::prelude::*;
+use tower::ServiceExt;
 use zjudss::application::{
     CandidateDecision, CandidatePurpose, ParseSettings, PublishDraftRequest, UploadBatchStatus,
     UploadFile, UploadSourceKind,
 };
-use zjudss::db::repositories::UploadRepo;
+use zjudss::db::repositories::{DataResourceRepo, UploadRepo};
 use zjudss::storage::StageLimits;
 
 use common::TestApp;
@@ -35,6 +39,67 @@ async fn session(app: &TestApp, title: &str) -> (zjudss::auth::CurrentUser, i32)
         .await
         .unwrap();
     (user, session.id)
+}
+
+#[tokio::test]
+async fn one_confirmation_claim_cannot_acquire_the_execution_lock_twice() {
+    let app = TestApp::spawn().await;
+    let (user, session_id) = session(&app, "single-confirmation-executor").await;
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            &user,
+            session_id,
+            "single-confirmation-executor".into(),
+            UploadSourceKind::Upload,
+            vec![file(&app, "series", "series.csv", b"x\n1\n".to_vec())],
+        )
+        .await
+        .unwrap();
+    let batch_id = batch.id.parse().unwrap();
+    let candidate = &batch.candidates[0];
+    let operation_id = "single-executor";
+    let payload_hash = "a".repeat(64);
+    DataResourceRepo::new(app.pool.clone())
+        .claim_confirmation(&user.id, batch_id, operation_id, &payload_hash, 10)
+        .await
+        .unwrap();
+    let decisions = vec![(
+        candidate.id.clone(),
+        "data_resource".to_string(),
+        true,
+        None,
+        Some("series".to_string()),
+        Some("series".to_string()),
+        false,
+    )];
+    let repo = UploadRepo::new(app.pool.clone());
+    repo.update_decisions(
+        batch_id,
+        decisions.clone(),
+        "ready_to_confirm",
+        Some((operation_id.into(), payload_hash.clone())),
+        11,
+    )
+    .await
+    .unwrap();
+
+    let error = repo
+        .update_decisions(
+            batch_id,
+            decisions,
+            "ready_to_confirm",
+            Some((operation_id.into(), payload_hash)),
+            12,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        zjudss::db::repositories::RepoError::InvalidState(ref code)
+            if code == "upload_state_invalid"
+    ));
 }
 
 #[tokio::test]
@@ -451,6 +516,238 @@ async fn staging_reservation_survives_restart_and_expires_once() {
         .unwrap();
     assert_eq!(expired.status, UploadBatchStatus::Expired);
     assert_eq!(expired.reserved_bytes, 0);
+}
+
+#[tokio::test]
+async fn expiry_waits_for_an_active_confirmation_and_resumes_after_it_finishes() {
+    let app = TestApp::spawn().await;
+    let (user, session_id) = session(&app, "expiry confirmation lock").await;
+    let cookie = app.login_cookie("alice@example.com").await;
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            &user,
+            session_id,
+            "expiry-confirmation-lock".into(),
+            UploadSourceKind::Upload,
+            vec![file(
+                &app,
+                "source",
+                "source.csv",
+                b"time,value\n0,1\n".to_vec(),
+            )],
+        )
+        .await
+        .unwrap();
+    let batch_id = batch.id.parse().unwrap();
+    app.state
+        .upload_batch_service
+        .update_candidates(
+            &user,
+            batch_id,
+            vec![CandidateDecision {
+                candidate_id: batch.candidates[0].id.clone(),
+                purpose: CandidatePurpose::DataResource,
+                selected: true,
+                table_name: None,
+                display_name: None,
+                alias: Some("expiry_source".into()),
+            }],
+        )
+        .await
+        .unwrap();
+    let repo = DataResourceRepo::new(app.pool.clone());
+    let payload_hash = "a".repeat(64);
+    repo.claim_confirmation(&user.id, batch_id, "expiry-operation", &payload_hash, 2)
+        .await
+        .unwrap();
+    repo.begin_confirmation(&user.id, batch_id, "expiry-operation", &payload_hash, 3)
+        .await
+        .unwrap();
+
+    let discard = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/upload-batches/{batch_id}"))
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(discard.status(), StatusCode::CONFLICT);
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(discard.into_body(), 1024 * 1024).await.unwrap()).unwrap();
+    assert_eq!(body["code"], "upload_state_invalid");
+    let mutation = app
+        .state
+        .upload_batch_service
+        .update_candidates(
+            &user,
+            batch_id,
+            vec![CandidateDecision {
+                candidate_id: batch.candidates[0].id.clone(),
+                purpose: CandidatePurpose::Skip,
+                selected: false,
+                table_name: None,
+                display_name: None,
+                alias: None,
+            }],
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(mutation.code(), "upload_state_invalid");
+
+    app.state
+        .upload_batch_service
+        .expire_before(&user, i64::MAX)
+        .await
+        .unwrap();
+    let active = app
+        .state
+        .upload_batch_service
+        .get(&user, batch_id)
+        .await
+        .unwrap();
+    assert_ne!(active.status, UploadBatchStatus::Expired);
+
+    repo.end_confirmation(&user.id, batch_id, "expiry-operation", 4)
+        .await
+        .unwrap();
+    app.state
+        .upload_batch_service
+        .expire_before(&user, i64::MAX)
+        .await
+        .unwrap();
+    let expired = app
+        .state
+        .upload_batch_service
+        .get(&user, batch_id)
+        .await
+        .unwrap();
+    assert_eq!(expired.status, UploadBatchStatus::Expired);
+}
+
+#[tokio::test]
+async fn startup_recovery_finalizes_committed_children_before_expiry() {
+    let app = TestApp::spawn().await;
+    let (user, session_id) = session(&app, "recover committed confirmation").await;
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            &user,
+            session_id,
+            "recover-committed-confirmation".into(),
+            UploadSourceKind::Upload,
+            vec![file(
+                &app,
+                "source",
+                "source.csv",
+                b"time,value\n0,1\n".to_vec(),
+            )],
+        )
+        .await
+        .unwrap();
+    let batch_id = batch.id.parse().unwrap();
+    app.state
+        .upload_batch_service
+        .update_candidates(
+            &user,
+            batch_id,
+            vec![CandidateDecision {
+                candidate_id: batch.candidates[0].id.clone(),
+                purpose: CandidatePurpose::DataResource,
+                selected: true,
+                table_name: None,
+                display_name: None,
+                alias: Some("recovered_source".into()),
+            }],
+        )
+        .await
+        .unwrap();
+    let repo = DataResourceRepo::new(app.pool.clone());
+    let payload_hash = "b".repeat(64);
+    repo.claim_confirmation(&user.id, batch_id, "recovery-operation", &payload_hash, 2)
+        .await
+        .unwrap();
+    repo.begin_confirmation(&user.id, batch_id, "recovery-operation", &payload_hash, 3)
+        .await
+        .unwrap();
+    let mut conn = app.pool.get().unwrap();
+    diesel::update(zjudss::db::schema::upload_batches::table.find(batch_id))
+        .set((
+            zjudss::db::schema::upload_batches::resource_publish_status.eq("published"),
+            zjudss::db::schema::upload_batches::expires_at_ms.eq(0_i64),
+        ))
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
+
+    app.state
+        .upload_batch_service
+        .recover_startup()
+        .await
+        .unwrap();
+    let recovered = app
+        .state
+        .upload_batch_service
+        .get(&user, batch_id)
+        .await
+        .unwrap();
+    assert_eq!(recovered.status, UploadBatchStatus::Confirmed);
+    assert_eq!(recovered.reserved_bytes, 0);
+}
+
+#[tokio::test]
+async fn startup_recovery_never_confirms_an_unstarted_idempotency_claim() {
+    let app = TestApp::spawn().await;
+    let (user, session_id) = session(&app, "recover unstarted claim").await;
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            &user,
+            session_id,
+            "recover-unstarted-claim".into(),
+            UploadSourceKind::Upload,
+            vec![file(&app, "source", "source.csv", b"x\n1\n".to_vec())],
+        )
+        .await
+        .unwrap();
+    let batch_id = batch.id.parse().unwrap();
+    DataResourceRepo::new(app.pool.clone())
+        .claim_confirmation(
+            &user.id,
+            batch_id,
+            "unstarted-operation",
+            &"c".repeat(64),
+            2,
+        )
+        .await
+        .unwrap();
+    let mut conn = app.pool.get().unwrap();
+    diesel::update(zjudss::db::schema::upload_batches::table.find(batch_id))
+        .set(zjudss::db::schema::upload_batches::expires_at_ms.eq(0_i64))
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
+
+    app.state
+        .upload_batch_service
+        .recover_startup()
+        .await
+        .unwrap();
+    let recovered = app
+        .state
+        .upload_batch_service
+        .get(&user, batch_id)
+        .await
+        .unwrap();
+    assert_eq!(recovered.status, UploadBatchStatus::Expired);
+    assert_ne!(recovered.status, UploadBatchStatus::Confirmed);
 }
 
 #[tokio::test]

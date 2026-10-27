@@ -19,4 +19,22 @@ describe('session keyed state',()=>{
     expect(state.s1.messages[0]).toMatchObject({id:'11',type:'progress'})
     expect(state.s1.revision).toBeGreaterThan(runningRevision)
   })
+
+  it('keeps an anchored context window separate while live events update the latest cache',()=>{
+    const latest:Message={...base,id:'100',type:'assistant',content:'latest'}
+    const context:Message={...base,id:'40',type:'assistant',content:'target'}
+    let state=sessionFeedReducer({},{type:'snapshot',sessionId:'s1',page:{messages:[latest],nextBeforeId:'100',hasMoreBefore:true}})
+    state=sessionFeedReducer(state,{type:'anchored',sessionId:'s1',targetId:'40',page:{messages:[context],nextBeforeId:'40',hasMoreBefore:true}})
+    state=sessionFeedReducer(state,{type:'event',sessionId:'s1',message:{...base,id:'101',type:'assistant',content:'new'}})
+
+    expect(state.s1.mode).toBe('anchored')
+    expect(state.s1.messages.map(message=>message.id)).toEqual(['40'])
+    expect(state.s1.latestMessages.map(message=>message.id)).toEqual(['100','101'])
+    expect(state.s1.hasNewerMessages).toBe(true)
+
+    state=sessionFeedReducer(state,{type:'return-latest',sessionId:'s1'})
+    expect(state.s1.mode).toBe('latest')
+    expect(state.s1.messages.map(message=>message.id)).toEqual(['100','101'])
+    expect(state.s1.hasNewerMessages).toBe(false)
+  })
 })

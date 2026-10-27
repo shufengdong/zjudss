@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   downloadModelDataFrame,
+  deleteSession,
   getModelDataFrame,
   getModelDataFrameRows,
   login,
+  previewSessionDeletion,
   request,
 } from './client'
 import type { ModelDataFrameSource } from '../types'
@@ -11,6 +13,28 @@ import type { ModelDataFrameSource } from '../types'
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+})
+
+describe('session deletion requests', () => {
+  it('previews impact and submits the opaque impact token', async () => {
+    const value = {
+      impactToken: 'opaque token', modelCount: 1, dataResourceCount: 2, scriptCount: 3,
+      runCount: 4, resultCount: 5, analysisArtifactCount: 6, logicalBytes: 7,
+      expiresAt: '2026-10-27T00:00:00Z',
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(value), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(previewSessionDeletion('42')).resolves.toEqual(value)
+    await deleteSession('42', 'opaque token')
+
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+      ['/api/sessions/42/deletion-preview', 'POST'],
+      ['/api/sessions/42?impactToken=opaque+token', 'DELETE'],
+    ])
+  })
 })
 
 describe('authentication-required notifications', () => {

@@ -5,6 +5,7 @@ use axum::http::{Request, StatusCode};
 use common::TestApp;
 use serde_json::{Value, json};
 use tower::ServiceExt;
+use zjudss::application::DraftReadExpectation;
 use zjudss::auth::CurrentUser;
 use zjudss::db::models::DraftRef;
 
@@ -189,4 +190,90 @@ async fn workspace_and_versions_are_user_scoped_and_publish_checks_revision() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
+}
+
+#[tokio::test]
+async fn session_deletion_preview_tracks_draft_revision_and_deleting_hides_draft_reads() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "draft deletion", 1)
+        .await
+        .unwrap();
+    let first = import_table(
+        &app,
+        &user,
+        session.id,
+        "draft-first",
+        None,
+        b"id,name\n1,source\n",
+    )
+    .await;
+    let stale_token = "a".repeat(64);
+    app.state
+        .session_repo
+        .preview_deletion(&user.id, session.id, stale_token.clone(), i64::MAX, 2)
+        .await
+        .unwrap();
+
+    let second = import_table(
+        &app,
+        &user,
+        session.id,
+        "draft-second",
+        Some(first),
+        b"id,name\n1,source\n",
+    )
+    .await;
+    let stale = app
+        .state
+        .session_repo
+        .begin_delete(&user.id, session.id, stale_token, 3)
+        .await
+        .unwrap_err();
+    assert!(stale.to_string().contains("deletion_impact_changed"));
+
+    let current_token = "b".repeat(64);
+    app.state
+        .session_repo
+        .preview_deletion(&user.id, session.id, current_token.clone(), i64::MAX, 4)
+        .await
+        .unwrap();
+    let snapshot = app
+        .state
+        .version_service
+        .workspace(&user, session.id)
+        .await
+        .unwrap();
+    let dataframe_id = snapshot.draft.as_ref().unwrap().dataframes[0].id;
+    assert!(
+        app.state
+            .session_repo
+            .begin_delete(&user.id, session.id, current_token, 5)
+            .await
+            .unwrap()
+    );
+    assert!(
+        app.state
+            .version_service
+            .workspace(&user, session.id)
+            .await
+            .is_err()
+    );
+    let error = app
+        .state
+        .model_dataframe_read_service
+        .draft_metadata(
+            &user,
+            dataframe_id,
+            DraftReadExpectation {
+                draft_id: second.id,
+                expected_revision: second.revision,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "not_found");
 }

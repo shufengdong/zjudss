@@ -59,6 +59,7 @@ pub struct NewUploadCandidate {
     pub display_name: String,
     pub proposed_alias: Option<String>,
     pub normalized_alias: Option<String>,
+    pub alias_explicit: bool,
     pub purpose: Option<String>,
     pub inferred_schema_ref: Option<String>,
     pub normalized_artifact_id: Option<i32>,
@@ -117,6 +118,7 @@ impl UploadRepo {
                     )
                     .filter(schema::sessions::id.eq(session_id))
                     .filter(schema::sessions::user_id.eq(&user))
+                    .filter(schema::sessions::deletion_status.eq("live"))
                     .filter(schema::users::storage_scope_id.eq(scope_id))
                     .select(schema::sessions::id)
                     .first::<i32>(conn)
@@ -205,6 +207,7 @@ impl UploadRepo {
                 )
                 .filter(schema::upload_batches::id.eq(id))
                 .filter(schema::sessions::user_id.eq(user))
+                .filter(schema::sessions::deletion_status.eq("live"))
                 .select(schema::upload_batches::all_columns)
                 .first::<UploadBatchRecord>(&mut conn)
                 .optional()?
@@ -244,6 +247,7 @@ impl UploadRepo {
                         .on(schema::sessions::id.eq(schema::upload_batches::session_id)),
                 )
                 .filter(schema::sessions::user_id.eq(user))
+                .filter(schema::sessions::deletion_status.eq("live"))
                 .filter(schema::upload_batches::session_id.eq(session_id))
                 .filter(schema::upload_batches::client_batch_id.eq(client_batch_id))
                 .select(schema::upload_batches::id)
@@ -290,10 +294,12 @@ impl UploadRepo {
                     .first::<UploadBatchRecord>(conn)
                     .optional()?
                     .ok_or(RepoError::NotFound)?;
-                if matches!(
-                    batch.status.as_str(),
-                    "discarded" | "expired" | "confirmed" | "failed"
-                ) {
+                if batch.confirmation_in_progress
+                    || matches!(
+                        batch.status.as_str(),
+                        "discarded" | "expired" | "confirmed" | "failed"
+                    )
+                {
                     return Err(RepoError::InvalidState("upload_state_invalid".into()));
                 }
                 let has_model = candidates.iter().any(|candidate| {
@@ -356,8 +362,10 @@ impl UploadRepo {
             Option<String>,
             Option<String>,
             Option<String>,
+            bool,
         )>,
         status: &str,
+        confirmation: Option<(String, String)>,
         now_ms: i64,
     ) -> RepoResult<()> {
         let pool = self.pool.clone();
@@ -370,13 +378,25 @@ impl UploadRepo {
                     .first::<UploadBatchRecord>(conn)
                     .optional()?
                     .ok_or(RepoError::NotFound)?;
-                if matches!(
-                    batch.status.as_str(),
-                    "discarded" | "expired" | "confirmed" | "failed"
-                ) {
+                let confirmation_matches =
+                    confirmation
+                        .as_ref()
+                        .is_some_and(|(operation_id, payload_hash)| {
+                            batch.confirm_operation_id.as_deref() == Some(operation_id.as_str())
+                                && batch.confirm_payload_hash.as_deref()
+                                    == Some(payload_hash.as_str())
+                        });
+                if batch.confirmation_in_progress
+                    || (confirmation.is_some() && !confirmation_matches)
+                    || matches!(
+                        batch.status.as_str(),
+                        "discarded" | "expired" | "confirmed" | "failed"
+                    )
+                {
                     return Err(RepoError::InvalidState("upload_state_invalid".into()));
                 }
-                for (id, purpose, selected, display, alias, normalized) in decisions {
+                for (id, purpose, selected, display, alias, normalized, alias_explicit) in decisions
+                {
                     let target = schema::upload_candidates::table
                         .filter(schema::upload_candidates::batch_id.eq(batch_id))
                         .filter(schema::upload_candidates::id.eq(id));
@@ -388,6 +408,7 @@ impl UploadRepo {
                                 schema::upload_candidates::display_name.eq(display),
                                 schema::upload_candidates::proposed_alias.eq(alias),
                                 schema::upload_candidates::normalized_alias.eq(normalized),
+                                schema::upload_candidates::alias_explicit.eq(alias_explicit),
                             ))
                             .execute(conn)?
                     } else {
@@ -397,6 +418,7 @@ impl UploadRepo {
                                 schema::upload_candidates::selected.eq(selected),
                                 schema::upload_candidates::proposed_alias.eq(alias),
                                 schema::upload_candidates::normalized_alias.eq(normalized),
+                                schema::upload_candidates::alias_explicit.eq(alias_explicit),
                             ))
                             .execute(conn)?
                     };
@@ -439,6 +461,14 @@ impl UploadRepo {
                         schema::upload_batches::updated_at_ms.eq(now_ms),
                     ))
                     .execute(conn)?;
+                if confirmation.is_some() {
+                    diesel::update(schema::upload_batches::table.find(batch_id))
+                        .set((
+                            schema::upload_batches::confirmation_started.eq(true),
+                            schema::upload_batches::confirmation_in_progress.eq(true),
+                        ))
+                        .execute(conn)?;
+                }
                 Ok(())
             })
         })
@@ -469,6 +499,7 @@ impl UploadRepo {
                     )
                     .filter(schema::upload_batches::id.eq(batch_id))
                     .filter(schema::sessions::user_id.eq(user))
+                    .filter(schema::sessions::deletion_status.eq("live"))
                     .select(schema::upload_batches::status)
                     .first::<String>(conn)
                     .optional()?
@@ -522,6 +553,7 @@ impl UploadRepo {
                     )
                     .filter(schema::upload_batches::id.eq(batch_id))
                     .filter(schema::sessions::user_id.eq(user))
+                    .filter(schema::sessions::deletion_status.eq("live"))
                     .select((
                         schema::upload_batches::all_columns,
                         schema::users::storage_scope_id,
@@ -533,6 +565,14 @@ impl UploadRepo {
                     batch.status.as_str(),
                     "discarded" | "expired" | "confirmed" | "failed"
                 ) {
+                    return Ok(SettledUpload {
+                        staged_paths: Vec::new(),
+                    });
+                }
+                if status == "discarded" && batch.confirmation_in_progress {
+                    return Err(RepoError::InvalidState("upload_state_invalid".into()));
+                }
+                if status == "expired" && batch.confirmation_in_progress {
                     return Ok(SettledUpload {
                         staged_paths: Vec::new(),
                     });
@@ -611,7 +651,9 @@ impl UploadRepo {
                         .on(schema::sessions::id.eq(schema::upload_batches::session_id)),
                 )
                 .filter(schema::sessions::user_id.eq(user))
+                .filter(schema::sessions::deletion_status.eq("live"))
                 .filter(schema::upload_batches::expires_at_ms.le(before))
+                .filter(schema::upload_batches::confirmation_in_progress.eq(false))
                 .filter(schema::upload_batches::status.ne_all([
                     "discarded",
                     "expired",
@@ -621,6 +663,38 @@ impl UploadRepo {
                 .select(schema::upload_batches::id)
                 .load(&mut conn)
                 .map_err(Into::into)
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
+    pub async fn release_abandoned_confirmations(&self, now_ms: i64) -> RepoResult<usize> {
+        let pool = self.pool.clone();
+        tokio::task::spawn_blocking(move || -> RepoResult<usize> {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            diesel::update(
+                schema::upload_batches::table
+                    .filter(schema::upload_batches::confirmation_in_progress.eq(true))
+                    .filter(schema::upload_batches::status.ne_all([
+                        "discarded",
+                        "expired",
+                        "confirmed",
+                        "failed",
+                    ]))
+                    .filter(
+                        schema::upload_batches::session_id.eq_any(
+                            schema::sessions::table
+                                .filter(schema::sessions::deletion_status.eq("live"))
+                                .select(schema::sessions::id),
+                        ),
+                    ),
+            )
+            .set((
+                schema::upload_batches::confirmation_in_progress.eq(false),
+                schema::upload_batches::updated_at_ms.eq(now_ms),
+            ))
+            .execute(&mut conn)
+            .map_err(Into::into)
         })
         .await
         .map_err(RepoError::Join)?
@@ -644,6 +718,7 @@ impl UploadRepo {
                     "confirmed",
                     "failed",
                 ]))
+                .filter(schema::sessions::deletion_status.eq("live"))
                 .select((
                     schema::users::id,
                     schema::users::name,
@@ -684,6 +759,7 @@ impl UploadRepo {
                         .on(schema::sessions::id.eq(schema::upload_batches::session_id)),
                 )
                 .filter(schema::sessions::user_id.eq(user))
+                .filter(schema::sessions::deletion_status.eq("live"))
                 .filter(schema::upload_batches::session_id.eq(session_id))
                 .filter(schema::upload_batches::client_batch_id.eq(client))
                 .count()
@@ -707,6 +783,7 @@ impl UploadRepo {
                 )
                 .filter(schema::data_resources::id.eq(resource_id))
                 .filter(schema::sessions::user_id.eq(user))
+                .filter(schema::sessions::deletion_status.eq("live"))
                 .filter(schema::data_resources::status.ne("deleted"))
                 .select(schema::data_resources::session_id)
                 .first(&mut conn)

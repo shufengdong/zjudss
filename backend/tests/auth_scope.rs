@@ -306,3 +306,153 @@ async fn repository_boundary_and_http_resources_are_scoped_by_user_id() {
     assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
     assert_eq!(json_body(hidden).await, json_body(missing).await);
 }
+
+#[tokio::test]
+async fn session_deletion_requires_a_current_impact_preview_and_hides_the_tombstone() {
+    let app = TestApp::spawn().await;
+    let (cookie, _, _) = login(&app, "alice", "alice").await;
+    let created = app
+        .router
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/sessions",
+            Some(&cookie),
+            json!({"title":"delete me"}),
+        ))
+        .await
+        .unwrap();
+    let session_id = json_body(created).await["id"].as_str().unwrap().to_string();
+
+    let preview = app
+        .router
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/api/sessions/{session_id}/deletion-preview"),
+            Some(&cookie),
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), StatusCode::OK);
+    let preview = json_body(preview).await;
+    for field in [
+        "modelCount",
+        "dataResourceCount",
+        "scriptCount",
+        "runCount",
+        "resultCount",
+        "analysisArtifactCount",
+        "logicalBytes",
+        "impactToken",
+        "expiresAt",
+    ] {
+        assert!(preview.get(field).is_some(), "missing {field}: {preview}");
+    }
+
+    let script = app
+        .router
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/api/sessions/{session_id}/scripts/text"),
+            Some(&cookie),
+            json!({"name":"late.rss","content":"answer = bus;"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(script.status(), StatusCode::CREATED);
+
+    let stale = app
+        .router
+        .clone()
+        .oneshot(request(
+            "DELETE",
+            &format!(
+                "/api/sessions/{session_id}?impactToken={}",
+                preview["impactToken"].as_str().unwrap()
+            ),
+            Some(&cookie),
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert_eq!(json_body(stale).await["code"], "deletion_impact_changed");
+
+    let current = app
+        .router
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/api/sessions/{session_id}/deletion-preview"),
+            Some(&cookie),
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    let token = json_body(current).await["impactToken"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut cancellation = app
+        .state
+        .session_cancellations
+        .subscribe(&UserId("alice".into()), session_id.parse().unwrap());
+    assert!(
+        app.state
+            .session_repo
+            .begin_delete(
+                &UserId("alice".into()),
+                session_id.parse().unwrap(),
+                hex::encode(Sha256::digest(token.as_bytes())),
+                zjudss::application::now_ms(),
+            )
+            .await
+            .unwrap()
+    );
+    let hidden_scripts = app
+        .router
+        .clone()
+        .oneshot(request(
+            "GET",
+            &format!("/api/sessions/{session_id}/scripts"),
+            Some(&cookie),
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(hidden_scripts.status(), StatusCode::NOT_FOUND);
+    for expected in [StatusCode::NO_CONTENT, StatusCode::NO_CONTENT] {
+        let deleted = app
+            .router
+            .clone()
+            .oneshot(request(
+                "DELETE",
+                &format!("/api/sessions/{session_id}?impactToken={token}"),
+                Some(&cookie),
+                Value::Null,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), expected);
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(1), cancellation.changed())
+        .await
+        .expect("session cancellation signalled")
+        .expect("cancellation channel remains open");
+    assert!(*cancellation.borrow());
+    let hidden = app
+        .router
+        .clone()
+        .oneshot(request(
+            "GET",
+            &format!("/api/sessions/{session_id}/messages"),
+            Some(&cookie),
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
+}

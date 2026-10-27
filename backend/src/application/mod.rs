@@ -64,10 +64,11 @@ pub use data_resources::{
 };
 pub use datasets::{DatasetError, DatasetService};
 pub use events::{
-    AppEvent, AttachmentFile, DatasetViewRef, EventBus, EventWriter, MESSAGE_TYPES, ModelAmbiguity,
-    ModelScope, ModelVersionSnapshot, ModelVersionStatus, OperationKind, OperationRef,
-    RecognizedTable, ResultColumn, ResultOutputRef, Stage, StageStatus, ToolStatus, UploadStatus,
-    VisualizationKind, ms_to_iso, now_ms,
+    AppEvent, AttachmentFile, DatasetViewRef, EventBus, EventDiagnostic, EventWriter,
+    MESSAGE_TYPES, ModelAmbiguity, ModelScope, ModelVersionSnapshot, ModelVersionStatus,
+    OperationKind, OperationRef, RecognizedTable, ResultColumn, ResultOutputRef, Stage,
+    StageStatus, StudyConfigCard, ToolStatus, UploadBatchCard, UploadCandidateCard, UploadStatus,
+    VisualizationKind, WorkflowAttemptCard, WorkflowProgressCard, ms_to_iso, now_ms,
 };
 pub use history::{HistoryError, HistoryService};
 pub use model_dataframes::{
@@ -76,7 +77,9 @@ pub use model_dataframes::{
 };
 pub use model_patch::{ModelChange, ModelMutationError, ModelPatch, ModelPatchService};
 pub use runs::{CreateRunRequest, RunError, RunService, RunSubmission, RunSummary};
-pub use scheduler::{AppError, RunScheduler, RunTicket, SchedulerError};
+pub use scheduler::{
+    AppError, RunScheduler, RunTicket, SchedulerError, SessionCancellationRegistry,
+};
 pub use scripts::{
     CreateScriptRequest, ScriptDetail, ScriptError, ScriptService, ScriptServiceDependencies,
     ScriptSource, ScriptSummary,
@@ -125,6 +128,7 @@ pub struct AppState {
     pub agent_factory: Arc<dyn AgentFactory>,
     pub auth: AuthService,
     pub scheduler: RunScheduler,
+    pub session_cancellations: SessionCancellationRegistry,
     pub semaphore: Arc<Semaphore>,
     /// 数据根目录（内核结果、上传附件落这里），由 `DATA_DIR` 环境变量或默认 `data` 决定。
     pub data_dir: PathBuf,
@@ -510,6 +514,7 @@ impl AppState {
         let session_repo = SessionRepo::new(pool.clone());
         let message_repo = MessageRepo::new(pool.clone());
         let events = EventBus::new();
+        let session_cancellations = SessionCancellationRegistry::default();
         let artifact_service = ArtifactService::new(
             ArtifactStore::new(data_dir.clone()).expect("DATA_DIR 已在配置阶段验证为可写"),
             ArtifactRepo::new(pool.clone()),
@@ -521,15 +526,17 @@ impl AppState {
             VersionRepo::new(pool.clone()),
             artifact_service.clone(),
         );
-        let upload_batch_service = UploadBatchService::new(
-            UploadRepo::new(pool.clone()),
-            artifact_service.clone(),
-            engine.clone(),
-            engine_snapshot.clone(),
-            data_dir.clone(),
-            upload_staging_ttl_hours,
-            archive_limits,
-        );
+        let upload_batch_service =
+            UploadBatchService::new(uploads::UploadBatchServiceDependencies {
+                repo: UploadRepo::new(pool.clone()),
+                confirmation_repo: DataResourceRepo::new(pool.clone()),
+                artifacts: artifact_service.clone(),
+                engine: engine.clone(),
+                snapshot: engine_snapshot.clone(),
+                data_dir: data_dir.clone(),
+                ttl_hours: upload_staging_ttl_hours,
+                archive_limits,
+            });
         let data_resource_service = DataResourceService::new(
             DataResourceRepo::new(pool.clone()),
             UploadRepo::new(pool.clone()),
@@ -561,6 +568,7 @@ impl AppState {
             scheduler: scheduler.clone(),
             messages: message_repo.clone(),
             events: events.clone(),
+            session_cancellations: session_cancellations.clone(),
             data_dir: data_dir.clone(),
         });
         let case_import_service = CaseImportService::new(
@@ -639,6 +647,7 @@ impl AppState {
             agent_factory,
             auth,
             scheduler,
+            session_cancellations,
             semaphore: Arc::new(Semaphore::new(4)),
             data_dir,
             upload_single_file_limit_bytes,

@@ -1,9 +1,9 @@
 //! 可恢复 SSE：先订阅实时通道，再按 Last-Event-ID 补发持久消息，最后去重接续实时事件。
 
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::pin::Pin;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::extract::{Path, State};
@@ -22,14 +22,9 @@ use super::ApiError;
 type EventStream = Pin<Box<dyn Stream<Item = Result<SseEvent, Infallible>> + Send>>;
 
 fn message_frame(event: AppEvent) -> Option<SseEvent> {
-    let id = event.message_id()?;
+    let id = event.event_id()?;
     let data = serde_json::to_string(&event).ok()?;
-    Some(
-        SseEvent::default()
-            .event("message")
-            .id(id.to_string())
-            .data(data),
-    )
+    Some(SseEvent::default().event("message").id(id).data(data))
 }
 
 fn resync_frame() -> SseEvent {
@@ -56,24 +51,24 @@ pub async fn stream(
     let raw_cursor = headers
         .get("last-event-id")
         .and_then(|value| value.to_str().ok());
-    let parsed_cursor = raw_cursor.and_then(|value| value.parse::<i32>().ok());
-    let invalid_cursor = raw_cursor.is_some() && parsed_cursor.is_none_or(|id| id <= 0);
+    let parsed_cursor = raw_cursor.and_then(parse_cursor);
+    let invalid_cursor = raw_cursor.is_some() && parsed_cursor.is_none();
 
     let mut initial = Vec::new();
-    let mut last_id = 0;
+    let mut seen = HashMap::new();
     if invalid_cursor {
         initial.push(Ok(resync_frame()));
-    } else if let Some(after_id) = parsed_cursor {
+    } else if let Some((after_id, after_revision)) = parsed_cursor {
+        seen.insert(after_id, after_revision);
         match state
             .message_repo
-            .list_after(&principal.id, session_id, after_id)
+            .list_after(&principal.id, session_id, after_id, after_revision)
             .await
         {
             Ok(messages) => {
-                last_id = after_id;
                 for message in messages {
                     let event = AppEvent::from_message(&message);
-                    last_id = last_id.max(message.id);
+                    seen.insert(message.id, message.revision);
                     if let Some(frame) = message_frame(event) {
                         initial.push(Ok(frame));
                     }
@@ -84,7 +79,7 @@ pub async fn stream(
         }
     }
 
-    let last_seen = Arc::new(AtomicI32::new(last_id));
+    let last_seen = Arc::new(Mutex::new(seen));
     let live_seen = last_seen.clone();
     let auth = state.auth.clone();
     let auth_session_hash = principal.auth_session_hash;
@@ -108,9 +103,13 @@ pub async fn stream(
                     item = events.next() => match item {
                         Some(Ok(event)) => {
                             let Some(id) = event.message_id() else { continue };
-                            if id <= live_seen.fetch_max(id, Ordering::SeqCst) {
+                            let revision = event.revision();
+                            let mut seen = live_seen.lock().expect("SSE seen revisions lock poisoned");
+                            if seen.get(&id).is_some_and(|seen_revision| *seen_revision >= revision) {
                                 continue;
                             }
+                            seen.insert(id, revision);
+                            drop(seen);
                             let Some(frame) = message_frame(event) else { continue };
                             return Some((
                                 Ok(frame),
@@ -148,4 +147,13 @@ pub async fn stream(
     );
     let stream: EventStream = Box::pin(futures::stream::iter(initial).chain(live));
     Ok(Sse::new(stream))
+}
+
+fn parse_cursor(value: &str) -> Option<(i32, i32)> {
+    let (id, revision) = value
+        .split_once(':')
+        .map_or((value, "1"), |(id, revision)| (id, revision));
+    let id = id.parse::<i32>().ok()?;
+    let revision = revision.parse::<i32>().ok()?;
+    (id > 0 && revision > 0).then_some((id, revision))
 }

@@ -121,6 +121,7 @@ impl RunRepo {
                     )
                     .filter(schema::script_resources::id.eq(request.script_id))
                     .filter(schema::sessions::user_id.eq(&user))
+                    .filter(schema::sessions::deletion_status.eq("live"))
                     .select(schema::script_resources::all_columns)
                     .first::<crate::db::models::ScriptResource>(conn)
                     .optional()?
@@ -257,6 +258,7 @@ impl RunRepo {
                 )
                 .filter(schema::simulation_runs::id.eq(id))
                 .filter(schema::sessions::user_id.eq(user))
+                .filter(schema::sessions::deletion_status.eq("live"))
                 .filter(schema::simulation_runs::deleted_at_ms.is_null())
                 .select(schema::simulation_runs::all_columns)
                 .first(&mut conn)
@@ -279,6 +281,7 @@ impl RunRepo {
             schema::sessions::table
                 .find(session_id)
                 .filter(schema::sessions::user_id.eq(user))
+                .filter(schema::sessions::deletion_status.eq("live"))
                 .select(schema::sessions::id)
                 .first::<i32>(&mut conn)
                 .optional()?
@@ -389,6 +392,7 @@ impl RunRepo {
             conn.immediate_transaction::<Vec<RunDataset>, RepoError, _>(|conn| {
                 let owned_sessions = schema::sessions::table
                     .filter(schema::sessions::user_id.eq(&user))
+                    .filter(schema::sessions::deletion_status.eq("live"))
                     .select(schema::sessions::id);
                 let exists = schema::simulation_runs::table
                     .filter(schema::simulation_runs::id.eq(id))

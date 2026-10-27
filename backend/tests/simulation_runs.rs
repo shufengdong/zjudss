@@ -124,11 +124,12 @@ async fn deleting_a_session_with_a_completed_run_removes_its_history_and_storage
             > 0
     );
 
+    let token = common::session_deletion_token(&app, session_id, &cookie).await;
     let deleted = app
         .router
         .clone()
         .oneshot(
-            Request::delete(format!("/api/sessions/{session_id}"))
+            Request::delete(format!("/api/sessions/{session_id}?impactToken={token}"))
                 .header("cookie", cookie)
                 .body(Body::empty())
                 .unwrap(),

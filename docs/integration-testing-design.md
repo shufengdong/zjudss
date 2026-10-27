@@ -18,11 +18,16 @@
 覆盖范围包括 BOOT、AUTH、SESSION、MESSAGE、SSE、SCHED、UPLOAD、MODEL-IMPORT、WORKSPACE、MODEL-DATAFRAME-READ、VERSION、
 EXAMPLE、DATA-RESOURCE、AGENT、SCRIPT、RUN、DATASET、ANALYSIS、VIEW、COMPARE、HISTORY、STORAGE、UI、RECOVERY、ENGINE。
 
+SESSION/MESSAGE/SSE/HISTORY 的 V4 行为测试还覆盖：删除 preview 的完整影响统计、过期或变化 token、删除中写入阻断和最小
+tombstone；三种 durable 操作卡以稳定 operation ID 原位更新、终态幂等、revision SSE 回放和公共 payload 脱敏；`aroundId`
+严格归属与精确包含；前端 anchored window 与 latest cache 分离、实时新消息提示及返回最新窗口。
+
 DATA-RESOURCE-001 的 Rust 行为测试覆盖：无 schemaRef 的通用资源、静态 `para` 与模型草稿分离且不能改判为模型、
-未决用途禁止确认、双子事务部分成功重试、成功侧空间结算与决定冻结、操作 ID 幂等及两个子 receipt、替换不改写旧
+未决用途禁止确认、双子事务部分成功后以新操作重试失败侧、成功侧空间结算与决定冻结、同操作同 payload 幂等、同操作不同 payload 冲突及两个子 receipt、替换不改写旧
 artifact 并使未确认研究配置失效、Struct preview/confirm 与被取代 artifact 回收、影响 token 删除和配额释放、跨用户 404、
 schema 资源的 SaveAsNew alias 分配、过期/跨路径失效 preview 回收、同用户跨会话去重原文件的引用隔离、普通资源
-分析输入/冻结血缘、并发 confirm 原文件幂等提交、confirm/discard 与 parse/discard 竞争不复活终态、模型替换
+分析输入/冻结血缘、并发 confirm 原文件幂等提交、同一确认声明只能取得一次执行锁、精确重放跨暂存 TTL 仍只读返回、显式 alias 冲突重放保持冻结失败语义、活动确认期间候选冻结与 DELETE 冲突、到期避让以及重启先汇总
+已提交子事务、confirm/discard 与 parse/discard 竞争不复活终态、模型替换
 原子释放旧草稿引用、活动版本克隆按逻辑表计数去重 artifact 引用、重复候选逐引用结算、结果提升、普通资源
 物化视图，以及 4 个 Agent
 工具的真实调用行为。合同测试同时追踪 10 条资源路由、4 个 Agent 工具和

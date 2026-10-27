@@ -60,14 +60,7 @@ async fn import_case(app: &TestApp, user: &zjudss::auth::CurrentUser, session_id
         .collect();
     app.state
         .data_resource_service
-        .confirm_upload(
-            user,
-            batch.id.parse().unwrap(),
-            decisions,
-            None,
-            None,
-            Some(id),
-        )
+        .confirm_upload(user, batch.id.parse().unwrap(), decisions, None, None, id)
         .await
         .unwrap();
     let workspace = app
@@ -157,7 +150,7 @@ async fn add_second_para_resource(
             decisions,
             None,
             None,
-            Some("publish-second-para"),
+            "publish-second-para",
         )
         .await
         .unwrap();

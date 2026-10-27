@@ -24,6 +24,7 @@ impl ComparisonRepo {
                 schema::sessions::table
                     .find(new.session_id)
                     .filter(schema::sessions::user_id.eq(&user))
+                    .filter(schema::sessions::deletion_status.eq("live"))
                     .select(schema::sessions::id)
                     .first::<i32>(conn)
                     .optional()?
@@ -70,6 +71,7 @@ impl ComparisonRepo {
                 .inner_join(schema::sessions::table)
                 .filter(schema::run_comparisons::id.eq(id))
                 .filter(schema::sessions::user_id.eq(user))
+                .filter(schema::sessions::deletion_status.eq("live"))
                 .select(schema::run_comparisons::all_columns)
                 .first(&mut conn)
                 .optional()?

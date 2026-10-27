@@ -525,12 +525,13 @@ async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outpu
     assert_eq!(compatibility["resultName"], "result");
     assert_eq!(outputs.len(), 1);
 
+    let token = common::session_deletion_token(&app, baseline.session_id, &cookie).await;
     assert_eq!(
         request(
             &app,
             &cookie,
             "DELETE",
-            format!("/api/sessions/{}", baseline.session_id),
+            format!("/api/sessions/{}?impactToken={token}", baseline.session_id),
         )
         .await
         .status(),

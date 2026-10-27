@@ -448,11 +448,12 @@ async fn script_resources_disappear_only_with_the_whole_session() {
         .await
         .unwrap();
     let cookie = app.login_cookie("alice@example.com").await;
+    let token = common::session_deletion_token(&app, session.id, &cookie).await;
     let response = app
         .router
         .clone()
         .oneshot(
-            Request::delete(format!("/api/sessions/{}", session.id))
+            Request::delete(format!("/api/sessions/{}?impactToken={token}", session.id))
                 .header("cookie", cookie)
                 .body(Body::empty())
                 .unwrap(),

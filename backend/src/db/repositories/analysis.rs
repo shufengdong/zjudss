@@ -32,6 +32,7 @@ impl AnalysisRepo {
                 schema::sessions::table
                     .find(run.session_id)
                     .filter(schema::sessions::user_id.eq(&user))
+                    .filter(schema::sessions::deletion_status.eq("live"))
                     .select(schema::sessions::id)
                     .first::<i32>(conn)
                     .optional()?
@@ -49,6 +50,7 @@ impl AnalysisRepo {
                                 .filter(schema::data_resources::id.eq(resource_id))
                                 .filter(schema::data_resources::session_id.eq(run.session_id))
                                 .filter(schema::sessions::user_id.eq(&user))
+                                .filter(schema::sessions::deletion_status.eq("live"))
                                 .filter(schema::data_resources::status.ne("deleted"))
                                 .select(schema::data_resources::id)
                                 .first::<String>(conn)
@@ -221,6 +223,7 @@ fn owned_analysis(
         .inner_join(schema::sessions::table)
         .filter(schema::result_analysis_runs::id.eq(id))
         .filter(schema::sessions::user_id.eq(user))
+        .filter(schema::sessions::deletion_status.eq("live"))
         .select(schema::result_analysis_runs::all_columns)
         .first(conn)
         .optional()?
@@ -239,7 +242,7 @@ fn owned_live_dataset(
         id: i32,
     }
     let found = diesel::sql_query(
-        "SELECT d.id FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id JOIN sessions s ON s.id=COALESCE(r.session_id,a.session_id) WHERE d.id=?1 AND s.id=?2 AND s.user_id=?3 AND d.deleted_at_ms IS NULL AND d.artifact_id IS NOT NULL",
+        "SELECT d.id FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id JOIN sessions s ON s.id=COALESCE(r.session_id,a.session_id) WHERE d.id=?1 AND s.id=?2 AND s.user_id=?3 AND s.deletion_status='live' AND d.deleted_at_ms IS NULL AND d.artifact_id IS NOT NULL",
     )
     .bind::<diesel::sql_types::Integer, _>(dataset_id)
     .bind::<diesel::sql_types::Integer, _>(session_id)
@@ -260,7 +263,7 @@ fn dataset_session(conn: &mut SqliteConnection, user: &str, id: i32) -> RepoResu
         session_id: i32,
     }
     diesel::sql_query(
-        "SELECT s.id AS session_id FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id JOIN sessions s ON s.id=COALESCE(r.session_id,a.session_id) WHERE d.id=?1 AND s.user_id=?2 AND d.deleted_at_ms IS NULL AND d.artifact_id IS NOT NULL",
+        "SELECT s.id AS session_id FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id JOIN sessions s ON s.id=COALESCE(r.session_id,a.session_id) WHERE d.id=?1 AND s.user_id=?2 AND s.deletion_status='live' AND d.deleted_at_ms IS NULL AND d.artifact_id IS NOT NULL",
     )
     .bind::<diesel::sql_types::Integer, _>(id)
     .bind::<diesel::sql_types::Text, _>(user)

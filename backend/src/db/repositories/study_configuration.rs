@@ -227,6 +227,7 @@ fn ensure_session(conn: &mut SqliteConnection, user: &str, session_id: i32) -> R
     schema::sessions::table
         .filter(schema::sessions::id.eq(session_id))
         .filter(schema::sessions::user_id.eq(user))
+        .filter(schema::sessions::deletion_status.eq("live"))
         .select(schema::sessions::id)
         .first::<i32>(conn)
         .optional()?
@@ -246,6 +247,7 @@ fn load_owned(
         )
         .filter(schema::study_configurations::id.eq(id))
         .filter(schema::sessions::user_id.eq(user))
+        .filter(schema::sessions::deletion_status.eq("live"))
         .select(schema::study_configurations::all_columns)
         .first::<StudyConfigurationRecord>(conn)
         .optional()?

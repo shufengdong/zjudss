@@ -158,6 +158,7 @@ impl ArtifactRepo {
                         )
                         .filter(schema::upload_files::id.eq(file_id))
                         .filter(schema::users::storage_scope_id.eq(scope_id))
+                        .filter(schema::sessions::deletion_status.eq("live"))
                         .select((
                             schema::upload_files::source_artifact_id,
                             schema::upload_batches::status,

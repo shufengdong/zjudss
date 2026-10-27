@@ -18,7 +18,7 @@ pub struct ConfirmBody {
     decisions: Vec<CandidateDecision>,
     replacement_action: Option<ReplacementAction>,
     expected_draft: Option<crate::db::models::DraftRef>,
-    client_operation_id: Option<String>,
+    client_operation_id: String,
 }
 
 pub async fn confirm_upload(
@@ -35,9 +35,11 @@ pub async fn confirm_upload(
             body.decisions,
             body.replacement_action,
             body.expected_draft,
-            body.client_operation_id.as_deref(),
+            &body.client_operation_id,
         )
         .await?;
+    let batch = state.upload_batch_service.get(&user, id).await?;
+    super::uploads::publish_upload(&state, &user, &batch).await?;
     Ok(Json(json!({"uploadConfirmation": confirmation})))
 }
 

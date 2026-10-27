@@ -4,9 +4,42 @@ use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
+use tokio::sync::watch;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::auth::UserId;
+
+type SessionCancellationKey = (UserId, i32);
+type SessionCancellationSenders = HashMap<SessionCancellationKey, watch::Sender<bool>>;
+
+#[derive(Clone, Default)]
+pub struct SessionCancellationRegistry {
+    inner: Arc<Mutex<SessionCancellationSenders>>,
+}
+
+impl SessionCancellationRegistry {
+    pub fn subscribe(&self, user: &UserId, session_id: i32) -> watch::Receiver<bool> {
+        let mut entries = self
+            .inner
+            .lock()
+            .expect("session cancellation lock poisoned");
+        entries
+            .entry((user.clone(), session_id))
+            .or_insert_with(|| watch::channel(false).0)
+            .subscribe()
+    }
+
+    pub fn cancel(&self, user: &UserId, session_id: i32) {
+        let mut entries = self
+            .inner
+            .lock()
+            .expect("session cancellation lock poisoned");
+        let sender = entries
+            .entry((user.clone(), session_id))
+            .or_insert_with(|| watch::channel(false).0);
+        sender.send_replace(true);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppError {

@@ -108,7 +108,7 @@ impl ResultRepo {
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let owned = diesel::sql_query(
-                "SELECT count(*) AS count FROM result_analysis_runs a JOIN sessions s ON s.id=a.session_id WHERE a.id=?1 AND s.user_id=?2",
+                "SELECT count(*) AS count FROM result_analysis_runs a JOIN sessions s ON s.id=a.session_id WHERE a.id=?1 AND s.user_id=?2 AND s.deletion_status='live'",
             )
             .bind::<Integer, _>(analysis_id)
             .bind::<Text, _>(&user)
@@ -131,7 +131,7 @@ impl ResultRepo {
         let user = user.0.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            let owned = diesel::sql_query("SELECT count(*) AS count FROM simulation_runs r JOIN sessions s ON s.id=r.session_id WHERE r.id=?1 AND s.user_id=?2 AND r.deleted_at_ms IS NULL")
+            let owned = diesel::sql_query("SELECT count(*) AS count FROM simulation_runs r JOIN sessions s ON s.id=r.session_id WHERE r.id=?1 AND s.user_id=?2 AND s.deletion_status='live' AND r.deleted_at_ms IS NULL")
                 .bind::<Integer, _>(run_id)
                 .bind::<Text, _>(&user)
                 .get_result::<Count>(&mut conn)?
@@ -171,7 +171,7 @@ impl ResultRepo {
         let user = user.0.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            let view = diesel::sql_query("SELECT v.id,v.source_dataset_id,v.view_dataset_id,v.name,v.kind,v.spec_json,v.is_default,v.created_at_ms FROM dataset_views v JOIN result_datasets d ON d.id=v.view_dataset_id LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id JOIN sessions s ON s.id=COALESCE(r.session_id,a.session_id) WHERE v.id=?1 AND s.user_id=?2 AND d.deleted_at_ms IS NULL AND d.artifact_id IS NOT NULL")
+            let view = diesel::sql_query("SELECT v.id,v.source_dataset_id,v.view_dataset_id,v.name,v.kind,v.spec_json,v.is_default,v.created_at_ms FROM dataset_views v JOIN result_datasets d ON d.id=v.view_dataset_id LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id JOIN sessions s ON s.id=COALESCE(r.session_id,a.session_id) WHERE v.id=?1 AND s.user_id=?2 AND s.deletion_status='live' AND d.deleted_at_ms IS NULL AND d.artifact_id IS NOT NULL")
                 .bind::<Integer, _>(view_id)
                 .bind::<Text, _>(&user)
                 .get_result::<ResultViewRow>(&mut conn)
@@ -205,7 +205,7 @@ impl ResultRepo {
         let user = user.0.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            diesel::sql_query("SELECT s.id AS value FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id JOIN sessions s ON s.id=COALESCE(r.session_id,a.session_id) WHERE d.id=?1 AND s.user_id=?2")
+            diesel::sql_query("SELECT s.id AS value FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id JOIN sessions s ON s.id=COALESCE(r.session_id,a.session_id) WHERE d.id=?1 AND s.user_id=?2 AND s.deletion_status='live'")
                 .bind::<Integer, _>(id)
                 .bind::<Text, _>(user)
                 .get_result::<IntValue>(&mut conn)
@@ -280,7 +280,7 @@ impl ResultRepo {
 
 fn live_dataset_query() -> diesel::query_builder::SqlQuery {
     diesel::sql_query(
-        "SELECT d.* FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id JOIN sessions s ON s.id=COALESCE(r.session_id,a.session_id) WHERE d.id=?1 AND s.user_id=?2 AND d.deleted_at_ms IS NULL AND d.artifact_id IS NOT NULL",
+        "SELECT d.* FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id JOIN sessions s ON s.id=COALESCE(r.session_id,a.session_id) WHERE d.id=?1 AND s.user_id=?2 AND s.deletion_status='live' AND d.deleted_at_ms IS NULL AND d.artifact_id IS NOT NULL",
     )
 }
 

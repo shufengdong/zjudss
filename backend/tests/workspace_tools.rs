@@ -49,8 +49,15 @@ fn tool_services_for_session(
     principal: CurrentUser,
     session_id: i32,
 ) -> Arc<ToolServices> {
+    let scope = principal.id.clone();
     let mut services = (*tool_services(app, principal)).clone();
     services.session_id = session_id;
+    services.writer = EventWriter::new(
+        scope,
+        session_id,
+        app.state.message_repo.clone(),
+        app.state.events.clone(),
+    );
     services.loaded_skills = Arc::new(Mutex::new(BTreeSet::from(["model-intake".to_string()])));
     Arc::new(services)
 }

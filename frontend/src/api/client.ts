@@ -2,7 +2,7 @@ import type {
   AnalysisRun, DatasetMetadata, DatasetPage, DatasetViewData, ExampleDetail, ExampleTreeNode,
   HistoryHit, Message, MessagePage, ModelImport, ModelVersion, RunComparison, ScriptDetail,
   ModelDataFrameMetadata, ModelDataFramePage, ModelDataFrameSource, ScriptSummary, Session,
-  SimulationRun, StorageUsage, User, VersionDeletionPreview, Workspace,
+  SessionDeletionPreview, SimulationRun, StorageUsage, User, VersionDeletionPreview, Workspace,
 } from '../types'
 import { emitAuthenticationRequired } from '../state/auth'
 import { normalizeApiBasePath } from '../../config/api-config'
@@ -42,7 +42,8 @@ export const getCurrentUser=()=>request<User>('/api/me')
 export const listSessions=async()=>(await request<{sessions:Session[]}>('/api/sessions')).sessions
 export const createSession=(title='')=>request<Session>('/api/sessions',{method:'POST',body:JSON.stringify({title})})
 export const renameSession=(id:string,title:string)=>request<Session>(`/api/sessions/${id}`,{method:'PATCH',body:JSON.stringify({title})})
-export const deleteSession=async(id:string)=>request<void>(`/api/sessions/${id}`,{method:'DELETE'},async()=>undefined)
+export const previewSessionDeletion=async(id:string)=>request<SessionDeletionPreview>(`/api/sessions/${id}/deletion-preview`,{method:'POST'})
+export const deleteSession=async(id:string,impactToken:string)=>request<void>(`/api/sessions/${id}${params({impactToken})}`,{method:'DELETE'},async()=>undefined)
 export const listMessages=(id:string,q:{beforeId?:string;aroundId?:string;limit?:number}={})=>
   request<MessagePage<Message>>(`/api/sessions/${id}/messages${params(q)}`)
 export const postMessage=async(id:string,message:string)=>request<{ok:boolean;sessionTitle:string}>(`/api/sessions/${id}/messages`,{method:'POST',body:JSON.stringify({message})})

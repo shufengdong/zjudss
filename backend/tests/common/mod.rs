@@ -4,8 +4,11 @@ use std::collections::{BTreeMap, HashSet};
 use std::io::Cursor;
 
 use axum::Router;
+use axum::body::{Body, to_bytes};
+use axum::http::Request;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+use tower::ServiceExt;
 use zjudss::adapters::{SimEngine, StubEngine};
 use zjudss::agent::knowledge::AgentKnowledge;
 use zjudss::agent::{AgentFactory, DeepSeekAgentFactory, LlmConfig};
@@ -30,6 +33,26 @@ pub struct TestApp {
 pub struct CountRow {
     #[diesel(sql_type = diesel::sql_types::BigInt)]
     pub count: i64,
+}
+
+pub async fn session_deletion_token(app: &TestApp, session_id: i32, cookie: &str) -> String {
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/sessions/{session_id}/deletion-preview"))
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    serde_json::from_slice::<serde_json::Value>(&body).unwrap()["impactToken"]
+        .as_str()
+        .unwrap()
+        .to_string()
 }
 
 pub fn seed_test_users(pool: &DbPool, csv_bytes: &[u8]) -> zjudss::auth::UserSeedSummary {
@@ -140,7 +163,7 @@ pub async fn publish_model_bytes(
             decisions,
             None,
             expected,
-            Some(client_id),
+            client_id,
         )
         .await
         .unwrap();

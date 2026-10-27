@@ -104,6 +104,7 @@ pub struct RunService {
     scheduler: RunScheduler,
     messages: MessageRepo,
     events: EventBus,
+    session_cancellations: crate::application::SessionCancellationRegistry,
     data_dir: PathBuf,
 }
 
@@ -115,6 +116,7 @@ pub(crate) struct RunServiceDependencies {
     pub scheduler: RunScheduler,
     pub messages: MessageRepo,
     pub events: EventBus,
+    pub session_cancellations: crate::application::SessionCancellationRegistry,
     pub data_dir: PathBuf,
 }
 
@@ -128,6 +130,7 @@ impl RunService {
             scheduler,
             messages,
             events,
+            session_cancellations,
             data_dir,
         } = dependencies;
         Self {
@@ -138,6 +141,7 @@ impl RunService {
             scheduler,
             messages,
             events,
+            session_cancellations,
             data_dir,
         }
     }
@@ -178,8 +182,18 @@ impl RunService {
             let service = self.clone();
             let principal = user.clone();
             let run_id = created.run.id;
+            let session_id = script.session_id;
             tokio::spawn(async move {
-                ticket.run(service.execute(principal, run_id)).await;
+                let mut cancelled = service
+                    .session_cancellations
+                    .subscribe(&principal.id, session_id);
+                if *cancelled.borrow() {
+                    return;
+                }
+                tokio::select! {
+                    _ = cancelled.changed() => {}
+                    _ = ticket.run(service.execute(principal, run_id)) => {}
+                }
             });
         }
         Ok(RunSubmission {

@@ -9,7 +9,8 @@ use crate::adapters::{ImportSpec, MODEL_TABLE_OUTPUTS, PARA_RESOURCE_OUTPUT, Sim
 use crate::auth::CurrentUser;
 use crate::catalog::DataFrameContractKind;
 use crate::db::repositories::{
-    NewUploadCandidate, NewUploadFile, RepoError, UploadBatchRecordSet, UploadRepo,
+    DataResourceRepo, NewUploadCandidate, NewUploadFile, RepoError, UploadBatchRecordSet,
+    UploadRepo,
 };
 use crate::engine_resources::{EngineResourceSnapshot, FacadeInputKind};
 use crate::ingestion::{
@@ -174,6 +175,7 @@ pub struct UploadBatchView {
     pub diagnostics: serde_json::Value,
     pub reserved_bytes: i64,
     pub expires_at_ms: i64,
+    pub revision: i64,
     pub candidates: Vec<UploadCandidateView>,
 }
 
@@ -227,10 +229,13 @@ impl std::fmt::Display for UploadBatchError {
 impl std::error::Error for UploadBatchError {}
 impl From<RepoError> for UploadBatchError {
     fn from(e: RepoError) -> Self {
-        if matches!(e, RepoError::NotFound) {
-            Self::NotFound
-        } else {
-            Self::Repository(e)
+        match e {
+            RepoError::NotFound => Self::NotFound,
+            RepoError::InvalidState(code) if code == "upload_state_invalid" => Self::Invalid(
+                "upload_state_invalid".into(),
+                "上传批次正在确认或当前状态不可修改".into(),
+            ),
+            other => Self::Repository(other),
         }
     }
 }
@@ -248,6 +253,7 @@ impl From<std::io::Error> for UploadBatchError {
 #[derive(Clone)]
 pub struct UploadBatchService {
     repo: UploadRepo,
+    confirmation_repo: DataResourceRepo,
     artifacts: ArtifactService,
     engine: Arc<dyn SimEngine>,
     snapshot: Arc<EngineResourceSnapshot>,
@@ -256,18 +262,32 @@ pub struct UploadBatchService {
     archive_limits: ArchiveLimits,
 }
 
+pub(crate) struct UploadBatchServiceDependencies {
+    pub repo: UploadRepo,
+    pub confirmation_repo: DataResourceRepo,
+    pub artifacts: ArtifactService,
+    pub engine: Arc<dyn SimEngine>,
+    pub snapshot: Arc<EngineResourceSnapshot>,
+    pub data_dir: PathBuf,
+    pub ttl_hours: u64,
+    pub archive_limits: ArchiveLimits,
+}
+
 impl UploadBatchService {
-    pub fn new(
-        repo: UploadRepo,
-        artifacts: ArtifactService,
-        engine: Arc<dyn SimEngine>,
-        snapshot: Arc<EngineResourceSnapshot>,
-        data_dir: PathBuf,
-        ttl_hours: u64,
-        archive_limits: ArchiveLimits,
-    ) -> Self {
+    pub(crate) fn new(dependencies: UploadBatchServiceDependencies) -> Self {
+        let UploadBatchServiceDependencies {
+            repo,
+            confirmation_repo,
+            artifacts,
+            engine,
+            snapshot,
+            data_dir,
+            ttl_hours,
+            archive_limits,
+        } = dependencies;
         Self {
             repo,
+            confirmation_repo,
             artifacts,
             engine,
             snapshot,
@@ -533,6 +553,7 @@ impl UploadBatchService {
             .await?)
     }
     pub async fn recover_startup(&self) -> Result<(), UploadBatchError> {
+        self.repo.release_abandoned_confirmations(now_ms()).await?;
         for item in self.repo.recoverable().await? {
             let user = CurrentUser {
                 id: crate::auth::UserId(item.user_id),
@@ -540,7 +561,20 @@ impl UploadBatchService {
                 storage_scope_id: item.storage_scope_id,
                 auth_session_hash: String::new(),
             };
-            let record = self.repo.find(&user.id, item.batch_id).await?;
+            let mut record = self.repo.find(&user.id, item.batch_id).await?;
+            if record.batch.confirmation_started {
+                let cleanup = self
+                    .confirmation_repo
+                    .finish_batch(&user.id, item.batch_id, now_ms())
+                    .await?;
+                for path in cleanup.staged_paths {
+                    let _ = std::fs::remove_file(self.data_dir.join(path));
+                }
+                record = self.repo.find(&user.id, item.batch_id).await?;
+                if record.batch.status == "confirmed" {
+                    continue;
+                }
+            }
             if record.batch.expires_at_ms <= now_ms() {
                 self.settle(&user, item.batch_id, "expired").await?;
                 continue;
@@ -585,6 +619,48 @@ impl UploadBatchService {
         user: &CurrentUser,
         id: i32,
         decisions: Vec<CandidateDecision>,
+    ) -> Result<UploadBatchView, UploadBatchError> {
+        self.update_candidates_inner(user, id, decisions, None, None)
+            .await
+    }
+
+    pub(crate) async fn update_candidates_with_alias_intent(
+        &self,
+        user: &CurrentUser,
+        id: i32,
+        decisions: Vec<CandidateDecision>,
+        explicit_aliases: BTreeSet<String>,
+    ) -> Result<UploadBatchView, UploadBatchError> {
+        self.update_candidates_inner(user, id, decisions, None, Some(explicit_aliases))
+            .await
+    }
+
+    pub(crate) async fn confirm_candidates(
+        &self,
+        user: &CurrentUser,
+        id: i32,
+        decisions: Vec<CandidateDecision>,
+        operation_id: &str,
+        payload_hash: &str,
+        explicit_aliases: BTreeSet<String>,
+    ) -> Result<UploadBatchView, UploadBatchError> {
+        self.update_candidates_inner(
+            user,
+            id,
+            decisions,
+            Some((operation_id.to_string(), payload_hash.to_string())),
+            Some(explicit_aliases),
+        )
+        .await
+    }
+
+    async fn update_candidates_inner(
+        &self,
+        user: &CurrentUser,
+        id: i32,
+        decisions: Vec<CandidateDecision>,
+        confirmation: Option<(String, String)>,
+        explicit_aliases: Option<BTreeSet<String>>,
     ) -> Result<UploadBatchView, UploadBatchError> {
         let batch = self.repo.find(&user.id, id).await?;
         if batch.batch.expires_at_ms <= now_ms() {
@@ -686,10 +762,19 @@ impl UploadBatchService {
             .into_iter()
             .map(|d| {
                 let existing = known[d.candidate_id.as_str()];
-                let alias = d
-                    .alias
-                    .or(d.table_name)
-                    .or_else(|| existing.proposed_alias.clone());
+                let requested_alias = d.alias.or(d.table_name);
+                let alias_explicit = existing.alias_explicit
+                    || explicit_aliases.as_ref().map_or_else(
+                        || {
+                            requested_alias.as_deref().is_some_and(|alias| {
+                                existing.proposed_alias.as_deref().is_none_or(|suggested| {
+                                    normalize_alias(suggested) != normalize_alias(alias)
+                                })
+                            })
+                        },
+                        |aliases| aliases.contains(&d.candidate_id),
+                    );
+                let alias = requested_alias.or_else(|| existing.proposed_alias.clone());
                 let selected = d.selected && d.purpose != CandidatePurpose::Skip;
                 if selected && alias.as_deref().is_none_or(|value| value.trim().is_empty()) {
                     return Err(UploadBatchError::Invalid(
@@ -705,11 +790,12 @@ impl UploadBatchService {
                     d.display_name,
                     alias,
                     normalized,
+                    alias_explicit,
                 ))
             })
             .collect::<Result<Vec<_>, UploadBatchError>>()?;
         self.repo
-            .update_decisions(id, values, "ready_to_confirm", now_ms())
+            .update_decisions(id, values, "ready_to_confirm", confirmation, now_ms())
             .await?;
         self.get(user, id).await
     }
@@ -1192,6 +1278,7 @@ fn candidate(
         display_name: display.into(),
         proposed_alias: alias.map(str::to_string),
         normalized_alias: alias.map(normalize_alias),
+        alias_explicit: false,
         purpose: purpose.map(|p| p.as_str().into()),
         inferred_schema_ref: schema_ref,
         normalized_artifact_id: Some(artifact),
@@ -1217,6 +1304,7 @@ fn view(record: UploadBatchRecordSet) -> UploadBatchView {
         diagnostics: serde_json::from_str(&record.batch.diagnostics_json).unwrap_or_default(),
         reserved_bytes: record.batch.reserved_bytes,
         expires_at_ms: record.batch.expires_at_ms,
+        revision: record.batch.revision,
         candidates: record
             .candidates
             .into_iter()
