@@ -132,7 +132,7 @@ impl RunRepo {
                     .first::<SimulationRun>(conn)
                     .optional()?
                 {
-                    if existing.script_resource_id != request.script_id
+                    if existing.script_resource_id != Some(request.script_id)
                         || existing.model_version_id != Some(request.model_version_id)
                     {
                         return Err(RunRepoError::IdempotencyConflict);

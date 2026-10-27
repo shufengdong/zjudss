@@ -49,6 +49,6 @@ impl Tool for ListSimulationHistoryTool {
             )
             .await
             .map_err(|e| DomainToolError::new("run_error", e.to_string()))?;
-        Ok(Value::Array(rows.into_iter().map(|run|json!({"runId":run.id.to_string(),"status":run.status,"modelVersionId":run.model_version_id.map(|id|id.to_string()),"scriptResourceId":run.script_resource_id.to_string(),"createdAt":crate::application::ms_to_iso(run.created_at_ms)})).collect()))
+        Ok(Value::Array(rows.into_iter().map(|run|json!({"runId":run.id.to_string(),"status":run.status,"modelVersionId":run.model_version_id.map(|id|id.to_string()),"scriptResourceId":run.script_resource_id.map(|id|id.to_string()),"createdAt":crate::application::ms_to_iso(run.created_at_ms)})).collect()))
     }
 }

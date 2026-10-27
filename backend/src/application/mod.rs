@@ -14,6 +14,7 @@ pub(crate) mod dataframe_reader;
 pub mod datasets;
 mod events;
 pub mod history;
+pub mod managed_workflows;
 pub mod model_dataframes;
 pub mod model_patch;
 pub mod runs;
@@ -32,14 +33,16 @@ use tokio::sync::Semaphore;
 
 use crate::adapters::{SimEngine, resolve_data_dir};
 use crate::agent::knowledge::AgentKnowledge;
-use crate::agent::{AgentFactory, DeepSeekAgentFactory, LlmConfig};
+use crate::agent::{
+    AgentFactory, DeepSeekAgentFactory, DeepSeekScriptAuthor, LlmConfig, ScriptAuthor,
+};
 use crate::auth::AuthService;
 use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
-    AnalysisRepo, ArtifactRepo, ComparisonRepo, DataResourceRepo, HistoryRepo, MessageRepo,
-    ResultRepo, RunRepo, ScriptRepo, SessionRepo, StorageScopeRepo, StudyConfigurationRepo,
-    UploadRepo, VersionRepo,
+    AnalysisRepo, ArtifactRepo, ComparisonRepo, DataResourceRepo, HistoryRepo, ManagedWorkflowRepo,
+    MessageRepo, ResultRepo, RunRepo, ScriptRepo, SessionRepo, StorageScopeRepo,
+    StudyConfigurationRepo, UploadRepo, VersionRepo,
 };
 use crate::engine_resources::{EngineKnowledge, EngineResourceSnapshot};
 use crate::ingestion::ArchiveLimits;
@@ -71,6 +74,10 @@ pub use events::{
     VisualizationKind, WorkflowAttemptCard, WorkflowProgressCard, ms_to_iso, now_ms,
 };
 pub use history::{HistoryError, HistoryService};
+pub use managed_workflows::{
+    ConfirmStudyRequest, ManagedWorkflowService, ManagedWorkflowView, WorkflowAttemptSummary,
+    WorkflowError,
+};
 pub use model_dataframes::{
     DraftReadExpectation, ModelDataFrameQuery, ModelDataFrameQueryResult, ModelDataFrameReadError,
     ModelDataFrameReadService, ModelReadScope,
@@ -121,11 +128,13 @@ pub struct AppState {
     pub history_service: HistoryService,
     pub study_planning_service: StudyPlanningService,
     pub study_configuration_service: StudyConfigurationService,
+    pub managed_workflow_service: ManagedWorkflowService,
     pub engine_snapshot: Arc<EngineResourceSnapshot>,
     pub agent_knowledge: Arc<AgentKnowledge>,
     pub events: EventBus,
     pub engine: Arc<dyn SimEngine>,
     pub agent_factory: Arc<dyn AgentFactory>,
+    pub script_author: Arc<dyn ScriptAuthor>,
     pub auth: AuthService,
     pub scheduler: RunScheduler,
     pub session_cancellations: SessionCancellationRegistry,
@@ -368,6 +377,8 @@ impl AppState {
             2 * 1024 * 1024,
             8 * 1024 * 1024,
             24,
+            3,
+            2,
             ArchiveLimits {
                 max_entries: 100,
                 max_expanded_bytes: 16 * 1024 * 1024,
@@ -458,6 +469,8 @@ impl AppState {
             50 * 1024 * 1024,
             500 * 1024 * 1024,
             24,
+            3,
+            2,
             ArchiveLimits::default(),
         )
     }
@@ -476,6 +489,8 @@ impl AppState {
         upload_single_file_limit_bytes: u64,
         upload_batch_limit_bytes: u64,
         upload_staging_ttl_hours: u64,
+        script_repair_max_attempts: usize,
+        agent_model_retry_max: usize,
         archive_limits: ArchiveLimits,
     ) -> Self {
         Self::new_with_resources_and_agent_factory(
@@ -491,6 +506,8 @@ impl AppState {
             upload_single_file_limit_bytes,
             upload_batch_limit_bytes,
             upload_staging_ttl_hours,
+            script_repair_max_attempts,
+            agent_model_retry_max,
             archive_limits,
         )
     }
@@ -509,9 +526,15 @@ impl AppState {
         upload_single_file_limit_bytes: u64,
         upload_batch_limit_bytes: u64,
         upload_staging_ttl_hours: u64,
+        script_repair_max_attempts: usize,
+        agent_model_retry_max: usize,
         archive_limits: ArchiveLimits,
     ) -> Self {
         let session_repo = SessionRepo::new(pool.clone());
+        let script_author: Arc<dyn ScriptAuthor> = Arc::new(DeepSeekScriptAuthor::from_factory(
+            agent_factory.clone(),
+            agent_model_retry_max,
+        ));
         let message_repo = MessageRepo::new(pool.clone());
         let events = EventBus::new();
         let session_cancellations = SessionCancellationRegistry::default();
@@ -620,6 +643,15 @@ impl AppState {
             data_mapping_service.clone(),
             engine_snapshot.clone(),
         );
+        let managed_workflow_service = ManagedWorkflowService::new(
+            ManagedWorkflowRepo::new(pool.clone()),
+            study_configuration_service.clone(),
+            events.clone(),
+            artifact_service.clone(),
+            data_resource_service.clone(),
+            &agent_knowledge,
+            script_repair_max_attempts,
+        );
         Self {
             pool,
             session_repo,
@@ -640,11 +672,13 @@ impl AppState {
             history_service,
             study_planning_service,
             study_configuration_service,
+            managed_workflow_service,
             engine_snapshot,
             agent_knowledge,
             events,
             engine,
             agent_factory,
+            script_author,
             auth,
             scheduler,
             session_cancellations,
@@ -690,6 +724,8 @@ impl AppState {
             50 * 1024 * 1024,
             500 * 1024 * 1024,
             24,
+            3,
+            2,
             ArchiveLimits::default(),
         )
     }

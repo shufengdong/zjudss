@@ -4,6 +4,7 @@ mod comparison;
 mod data_resource;
 mod engine_resource_snapshot;
 mod history;
+mod managed_workflow;
 mod message;
 mod result;
 mod run;
@@ -25,6 +26,11 @@ pub use data_resource::{
 };
 pub use engine_resource_snapshot::EngineResourceSnapshotRepo;
 pub use history::{HistoryHit, HistoryRepo, SearchFilters};
+pub(crate) use managed_workflow::recover_interrupted_workflows;
+pub use managed_workflow::{
+    ConfirmStartOutcome, ManagedWorkflowAggregate, ManagedWorkflowRepo, ManagedWorkflowRepoError,
+    NewWorkflowCandidate, WorkflowReplacementMaterial,
+};
 pub use message::MessageRepo;
 pub use result::{DeleteResultError, DeletedResult, LineageRow, ResultRepo, ResultViewRow};
 pub use run::{

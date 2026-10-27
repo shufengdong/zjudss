@@ -14,6 +14,7 @@ mod sessions;
 mod storage;
 mod study_configurations;
 mod uploads;
+mod workflows;
 mod workspaces;
 
 use axum::Router;
@@ -39,6 +40,7 @@ use crate::application::ScriptError;
 use crate::application::StudyConfigurationError;
 use crate::application::UploadBatchError;
 use crate::application::VersionError;
+use crate::application::WorkflowError;
 use crate::db::repositories::RepoError;
 
 /// 统一 API 错误：把仓储/适配器错误映射为 HTTP 响应。
@@ -47,6 +49,29 @@ pub struct ApiError {
     message: String,
     code: &'static str,
     details: Option<serde_json::Value>,
+}
+
+impl From<WorkflowError> for ApiError {
+    fn from(error: WorkflowError) -> Self {
+        let code = error.code();
+        let status = match code {
+            "not_found" => StatusCode::NOT_FOUND,
+            "workflow_in_progress"
+            | "configuration_stale"
+            | "idempotency_conflict"
+            | "workflow_terminal_conflict" => StatusCode::CONFLICT,
+            _ => StatusCode::UNPROCESSABLE_ENTITY,
+        };
+        let details = error
+            .workflow_id()
+            .map(|id| serde_json::json!({"workflowId":id.to_string()}));
+        Self {
+            status,
+            message: error.to_string(),
+            code,
+            details,
+        }
+    }
 }
 
 impl ApiError {
@@ -677,6 +702,17 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
         "/api/study-configurations/{id}/results",
         put(study_configurations::select_results),
         ["PUT"]
+    );
+    add_route!(
+        "/api/study-configurations/{id}/confirm",
+        post(study_configurations::confirm),
+        ["POST"]
+    );
+    add_route!("/api/workflows/{id}", get(workflows::get), ["GET"]);
+    add_route!(
+        "/api/workflows/{id}/cancel",
+        post(workflows::cancel),
+        ["POST"]
     );
     add_route!(
         "/api/sessions/{id}/scripts",

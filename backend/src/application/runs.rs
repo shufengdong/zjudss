@@ -218,11 +218,12 @@ impl RunService {
 
     pub async fn find_summary(&self, user: &CurrentUser, id: i32) -> Result<RunSummary, RunError> {
         let run = self.find(user, id).await?;
-        let script = self.scripts.find(&user.id, run.script_resource_id).await?;
-        Ok(RunSummary {
-            run,
-            script_name: script.name,
-        })
+        let script_name = if let Some(script_id) = run.script_resource_id {
+            self.scripts.find(&user.id, script_id).await?.name
+        } else {
+            "脚本尚未生成".into()
+        };
+        Ok(RunSummary { run, script_name })
     }
 
     pub async fn list(
@@ -253,10 +254,13 @@ impl RunService {
             .collect::<BTreeMap<_, _>>();
         runs.into_iter()
             .map(|run| {
-                let script_name = script_names
-                    .get(&run.script_resource_id)
-                    .cloned()
-                    .ok_or(RunError::NotFound)?;
+                let script_name = match run.script_resource_id {
+                    Some(script_id) => script_names
+                        .get(&script_id)
+                        .cloned()
+                        .ok_or(RunError::NotFound)?,
+                    None => "脚本尚未生成".into(),
+                };
                 Ok(RunSummary { run, script_name })
             })
             .collect()
@@ -344,9 +348,13 @@ impl RunService {
         let result = root.join("result");
         std::fs::create_dir_all(&input).map_err(RunError::Io)?;
         std::fs::create_dir_all(&result).map_err(RunError::Io)?;
+        let script_artifact_id = context
+            .run
+            .script_artifact_id
+            .ok_or_else(|| RunError::Invalid("受管脚本尚未生成".into()))?;
         let script_artifact = self
             .artifacts
-            .find_owned(user.storage_scope_id, context.run.script_artifact_id)
+            .find_owned(user.storage_scope_id, script_artifact_id)
             .await?;
         let script_source = self
             .artifacts

@@ -301,6 +301,10 @@ pub struct StudyConfigurationService {
 }
 
 impl StudyConfigurationService {
+    pub(crate) fn snapshot_id(&self) -> &str {
+        &self.snapshot.id
+    }
+
     pub fn new(
         repo: StudyConfigurationRepo,
         versions: VersionRepo,

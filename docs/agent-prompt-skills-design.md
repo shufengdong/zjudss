@@ -61,7 +61,11 @@ V4 动态目录基础已经实现：`functions.json=2`、`study_facades.json=1`�
 无效时只禁用受影响门面并保留稳定诊断；文件缺失时发布“没有可用研究门面”的全局诊断。Agent 常驻摘要使用
 `catalogSchemaVersions` 和门面启用/禁用数量，不注入完整目录。
 
-`StudyPlanningService::search/get` 与 `StudyConfigurationService` 直接查询当前 snapshot 的门面注册表。显式函数选择只返回该函数，不根据网络拓扑改写；候选较多时向用户展示目录中的 `differences`。配置服务按目录合同生成 revisioned 卡片并准备 Task 9 原子确认所需的锁定合同和输入快照。
+`StudyPlanningService::search/get` 与 `StudyConfigurationService` 直接查询当前 snapshot 的门面注册表。显式函数选择只返回该函数，不根据网络拓扑改写；候选较多时向用户展示目录中的 `differences`。配置服务按目录合同生成 revisioned 卡片；用户确认后由 `ManagedWorkflowService` 原子冻结合同、输入和 provisional run。
+
+脚本生成使用独立 `ScriptAuthor`，不注册聊天工具，也不复用对话 Agent 的授权面。generation/repair 请求只包含冻结合同、
+冻结输入、允许的引擎文档和明确指令；外部模型传输失败按 `AGENT_MODEL_RETRY_MAX` 独立重试，不创建 attempt。每份成功
+返回的完整脚本先作为不可变 candidate artifact 持久化并记录父 attempt，执行与修正循环由后续 worker 使用。
 
 ## Persistence and audit
 

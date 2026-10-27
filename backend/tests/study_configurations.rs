@@ -477,7 +477,7 @@ async fn multiple_compatible_struct_resources_are_never_guessed() {
 }
 
 #[tokio::test]
-async fn configuration_routes_are_user_scoped_revisioned_and_expose_no_confirm_endpoint() {
+async fn configuration_routes_are_user_scoped_revisioned_and_require_confirm_contract() {
     let app = TestApp::spawn().await;
     let (user, session_id) = session(&app, "api-config").await;
     let owner = app.login_cookie("alice@example.com").await;
@@ -553,7 +553,7 @@ async fn configuration_routes_are_user_scoped_revisioned_and_expose_no_confirm_e
         )
         .await
         .unwrap();
-    assert_eq!(confirm.status(), StatusCode::NOT_FOUND);
+    assert_eq!(confirm.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
 }
 
 #[tokio::test]

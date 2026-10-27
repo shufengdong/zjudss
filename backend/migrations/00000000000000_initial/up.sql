@@ -325,6 +325,7 @@ CREATE TABLE managed_workflows (
  configuration_id INTEGER REFERENCES study_configurations(id) ON DELETE SET NULL,
  configuration_revision INTEGER CHECK(configuration_revision IS NULL OR configuration_revision>0),
  source_workflow_id INTEGER REFERENCES managed_workflows(id) ON DELETE SET NULL,
+ client_operation_id TEXT,
  status TEXT NOT NULL CHECK(status IN ('queued','generating','executing','repairing','succeeded','failed','cancelled_by_user','service_restarted')),
  intent_json TEXT NOT NULL,
  locked_contract_json TEXT,
@@ -343,6 +344,8 @@ CREATE TABLE managed_workflows (
 );
 CREATE UNIQUE INDEX idx_one_nonterminal_workflow_per_session ON managed_workflows(session_id)
  WHERE status IN ('queued','generating','executing','repairing');
+CREATE UNIQUE INDEX idx_managed_workflow_operation ON managed_workflows(session_id,client_operation_id)
+ WHERE client_operation_id IS NOT NULL;
 CREATE TABLE workflow_input_snapshots (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  workflow_id INTEGER NOT NULL REFERENCES managed_workflows(id) ON DELETE CASCADE,
@@ -429,9 +432,9 @@ CREATE TABLE simulation_runs (
  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
  model_version_id INTEGER REFERENCES model_versions(id) ON DELETE RESTRICT,
  model_content_hash TEXT CHECK(model_content_hash IS NULL OR length(model_content_hash)=64),
- script_resource_id INTEGER NOT NULL REFERENCES script_resources(id) ON DELETE RESTRICT,
- script_artifact_id INTEGER NOT NULL REFERENCES artifacts(id) ON DELETE RESTRICT,
- script_content_hash TEXT NOT NULL CHECK(length(script_content_hash)=64),
+ script_resource_id INTEGER REFERENCES script_resources(id) ON DELETE RESTRICT,
+ script_artifact_id INTEGER REFERENCES artifacts(id) ON DELETE RESTRICT,
+ script_content_hash TEXT CHECK(script_content_hash IS NULL OR length(script_content_hash)=64),
  client_run_id TEXT NOT NULL,
  status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed')),
  stage TEXT NOT NULL,
@@ -450,6 +453,9 @@ CREATE TABLE simulation_runs (
  finished_at_ms INTEGER,
  deleted_at_ms INTEGER,
  tombstone_json TEXT,
+ CHECK((script_resource_id IS NULL AND script_artifact_id IS NULL AND script_content_hash IS NULL
+        AND run_kind='managed')
+    OR (script_resource_id IS NOT NULL AND script_artifact_id IS NOT NULL AND script_content_hash IS NOT NULL)),
  UNIQUE(session_id,client_run_id)
 );
 CREATE INDEX idx_runs_session_time ON simulation_runs(session_id,created_at_ms,id);
@@ -648,8 +654,10 @@ CREATE TRIGGER live_session_workflows_update BEFORE UPDATE ON managed_workflows 
 CREATE TRIGGER live_session_comparisons_insert BEFORE INSERT ON run_comparisons WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
 CREATE TRIGGER immutable_model_versions BEFORE UPDATE OF workspace_id,description,content_hash,source_summary_json,engine_contract_version,created_at_ms ON model_versions BEGIN SELECT RAISE(ABORT,'model versions are immutable'); END;
 CREATE TRIGGER immutable_model_dataframes BEFORE UPDATE ON model_dataframes BEGIN SELECT RAISE(ABORT,'model dataframes are immutable'); END;
+CREATE TRIGGER immutable_workflow_inputs BEFORE UPDATE ON workflow_input_snapshots BEGIN SELECT RAISE(ABORT,'workflow inputs are immutable'); END;
+CREATE TRIGGER immutable_workflow_attempt_identity BEFORE UPDATE OF workflow_id,attempt_number,parent_attempt_id,phase,script_artifact_id,script_content_hash,agent_bundle_version,agent_skill_refs_json,agent_model,engine_snapshot_id,created_at_ms ON workflow_attempts BEGIN SELECT RAISE(ABORT,'workflow attempt candidate is immutable'); END;
 CREATE TRIGGER validate_run_insert BEFORE INSERT ON simulation_runs BEGIN
- SELECT CASE WHEN NOT EXISTS(
+ SELECT CASE WHEN NEW.script_resource_id IS NOT NULL AND NOT EXISTS(
    SELECT 1 FROM sessions s
    JOIN script_resources r ON r.session_id=s.id
    WHERE s.id=NEW.session_id AND r.id=NEW.script_resource_id
@@ -661,6 +669,17 @@ CREATE TRIGGER validate_run_insert BEFORE INSERT ON simulation_runs BEGIN
    WHERE w.session_id=NEW.session_id AND v.id=NEW.model_version_id
      AND v.content_hash=NEW.model_content_hash AND v.deleted_at_ms IS NULL
  ) THEN RAISE(ABORT,'run model must belong to session') END;
+END;
+CREATE TRIGGER validate_run_script_binding_update BEFORE UPDATE OF script_resource_id,script_artifact_id,script_content_hash ON simulation_runs BEGIN
+ SELECT CASE WHEN OLD.script_resource_id IS NOT NULL AND
+   (NEW.script_resource_id IS NOT OLD.script_resource_id OR NEW.script_artifact_id IS NOT OLD.script_artifact_id OR NEW.script_content_hash IS NOT OLD.script_content_hash)
+   THEN RAISE(ABORT,'run script binding is write once') END;
+ SELECT CASE WHEN NEW.script_resource_id IS NULL OR NEW.script_artifact_id IS NULL OR NEW.script_content_hash IS NULL
+   THEN RAISE(ABORT,'run script binding cannot be cleared') END;
+ SELECT CASE WHEN NOT EXISTS(
+   SELECT 1 FROM script_resources r WHERE r.id=NEW.script_resource_id AND r.session_id=NEW.session_id
+     AND r.artifact_id=NEW.script_artifact_id AND r.content_hash=NEW.script_content_hash
+ ) THEN RAISE(ABORT,'run resources must belong to one session') END;
 END;
 CREATE TRIGGER immutable_data_resource_payload BEFORE UPDATE OF normalized_artifact_id,source_artifact_id,schema_json,schema_hash,row_count,source_kind,source_batch_id,lineage_json ON data_resources
 WHEN NOT (

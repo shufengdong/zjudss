@@ -376,6 +376,8 @@ impl TestApp {
             config.upload_single_file_limit_bytes,
             config.upload_batch_limit_bytes,
             config.upload_staging_ttl_hours,
+            config.script_repair_max_attempts,
+            config.agent_model_retry_max,
             zjudss::ingestion::ArchiveLimits {
                 max_entries: config.archive_max_entries,
                 max_expanded_bytes: config.archive_max_expanded_bytes,

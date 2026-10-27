@@ -94,7 +94,7 @@ function RunDetails({ run, detail, now, onRetry, onOpenDataset }: {
           </li>)}
         </ul>
       </>}
-    <p className="mt-3 break-words text-slate-400">运行 #{run.id} · 脚本 #{run.scriptResourceId} · Engine {run.engineContractVersion}</p>
+    <p className="mt-3 break-words text-slate-400">运行 #{run.id} · {run.scriptResourceId ? `脚本 #${run.scriptResourceId}` : '脚本尚未生成'} · Engine {run.engineContractVersion}</p>
     <RunTimestamps run={run} />
   </div>
 }

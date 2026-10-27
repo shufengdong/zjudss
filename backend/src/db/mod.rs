@@ -61,17 +61,13 @@ pub fn recover_interrupted_runs(
     conn: &mut SqliteConnection,
     now_ms: i64,
 ) -> Result<(), diesel::result::Error> {
+    repositories::recover_interrupted_workflows(conn, now_ms)?;
     conn.batch_execute(&format!(
         "UPDATE simulation_runs
          SET status='failed', stage='recovery',
              error_json='{{\"code\":\"service_restarted\",\"message\":\"服务重启，运行已中止\"}}',
              finished_at_ms={now_ms}
-         WHERE status IN ('queued','running');
-         UPDATE managed_workflows
-         SET status='service_restarted',
-             error_json='{{\"code\":\"service_restarted\",\"message\":\"服务重启，研究工作流已中止\"}}',
-             updated_at_ms={now_ms}, finished_at_ms={now_ms}
-         WHERE status IN ('queued','generating','executing','repairing');
+         WHERE status IN ('queued','running') AND managed_workflow_id IS NULL;
          UPDATE result_analysis_runs
          SET status='failed', stage='recovery',
              error_json='{{\"code\":\"service_restarted\",\"message\":\"服务重启，运行已中止\"}}',

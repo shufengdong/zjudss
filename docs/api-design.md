@@ -134,8 +134,23 @@ schemaRef、规范字段和 expected content hash，确认前不创建资源，�
 
 Data 输入的 mapping 只接受源列到目标列的受控映射。服务端按目标 schema 转换为 Snappy Parquet，经统一上传发布
 事务创建 `sourceKind=mapping` 的新普通资源，并冻结源资源 ID、目标 schema 和映射血缘；不会修改源资源。结果集合
-必须有序、唯一、属于门面且满足 fixed/minimum/conditional 约束。当前没有公共 confirm 路由；Task 9 将以一个原子
-事务重新校验配置、发布参数资源、冻结输入并启动 workflow，按钮固定为“确认并生成脚本”。
+必须有序、唯一、属于门面且满足 fixed/minimum/conditional 约束。
+
+## Managed study workflows
+
+`POST /api/study-configurations/{id}/confirm` 只接受
+`{expectedRevision, clientOperationId}`。服务在一个 immediate transaction 中重新校验配置、当前引擎快照、active
+模型、资源 ID/hash/schema 和结果合同；需要修改 Struct 参数时，同时发布新的普通 Data 资源并执行 Replace 或
+SaveAsNew；随后确认配置、冻结逐项输入 artifact、创建 managed workflow、持久进度消息和 provisional run。相同操作
+ID 幂等返回同一 workflow/run；同一操作 ID 配合不同请求返回 `idempotency_conflict`。按钮固定为“确认并生成脚本”。
+
+`GET /api/workflows/{id}` 返回工作流、修正预算、run、可空脚本消息锚点和脱敏 attempt 摘要；
+`POST /api/workflows/{id}/cancel` 幂等收敛到 `cancelled_by_user`。同一会话只允许一个
+`queued|generating|executing|repairing` 工作流，冲突返回 `409 workflow_in_progress` 及当前 workflow ID。跨用户和不存在
+统一 404。首份候选脚本产生前 managed run 的脚本资源/artifact/hash 和 `scriptMessageId` 均为空；终态发布脚本资源与
+script 消息时一次性绑定，之后不可更换。正常完成、取消或服务重启时，只要已有候选脚本，都会把最后一个候选原子发布为
+稳定 script 消息锚点；只有候选尚未产生时终态 run 才继续为空。服务重启把非终态 workflow、attempt 和 run 收敛为
+`service_restarted`，不从临时文件续跑。
 
 发布请求携带 `expectedDraftId`、`expectedDraftRevision`、`clientPublishId`。成功冻结版本、清空草稿并自动激活。
 激活历史版本只移动 active 指针；存在草稿时必须提交 `discardDraft=true` 以及准确 expected draft。
@@ -170,11 +185,13 @@ manifest、角色化文件哈希和验证诊断。两个工具只读，Agent 无
 上传脚本 multipart 只接受字段 `file` 的单个 UTF-8 `.rss`；`POST /api/sessions/{id}/scripts/text` 接受 JSON
 `{name, content}` 直接以文本创建（`sourceKind: "manual"`）。两条路径只做名称、UTF-8 和大小校验后不可变落盘，
 不使用 zjudss RSS 静态语法校验器；语法和运行可行性以用户点击运行后 tensoreval 的退出码、stderr 和结果为准。
-脚本详情返回全文；列表和消息只返回有界预览。V4 受管研究的结构合同、确认和自动执行接口由 Tasks 9–11 补充；
-当前过渡运行请求仍为 `{modelVersionId, clientRunId}`。Agent 没有普通运行、激活或删除工具。
+脚本详情返回全文；列表和消息只返回有界预览。V4 受管研究已提供确认、workflow 查询与取消接口；生成、执行和自动
+修正循环由后续任务接入该持久状态机。当前普通运行请求仍为 `{modelVersionId, clientRunId}`。Agent 没有普通运行、
+激活或删除工具。
 
-运行创建响应、session 运行列表和单运行详情中的 `SimulationRun` 都包含必填 `scriptName`；它来自运行所绑定的
-不可变脚本资源，不由前端按 ID 二次猜测。运行快照继续冻结模型、脚本 artifact/hash、engine contract、Agent bundle
+运行创建响应、session 运行列表和单运行详情中的 `SimulationRun` 都包含 `scriptName`；首份受管脚本生成前显示“脚本尚未
+生成”，其 `scriptResourceId/scriptArtifactId/scriptContentHash/scriptMessageId` 可空，其他运行必须绑定不可变脚本资源。
+运行快照继续冻结模型、脚本 artifact/hash、engine contract、Agent bundle
 和 skill refs；`GET /api/runs/{id}/datasets` 只列出该运行当前仍存活的全部结果数据集。失败时保留实际执行阶段；API 将内部
 adapter/IO/校验错误映射为受控 `error.code`/`error.message`。adapter 对 stdout/stderr 分别持续排空、保留有界首尾并
 记录完整 hash；tensoreval 以非零状态退出时保留实际退出码。原始有界 stderr 只供后续受限审计，普通 API 继续只返回脱敏摘要；没有该标记的

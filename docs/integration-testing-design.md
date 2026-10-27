@@ -25,6 +25,8 @@ tombstone；三种 durable 操作卡以稳定 operation ID 原位更新、终态
 DATA-RESOURCE-001 的 Rust 行为测试覆盖：无 schemaRef 的通用资源、静态 `para` 与模型草稿分离且不能改判为模型、
 未决用途禁止确认、双子事务部分成功后以新操作重试失败侧、成功侧空间结算与决定冻结、同操作同 payload 幂等、同操作不同 payload 冲突及两个子 receipt、替换不改写旧
 artifact 并使未确认研究配置失效、Struct preview/confirm 与被取代 artifact 回收、影响 token 删除和配额释放、跨用户 404、
+受管研究覆盖确认幂等、同会话单非终态 workflow、Struct 替换与冻结同事务、provisional run 空脚本合同、candidate 父链、
+终态脚本消息锚点、带候选和无候选两类取消/启动恢复、active 模型切换竞争、并发重放 material 引用结算；
 schema 资源的 SaveAsNew alias 分配、过期/跨路径失效 preview 回收、同用户跨会话去重原文件的引用隔离、普通资源
 分析输入/冻结血缘、并发 confirm 原文件幂等提交、同一确认声明只能取得一次执行锁、精确重放跨暂存 TTL 仍只读返回、显式 alias 冲突重放保持冻结失败语义、活动确认期间候选冻结与 DELETE 冲突、到期避让以及重启先汇总
 已提交子事务、confirm/discard 与 parse/discard 竞争不复活终态、模型替换

@@ -348,7 +348,23 @@ impl SessionRepo {
                        UNION ALL
                        SELECT artifact_id FROM script_resources WHERE session_id=?1
                        UNION ALL
-                       SELECT script_artifact_id FROM simulation_runs WHERE session_id=?1
+                       SELECT script_artifact_id FROM simulation_runs WHERE session_id=?1 AND script_artifact_id IS NOT NULL
+                       UNION ALL
+                       SELECT i.artifact_id FROM workflow_input_snapshots i
+                       JOIN managed_workflows w ON w.id=i.workflow_id
+                       WHERE w.session_id=?1 AND i.artifact_id IS NOT NULL
+                       UNION ALL
+                       SELECT a.script_artifact_id FROM workflow_attempts a
+                       JOIN managed_workflows w ON w.id=a.workflow_id
+                       WHERE w.session_id=?1 AND a.script_artifact_id IS NOT NULL
+                       UNION ALL
+                       SELECT a.stderr_audit_artifact_id FROM workflow_attempts a
+                       JOIN managed_workflows w ON w.id=a.workflow_id
+                       WHERE w.session_id=?1 AND a.stderr_audit_artifact_id IS NOT NULL
+                       UNION ALL
+                       SELECT a.stdout_audit_artifact_id FROM workflow_attempts a
+                       JOIN managed_workflows w ON w.id=a.workflow_id
+                       WHERE w.session_id=?1 AND a.stdout_audit_artifact_id IS NOT NULL
                        UNION ALL
                        SELECT script_artifact_id FROM result_analysis_runs WHERE session_id=?1
                        UNION ALL
@@ -512,7 +528,11 @@ fn session_deletion_impact(
           UNION SELECT source_artifact_id FROM data_resources WHERE session_id=?1 AND source_artifact_id IS NOT NULL
           UNION SELECT p.pending_artifact_id FROM data_resource_replacement_previews p JOIN data_resources d ON d.id=p.old_resource_id WHERE d.session_id=?1
           UNION SELECT artifact_id FROM script_resources WHERE session_id=?1
-          UNION SELECT script_artifact_id FROM simulation_runs WHERE session_id=?1
+          UNION SELECT script_artifact_id FROM simulation_runs WHERE session_id=?1 AND script_artifact_id IS NOT NULL
+          UNION SELECT i.artifact_id FROM workflow_input_snapshots i JOIN managed_workflows w ON w.id=i.workflow_id WHERE w.session_id=?1 AND i.artifact_id IS NOT NULL
+          UNION SELECT a.script_artifact_id FROM workflow_attempts a JOIN managed_workflows w ON w.id=a.workflow_id WHERE w.session_id=?1 AND a.script_artifact_id IS NOT NULL
+          UNION SELECT a.stderr_audit_artifact_id FROM workflow_attempts a JOIN managed_workflows w ON w.id=a.workflow_id WHERE w.session_id=?1 AND a.stderr_audit_artifact_id IS NOT NULL
+          UNION SELECT a.stdout_audit_artifact_id FROM workflow_attempts a JOIN managed_workflows w ON w.id=a.workflow_id WHERE w.session_id=?1 AND a.stdout_audit_artifact_id IS NOT NULL
           UNION SELECT script_artifact_id FROM result_analysis_runs WHERE session_id=?1
           UNION SELECT d.artifact_id FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id WHERE COALESCE(r.session_id,a.session_id)=?1 AND d.artifact_id IS NOT NULL
         )
@@ -532,7 +552,7 @@ fn session_deletion_impact(
             UNION ALL SELECT 'draft_frame:'||dd.id||':'||dd.table_name||':'||dd.artifact_id||':'||dd.content_hash FROM draft_dataframes dd JOIN workspace_drafts wd ON wd.id=dd.draft_id JOIN workspaces w ON w.id=wd.workspace_id WHERE w.session_id=?1
             UNION ALL SELECT 'resource:'||id||':'||status||':'||schema_hash||':'||COALESCE(normalized_artifact_id,-1)||':'||COALESCE(source_artifact_id,-1)||':'||COALESCE(replaced_by_resource_id,'') FROM data_resources WHERE session_id=?1
             UNION ALL SELECT 'script:'||id||':'||artifact_id||':'||content_hash FROM script_resources WHERE session_id=?1
-            UNION ALL SELECT 'run:'||id||':'||status||':'||script_artifact_id||':'||COALESCE(script_message_id,-1) FROM simulation_runs WHERE session_id=?1
+            UNION ALL SELECT 'run:'||id||':'||status||':'||COALESCE(script_artifact_id,-1)||':'||COALESCE(script_message_id,-1) FROM simulation_runs WHERE session_id=?1
             UNION ALL SELECT 'analysis:'||id||':'||status||':'||script_artifact_id FROM result_analysis_runs WHERE session_id=?1
             UNION ALL SELECT 'result:'||d.id||':'||COALESCE(d.artifact_id,-1)||':'||d.schema_hash||':'||COALESCE(d.deleted_at_ms,-1) FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id WHERE COALESCE(r.session_id,a.session_id)=?1
             UNION ALL SELECT 'upload:'||id||':'||revision||':'||status||':'||model_publish_status||':'||resource_publish_status||':'||reserved_bytes FROM upload_batches WHERE session_id=?1

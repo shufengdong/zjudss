@@ -180,7 +180,7 @@ fn run_snapshot(run: &crate::db::models::SimulationRun) -> String {
         "runId": run.id.to_string(),
         "modelVersionId": run.model_version_id.map(|id| id.to_string()),
         "modelContentHash": run.model_content_hash,
-        "scriptResourceId": run.script_resource_id.to_string(),
+        "scriptResourceId": run.script_resource_id.map(|id| id.to_string()),
         "scriptContentHash": run.script_content_hash,
         "engineContractVersion": run.engine_contract_version,
     })

@@ -10,8 +10,13 @@ use rig::tool::RegisteredTool;
 mod factory;
 pub mod knowledge;
 pub mod prompt;
+pub mod script_author;
 
 pub use factory::{AgentBuildRequest, AgentFactory, DeepSeekAgentFactory};
+pub use script_author::{
+    DeepSeekScriptAuthor, EngineDocRef, ScriptAuthor, ScriptAuthorError, ScriptGenerationRequest,
+    ScriptRepairRequest,
+};
 
 const SYSTEM_PROMPT: &str = include_str!("../../resources/agent/v4/system.md");
 const SKILL_INDEX: &str = include_str!("../../resources/agent/v4/skill-index.json");

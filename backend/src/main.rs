@@ -125,6 +125,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         runtime.upload_single_file_limit_bytes,
         runtime.upload_batch_limit_bytes,
         runtime.upload_staging_ttl_hours,
+        runtime.script_repair_max_attempts,
+        runtime.agent_model_retry_max,
         ArchiveLimits {
             max_entries: runtime.archive_max_entries,
             max_expanded_bytes: runtime.archive_max_expanded_bytes,

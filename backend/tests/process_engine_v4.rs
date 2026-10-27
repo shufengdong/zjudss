@@ -105,7 +105,10 @@ fn spec(root: &Path, input_tree: &Path, mode: RunMode) -> RunSpec {
         script_path,
         named_inputs,
         result_dir: root.join(format!("result-{mode:?}")),
-        timeout: Duration::from_secs(5),
+        // Process-heavy cases in this file run concurrently under the default
+        // test harness. Keep enough scheduling headroom while individual
+        // timeout tests continue to override this value explicitly.
+        timeout: Duration::from_secs(15),
     }
 }
 

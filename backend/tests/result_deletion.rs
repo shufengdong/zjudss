@@ -441,7 +441,7 @@ async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outpu
         .run_service
         .create(
             &user,
-            baseline.script_resource_id,
+            baseline.script_resource_id.unwrap(),
             CreateRunRequest {
                 model_version_id: baseline.model_version_id.unwrap().to_string(),
                 client_run_id: "comparison-candidate".into(),
@@ -475,7 +475,7 @@ async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outpu
         .run_service
         .create(
             &user,
-            baseline.script_resource_id,
+            baseline.script_resource_id.unwrap(),
             CreateRunRequest {
                 model_version_id: baseline.model_version_id.unwrap().to_string(),
                 client_run_id: "comparison-baseline".into(),

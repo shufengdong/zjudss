@@ -21,7 +21,7 @@ use crate::catalog::{DataFrameContractKind, DataFrameSchemaContract, DataTypeCon
 use crate::db::repositories::{
     DataResourceRepo, DeletionImpactRow, DeletionPreviewInput, PromoteDatasetInput, RepoError,
     ResourcePageRow, ResourcePublishInput, StructuredPreviewConfirmation, StructuredPreviewInput,
-    UploadRepo,
+    UploadRepo, WorkflowReplacementMaterial,
 };
 use crate::engine_resources::{EngineResourceSnapshot, FacadeInputKind};
 use crate::storage::StageLimits;
@@ -293,6 +293,133 @@ pub struct DataResourceService {
 }
 
 impl DataResourceService {
+    #[doc(hidden)]
+    pub async fn materialize_study_replacements(
+        &self,
+        user: &CurrentUser,
+        prepared: &crate::application::PreparedStudyConfirmation,
+    ) -> Result<Vec<WorkflowReplacementMaterial>, DataResourceError> {
+        let mut materials = Vec::new();
+        for replacement in &prepared.replacement_actions {
+            let result = self
+                .materialize_study_replacement(user, prepared, replacement)
+                .await;
+            match result {
+                Ok(material) => materials.push(material),
+                Err(error) => {
+                    for material in &materials {
+                        let _ = self
+                            .artifacts
+                            .release(user.storage_scope_id, material.artifact_id)
+                            .await;
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        Ok(materials)
+    }
+
+    async fn materialize_study_replacement(
+        &self,
+        user: &CurrentUser,
+        prepared: &crate::application::PreparedStudyConfirmation,
+        replacement: &crate::application::PreparedResourceReplacement,
+    ) -> Result<WorkflowReplacementMaterial, DataResourceError> {
+        let structured = prepared
+            .locked
+            .structs
+            .iter()
+            .find(|value| value.input_id == replacement.input_id)
+            .ok_or_else(|| Self::invalid("configuration_stale", "Struct 输入合同已经变化"))?;
+        let contract = self
+            .snapshot
+            .schemas
+            .resolve(&structured.schema_ref)
+            .map_err(|error| Self::invalid("configuration_stale", &error.to_string()))?;
+        if contract.kind != DataFrameContractKind::Struct {
+            return Err(Self::invalid(
+                "configuration_stale",
+                "研究参数 schema 不再是 Struct",
+            ));
+        }
+        let object = replacement
+            .values
+            .as_object()
+            .ok_or_else(|| Self::invalid("structured_values_invalid", "Struct 参数必须是对象"))?;
+        let parquet = struct_parquet(contract, object)?;
+        let staged = self
+            .artifacts
+            .store()
+            .stage(std::io::Cursor::new(parquet), StageLimits::default())
+            .map_err(ArtifactError::from)?;
+        let artifact = self
+            .artifacts
+            .commit(user.storage_scope_id, staged, ArtifactMetadata::parquet())
+            .await?;
+        let material = async {
+            let source = if let Some(id) = replacement.source_resource_id.as_deref() {
+                Some(self.get(user, id).await?)
+            } else {
+                None
+            };
+            let columns = contract
+                .fields
+                .iter()
+                .map(|field| super::dataframe_reader::DataFrameColumn {
+                    name: field.name.clone(),
+                    dtype: dtype_label(&field.dtype),
+                    nullable: field.nullable,
+                    unit: Some(field.unit.0.clone()),
+                })
+                .collect::<Vec<_>>();
+            let resource_id = format!(
+                "dr_{}",
+                &hex::encode(Sha256::digest(
+                    format!(
+                        "workflow:{}:{}:{}",
+                        prepared.configuration_id, replacement.input_id, artifact.sha256
+                    )
+                    .as_bytes()
+                ))[..24]
+            );
+            Ok::<_, DataResourceError>(WorkflowReplacementMaterial {
+                input_id: replacement.input_id.clone(),
+                source_resource_id: replacement.source_resource_id.clone(),
+                action: replacement.action.clone(),
+                artifact_id: artifact.id,
+                content_hash: artifact.sha256.clone(),
+                resource_id,
+                schema_ref: structured.schema_ref.clone(),
+                schema_json: serde_json::to_string(&columns).map_err(|error| {
+                    Self::invalid("structured_values_invalid", &error.to_string())
+                })?,
+                schema_hash: contract.schema_hash.clone(),
+                values_json: replacement.values.to_string(),
+                differences_json: Value::Array(replacement.differences.clone()).to_string(),
+                display_name: source
+                    .as_ref()
+                    .map(|resource| resource.display_name.clone())
+                    .unwrap_or_else(|| replacement.input_id.clone()),
+                proposed_alias: source
+                    .as_ref()
+                    .map(|resource| resource.alias.clone())
+                    .unwrap_or_else(|| replacement.input_id.clone()),
+                source_model_version_id: source
+                    .and_then(|resource| resource.source_model_version_id)
+                    .and_then(|id| id.parse().ok()),
+            })
+        }
+        .await;
+        if material.is_err() {
+            let _ = self
+                .artifacts
+                .release(user.storage_scope_id, artifact.id)
+                .await;
+        }
+        material
+    }
+
     pub(crate) fn artifact_store(&self) -> &crate::storage::ArtifactStore {
         self.artifacts.store()
     }

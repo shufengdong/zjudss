@@ -110,8 +110,17 @@ transaction 比较 revision 并整体替换三个子表。资源替换/删除会
 工作流只读自己的冻结 input snapshot。
 
 列映射先按目标 schema 在应用层生成 Snappy Parquet，再通过统一上传候选事务发布新 `data_resources` 行；发布时即
-写入 `source_kind=mapping` 和源资源/目标 schema/列映射血缘，避免发布后修改不可变 payload。配置确认事务尚未在
-Task 6 暴露；Task 9 才会同时重验 revision/snapshot/hash、发布 Struct replacement、新增 workflow 和冻结引用。
+写入 `source_kind=mapping` 和源资源/目标 schema/列映射血缘，避免发布后修改不可变 payload。配置确认事务重新校验
+revision/snapshot/hash，在同一事务内发布 Struct replacement、确认配置、新增 workflow/provisional run、逐项冻结输入
+artifact 并建立持久进度消息。`client_operation_id` 在会话内唯一，确保重复确认不重复工作；partial unique index 保证
+每会话只有一个非终态 workflow。
+
+首次受管 run 在脚本尚未产生时允许脚本资源/artifact/hash 三列同时为空；该例外只适用于 `run_kind=managed`。一旦候选
+脚本成为用户可见终态，三列、同会话 script 消息锚点和 workflow 最终引用原子写入，数据库触发器禁止清空或改换锚点。
+`workflow_attempts` 保存不可变候选 artifact、父 attempt 和脱敏诊断。workflow 输入、candidate、最终 script 与 run 分别
+持有 artifact 引用；会话删除逐引用释放。正常完成、用户取消和启动恢复共用终态事务：存在候选时均发布最后一个候选为
+不可变 script/message/run 锚点，确实尚无候选时才允许终态 managed run 保持空脚本三元组。启动恢复把非终态 workflow、candidate/executing attempt 和 provisional run
+收敛到明确失败态。
 
 ## Search and recovery
 

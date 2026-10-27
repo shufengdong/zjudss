@@ -12,6 +12,7 @@ const makeRun = (overrides: Partial<SimulationRun> = {}): SimulationRun => ({
   id: '9', sessionId: '1', modelVersionId: '3', modelContentHash: 'm'.repeat(64),
   scriptResourceId: '4', scriptName: 'long-script.rss', scriptArtifactId: '5',
   scriptContentHash: 's'.repeat(64), clientRunId: 'client-9', status: 'succeeded',
+  scriptMessageId: null, managedWorkflowId: null,
   stage: 'completed', engineContractVersion: 'tensoreval-parquet-v3', agentBundleVersion: null,
   agentSkillRefs: [{ kind: 'study-plan', function: 'ds_radial_pf' }], exitCode: 0, error: null,
   createdAt: '2026-01-01T00:00:00Z', startedAt: '2026-01-01T00:00:01Z',

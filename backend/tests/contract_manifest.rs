@@ -10,8 +10,8 @@ fn production_router_and_manifest_share_one_declaration() {
         .map(|route| (route.method, route.path))
         .collect::<HashSet<_>>();
 
-    assert_eq!(routes.len(), 68);
-    assert_eq!(unique.len(), 68);
+    assert_eq!(routes.len(), 71);
+    assert_eq!(unique.len(), 71);
     assert!(unique.contains(&("GET", "/health")));
     assert!(unique.contains(&("POST", "/api/auth/login")));
     assert!(unique.contains(&("POST", "/api/auth/logout")));
@@ -33,6 +33,9 @@ fn production_router_and_manifest_share_one_declaration() {
         ),
         ("PUT", "/api/study-configurations/{id}/structs/{inputId}"),
         ("PUT", "/api/study-configurations/{id}/results"),
+        ("POST", "/api/study-configurations/{id}/confirm"),
+        ("GET", "/api/workflows/{id}"),
+        ("POST", "/api/workflows/{id}/cancel"),
     ] {
         assert!(unique.contains(&route));
     }
@@ -91,7 +94,8 @@ fn contract_manifest_contains_all_public_enums() {
             "independent_data_resources",
             "managed_study_configurations",
             "durable_workflow_messages",
-            "v4_conversational_agent"
+            "v4_conversational_agent",
+            "managed_study_workflows"
         ]
     );
 
@@ -154,6 +158,11 @@ fn contract_manifest_contains_all_public_enums() {
     assert!(manifest.stable_error_codes.contains(&"agent_queue_full"));
     assert!(manifest.stable_error_codes.contains(&"invalid_credentials"));
     assert!(manifest.stable_error_codes.contains(&"invalid_page"));
+    assert!(
+        manifest
+            .stable_error_codes
+            .contains(&"workflow_in_progress")
+    );
     for code in [
         "upload_file_too_large",
         "upload_batch_too_large",

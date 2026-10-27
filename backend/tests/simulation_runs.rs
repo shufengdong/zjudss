@@ -368,7 +368,7 @@ async fn only_explicit_click_route_creates_idempotent_frozen_runs_and_results() 
         .unwrap();
     assert_eq!(run.status, "succeeded", "{:?}", run.error_json);
     assert_eq!(run.model_content_hash.as_deref().map(str::len), Some(64));
-    assert_eq!(run.script_content_hash.len(), 64);
+    assert_eq!(run.script_content_hash.as_deref().unwrap().len(), 64);
     for path in [
         format!("/api/sessions/{session_id}/runs"),
         format!("/api/runs/{run_id}"),

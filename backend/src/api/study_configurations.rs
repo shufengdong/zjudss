@@ -3,8 +3,9 @@ use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 
 use crate::application::{
-    AppState, BindStudyResourceRequest, EventWriter, SelectFacadeRequest,
-    SelectStudyResultsRequest, StudyConfigCard, StudyConfigurationView, UpdateStudyStructRequest,
+    AppState, BindStudyResourceRequest, ConfirmStudyRequest, EventWriter, ManagedWorkflowView,
+    SelectFacadeRequest, SelectStudyResultsRequest, StudyConfigCard, StudyConfigurationView,
+    UpdateStudyStructRequest,
 };
 use crate::auth::CurrentUser;
 
@@ -88,6 +89,20 @@ pub async fn select_results(
         .await?;
     publish(&state, &user, &view).await?;
     Ok(Json(view))
+}
+
+pub async fn confirm(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+    Json(body): Json<ConfirmStudyRequest>,
+) -> Result<Json<ManagedWorkflowView>, ApiError> {
+    Ok(Json(
+        state
+            .managed_workflow_service
+            .confirm_configuration_and_start(&user, id, body)
+            .await?,
+    ))
 }
 
 #[derive(Deserialize)]

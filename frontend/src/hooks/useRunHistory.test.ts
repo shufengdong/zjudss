@@ -11,6 +11,7 @@ const run = (id: string): SimulationRun => ({
   id, sessionId: '1', modelVersionId: '3', modelContentHash: 'm'.repeat(64),
   scriptResourceId: '4', scriptName: 'flow.rss', scriptArtifactId: '5',
   scriptContentHash: 's'.repeat(64), clientRunId: `client-${id}`, status: 'succeeded',
+  scriptMessageId: null, managedWorkflowId: null,
   stage: 'completed', engineContractVersion: 'v3', agentBundleVersion: null,
   agentSkillRefs: [], exitCode: 0, error: null, createdAt: '2026-01-01T00:00:00Z',
   startedAt: '2026-01-01T00:00:01Z', finishedAt: '2026-01-01T00:00:02Z',

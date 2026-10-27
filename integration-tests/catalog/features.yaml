@@ -682,14 +682,14 @@
       name: multiple_compatible_struct_resources_are_never_guessed
     - runner: rust
       file: backend/tests/study_configurations.rs
-      name: configuration_routes_are_user_scoped_revisioned_and_expose_no_confirm_endpoint
+      name: configuration_routes_are_user_scoped_revisioned_and_require_confirm_contract
     - runner: rust
       file: backend/tests/study_configurations.rs
       name: confirmed_column_mapping_publishes_an_immutable_compatible_resource
     - runner: rust
       file: backend/tests/workspace_tools.rs
       name: study_tools_search_explicit_functions_and_prepare_persisted_cards
-  assertions: [explicit functions are never topology-rewritten, model inputs come only from active tables declared by the selected facade, para remains an independent Struct resource, multiple resources require user selection, Struct changes require replacement intent, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, no public confirm endpoint exists before the atomic workflow transaction]
+  assertions: [explicit functions are never topology-rewritten, model inputs come only from active tables declared by the selected facade, para remains an independent Struct resource, multiple resources require user selection, Struct changes require replacement intent, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, confirmation accepts only expected revision and a client operation ID]
   fixtures: [current engine facade catalog, imported active model plus independent para resource, ambiguous compatible resources]
   contracts:
     - "route:GET /api/study-configurations/{id}"
@@ -714,6 +714,45 @@
     - "error:study_schema_unavailable"
     - "error:struct_values_invalid"
     - "error:replacement_action_invalid"
+
+- id: MANAGED-STUDY-WORKFLOW-001
+  source: docs/api-design.md#managed-study-workflows
+  title: Confirmed studies create one durable managed workflow and provisional run per session
+  layers: [database, application, api, agent]
+  lanes: [pr, release]
+  tests:
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
+      name: confirmation_is_idempotent_and_creates_one_provisional_run
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
+      name: one_live_workflow_per_session_and_cancel_is_idempotent
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
+      name: workflow_routes_are_scoped_and_return_stable_conflicts
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
+      name: restart_recovery_finishes_workflow_attempt_and_provisional_run
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
+      name: confirmation_atomically_replaces_struct_resource_and_freezes_new_artifact
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
+      name: deleting_session_prevents_terminal_script_publication
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
+      name: scripted_author_sequences_generation_and_repair
+  assertions: [confirmation and frozen inputs commit atomically, one session has at most one nonterminal workflow, operation IDs are idempotent, a managed run may remain scriptless until the first candidate exists, candidate artifacts and parent attempts are immutable, script messages anchor terminal runs once, cancellation and restart converge deterministically, resources and workflows are user scoped]
+  fixtures: [ready study configuration, imported active model and para resource, temporary V4 database]
+  contracts:
+    - "route:POST /api/study-configurations/{id}/confirm"
+    - "route:GET /api/workflows/{id}"
+    - "route:POST /api/workflows/{id}/cancel"
+    - "error:workflow_in_progress"
+    - "error:workflow_terminal_conflict"
+    - "error:client_operation_invalid"
+    - "error:cancelled_by_user"
+    - "error:service_restarted"
 
 - id: ENGINE-FACADE-CATALOG-001
   source: docs/superpowers/plans/2026-10-27-v4-independent-data-resources-managed-studies.md#task-2-从引擎-snapshot-发布全部可用-dataframe-研究门面
