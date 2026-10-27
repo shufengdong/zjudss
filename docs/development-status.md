@@ -3,6 +3,10 @@
 > V4 规划：负荷预测等辅助 DataFrame 将使用独立数据资源库，不再进入模型版本；V4 从空数据库建立，
 > 不迁移或兼容 V3 持久化数据。已确认需求见
 > [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)。
+> 详细实施步骤见
+> [`2026-10-27-v4-independent-data-resources-managed-studies.md`](superpowers/plans/2026-10-27-v4-independent-data-resources-managed-studies.md)。
+> 当前 eig-rs 已提供全部门面的完整传递输入、Struct 参数卡和结果 schema，外部机器合同门禁已经满足。V4 尚未开始
+> 实施；当前 V3 预检不支持 dataframes/functions/study_facades 的独立 schema version，修复已明确列入 V4 Task 2。
 > 本文其余内容仍描述当前已实现的 V3 基线。
 
 ## Current release

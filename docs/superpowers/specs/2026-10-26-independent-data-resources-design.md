@@ -25,7 +25,7 @@ V4 只改变本文件明确描述的数据资源、研究输入确认、脚本�
 
 发布模型草稿时，用户可以提供不超过 200 个 Unicode 字符的单行描述；前后空白被移除，CR/LF 归一为空格，其他
 控制字符被拒绝。界面的“生成版本”区域提供可选描述输入。用户没有填写或归一后为空时，后端必须根据实际草稿与
-基准版本的表差异生成确定性描述，例如“首次发布：20 张模型表”或
+基准版本的表差异生成确定性描述，例如“首次发布：23 张模型表”或
 “修改 3 张表：load、line、transformer”；表名按规范顺序排列，内容过长时按同一规则截断，不能调用 LLM，也不能
 使用“已完成”等状态词作为版本名称。
 
@@ -58,6 +58,12 @@ DataFrame 都作为同一种普通资源管理。上传内容必须先确定用�
 adapter 输出进入工作区以前把它拆开：`bus` 至 `storage` 的 20 张网络表可以进入模型草稿和模型版本，`para` 永远
 不能进入 draft/model version，而是作为当前会话的普通本地数据资源保存为规范 Snappy Parquet。案例库应用、
 DSS/bundle 导入和其他使用同一静态导入 profile 的入口都执行相同拆分，不能因来源不同恢复 21 张模型表。
+
+上述 20 张表只定义 `import_dss` 静态 profile 和门面参数组 `network[20]`，不是模型版本的固定表清单或数量上限。
+模型草稿、版本和 active 模型可以包含当前 engine snapshot 中被有效研究门面声明为 `inputKind=model` 的任意 schema，
+例如 `shape_assignment`、`storage_controller`、`monitor`、`energy_meter`、`fuse`、`recloser` 和 `relay`。上传和其他导入
+profile 应按目录的 `schemaRef + inputKind` 识别并发布这些模型表；不得因为它们不在 `network[20]` 中而改存为 Data
+资源。一个门面执行时只绑定该门面实际声明的 model 输入，不要求 active 模型只有或必须补齐上述 20 张基础网络表。
 
 从“模型工作区”或模型缺失提示发起的上传把候选用途预填为模型表；从“数据文件”或研究 Data 输入缺失提示发起的
 上传预填为数据资源；对话中的通用附件则根据当前 engine snapshot 的模型 schema、实际表头/dtype 和用户意图推断。
@@ -348,6 +354,11 @@ resource snapshot。Agent、研究规划器、参数卡片、数据资源匹配�
 更新 `SPARROWZZ_DIR` 下的文档或 catalog 后必须重启服务，已创建的计划、脚本和运行继续保存其实际 snapshot
 标识与合同引用。
 
+`functions.json`、`study_facades.json`、`dataframes.json` 和 `dtype_grammar` 分别拥有自己的 schema version；版本号只描述
+各自格式，服务必须分别校验并把版本映射纳入 snapshot，不得要求这些数值相等。当前 eig-rs 合同为 functions 2、
+study facades 1、dataframes 3、dtype grammar 1。任一文件缺失或使用不支持的版本时，本次 snapshot 发布失败；单个门面
+在受支持格式内的传递合同错误仍按门面隔离诊断。
+
 engine resource snapshot 是按实际文档字节 hash 去重的系统级共享 artifact，不属于任何用户或会话，也不计入用户
 artifact 数和字节配额。本次启动发布的当前 snapshot 必须保留；旧 snapshot 只要仍被已确认配置、脚本、工作流、
 attempt、运行、结果或派生血缘引用，也必须连同其目录合同和必要文档保持可读且不可修改，供历史详情、诊断和审计
@@ -372,15 +383,22 @@ active 模型（如有）和当前 alias 资源做一次执行，不因 catalog 
 V4 支持该权威目录发布的全部 **DataFrame 研究门面函数**，不在 zjudss 中维护固定的五类研究枚举。目录新增
 合规门面后，zjudss 应通过新 snapshot 发现它，而不是再修改一套函数名、参数顺序或 schema 硬编码。每个已发布
 研究门面必须提供稳定函数 ID、RSS 函数名、用途、完整参数顺序、结果集合，并为每个参数提供
-`inputKind = model | struct | data`、直接 `schemaRef`、必填/条件必填规则和行数约束；Struct schema 还必须提供
-生成参数卡片所需的字段类型、单位、范围、默认值、枚举及字段联动，Data schema 必须足以校验上传资源兼容性。
+`inputKind = model | struct | data`、直接 `schemaRef`、必填/条件必填规则和行数约束。每个 Model/Data schema 必须以
+机器可读形式给出规范字段顺序、dtype（包括 list element type）、required/nullable、行数规则和允许的别名/转换，足以
+校验上传资源兼容性；目录必须完整声明自己使用的 dtype grammar，并对开放列、动态列或多形态表给出机器可读的
+closed/open policy、列模式或 discriminator/variant，不能只写公共前缀。每个结果 schema 必须达到同样精度，供运行后校验
+实际 Parquet。Struct schema 还必须提供生成参数卡片所需的字段类型、单位、范围、默认值、枚举及字段联动；不适用的
+元数据使用合同规定的显式 not-applicable，不能以缺字段让消费者猜测。`note`、`constraints` 等自然语言说明只能用于展示，
+不能代替这些可执行字段，也不能要求 zjudss 读取 eig-rs 源码或样例来补齐。
 各门面独立声明实际输入：引用完整配电网的门面把实际需要的网络表逐项声明为 `model`，只处理保护配合等独立数据的
 门面可以没有任何 `model` 输入。zjudss 不得为了统一调用形式，给所有门面强制补齐 20 张网络表或 active 模型。
 
-snapshot 为每个有效研究门面计算规范化 `facadeContractHash`，内容必须覆盖稳定门面 ID、RSS 函数名、参数顺序、
-每个输入的 inputKind 与传递引用的完整 schema、Struct 字段约束、结果集合及组合约束；说明文字、排版或不影响执行
-合同的文档修改不得改变该 hash。配置确认、修正合同、脚本和运行同时保存 snapshot ID 与该门面合同 hash，使服务
-能够区分“文档版本变化”和“本次研究的可执行合同变化”。
+snapshot 先解析参数组和 `base_schema`，形成无环、无冲突的规范 schema，再为每个有效研究门面计算规范化
+`facadeContractHash`。内容必须覆盖稳定门面 ID、RSS 函数名、参数顺序、每个输入的 inputKind 与传递引用的完整 schema、
+Struct 字段约束、结果集合、组合约束，以及这些 schema 实际使用的 dtype、semantic type 和 conversion 定义；未被该门面
+引用的全局 dtype 条目、说明文字、排版、source location 或其他不影响该门面执行合同的文档修改不得改变该 hash，
+同一传递 schema 的执行字段变化必须改变所有引用它的门面 hash。配置确认、修正合同、脚本和运行同时保存
+snapshot ID 与该门面合同 hash，使服务能够区分“文档版本变化”和“本次研究的可执行合同变化”。
 
 目录校验按门面隔离。某个已发布门面缺少上述合同、引用不存在的 schema 或包含不一致的参数/结果定义时，服务
 不得把它加入本次 snapshot 的可执行能力集，但也不得因此禁用其他合同完整的门面或阻止整个服务启动。服务必须
@@ -418,7 +436,7 @@ Agent 规划和聊天回复中保持一致。该诊断不要求新增独立的�
 且只有一个兼容资源，自动预填并在卡片中明确显示来源，用户可以恢复目录默认值、改值或改选其他资源。存在多个合理
 资源且没有唯一同源项时必须让用户选择，不能按最新时间猜测。参数卡修改后的确认会覆盖所选普通资源，或者在用户
 选择“另存”时创建新的普通资源。`inputKind=data` 的 DataFrame 表示数据集或序列，同样绑定普通数据资源，但通过资源
-选择和列映射处理，不用参数卡片逐项填写。门面声明的模型输入只从本次 active 模型的实际网络表清单中解析，不能
+选择和列映射处理，不用参数卡片逐项填写。门面声明的模型输入只从本次 active 模型的实际模型表清单中解析，不能
 按固定数量给函数补参；门面没有模型输入时不要求 active 模型。`para` 不得作为 active 模型表出现。
 
 没有兼容 Struct 资源时，参数卡使用目录默认值并要求用户补齐所有缺失必填字段；最终确认必须创建一个新的普通单行

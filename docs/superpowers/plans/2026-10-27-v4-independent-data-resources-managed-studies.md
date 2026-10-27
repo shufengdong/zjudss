@@ -4,7 +4,7 @@
 
 **Goal:** 从空数据库交付 V4：把辅助 DataFrame 作为独立资源管理，以动态引擎门面驱动研究输入确认，在用户最终确认后自动生成、执行和有限修正 RSS 脚本，并允许用户确认删除终态运行及其直接结果。
 
-**Architecture:** V4 用一个统一上传批次把来源文件解析为候选，再按用户确认拆成模型和本地资源两个独立原子发布事务；静态导入的 21 个输出在 adapter 边界固定拆为 20 张网络模型表和一个普通 `para` 数据资源。研究配置是持久化状态机，全部函数、输入、Struct 参数和结果合同来自本次 `$SPARROWZZ_DIR/dss/docs` snapshot；确认事务冻结首次执行输入。受管工作流把脚本生成、tensoreval 执行、结果合同校验和有限修正编排为可恢复审计链，成功脚本的再次“运行”则按当前 alias 绑定最新数据资源并只执行一次。
+**Architecture:** V4 用一个统一上传批次把来源文件解析为候选，再按用户确认拆成模型和本地资源两个独立原子发布事务；静态导入的 21 个输出在 adapter 边界固定拆为 20 张基础网络模型表和一个普通 `para` 数据资源，但模型版本按 engine snapshot 的 `inputKind=model` 声明接纳其他模型表，不设固定表清单。研究配置是持久化状态机，全部函数、输入、Struct 参数和结果合同来自本次 `$SPARROWZZ_DIR/dss/docs` snapshot；确认事务冻结首次执行输入。受管工作流把脚本生成、tensoreval 执行、结果合同校验和有限修正编排为可恢复审计链，成功脚本的再次“运行”则按当前 alias 绑定最新数据资源并只执行一次。
 
 **Tech Stack:** Rust 2024、Axum 0.8、Diesel/SQLite、Tokio、rig/DeepSeek、Arrow/Parquet 60（Snappy）、calamine/csv、React 19、TypeScript 5.9、ECharts 6、Vitest 5、Playwright 1.64。
 
@@ -21,7 +21,7 @@
   lifecycle 元数据只能通过受控事务更新，正文变化通过新资源、replacement 和血缘表达。
 - 每个模型版本随发布冻结非空的单行简短描述；用户可选填写，缺省由后端按草稿差异确定性生成。描述不参与模型内容
   hash；相同内容去重或幂等重放返回已有版本及原描述，不能修改历史描述或只因描述不同创建重复版本。
-- 静态模型导入的 `para` 永远不是模型表：model draft/version/active 只含 `bus` 至 `storage` 的 20 张网络表；`para` 是有普通 alias 的本地 Data 资源，可由参数卡修改并通过 replacement 覆盖。
+- 静态模型导入的 `para` 永远不是模型表：该 profile 把 `bus` 至 `storage` 的 20 张基础网络表加入 model draft/version，把 `para` 发布为有普通 alias 的本地 Data 资源。model draft/version/active 还可包含 engine snapshot 声明为 `inputKind=model` 的其他表，表集合不固定；`para` 可由参数卡修改并通过 replacement 覆盖。
 - 每个 repository 查询显式接收 `UserId`；跨用户与不存在资源统一 404。
 - `$SPARROWZZ_DIR/dss/docs` 是 RSS、全部 DataFrame 研究门面、输入 schema、Struct 参数和结果合同的唯一权威来源；不扫描 eig-rs 源码，不内置竞争目录。
 - 权威目录中的路径/URL/import 门面不得进入受管研究；单门面合同无效只禁用该门面并在对话显示诊断。
@@ -63,24 +63,20 @@ no_result_dataset, service_restarted, cancelled_by_user
 
 ## External Engine-Documentation Prerequisite
 
-2026-10-27 检查的当前 eig-rs `dss/docs/catalog/functions.json` 为 schema version 2，只提供函数组的
-`names/arity/arguments/results`，还没有 V4 所需的逐门面 `inputKind`、输入/结果 `schemaRef`、Struct 字段合同、
-推荐结果集合、结果组合约束和面向用户的差异说明。zjudss 不能从函数名、arity 或 eig-rs 源码推断这些事实。
+2026-10-27 重新检查 eig-rs `385a98b48` / sparrowzz `671aabd`，外部文档前置条件已经满足：catalog validator 报告
+30 个 DSA 函数、15 个 DataFrame 研究门面、28 个 model、16 个 data、7 个 struct 和 85 个直接结果 schema（含继承基类
+共 102 个），完整性诊断为零；28 个 catalog 单测全部通过。`dataframes.json` schema version 3 已发布完整
+`dtype_grammar`、统一 `contract`、Struct `card`、机器规则、多形态表、`base_schema/baseMerge` 和完整结果 dtype；
+`dss/docs/catalog/README.md` 明确区分执行字段与展示字段。Task 2 的真实依赖测试仍必须独立复核这些事实，不能把
+eig-rs 的 Python validator 当作 zjudss 生产解析器。
 
-在 Task 2 的真实依赖测试通过前，eig-rs 必须在 `$SPARROWZZ_DIR/dss/docs/catalog/study_facades.json` 发布独立版本的
-逐门面合同；每个函数一个 entry，不把 Newton/Radial 或 WLS/MNMR/MCE 合并成共享 entry。字段至少为
-`id/function/family/title/description/differences/inputs/results/resultConstraints`，每个 input 明确
-`id/alias/inputKind/schemaRef/required/position`，每个 result 明确
-`id/name/schemaRef/description/recommended`。`schemaRef` 指向同一 snapshot 中的 DataFrame schema。
-当前 DataFrame DSA 研究门面最后一个 `para` 必须声明为 `inputKind=struct`，不得列为 model input；该 Struct 输入可以
-绑定 schema 兼容的普通数据资源并通过参数卡修改。门面出现 `network[20]` 时才把其实际 20 张网络输入逐项声明为
-`inputKind=model`；例如当前 `ds_protection_coordination` 没有网络输入，只声明自己的 Data 输入和 `para`。因此
-zjudss 不通过参数名猜测输入归属，也不为没有 model 输入的门面强制 active 模型或补齐 20 张表；会拒绝与目录事实
-冲突的 entry。
+三个目录文件拥有独立版本：`functions.json=2`、`study_facades.json=1`、`dataframes.json=3`，其中
+`dtype_grammar.version=1`。这是当前有效合同，不是版本不一致。zjudss 必须分别校验每个文件及 dtype grammar 的支持版本，
+不得继续要求三者的 `schema_version` 相等。当前 V3 `EngineResourceRegistry` 会以“不支持 catalog schema version 3”拒绝
+最新目录；该已知失败是 Task 2 首个红灯测试和实现内容，不是新的 eig-rs 外部堵点。
 
-zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门面”的全局诊断；单 entry 无效时仅禁用该 entry；不会
-回退硬编码、扫描 `eig-rs/psa/src/dsa` 或修改 SPARROWZZ 工作树。Task 2 的 fixture 可先固定此合同，Task 15 的真实
-门禁必须使用已经补齐该文件的最新 eig-rs，否则 V4 候选发布失败。
+zjudss 只读并验证 `study_facades.json` 及其传递 schema：文件缺失时发布“没有可用研究门面”的全局诊断；单 entry 或
+传递 schema 无效时仅禁用受影响 entry；不会回退硬编码、扫描 `eig-rs/psa/src/dsa` 或修改 SPARROWZZ 工作树。
 
 ---
 
@@ -150,25 +146,46 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
 - Modify: `backend/src/engine_resources/mod.rs`
 - Modify: `backend/src/engine_resources/snapshot.rs`
 - Modify: `backend/src/catalog/schema.rs`
+- Modify: `backend/src/agent/prompt.rs`
+- Modify: `backend/src/application/mod.rs`
 - Replace: `backend/src/application/study_planning/contracts.rs`
 - Replace: `backend/src/application/study_planning/policy.rs`
 - Modify: `backend/src/application/study_planning/mod.rs`
 - Modify: `backend/tests/engine_resources.rs`
+- Modify: `backend/tests/agent_knowledge.rs`
+- Modify: `backend/tests/common/mod.rs`
 - Modify: `backend/tests/study_planning.rs`
 - Modify fixtures under: `backend/tests/fixtures/engine_resources/`
 
 **Interfaces:**
 - Consumes: `EngineResourceSnapshot` 读取的 catalog/document 原始字节。
-- Produces: `FacadeRegistry::search`, `FacadeRegistry::get_enabled`, `FacadeContract`, `DisabledFacadeDiagnostic`，供上传兼容性、研究配置、脚本合同和重试使用。
+- Produces: `CatalogSchemaVersions`、`SchemaRegistry::resolve`、`FacadeRegistry::search`、`FacadeRegistry::get_enabled`、`DataFrameSchemaContract`、`FacadeContract`、`DisabledFacadeDiagnostic`，供上传兼容性、研究配置、脚本合同和重试使用。
 
-- [ ] **Step 1: 写失败的动态目录测试。** 覆盖 `publishes_every_valid_dataframe_facade`、`excludes_path_url_and_import_facades`、`invalid_facade_is_disabled_without_disabling_neighbors`、`facade_hash_changes_only_with_that_facade_contract`、`explicit_newton_is_not_replaced_by_radial`。断言合同来自 fixture catalog，门面缺少 input kind/schema/说明/推荐结果时只产生该门面诊断。
+- [ ] **Step 1: 写失败的动态目录测试。** 覆盖 `accepts_independent_supported_catalog_versions`、`rejects_each_unsupported_catalog_or_dtype_grammar_version`、`snapshot_hash_includes_study_facades_and_all_version_numbers`、`publishes_every_valid_dataframe_facade`、`excludes_path_url_and_import_facades`、`invalid_facade_is_disabled_without_disabling_neighbors`、`incomplete_transitive_schema_disables_only_affected_facades`、`prose_constraints_do_not_satisfy_struct_card_contract`、`base_schema_resolves_once_without_cycles`、`facade_hash_changes_with_transitive_executable_schema`、`facade_hash_ignores_presentation_only_text`、`explicit_newton_is_not_replaced_by_radial`。fixture 使用真实的 `functions=2/study_facades=1/dataframes=3/dtype_grammar=1` 组合；门面缺少 input kind、直接/传递 schema、完整字段 dtype、Struct card、结果 schema、推荐结果或组合约束时，只为受影响门面产生稳定诊断。
 
 - [ ] **Step 2: 运行 `cd backend && cargo test --test engine_resources --test study_planning --features e2e-test` 并确认失败。**
 
 - [ ] **Step 3: 定义动态门面类型。**
 
   ```rust
+  pub struct CatalogSchemaVersions { pub functions: u32, pub study_facades: u32,
+      pub dataframes: u32, pub dtype_grammar: u32 }
+  pub enum DataFrameContractKind { Model, Struct, Data, Result }
   pub enum FacadeInputKind { Model, Struct, Data }
+  pub struct SchemaFieldContract { pub name: String, pub dtype: DataTypeContract,
+      pub required: bool, pub nullable: bool, pub unit: UnitContract,
+      pub card: Option<StructCardContract> }
+  pub struct StructCardContract { pub default: CardDefault, pub unit: CardUnit,
+      pub range: CardRange, pub enum_values: CardEnum,
+      pub visible_when: CardCondition, pub enabled_when: CardCondition }
+  pub struct DataFrameSchemaContract { pub schema_ref: String, pub kind: DataFrameContractKind,
+      pub row_count: RowCountConstraint, pub shape: FrameShape,
+      pub column_policy: ColumnPolicy, pub fields: Vec<SchemaFieldContract>,
+      pub stable_keys: Vec<String>, pub sort_keys: Vec<String>,
+      pub column_aliases: BTreeMap<String, String>,
+      pub allowed_conversions: Vec<UploadConversion>, pub rules: Vec<SchemaRule>,
+      pub discriminator: Option<Discriminator>, pub variants: Vec<SchemaVariant>,
+      pub schema_hash: String }
   pub struct FacadeInputContract { pub id: String, pub alias: String, pub kind: FacadeInputKind,
       pub schema_ref: String, pub required: bool, pub position: u32 }
   pub struct FacadeResultContract { pub id: String, pub name: String, pub schema_ref: String,
@@ -176,25 +193,42 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
   pub struct FacadeContract { pub id: String, pub function: String, pub family: String,
       pub title: String, pub description: String, pub differences: Vec<String>,
       pub inputs: Vec<FacadeInputContract>, pub results: Vec<FacadeResultContract>,
-      pub result_constraints: serde_json::Value, pub contract_hash: String }
+      pub result_constraints: Vec<ResultSelectionRule>, pub contract_hash: String }
   pub struct DisabledFacadeDiagnostic { pub facade_id: String, pub code: String, pub message: String }
   ```
 
-  `contract_hash` 只覆盖该门面的规范 JSON；registry 保留 snapshot ID。缺少用户可解释差异、输入 schema、Struct 字段合同、结果 schema/推荐集合或组合约束时禁用该门面。路径/URL/import 参数门面即使结构合法也排除。
+  `EngineResourceSnapshot` 保存三个原始 JSON/bytes/hash 以及 `CatalogSchemaVersions`；Prompt 和内部诊断使用
+  `catalogSchemaVersions` 对象，不再使用含义模糊的单个 `catalogSchemaVersion`。支持版本分别固定为 dataframes 3、
+  functions 2、study facades 1、dtype grammar 1，不做相等比较。`study_facades.json` 必须参与 snapshot 身份、发布 inventory
+  和历史重载。
+
+  `SchemaRegistry` 严格按 eig-rs schema v3 和 dtype grammar v1 解析 primitive/constructor/semantic dtype、五种 rowCount、
+  uniform/discriminated shape、open/closed/dynamic column policy、Struct card 的显式状态、README 登记的规则联合类型、
+  discriminator/variant 和 `base_schema/baseMerge`；未知 enum、rule、condition、conversion 或 dtype 一律使受影响门面失效。
+  `FacadeRegistry` 保存解析后的 schema 引用，供上传、参数卡和结果校验共用，不允许各层再次解释原始 JSON。
+
+  `ResultSelectionRule` 是 internally tagged enum，覆盖当前目录的 `ordered_unique_selection`、`default_results`、
+  `fixed_results` 和 `conditional_unavailable`；未知规则禁用受影响门面，不能把未验证的任意 JSON 传给 LLM 或前端。
+
+  `contract_hash` 覆盖该门面的稳定执行字段，以及按引用闭包解析后的输入和结果完整 schema；同一 schema 变化只改变
+  引用它的门面 hash。hash 还包含这些 schema 实际引用的 dtype/semantic type 和 conversion 定义；未被该门面引用的全局
+  dtype 条目变化只改变 snapshot，不改变该门面 hash。title、description、differences、说明文字、排版和 source location
+  等展示字段不进入 hash。registry 另行保留 snapshot ID 与展示元数据。缺少用户可解释差异、输入 schema、Struct 字段
+  合同、结果 schema/推荐集合或组合约束时禁用该门面。路径/URL/import 参数门面即使结构合法也排除。
 
   registry 的唯一门面来源固定为 `dss/docs/catalog/study_facades.json`；`functions.json` 只继续提供 RSS 函数/表达式
   语法索引，不能补齐或覆盖门面合同。
 
 - [ ] **Step 4: 把 `StudyPlanningService` 改成目录驱动搜索。** 移除五类研究硬编码函数和 arity 策略，提供 `search(query, explicit_function)` 与 `get(facade_id)`；显式函数唯一且有效时直接返回，多个候选返回完整差异，禁用项返回其诊断。模型事实只用于推荐说明，不得改写显式方法。
 
-- [ ] **Step 5: 启动发布并持久化 snapshot 元数据。** 当前 snapshot 原子标记 `is_current`；历史引用阻止旧 snapshot GC。更新资源树仍要求重启，不 checkout/pull/改写 eig-rs。
+- [ ] **Step 5: 启动发布并持久化 snapshot 元数据。** 当前 snapshot 原子标记 `is_current`，持久化三个 catalog schema version 和 dtype grammar version；历史引用阻止旧 snapshot GC。更新资源树仍要求重启，不 checkout/pull/改写 eig-rs。
 
-- [ ] **Step 6: 运行聚焦测试。** 同时执行 `cargo test --test catalog_inference --features e2e-test`，确认现有模型表推断未回退。
+- [ ] **Step 6: 运行聚焦测试。** 同时执行 `cargo test --test catalog_inference --features e2e-test`，确认现有模型表推断未回退；再对实际 `$SPARROWZZ_DIR` 运行真实目录测试，要求 `enabled_count == catalog_entry_count`（本次审计基线为 15）且没有 schema 诊断。该断言不满足时 Task 2 保持未完成；产品代码和 fixture 不维护固定数量枚举。
 
 - [ ] **Step 7: 提交。**
 
   ```bash
-  git add backend/src/engine_resources backend/src/catalog backend/src/application/study_planning backend/tests/engine_resources.rs backend/tests/study_planning.rs backend/tests/fixtures/engine_resources integration-tests/catalog/features.yaml backend/src/contract_manifest.rs backend/tests/contract_manifest.rs
+  git add backend/src/engine_resources backend/src/catalog backend/src/agent/prompt.rs backend/src/application/mod.rs backend/src/application/study_planning backend/tests/engine_resources.rs backend/tests/agent_knowledge.rs backend/tests/common/mod.rs backend/tests/study_planning.rs backend/tests/fixtures/engine_resources integration-tests/catalog/features.yaml backend/src/contract_manifest.rs backend/tests/contract_manifest.rs
   git commit -m "feat: publish dynamic study facade contracts"
   ```
 
@@ -279,7 +313,7 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
 - Consumes: Task 1 upload tables/config、Task 2 model schema、Task 3 adapter import、现有 staging/CAS。
 - Produces: `UploadBatchService` 和受控 `UploadBatchView`；Task 5 用确认后的 model/resource candidate 发布事务。
 
-- [ ] **Step 1: 写失败的上传行为测试。** 测试名至少包括 `static_import_splits_twenty_model_tables_from_para_resource`、`case_import_never_puts_para_in_the_draft`、`csv_and_parquet_create_one_candidate_each`、`excel_visible_nonempty_sheets_default_selected_and_hidden_sheets_do_not`、`ambiguous_parse_requires_settings`、`formulas_macros_and_external_links_are_never_executed`、`missing_required_formula_cache_is_rejected`、`mixed_candidates_require_explicit_purpose`、`staging_reservation_survives_restart_and_expires_once`、`archive_and_batch_limits_leave_no_partial_batch`。断言列名/dtype 来自实际表头而非文件名；所有静态导入来源都得到恰好 20 个 model candidates 和一个固定进入资源子事务的普通 `para` Data candidate。本任务只建立可恢复批次和候选，不提前发布模型或资源。
+- [ ] **Step 1: 写失败的上传行为测试。** 测试名至少包括 `static_import_splits_twenty_model_tables_from_para_resource`、`case_import_never_puts_para_in_the_draft`、`catalog_model_schema_outside_network20_creates_model_candidate`、`csv_and_parquet_create_one_candidate_each`、`excel_visible_nonempty_sheets_default_selected_and_hidden_sheets_do_not`、`ambiguous_parse_requires_settings`、`formulas_macros_and_external_links_are_never_executed`、`missing_required_formula_cache_is_rejected`、`mixed_candidates_require_explicit_purpose`、`staging_reservation_survives_restart_and_expires_once`、`archive_and_batch_limits_leave_no_partial_batch`。断言列名/dtype 来自实际表头而非文件名；所有静态导入来源都得到恰好 20 个 model candidates 和一个固定进入资源子事务的普通 `para` Data candidate；与当前目录 `frames.fuse` 等额外 model schema 匹配的上传仍生成 ModelTable candidate。本任务只建立可恢复批次和候选，不提前发布模型或资源。
 
 - [ ] **Step 2: 运行 `cd backend && cargo test --test upload_batches --test quota_concurrency --features e2e-test` 并确认失败。**
 
@@ -299,7 +333,7 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
       pub alias: Option<String> }
   ```
 
-  流程为 `accept -> parse/infer -> await settings/purpose -> ready -> partially-confirmed|confirmed|failed|discarded|expired`。批次同时保存 model/resource 两个 `ChildPublishStatus`、各自 receipt/diagnostic 和仍待处理候选；部分成功只允许修正或重试失败子事务，已发布子事务不可重复执行。两个发布子事务都校验失败时总状态回到 `ReadyToConfirm` 并保留诊断；`Failed` 只表示来源损坏、暂存丢失等不可恢复终态，不允许再次 confirm。每个 CSV/Parquet 一个候选；Excel 每个非空 sheet 一个候选。所有 tabular candidate 只允许 ModelTable/DataResource/Skip；adapter 静态导入输出按常量 `STATIC_IMPORT_OUTPUTS`（21 项）校验完整性，再拆成 `MODEL_TABLE_OUTPUTS`（`bus..storage` 20 项）与固定 `PARA_RESOURCE_OUTPUT="para"`。`para` 只允许 DataResource/Skip，默认 alias 为 `para`，并保存目录 schemaRef 与同批来源，但公共类型中没有专用参数资源 purpose。批次保存来源 hash、parser 版本、规范 parse spec、有限样例和诊断；任何公共 DTO 不含 staging path。公共 serde 状态使用 `snake_case`，因此 `PartiallyConfirmed` 出网为 `partially_confirmed`。
+  流程为 `accept -> parse/infer -> await settings/purpose -> ready -> partially-confirmed|confirmed|failed|discarded|expired`。批次同时保存 model/resource 两个 `ChildPublishStatus`、各自 receipt/diagnostic 和仍待处理候选；部分成功只允许修正或重试失败子事务，已发布子事务不可重复执行。两个发布子事务都校验失败时总状态回到 `ReadyToConfirm` 并保留诊断；`Failed` 只表示来源损坏、暂存丢失等不可恢复终态，不允许再次 confirm。每个 CSV/Parquet 一个候选；Excel 每个非空 sheet 一个候选。所有 tabular candidate 只允许 ModelTable/DataResource/Skip；模型候选集合来自当前 engine snapshot 中有效门面的 `inputKind=model` schema，不维护固定模型表枚举。adapter 的 `import_dss` 静态 profile 仍按常量 `STATIC_IMPORT_OUTPUTS`（21 项）校验完整性，再拆成该 profile 的 `MODEL_TABLE_OUTPUTS`（`bus..storage` 20 项）与固定 `PARA_RESOURCE_OUTPUT="para"`；这两个常量不得用于限制其他上传或导入 profile 可发布的模型表。`para` 只允许 DataResource/Skip，默认 alias 为 `para`，并保存目录 schemaRef 与同批来源，但公共类型中没有专用参数资源 purpose。批次保存来源 hash、parser 版本、规范 parse spec、有限样例和诊断；任何公共 DTO 不含 staging path。公共 serde 状态使用 `snake_case`，因此 `PartiallyConfirmed` 出网为 `partially_confirmed`。
 
 - [ ] **Step 4: 实现配额预留和 TTL。** 接收字节前事务增加 `reserved_bytes`；流式超限立即中止。确认、部分确认、放弃、24 小时到期和启动恢复通过来源 artifact/暂存所有权账本幂等结算：成功子事务需要的来源转为正式引用，只为失败子事务仍需的暂存保留 reservation；全部终态后释放其余预留。过期确认返回 `upload_batch_expired`。服务重启恢复合法候选和两个子状态，丢失暂存文件则只使仍未发布的子事务收敛为明确失败。
 
@@ -361,7 +395,7 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
 - Consumes: Task 4 已解析候选、Task 2 schema/保留名、现有 result dataset/analysis。
 - Produces: `DataResourceService`、统一的本地 Data 资源 HTTP DTO、四个受控 Agent 工具；Task 6 通过稳定 resource ID 绑定 Data 或 Struct 输入。
 
-- [ ] **Step 1: 写失败的数据资源测试。** 覆盖通用资源可无 schemaRef、静态导入 `para` 是带 alias/schemaRef/source association 的普通 Data 且不进入 draft、session data alias 唯一/归一/保留名、原文件与 Snappy Parquet 双 artifact、多 sheet 共享来源、hash 去重计费、混合批次两个子事务各自原子、`partial_confirmation_keeps_only_failed_child_retryable`、删除影响 preview、冻结引用存活、重新上传和参数卡覆盖都使用 replacement 且有三种动作、structured preview 不写资源、expected hash 过期返回 `resource_stale`、覆盖不改历史 artifact、引擎升级 `needs_rename`、结果/分析提升和跨用户 404。
+- [ ] **Step 1: 写失败的数据资源测试。** 覆盖通用资源可无 schemaRef、静态导入 `para` 是带 alias/schemaRef/source association 的普通 Data 且不进入 draft、`catalog_model_table_outside_network20_publishes_to_draft_and_version`、session data alias 唯一/归一/保留名、原文件与 Snappy Parquet 双 artifact、多 sheet 共享来源、hash 去重计费、混合批次两个子事务各自原子、`partial_confirmation_keeps_only_failed_child_retryable`、删除影响 preview、冻结引用存活、重新上传和参数卡覆盖都使用 replacement 且有三种动作、structured preview 不写资源、expected hash 过期返回 `resource_stale`、覆盖不改历史 artifact、引擎升级 `needs_rename`、结果/分析提升和跨用户 404。
 
 - [ ] **Step 2: 运行 `cd backend && cargo test --test data_resources --test auth_scope --test quota_concurrency --features e2e-test` 并确认失败。**
 
@@ -382,7 +416,7 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
 
   所有资源都使用 opaque UUID/ULID 和会话唯一 alias。默认 alias 由文件/sheet/adapter 输出名生成，冲突用 `data_<shortId>`；静态 `para` 保存 Struct schemaRef、同批来源和原始输出名，但 DTO 与存储类型仍是普通 Data。alias 校验当前 snapshot 的标识符、保留字、模型/结果/函数/临时命名空间；Struct 输入名允许成为满足该输入的资源 alias。新 snapshot 启动后批量标记冲突资源为 `needs_rename`，不自动改名。
 
-- [ ] **Step 4: 实现混合确认的双事务语义。** 20 张模型 candidate 在一个事务应用 draft revision；包括固定 `para` 在内的全部 Data candidate 在另一个资源事务发布。任一子事务内部全成全败，一方失败不回滚另一方成功，批次进入 `PartiallyConfirmed` 并分别返回两个子状态、receipt 和诊断。已成功子事务的来源转为长期 artifact 且不再占 staging reservation；失败子事务保留可重试候选及仍需 reservation，修正后只重跑失败侧。全部成功才进入 `Confirmed` 并释放剩余预留；重复请求返回相同 receipt，不能重复发布或计费。`para` 记录与同批 workspace/import/case 的来源关联，但不加入 draft/version 表。
+- [ ] **Step 4: 实现混合确认的双事务语义。** 本批全部 ModelTable candidate 在一个事务应用 draft revision；包括静态 profile 固定 `para` 在内的全部 Data candidate 在另一个资源事务发布。任一子事务内部全成全败，一方失败不回滚另一方成功，批次进入 `PartiallyConfirmed` 并分别返回两个子状态、receipt 和诊断。已成功子事务的来源转为长期 artifact 且不再占 staging reservation；失败子事务保留可重试候选及仍需 reservation，修正后只重跑失败侧。全部成功才进入 `Confirmed` 并释放剩余预留；重复请求返回相同 receipt，不能重复发布或计费。`para` 记录与同批 workspace/import/case 的来源关联，但不加入 draft/version 表。
 
   在本步骤注册 `POST /api/upload-batches/{id}/confirm`；请求接受 expected draft、完整 candidate decisions、可选
   replacement action 和幂等 client operation ID，响应始终分别返回 model/resource 子状态。Task 4 的其他批次路由
@@ -445,7 +479,7 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
 - Produces: `StudyConfigurationService`、卡片 DTO、`PreparedStudyConfirmation`；Task 9 的 repository unit-of-work 在同一
   数据库事务内重新校验准备结果、冻结 `LockedStudyContract`/`WorkflowInputSnapshot` 并启动 workflow。
 
-- [ ] **Step 1: 写失败的配置状态机测试。** 覆盖显式函数直接选择、多个门面解释卡、含 network 输入的门面只从 active 的实际网络表动态绑定且不含 `para`、无 model 输入的门面没有 active 模型也能进入确认、单一兼容 Data 自动预选、多 Data 选择、无 Data 上传提示、列映射派生资源、Struct schema 卡、同源唯一 `para` 普通资源自动预填、多个兼容资源要求选择、参数卡修改必须选择覆盖或另存、覆盖产生 replacement 且历史引用不变、只复用同门面最后一个 `para`、结果推荐与组合约束、资源/alias/snapshot race 返回 `configuration_stale`、未确认时禁止脚本/workflow。
+- [ ] **Step 1: 写失败的配置状态机测试。** 覆盖显式函数直接选择、多个门面解释卡、门面的全部 model 输入只从 active 的实际模型表动态绑定且不含 `para`、`network[20]` 正确展开但不限制其他 model 输入、保护配合只绑定其声明的 `fuse/recloser/relay` 模型表、无 model 输入的门面没有 active 模型也能进入确认、单一兼容 Data 自动预选、多 Data 选择、无 Data 上传提示、列映射派生资源、Struct schema 卡、同源唯一 `para` 普通资源自动预填、多个兼容资源要求选择、参数卡修改必须选择覆盖或另存、覆盖产生 replacement 且历史引用不变、只复用同门面最后一个 `para`、结果推荐与组合约束、资源/alias/snapshot race 返回 `configuration_stale`、未确认时禁止脚本/workflow。
 
 - [ ] **Step 2: 运行 `cd backend && cargo test --test study_configurations --test study_planning --test tool_manifest --features e2e-test` 并确认失败。**
 
@@ -473,8 +507,8 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
       -> Result<PreparedStudyConfirmation, StudyConfigurationError>;
   ```
 
-  每次卡片提交带 expected revision。`inputKind=model` 只按门面声明从 active 的实际网络表取值；没有 model 输入时
-  `WorkflowInputSnapshot.model=None`，不要求 active。`struct` 从 catalog schema 生成类型/单位/范围/枚举/联动校验卡，并绑定 schema 兼容的普通 Data resource；`data` 也绑定普通 Data resource，但用资源选择/映射卡。Struct 字段被修改时，确认事务调用 Task 5 replacement 服务生成新的单行 Parquet 资源。映射确认创建 Task 5 的不可变派生 Data 资源。任何 catalog 把 `para` 声明为 model 都禁用该门面并显示合同诊断。
+  每次卡片提交带 expected revision。`inputKind=model` 只按门面声明从 active 的实际模型表取值；没有 model 输入时
+  `WorkflowInputSnapshot.model=None`，不要求 active。`struct` 只使用 Task 2 已规范化的 `DataFrameSchemaContract` 生成类型/单位/范围/枚举/联动校验卡，并绑定 schema 兼容的普通 Data resource；`data` 也使用同一合同校验和绑定普通 Data resource，但用资源选择/映射卡。配置层不得读取原始 catalog JSON 或解释 prose constraint。Struct 字段被修改时，确认事务调用 Task 5 replacement 服务生成新的单行 Parquet 资源。映射确认创建 Task 5 的不可变派生 Data 资源。任何 catalog 把 `para` 声明为 model 都禁用该门面并显示合同诊断。
 
 - [ ] **Step 4: 定义研究配置 API。**
 
@@ -792,7 +826,7 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
   DELETE /api/runs/{id}?impactToken=<opaque>
   ```
 
-  前端不再提交 model version。后端事务按 Agent script 的冻结门面合同只读取当前所需 active 表；门面没有 model 输入时允许 model 为空。Agent script 按 required alias 解析包括 `para` 在内的最新 Data 资源。manual/upload script 注入当前会话全部 live Data alias，并在 active 模型存在时注入其实际网络表；没有 active 时仍允许只使用 Data 资源的手写脚本运行，缺少的变量由 tensoreval 实际报错。创建 Run 时解析 script resource 的同会话规范 script message并冻结 `scriptMessageId`；run list/detail DTO 原样返回该可空 stable ID。每次保存可空 model 与实际 resource ID/hash 和 Struct 字段及来源审计；资源被覆盖后 Run 使用新 ID/hash，既有 run 继续引用旧 artifact。
+  前端不再提交 model version。后端事务按 Agent script 的冻结门面合同只读取当前所需 active 表；门面没有 model 输入时允许 model 为空。Agent script 按 required alias 解析包括 `para` 在内的最新 Data 资源。manual/upload script 注入当前会话全部 live Data alias，并在 active 模型存在时注入其全部实际模型表；没有 active 时仍允许只使用 Data 资源的手写脚本运行，缺少的变量由 tensoreval 实际报错。创建 Run 时解析 script resource 的同会话规范 script message并冻结 `scriptMessageId`；run list/detail DTO 原样返回该可空 stable ID。每次保存可空 model 与实际 resource ID/hash 和 Struct 字段及来源审计；资源被覆盖后 Run 使用新 ID/hash，既有 run 继续引用旧 artifact。
 
 - [ ] **Step 5: 实现单次 Run。** 成功 Agent script 沿用创建时结果合同，失败不修正且不改 script。manual/upload 使用开放合同：至少一个名称合法唯一、可读、未超限的 Snappy Parquet；集合/schema 每次可不同；空目录 `no_result_dataset`；任一非法项整次失败。
 
@@ -949,7 +983,7 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
 
 - [ ] **Step 2: 扩展确定性控制端。** ScriptedAgent 与 ScriptedAuthor 分开排队/trace；ScenarioEngine 能产生 stderr、合同漂移、大小超限、barrier、monitor failure；控制端只在 loopback + token 下可用，不允许普通测试路由修改生产状态。
 
-- [ ] **Step 3: 编写数据资源与模型版本浏览器旅程。** 登录→案例/DSS 导入 21 个 adapter 输出→只发布 20 张模型表并把 `para` 发布为普通 Data resource→用用户描述发布模型版本→修改草稿后留空描述并验证确定性摘要→以不同描述重复发布同一内容并验证复用原版本/原描述→通用 CSV/Excel/Parquet→解析歧义→sheet 全选/隐藏 sheet→混合用途→两个子事务（含一次部分成功后只重试失败侧）→数据预览/原文件与规范文件下载→自然语言重命名 alias→以稳定 resource ID 做一次派生表格和受控 ECharts 分析→把指定结果提升为普通 Data resource→`para` 与其他 Data replacement diff 三动作→删除 impact；覆盖刷新恢复、TTL、配额、恶意 archive、两用户隔离和 390px/axe。
+- [ ] **Step 3: 编写数据资源与模型版本浏览器旅程。** 登录→案例/DSS 导入 21 个 adapter 输出→只发布 20 张基础模型表并把 `para` 发布为普通 Data resource→另上传当前目录声明的 `network[20]` 之外模型表并发布到同一草稿/版本→用用户描述发布模型版本→修改草稿后留空描述并验证确定性摘要→以不同描述重复发布同一内容并验证复用原版本/原描述→通用 CSV/Excel/Parquet→解析歧义→sheet 全选/隐藏 sheet→混合用途→两个子事务（含一次部分成功后只重试失败侧）→数据预览/原文件与规范文件下载→自然语言重命名 alias→以稳定 resource ID 做一次派生表格和受控 ECharts 分析→把指定结果提升为普通 Data resource→`para` 与其他 Data replacement diff 三动作→删除 impact；覆盖刷新恢复、TTL、配额、恶意 archive、两用户隔离和 390px/axe。
 
 - [ ] **Step 4: 编写受管研究旅程。** 自然语言→多门面/显式 Newton→从同源普通资源读取 `para` 并修改→选择覆盖→Struct/Data/para reuse/result 卡→最终按钮→原 alias 转移且首次 workflow 冻结新 ID/hash→初始失败→脚本自动修正→成功只列 datasets→再次覆盖 `para`→成功 Run 使用最新 Data/Struct 资源且失败不修正→失败 script Retry 输入 diff/合同 hash并产生新派生脚本/新 message anchor；另用不含 model 输入的 fixture 门面在没有 active 模型时仅凭 Data/Struct 资源完成一次研究。再制造超过首屏消息的历史，点击不同 run 验证按各自 `scriptMessageId` 加载 around context、定位/聚焦精确脚本，null anchor 不误跳。断言 active 模型没有 `para`、历史 run 仍引用覆盖前 artifact、engine 调用次数、脚本全文和 stderr 不泄漏到不应出现的消息。
 
@@ -1003,7 +1037,7 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
 - Consumes: 已通过 Task 14 的最终代码与公共 manifest。
 - Produces: V4 当前设计文档、空库部署说明和真实 eig-rs/DeepSeek 候选发布证据。
 
-- [ ] **Step 1: 写失败的 release semantic assertions。** 断言 V4 bundle/version、所有新 env、无 V3 route/table/tool、`SPARROWZZ_DIR/dss/docs` 动态门面、静态导入始终为 20 model + 1 普通 `para` Data resource、真实 managed generation/repair/run、run→script message 定位与终态删除、Snappy outputs、无 static validation/binary-change gate、报告不含 secret/path/user credentials。
+- [ ] **Step 1: 写失败的 release semantic assertions。** 断言 V4 bundle/version、所有新 env、无 V3 route/table/tool、`SPARROWZZ_DIR/dss/docs` 动态门面、真实目录 `enabled_count == catalog_entry_count`（不把本次基线 15 写进产品枚举）且所有传递 schema 完整、静态导入始终为 20 个基础 model + 1 普通 `para` Data resource、目录额外 model schema 可进入版本、真实 managed generation/repair/run、run→script message 定位与终态删除、Snappy outputs、无 static validation/binary-change gate、报告不含 secret/path/user credentials。
 
 - [ ] **Step 2: 运行 `cd frontend && npm test -- --run src/release/semantic-assertions.test.ts` 和 `./scripts/check-functional-coverage --require-release`，确认文档/报告尚未对齐。**
 
@@ -1011,7 +1045,7 @@ zjudss 只读并验证该文件：文件缺失时发布“没有可用研究门�
 
 - [ ] **Step 4: 编写空库部署步骤。** 停服、备份后同时移走 V3 SQLite 与 DATA_DIR，以 V4 initial migration 启动；明确不迁移历史。列出全部必需/默认 env，并明确 `OWNER_ARTIFACT_LIMIT`、`OWNER_STORAGE_LIMIT_BYTES`、`AGENT_MAX_OWNER_RUNS` 均已分别改为 `USER_ARTIFACT_LIMIT`、`USER_STORAGE_LIMIT_BYTES`、`AGENT_MAX_USER_RUNS` 且旧名不接受；说明重启 recovery 行为和 engine snapshot 生命周期。
 
-- [ ] **Step 5: 扩展真实依赖门禁。** 检出 eig-rs 当前默认分支、构建当前 tensoreval、使用当前 `SPARROWZZ_DIR`；验证静态导入仍完整返回 21 个 adapter 输出但 zjudss 只发布 20 张模型表并把 `para` 发布为普通 Data resource；验证参数卡覆盖后 alias 指向新 artifact 且旧运行仍可读；验证所有有效 DataFrame facade 能被发现且至少对 catalog 当前存在的每个 study family 运行代表合同。用真实 DeepSeek 完成至少一个“确认→自动执行”和一个“失败→修正→成功”旅程；门面无效按门面诊断记录，不因单项坏合同禁用其他项。
+- [ ] **Step 5: 扩展真实依赖门禁。** 检出 eig-rs 当前默认分支、构建当前 tensoreval、使用当前 `SPARROWZZ_DIR`；先验证全部 DataFrame facade 的传递 schema 完整、`enabled_count == catalog_entry_count` 且零诊断，再验证静态导入仍完整返回 21 个 adapter 输出但 zjudss 只发布 20 张基础模型表并把 `para` 发布为普通 Data resource；验证目录额外 model schema 可上传、发布和绑定；验证参数卡覆盖后 alias 指向新 artifact 且旧运行仍可读；至少对 catalog 当前存在的每个 study family 运行代表合同。用真实 DeepSeek 完成至少一个“确认→自动执行”和一个“失败→修正→成功”旅程。注入一个仅供隔离测试的坏门面时，应只记录该门面诊断且不禁用其他项；真实当前目录存在任何诊断则候选发布失败。
 
 - [ ] **Step 6: 运行最终候选门禁。**
 
