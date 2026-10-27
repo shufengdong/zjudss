@@ -23,7 +23,7 @@
 | Task 9：受管工作流状态机 | complete | 原子确认、Struct 资源发布、冻结输入、provisional run、专用 ScriptAuthor、candidate/父 attempt、查询/取消 API、启动恢复 |
 | Task 7：durable 消息、历史锚定与会话删除 | complete | 3 种 revisioned 操作卡、`messageId:revision` SSE、连续 around window、影响 token 删除与统一取消 |
 | Task 8：V4 Agent bundle 与受控工具 | complete | `v4.0.0`、5 个按需 skills、22 个对话工具、无 `create_script`/`plan_study` 权限 |
-| Tasks 9–15 | planned | 以 V4 实施计划为准 |
+| Tasks 10–15 | planned | 以 V4 实施计划为准 |
 
 Task 5 的完整后端测试和统一上传/独立数据资源公共 API Playwright 旅程已通过。完整旧版 Playwright 套件仍依赖已删除的
 `/model-imports` 协议和“确认合并”界面，剩余迁移属于 Task 12 前端工作区任务，不恢复旧协议作为兼容层。
@@ -57,14 +57,14 @@ Task 5 的完整后端测试和统一上传/独立数据资源公共 API Playwri
 - 每次 tensoreval 调用均由统一 adapter 流式排空 stdout/stderr；每流按 `ENGINE_PROCESS_OUTPUT_MAX_BYTES` 保留等额首尾并
   记录完整 hash/总字节数。运行中和退出后都检查结果数量、单文件/总量、普通文件和路径边界；失败、超时或取消会
   终止整个进程组并清理未发布目录。
-- 公共合同：68 条路由、12 类消息、22 个工具、5 个 skills、8 个上传来源、6 类视图。
+- 公共合同：71 条路由、12 类消息、22 个工具、5 个 skills、8 个上传来源、6 类视图。
 - 静态 DSS adapter profile 固定输出 21 张规范 DataFrame；统一上传把其中 20 张网络表作为模型候选，把 `para`
   作为普通 Data resource 候选。其他模型表完全由当前 engine snapshot 的有效 model schema 和实际表头推断。
 - 研究配置：`search_study_facades` 按当前 snapshot 返回目录门面、方法差异和禁用诊断，显式函数不会被拓扑改写；
   `prepare_study` 持久化 revisioned 配置卡。model 输入仅绑定 active 的实际门面表，Struct/Data 绑定普通资源，
   多资源必须选择，列映射发布带血缘的新 Parquet 资源。结果集合按 fixed/minimum/conditional 目录约束校验。
   `prepare_confirmation` 重新检查 revision、snapshot、门面 hash、active 模型和资源内容，生成 Task 9 原子事务使用的
-  locked contract/input snapshot/replacement commands；当前不提供 confirm 公共路由，也不提前生成脚本。
+  locked contract/input snapshot/replacement commands；confirm 公共路由原子创建受管 workflow 与 provisional run，脚本生成、执行和自动修正由 Task 10 接入。
 - 模型表读取：active、准确 draft revision 和历史版本均支持元数据、分页投影与 Parquet 下载；Agent 可通过
   有界等值查询读取实际行后再修改，读取不改变模型生命周期。
 
