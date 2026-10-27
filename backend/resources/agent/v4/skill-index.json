@@ -1,0 +1,119 @@
+{
+  "bundleVersion": "v4.0.0",
+  "skills": [
+    {
+      "id": "model-intake",
+      "version": "1.0.0",
+      "description": "整理上传、表头推断、替换与模型版本",
+      "triggers": [
+        "upload",
+        "replace",
+        "mapping"
+      ],
+      "requiredTools": [
+        "inspect_workspace",
+        "read_model_dataframe",
+        "modify_model"
+      ],
+      "engineContractVersion": "tensoreval-parquet-v3",
+      "sources": [
+        "docs/dataframe_schema_reference.md",
+        "docs/dss_to_rss.md"
+      ],
+      "path": "skills/model-intake.md",
+      "sha256": "9260edc27b685f34aa9fb8db5a97ab1d088a7968e1c95ae77aa86513286136c6"
+    },
+    {
+      "id": "study-planning",
+      "version": "1.3.0",
+      "description": "结合 active 模型规划潮流、QSTS、短路、谐波与暂态研究",
+      "triggers": [
+        "simulate",
+        "仿真",
+        "power-flow",
+        "潮流",
+        "short-circuit",
+        "短路",
+        "fault",
+        "qsts",
+        "时序",
+        "harmonic",
+        "谐波",
+        "transient",
+        "暂态"
+      ],
+      "requiredTools": [
+        "inspect_workspace",
+        "search_study_facades",
+        "prepare_study"
+      ],
+      "engineContractVersion": "tensoreval-parquet-v3",
+      "sources": [
+        "docs/agent_quickstart.md",
+        "docs/dsa_function_reference.md"
+      ],
+      "path": "skills/study-planning.md",
+      "sha256": "8adf464bfab2937d71b5e50dadab7157c622dd2c3bc5222c6265a95a920a72e0"
+    },
+    {
+      "id": "result-analysis",
+      "version": "1.0.0",
+      "description": "从 Parquet dataset 生成受控结果查询和视图",
+      "triggers": [
+        "query-result",
+        "aggregate",
+        "visualize"
+      ],
+      "requiredTools": [
+        "run_result_analysis",
+        "create_dataset_view"
+      ],
+      "engineContractVersion": "tensoreval-parquet-v3",
+      "sources": [
+        "docs/catalog/dataframes.json",
+        "docs/rsdss_function_reference.md"
+      ],
+      "path": "skills/result-analysis.md",
+      "sha256": "864999da5024ef0adc947c6b61f54ac2b39a407807a309d155d83a719372f7ab"
+    },
+    {
+      "id": "comparison",
+      "version": "1.0.0",
+      "description": "按稳定键和单位比较两个仿真运行",
+      "triggers": [
+        "compare",
+        "before-after"
+      ],
+      "requiredTools": [
+        "compare_simulations"
+      ],
+      "engineContractVersion": "tensoreval-parquet-v3",
+      "sources": [
+        "docs/catalog/dataframes.json",
+        "docs/validation_and_troubleshooting.md"
+      ],
+      "path": "skills/comparison.md",
+      "sha256": "2d135d581bb6c40f34a884fde44e0442859bdebac0796531b7f860793e3b276a"
+    },
+    {
+      "id": "troubleshooting",
+      "version": "1.0.0",
+      "description": "按稳定错误码和引擎文档定位失败",
+      "triggers": [
+        "failed",
+        "diagnose"
+      ],
+      "requiredTools": [
+        "search_engine_docs",
+        "read_engine_doc_section"
+      ],
+      "engineContractVersion": "tensoreval-parquet-v3",
+      "sources": [
+        "docs/validation_and_troubleshooting.md",
+        "docs/opendss_compatibility_matrix.md"
+      ],
+      "path": "skills/troubleshooting.md",
+      "sha256": "73b7d2e021203b6bd1b17dd140beb99017d5d4c3ee5c454e42ceff3314164496"
+    }
+  ]
+}

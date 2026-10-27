@@ -36,8 +36,8 @@ fn skill(id: &str, path: &str, tool: &str, content: &str) -> Value {
 
 #[test]
 fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
-    let knowledge = AgentKnowledge::load_embedded("v3.3.3").expect("embedded knowledge");
-    assert_eq!(knowledge.manifest.agent_bundle_version, "v3.3.3");
+    let knowledge = AgentKnowledge::load_embedded("v4.0.0").expect("embedded knowledge");
+    assert_eq!(knowledge.manifest.agent_bundle_version, "v4.0.0");
     assert_eq!(
         knowledge.manifest.engine_contract_version,
         "tensoreval-parquet-v3"
@@ -58,7 +58,7 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
             "stale engine pin: {removed}"
         );
     }
-    assert_eq!(knowledge.skill_index().count(), 6);
+    assert_eq!(knowledge.skill_index().count(), 5);
     assert!(knowledge.skill("result-analysis").is_some());
     let study_skill = knowledge.skill("study-planning").unwrap();
     assert_eq!(study_skill.metadata.version, "1.3.0");
@@ -69,23 +69,21 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     assert!(study_planning.contains("多个资源时必须由用户选择"));
     assert!(study_planning.contains("Newton 适用于径向和非径向网络"));
     assert!(!study_planning.contains("plan_study"));
-    let rss_skill = knowledge.skill("rss-generation").unwrap();
-    assert_eq!(rss_skill.metadata.version, "1.3.0");
-    let rss_generation = &rss_skill.content;
-    assert!(rss_generation.contains("函数结果绑定本身就是输出"));
-    assert!(rss_generation.contains("未被后续节点消费的纯标量"));
-    assert!(rss_generation.contains("prepare_study"));
-    assert!(rss_generation.contains("不得用通用脚本接口生成"));
-    assert!(rss_generation.contains("只能包含变量声明"));
-    assert!(rss_generation.contains("函数调用后不要追加"));
-    assert!(rss_generation.contains("文件读取"));
+    assert!(knowledge.skill("rss-generation").is_none());
     assert!(!study_planning.contains("bus, line, linecode"));
-    assert!(!rss_generation.contains("bus, line, linecode"));
     assert!(knowledge.system_prompt.contains("inspect_workspace"));
     assert!(knowledge.system_prompt.contains("search_study_facades"));
     assert!(knowledge.system_prompt.contains("prepare_study"));
     assert!(knowledge.system_prompt.contains("确认并生成脚本"));
     assert!(!knowledge.system_prompt.contains("plan_study"));
+    assert!(!knowledge.system_prompt.contains("create_script"));
+    assert!(
+        !knowledge
+            .manifest
+            .allowed_tools
+            .iter()
+            .any(|tool| tool == "create_script" || tool == "plan_study")
+    );
     assert!(!knowledge.system_prompt.contains("bus, line, linecode"));
     assert!(!knowledge.system_prompt.contains("/Users/"));
     assert!(!knowledge.system_prompt.contains("SPARROWZZ_DIR"));

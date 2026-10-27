@@ -49,9 +49,9 @@ RUN-001 在 Rust 层验证创建、重放、列表和详情都返回绑定脚本
 都出现在展开记录中，并能选择非首个 `loss` 打开工作台；真实失败场景验证实际阶段、退出码和多行 tensoreval 报错可见，绝对路径
 被隐藏且不请求数据集。运行记录仍不可删除，脚本仍不自动运行。
 
-应用层 scripted-agent 测试额外覆盖脚本已创建后的 provider 收尾失败不覆盖成功，以及失败的
-`create_script` 不会被误判为成功；并用“计算潮流”等原始短指令覆盖五类研究统一规划、一次性缺参追问、
-active 模型决定的 ready/missing 分支、电机动态和 EMT 边界，以及所有脚本都必须由用户显式运行。
+应用层 scripted-agent 测试额外覆盖配置卡已创建后的 provider 收尾失败不覆盖成功、对话 Agent 无脚本创建权限；
+并用“求解牛顿法潮流”等原始短指令验证显式函数选择不被拓扑改写，缺 Data/Struct、资源歧义和禁用门面都只返回
+选择或配置卡，不提前生成或运行脚本。
 
 ScenarioEngine 场景由控制端按调用顺序排队，不使用 sleep；timeout/cancel 使用 barrier，并能排队提供二进制 stderr、
 结果合同错误和监控错误。进程 adapter 的 Rust 测试使用独立 helper process 验证双流超过 1 MiB 仍持续排空、完整 hash、

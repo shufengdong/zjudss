@@ -159,7 +159,7 @@ pub struct ContractManifest {
 }
 
 pub fn contract_manifest() -> Result<ContractManifest, KnowledgeError> {
-    let knowledge = AgentKnowledge::load_embedded("v3.3.3")?;
+    let knowledge = AgentKnowledge::load_embedded("v4.0.0")?;
     let mut skill_ids = knowledge
         .skill_index()
         .map(|skill| skill.id.clone())
@@ -175,6 +175,7 @@ pub fn contract_manifest() -> Result<ContractManifest, KnowledgeError> {
             "independent_data_resources",
             "managed_study_configurations",
             "durable_workflow_messages",
+            "v4_conversational_agent",
         ],
         routes: route_manifest(),
         message_types: MESSAGE_TYPES.to_vec(),

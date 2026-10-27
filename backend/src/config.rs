@@ -200,7 +200,7 @@ impl RuntimeConfig {
             script_repair_max_attempts: positive_usize(&values, "SCRIPT_REPAIR_MAX_ATTEMPTS", 3)?,
             agent_model_retry_max: positive_usize(&values, "AGENT_MODEL_RETRY_MAX", 2)?,
             tensoreval_timeout_ms: positive_u64(&values, "TENSOREVAL_TIMEOUT_MS", 120_000)?,
-            agent_bundle_version: get("AGENT_BUNDLE_VERSION").unwrap_or("v3.3.3").to_string(),
+            agent_bundle_version: get("AGENT_BUNDLE_VERSION").unwrap_or("v4.0.0").to_string(),
         })
     }
 }

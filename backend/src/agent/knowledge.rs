@@ -4,9 +4,9 @@ use std::path::{Component, Path};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-const MANIFEST: &str = include_str!("../../resources/agent/v3/manifest.json");
-const SKILL_INDEX: &str = include_str!("../../resources/agent/v3/skill-index.json");
-const SYSTEM: &str = include_str!("../../resources/agent/v3/system.md");
+const MANIFEST: &str = include_str!("../../resources/agent/v4/manifest.json");
+const SKILL_INDEX: &str = include_str!("../../resources/agent/v4/skill-index.json");
+const SYSTEM: &str = include_str!("../../resources/agent/v4/system.md");
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,27 +84,23 @@ impl AgentKnowledge {
         let files = BTreeMap::from([
             (
                 "skills/model-intake.md".to_string(),
-                include_str!("../../resources/agent/v3/skills/model-intake.md").to_string(),
+                include_str!("../../resources/agent/v4/skills/model-intake.md").to_string(),
             ),
             (
                 "skills/study-planning.md".to_string(),
-                include_str!("../../resources/agent/v3/skills/study-planning.md").to_string(),
-            ),
-            (
-                "skills/rss-generation.md".to_string(),
-                include_str!("../../resources/agent/v3/skills/rss-generation.md").to_string(),
+                include_str!("../../resources/agent/v4/skills/study-planning.md").to_string(),
             ),
             (
                 "skills/result-analysis.md".to_string(),
-                include_str!("../../resources/agent/v3/skills/result-analysis.md").to_string(),
+                include_str!("../../resources/agent/v4/skills/result-analysis.md").to_string(),
             ),
             (
                 "skills/comparison.md".to_string(),
-                include_str!("../../resources/agent/v3/skills/comparison.md").to_string(),
+                include_str!("../../resources/agent/v4/skills/comparison.md").to_string(),
             ),
             (
                 "skills/troubleshooting.md".to_string(),
-                include_str!("../../resources/agent/v3/skills/troubleshooting.md").to_string(),
+                include_str!("../../resources/agent/v4/skills/troubleshooting.md").to_string(),
             ),
         ]);
         Self::load_from_parts(bundle_version, MANIFEST, SKILL_INDEX, SYSTEM, files)

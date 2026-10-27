@@ -13,8 +13,8 @@ pub mod prompt;
 
 pub use factory::{AgentBuildRequest, AgentFactory, DeepSeekAgentFactory};
 
-const SYSTEM_PROMPT: &str = include_str!("../../resources/agent/v3/system.md");
-const SKILL_INDEX: &str = include_str!("../../resources/agent/v3/skill-index.json");
+const SYSTEM_PROMPT: &str = include_str!("../../resources/agent/v4/system.md");
+const SKILL_INDEX: &str = include_str!("../../resources/agent/v4/skill-index.json");
 
 #[derive(Debug, Clone)]
 pub struct LlmConfig {

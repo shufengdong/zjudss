@@ -189,7 +189,7 @@ async fn data_resource_tools_list_read_rename_and_promote_owned_session_resource
 
 #[test]
 fn manifest_allowed_tools_equal_runtime_registry() {
-    let mut manifest = AgentKnowledge::load_embedded("v3.3.3")
+    let mut manifest = AgentKnowledge::load_embedded("v4.0.0")
         .unwrap()
         .manifest
         .allowed_tools;
@@ -202,11 +202,12 @@ fn manifest_allowed_tools_equal_runtime_registry() {
 
     assert_eq!(
         runtime.len(),
-        23,
-        "runtime registry must contain 23 unique tools"
+        22,
+        "runtime registry must contain 22 unique tools"
     );
     runtime.dedup();
-    assert_eq!(runtime.len(), 23, "runtime tool names must be unique");
+    assert_eq!(runtime.len(), 22, "runtime tool names must be unique");
+    assert!(!runtime.iter().any(|tool| tool == "create_script"));
     assert_eq!(
         manifest, runtime,
         "manifest and runtime tool registries must be bidirectionally equal"

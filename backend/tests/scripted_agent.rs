@@ -204,17 +204,17 @@ async fn study_power_flow_searches_then_prepares_a_configuration_without_a_scrip
     publish_agent_study_model(&app, session.parse().unwrap()).await;
     factory.enqueue(ScriptScenario {
         id: "study-power-flow-config".into(),
-        expected_prompt: Some("计算潮流".into()),
+        expected_prompt: Some("求解牛顿法潮流".into()),
         turns: vec![
             ScriptTurn::ToolCall { call_id: "inspect".into(), name: "inspect_workspace".into(), args: json!({}) },
             ScriptTurn::ToolCall { call_id: "load-planning".into(), name: "load_agent_skill".into(), args: json!({"skill_id":"study-planning"}) },
-            ScriptTurn::ToolCall { call_id: "search".into(), name: "search_study_facades".into(), args: json!({"query":"潮流","explicitFunction":"ds_radial_pf"}) },
-            ScriptTurn::ToolCall { call_id: "prepare".into(), name: "prepare_study".into(), args: json!({"facadeId":"static_power_flow_radial","intent":{"request":"计算潮流"}}) },
+            ScriptTurn::ToolCall { call_id: "search".into(), name: "search_study_facades".into(), args: json!({"query":"牛顿法潮流","explicitFunction":"ds_newton_raphson_pf"}) },
+            ScriptTurn::ToolCall { call_id: "prepare".into(), name: "prepare_study".into(), args: json!({"facadeId":"static_power_flow_newton","intent":{"request":"求解牛顿法潮流"}}) },
             ScriptTurn::Text { text: "研究配置已准备，请在卡片中确认输入、参数和结果。".into() },
         ],
     });
     assert_eq!(
-        post_and_wait(&app, &session, "计算潮流").await,
+        post_and_wait(&app, &session, "求解牛顿法潮流").await,
         StatusCode::ACCEPTED
     );
     let events = messages(&app, &session).await;
@@ -232,7 +232,49 @@ async fn study_power_flow_searches_then_prepares_a_configuration_without_a_scrip
 }
 
 #[tokio::test]
-async fn generic_agent_script_validation_is_deferred_to_tensoreval() {
+async fn prepared_configuration_survives_provider_finalization_failure() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let session = create_session(&app).await;
+    publish_agent_study_model(&app, session.parse().unwrap()).await;
+    factory.enqueue(ScriptScenario {
+        id: "prepared-config-provider-failure".into(),
+        expected_prompt: Some("求解牛顿法潮流".into()),
+        turns: vec![
+            ScriptTurn::ToolCall {
+                call_id: "skill".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"study-planning"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "prepare".into(),
+                name: "prepare_study".into(),
+                args: json!({"facadeId":"static_power_flow_newton","intent":{"request":"求解牛顿法潮流"}}),
+            },
+            ScriptTurn::Error {
+                message: "provider closed after tool success".into(),
+            },
+        ],
+    });
+    assert_eq!(
+        post_and_wait(&app, &session, "求解牛顿法潮流").await,
+        StatusCode::ACCEPTED
+    );
+    let events = messages(&app, &session).await;
+    assert_no_script_or_run(&events);
+    assert!(events.iter().any(|event| {
+        event["type"] == "assistant"
+            && event["content"]
+                .as_str()
+                .is_some_and(|text| text.contains("研究配置已准备"))
+    }));
+    assert!(!events.iter().any(|event| {
+        event["type"] == "assistant" && event["content"] == "agent 运行失败，请稍后重试"
+    }));
+}
+
+#[tokio::test]
+async fn conversational_agent_cannot_create_a_generic_script() {
     let factory = Arc::new(ScriptedAgentFactory::default());
     let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
     let session = create_session(&app).await;
@@ -241,9 +283,8 @@ async fn generic_agent_script_validation_is_deferred_to_tensoreval() {
         id: "generic-script-deferred".into(),
         expected_prompt: Some("保存通用脚本".into()),
         turns: vec![
-            ScriptTurn::ToolCall { call_id: "load-rss".into(), name: "load_agent_skill".into(), args: json!({"skill_id":"rss-generation"}) },
             ScriptTurn::ToolCall { call_id: "create".into(), name: "create_script".into(), args: json!({"name":"generic.rss","content":"answer = select(col(value), source);"}) },
-            ScriptTurn::Text { text: "脚本已保存，实际语法与运行可行性将在 tensoreval 执行时判定。".into() },
+            ScriptTurn::Text { text: "对话 Agent 无权创建脚本，请使用研究配置卡。".into() },
         ],
     });
     assert_eq!(
@@ -251,11 +292,7 @@ async fn generic_agent_script_validation_is_deferred_to_tensoreval() {
         StatusCode::ACCEPTED
     );
     let events = messages(&app, &session).await;
-    assert!(
-        events.iter().any(
-            |event| event["type"] == "script" && event["script"]["validationStatus"] == "valid"
-        )
-    );
+    assert_no_script_or_run(&events);
     assert!(runs(&app, &session).await.is_empty());
     assert_eq!(
         app.state
@@ -264,7 +301,7 @@ async fn generic_agent_script_validation_is_deferred_to_tensoreval() {
             .await
             .unwrap()
             .len(),
-        1
+        0
     );
 }
 

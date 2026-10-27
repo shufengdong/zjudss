@@ -191,9 +191,9 @@ adapter/IO/校验错误映射为受控 `error.code`/`error.message`。adapter �
 `messageId:revision`，重连时同时按消息 ID 和 revision 去重；补发除游标后的普通消息外，还返回当前最新操作卡，即使该卡的
 稳定消息 ID 早于游标，避免错过旧卡的新 revision。旧的纯数字 `Last-Event-ID` 仍按 revision 1 解释。卡片只携稳定 ID、
 公共状态和脱敏诊断，不序列化服务器路径或原始 stderr；attempt
-详情由前端默认折叠。运行关联字段统一为 `runId`。成功的 `create_script` tool-call 和 `script` 消息是脚本生成的持久成功事实；
-后续模型收尾失败不追加通用 Agent 失败，缺少 assistant 收尾时由服务端补充检查并点击“运行”的提示。
-Agent 在创建脚本前耗尽单轮模型调用预算时，assistant 明确提示本轮尚未生成脚本并可重新发送请求；后台日志记录
+详情由前端默认折叠。运行关联字段统一为 `runId`。V4 对话 Agent 只持久化研究配置卡，不具备脚本创建权限；
+后续模型收尾失败不追加通用 Agent 失败，缺少 assistant 收尾时由服务端补充“研究配置已准备”的提示。
+Agent 在完成配置前耗尽单轮模型调用预算时，assistant 明确提示本轮尚未完成配置并可重新发送请求；后台日志记录
 session ID 和失败类别，消息正文不暴露 provider 诊断。
 
 消息列表默认返回最新连续窗口，`beforeId` 向前分页；`aroundId` 必须精确属于当前用户的当前会话，否则统一 404，成功响应

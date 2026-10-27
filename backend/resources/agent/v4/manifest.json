@@ -1,0 +1,30 @@
+{
+  "agentBundleVersion": "v4.0.0",
+  "engineContractVersion": "tensoreval-parquet-v3",
+  "systemSha256": "757e5ec9f138a1de25f73996f6187e863055305bff2ba17b8e92fbbda6ef6792",
+  "skillIndexSha256": "3ce92d5e5b7d6aac9f009a4719533d1f362aad60b9a5aa640c22d602e4aac5ba",
+  "allowedTools": [
+    "inspect_workspace",
+    "read_model_dataframe",
+    "search_study_facades",
+    "prepare_study",
+    "search_examples",
+    "inspect_example",
+    "modify_model",
+    "list_result_datasets",
+    "run_result_analysis",
+    "create_dataset_view",
+    "compare_simulations",
+    "list_simulation_history",
+    "search_chat_history",
+    "read_chat_context",
+    "get_storage_usage",
+    "load_agent_skill",
+    "search_engine_docs",
+    "read_engine_doc_section",
+    "list_data_resources",
+    "read_data_resource",
+    "update_data_resource_alias",
+    "promote_result_dataset"
+  ]
+}

@@ -49,7 +49,7 @@ Agent 在修改前先用 `inspect_workspace` 确定 active/draft 范围，再用
 
 ## Script lifecycle
 
-脚本是 session 下可随时新增的不可编辑资源，可由上传或 Agent `create_script` 创建；没有版本历史和单独删除。
+脚本是 session 下可随时新增的不可编辑资源，可由上传、手工文本或确认后的专用脚本 author 创建；没有版本历史和单独删除。
 V4 创建时只验证名称、UTF-8 和大小，RSS 语法与运行可行性完全以 tensoreval 为准；受管研究另由冻结配置做结构
 一致性检查。无 active 时也允许保存，全文通过详情 API 读取。用户可复制、修改后以新 `.rss` 再上传。
 

@@ -23,14 +23,14 @@ use tokio::sync::Semaphore;
 
 /// 单次对话允许的最大模型调用轮数（防死循环）。
 const MAX_TURNS: usize = 8;
-const SCRIPT_CREATED_REPLY: &str = "脚本已生成，请检查代码并点击脚本卡片“运行”";
-const TURN_LIMIT_REPLY: &str = "本轮工具调用已达到上限，尚未生成脚本，请重新发送请求";
+const CONFIG_PREPARED_REPLY: &str = "研究配置已准备，请在卡片中补齐并确认输入、参数和结果";
+const TURN_LIMIT_REPLY: &str = "本轮工具调用已达到上限，尚未完成研究配置，请重新发送请求";
 const AGENT_FAILED_REPLY: &str = "agent 运行失败，请稍后重试";
 
 #[derive(Default)]
 struct TurnOutcome {
     assistant_emitted: bool,
-    script_created: bool,
+    configuration_prepared: bool,
 }
 
 #[derive(Clone)]
@@ -166,7 +166,7 @@ impl ChatService {
             outcome = self.consume(events, &writer) => outcome,
         };
 
-        // 6. 等 agent future 收尾。create_script 已成功即完成本轮领域操作，
+        // 6. 等 agent future 收尾。prepare_study 已成功即完成本轮领域操作，
         // 后续生成收尾文本的 provider 错误不得覆盖已持久化的成功结果。
         let agent_result = tokio::select! {
             _ = cancelled.changed() => {
@@ -192,9 +192,9 @@ impl ChatService {
                 Some(AGENT_FAILED_REPLY)
             }
         };
-        if outcome.script_created {
+        if outcome.configuration_prepared {
             if !outcome.assistant_emitted {
-                let _ = writer.assistant(SCRIPT_CREATED_REPLY).await;
+                let _ = writer.assistant(CONFIG_PREPARED_REPLY).await;
             }
         } else if let Some(reply) = failure_reply {
             let _ = writer.assistant(reply).await;
@@ -261,8 +261,8 @@ impl ChatService {
                     } else {
                         ToolStatus::Success
                     };
-                    if !tool_result.is_error && tool_result.name.as_str() == "create_script" {
-                        outcome.script_created = true;
+                    if !tool_result.is_error && tool_result.name.as_str() == "prepare_study" {
+                        outcome.configuration_prepared = true;
                     }
                     let summary = summarize(&tool_result.content);
                     let args = args_by_call

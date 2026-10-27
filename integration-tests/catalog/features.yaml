@@ -633,24 +633,29 @@
 
 - id: AGENT-001
   source: docs/integration-testing-design.md#coverage-matrix
-  title: V3 agent loads pinned skills before gated tools
+  title: V4 conversational agent prepares configurations without script authority
   layers: [agent]
   lanes: [pr, release]
   tests:
     - runner: rust
       file: backend/tests/scripted_agent.rs
       name: study_power_flow_searches_then_prepares_a_configuration_without_a_script
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: prepared_configuration_survives_provider_finalization_failure
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: conversational_agent_cannot_create_a_generic_script
     - runner: release
       file: scripts/test-release-integration
       name: real DeepSeek and tensoreval complete the semantic release journey
-  assertions: [tool calls are controlled and persisted, skills are loaded on demand]
-  fixtures: [embedded V3 agent bundle]
+  assertions: [tool calls are controlled and persisted, skills are loaded on demand, prepare_study is a durable success even if provider finalization fails, conversational tools cannot create or run scripts]
+  fixtures: [embedded V4 agent bundle]
   contracts:
     - "tool:load_agent_skill"
     - "skill:comparison"
     - "skill:model-intake"
     - "skill:result-analysis"
-    - "skill:rss-generation"
     - "skill:troubleshooting"
     - "error:skill_required"
 
@@ -769,19 +774,15 @@
       file: integration-tests/e2e/v3-workflows.spec.ts
       name: model import stays a draft until publish and a script runs only after its explicit button
     - runner: rust
-      file: backend/tests/scripted_agent.rs
-      name: generic_agent_script_validation_is_deferred_to_tensoreval
-    - runner: rust
       file: backend/tests/scripts.rs
       name: script_text_endpoint_defers_rss_syntax_to_tensoreval
-  assertions: [scripts list independently, full text loads on demand, Agent creation does not run, successful script creation remains successful if provider finalization fails, script syntax and runtime viability are decided by tensoreval rather than a zjudss static parser]
+  assertions: [scripts list independently, full text loads on demand, manual upload or text creation does not run, script syntax and runtime viability are decided by tensoreval rather than a zjudss static parser]
   fixtures: [long RSS script]
   contracts:
     - "route:GET /api/sessions/{id}/scripts"
     - "route:POST /api/sessions/{id}/scripts"
     - "route:POST /api/sessions/{id}/scripts/text"
     - "route:GET /api/scripts/{id}"
-    - "tool:create_script"
     - "error:study_plan_required"
     - "error:study_plan_not_found"
     - "error:study_plan_stale"

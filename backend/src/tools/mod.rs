@@ -47,8 +47,6 @@ use crate::application::{
 use crate::auth::{CurrentUser, UserId};
 use crate::engine_resources::EngineResourceSnapshot;
 
-pub use support::ReadyStudyPlanRegistry;
-
 /// 工具共享服务：引擎适配器 + 绑定到当前 session 的写入器 / 任务仓储 / 限流信号量。
 #[derive(Clone)]
 pub struct ToolServices {
@@ -117,7 +115,6 @@ define_tool_registry!(
     search_examples::SearchExamplesTool,
     inspect_example::InspectExampleTool,
     modify_model::ModifyModelTool,
-    create_script::CreateScriptTool,
     list_result_datasets::ListResultDatasetsTool,
     run_result_analysis::RunResultAnalysisTool,
     create_dataset_view::CreateDatasetViewTool,

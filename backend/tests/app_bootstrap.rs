@@ -49,7 +49,7 @@ fn runtime_config_uses_v4_defaults_and_rejects_zero_or_inconsistent_limits() {
     assert_eq!(config.script_repair_max_attempts, 3);
     assert_eq!(config.agent_model_retry_max, 2);
     assert_eq!(config.tensoreval_timeout_ms, 120_000);
-    assert_eq!(config.agent_bundle_version, "v3.3.3");
+    assert_eq!(config.agent_bundle_version, "v4.0.0");
 
     for name in [
         "RESULT_MAX_FILES",

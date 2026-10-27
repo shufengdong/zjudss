@@ -1,10 +1,5 @@
-use std::collections::BTreeMap;
-
 use rig::completion::ToolAnnotations;
 use rig::tool::{Tool, ToolContext, ToolErrorKind, ToolExecutionError};
-use sha2::{Digest, Sha256};
-
-use crate::application::study_planning::ReadyStudyPlan;
 
 #[derive(Debug)]
 pub struct DomainToolError {
@@ -78,30 +73,6 @@ where
     }
 }
 
-/// Transitional test helper for V3 plan fixtures. It is not part of the runtime tool registry.
-#[derive(Debug, Default)]
-pub struct ReadyStudyPlanRegistry {
-    plans: BTreeMap<String, ReadyStudyPlan>,
-}
-
-impl ReadyStudyPlanRegistry {
-    pub fn insert(&mut self, request_message_id: i32, plan: ReadyStudyPlan) -> String {
-        let proof = serde_json::json!({"requestMessageId":request_message_id,"plan":&plan});
-        let id = format!(
-            "study-plan:{}",
-            hex::encode(Sha256::digest(
-                crate::application::canonical_json(&proof).as_bytes()
-            ))
-        );
-        self.plans.insert(id.clone(), plan);
-        id
-    }
-
-    pub fn get(&self, id: &str) -> Option<ReadyStudyPlan> {
-        self.plans.get(id).cloned()
-    }
-}
-
 impl From<crate::application::VersionError> for DomainToolError {
     fn from(value: crate::application::VersionError) -> Self {
         Self::new("workspace_error", value.to_string())
@@ -125,12 +96,6 @@ impl From<crate::application::AnalysisError> for DomainToolError {
 impl From<crate::application::ComparisonError> for DomainToolError {
     fn from(value: crate::application::ComparisonError) -> Self {
         Self::new(value.code, value.to_string())
-    }
-}
-
-impl From<crate::application::study_planning::StudyPlanningError> for DomainToolError {
-    fn from(value: crate::application::study_planning::StudyPlanningError) -> Self {
-        Self::new(value.code(), value.to_string())
     }
 }
 

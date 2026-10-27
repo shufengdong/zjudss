@@ -7,7 +7,7 @@
 > [`2026-10-27-v4-independent-data-resources-managed-studies.md`](superpowers/plans/2026-10-27-v4-independent-data-resources-managed-studies.md)。
 > 当前 eig-rs 已提供全部门面的完整传递输入、Struct 参数卡和结果 schema，外部机器合同门禁已经满足。V4 Task 1
 > 的空库持久化合同、Task 2 的动态研究门面目录、Task 3 的有界进程执行边界、Task 4 的可恢复统一上传批次和
-> Task 5 的独立数据资源发布/管理、Task 6 的目录驱动研究配置及 Task 7 的 durable 工作流消息、历史锚定与会话删除合同已经实现；最终确认与受管执行工作流尚未实现。
+> Task 5 的独立数据资源发布/管理、Task 6 的目录驱动研究配置、Task 7 的 durable 工作流消息、历史锚定与会话删除合同及 Task 8 的 V4 对话 Agent bundle 已经实现；最终确认与受管执行工作流尚未实现。
 > 本文未明确标为 V4 已完成的其余内容仍描述进入 V4 前已验证的 V3 产品行为。
 
 ## V4 implementation progress
@@ -21,7 +21,8 @@
 | Task 5：独立数据资源发布与管理 | complete | model/resource 双子事务、普通 Data/Struct 资源、替换/删除/提升、资源分析与物化视图、4 个 Agent 工具 |
 | Task 6：目录驱动研究配置 | complete | revision 状态机、动态 model/Data/Struct/结果卡、复用建议、多资源消歧、受控列映射、最终确认准备合同、2 个 Agent 工具 |
 | Task 7：durable 消息、历史锚定与会话删除 | complete | 3 种 revisioned 操作卡、`messageId:revision` SSE、连续 around window、影响 token 删除与统一取消 |
-| Tasks 8–15 | planned | 以 V4 实施计划为准 |
+| Task 8：V4 Agent bundle 与受控工具 | complete | `v4.0.0`、5 个按需 skills、22 个对话工具、无 `create_script`/`plan_study` 权限 |
+| Tasks 9–15 | planned | 以 V4 实施计划为准 |
 
 Task 5 的完整后端测试和统一上传/独立数据资源公共 API Playwright 旅程已通过。完整旧版 Playwright 套件仍依赖已删除的
 `/model-imports` 协议和“确认合并”界面，剩余迁移属于 Task 12 前端工作区任务，不恢复旧协议作为兼容层。
@@ -42,20 +43,20 @@ Task 5 的完整后端测试和统一上传/独立数据资源公共 API Playwri
 | 运行 | complete | 仅按钮创建、active race、含脚本名的冻结快照、私有输入树、可展开失败详情与多 Parquet 结果 |
 | 结果与派生 | complete | 单结果删除、分析、物化视图、比较、tombstone 血缘 |
 | 前端 | complete | 三列/窄屏、运行摘要与失败原因/耗时/全结果选择、结果数据表/图表、active/draft/历史模型表只读工作台、登录用户菜单 |
-| Agent bundle | transitioning | 23 工具；`search_study_facades`/`prepare_study` 已替代 `plan_study`，受管研究等待配置卡确认；Task 8 发布正式 V4 bundle 并移除对话 Agent 的通用脚本工具 |
+| Agent bundle | complete | V4 `v4.0.0`、22 个受控工具；`search_study_facades`/`prepare_study` 准备配置卡，对话 Agent 无通用脚本创建权限 |
 | 发布门禁 | complete | deterministic Rust/Vitest/build/Playwright/coverage；真实依赖另行执行 |
 
 ## Runtime contracts
 
 - 后端 Cargo package 与 library crate 均为 `zjudss`；`backend/` 只是仓库目录名，Rust 调用点使用
   `zjudss::`。
-- Agent bundle：`v3.3.3`，目录 `backend/resources/agent/v3`。
+- Agent bundle：`v4.0.0`，目录 `backend/resources/agent/v4`。
 - Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `SPARROWZZ_DIR` 动态发现并验证
   `dss/docs/catalog` 与 `dss/rssbundle` manifest，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
 - 每次 tensoreval 调用均由统一 adapter 流式排空 stdout/stderr；每流按 `ENGINE_PROCESS_OUTPUT_MAX_BYTES` 保留等额首尾并
   记录完整 hash/总字节数。运行中和退出后都检查结果数量、单文件/总量、普通文件和路径边界；失败、超时或取消会
   终止整个进程组并清理未发布目录。
-- 公共合同：68 条路由、12 类消息、23 个工具、6 个 skills、8 个上传来源、6 类视图。
+- 公共合同：68 条路由、12 类消息、22 个工具、5 个 skills、8 个上传来源、6 类视图。
 - 静态 DSS adapter profile 固定输出 21 张规范 DataFrame；统一上传把其中 20 张网络表作为模型候选，把 `para`
   作为普通 Data resource 候选。其他模型表完全由当前 engine snapshot 的有效 model schema 和实际表头推断。
 - 研究配置：`search_study_facades` 按当前 snapshot 返回目录门面、方法差异和禁用诊断，显式函数不会被拓扑改写；
