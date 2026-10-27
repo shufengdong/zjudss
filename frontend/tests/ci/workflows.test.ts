@@ -93,6 +93,9 @@ describe('local SSH deployment', () => {
         fs.copyFileSync(path.join(repoRoot, 'scripts/deploy'), path.join(directory, 'scripts/deploy'))
         fs.writeFileSync(path.join(directory, 'backend/resources/init_users.csv'), 'ID,NAME\nalice,Alice\n')
         for (const [name, body] of Object.entries({
+          uname: 'case ${1:-} in -s) printf Linux;; -m) printf x86_64;; *) exit 1;; esac',
+          realpath: 'path=${!#}; [[ -e $path ]] || exit 1; printf "%s" "$path"',
+          flock: 'exit 0',
           cargo: '[[ $DEPLOY_TEST_SCENARIO != "build failure" ]] || exit 1\nmkdir -p target/release\nprintf new > target/release/zjudss',
           npm: 'if [[ $1 == run ]]; then mkdir -p dist; printf "%s|%s" "$VITE_BASE_PATH" "$VITE_API_BASE_PATH" > dist/index.html; fi',
           ssh: 'printf "ssh\\n" >> "$DEPLOY_TEST_TRACE"\nif [[ $DEPLOY_TEST_SCENARIO == "upload failure" && ${!#} == *"tar -xzf"* ]]; then exit 1; fi\nexec bash -c "${!#}"',

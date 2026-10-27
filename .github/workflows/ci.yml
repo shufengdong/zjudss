@@ -18,6 +18,8 @@ jobs:
       PLAYWRIGHT_JUNIT_OUTPUT_NAME: ../target/test-reports/playwright.xml
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare test users
+        run: install -m 600 integration-tests/fixtures/init_users.csv backend/resources/init_users.csv
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -64,4 +66,3 @@ jobs:
             target/functional-coverage/
             frontend/test-results/
             frontend/playwright-report/
-
