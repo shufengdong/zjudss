@@ -52,3 +52,12 @@ export interface UploadBatchView {
   revision: number
   candidates: UploadCandidateView[]
 }
+
+export interface UploadBatchActions {
+  updateParseSettings: (id: string, settings: ParseSettings) => Promise<unknown>
+  updateCandidates: (id: string, decisions: CandidateDecision[]) => Promise<unknown>
+  confirm: (id: string, decisions: CandidateDecision[], replacementAction?: ReplacementAction) => Promise<unknown>
+  discard: (id: string) => Promise<void>
+  addBatch: (batch: UploadBatchView) => void
+  watch: (id: string) => void
+}

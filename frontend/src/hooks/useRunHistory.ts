@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { listRuns } from '../api/client'
-import type { SimulationRun } from '../types'
+import { deleteRun as deleteRunApi, listRuns, previewRunDeletion } from '../api/client'
+import type { RunDeletionPreview, SimulationRun } from '../types'
 
 export interface RunHistoryState {
   runs: SimulationRun[]
   status: 'idle' | 'loading' | 'ready' | 'error'
   error: string | null
   reload: () => void
+  previewDeletion:(id:string)=>Promise<RunDeletionPreview>
+  deleteRun:(id:string,impactToken:string)=>Promise<void>
 }
 
 function errorMessage(error: unknown): string {
@@ -22,6 +24,8 @@ export function useRunHistory(id: string | null, revision = 0): RunHistoryState 
   const [reloadRevision, setReloadRevision] = useState(0)
   const generation = useRef(0)
   const reload = useCallback(() => setReloadRevision((value) => value + 1), [])
+  const previewDeletion=useCallback((runId:string)=>previewRunDeletion(runId),[])
+  const deleteRun=useCallback(async(runId:string,impactToken:string)=>{await deleteRunApi(runId,impactToken);setRuns(values=>values.filter(run=>run.id!==runId))},[])
 
   useEffect(() => {
     const request = ++generation.current
@@ -49,5 +53,5 @@ export function useRunHistory(id: string | null, revision = 0): RunHistoryState 
     )
   }, [id, revision, reloadRevision])
 
-  return { runs, status, error, reload }
+  return { runs, status, error, reload, previewDeletion, deleteRun }
 }

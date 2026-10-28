@@ -1,7 +1,7 @@
 # V4 HTTP 与 SSE API（实施中）
 
 > 本文跟随已实现的 V4 公共接口更新。Tasks 1–12 的统一上传、独立资源、研究配置、受管执行、重试和删除接口已实现；
-> 对话内完整配置卡和运行到脚本消息定位界面由 Task 13 接入。已确认的行为边界见
+> 对话内完整配置卡和运行到脚本消息定位界面已经接入。已确认的行为边界见
 > [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)；
 > 当前接口表只记录已经实现并可验证的能力。
 

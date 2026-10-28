@@ -2,8 +2,9 @@ import type {
   AnalysisRun, DatasetMetadata, DatasetPage, DatasetViewData, ExampleDetail, ExampleTreeNode,
   CandidateDecision, DataResourceDeletionPreview, DataResourcePage, DataResourceRows, DataResourceView,
   DeletedDataResource, HistoryHit, Message, MessagePage, ModelVersion, ParseSettings, ReplacementAction,
-  RunComparison, ScriptDetail, StructuredReplacementPreview, StructuredReplacementRequest,
-  UploadBatchView, UploadConfirmation,
+  ManagedWorkflowView, RetryPreviewView, RunComparison, RunDeletionPreview, ScriptDetail,
+  StudyConfigurationView, StudyStructUpdate, StructuredReplacementPreview, StructuredReplacementRequest,
+  UploadBatchView, UploadConfirmation, ColumnMapping,
   ModelDataFrameMetadata, ModelDataFramePage, ModelDataFrameSource, ScriptSummary, Session,
   SessionDeletionPreview, SimulationRun, StorageUsage, User, VersionDeletionPreview, Workspace,
 } from '../types'
@@ -69,6 +70,16 @@ export async function uploadScript(sessionId:string,file:File){const form=new Fo
 export const createScriptText=(sessionId:string,body:{name:string;content:string})=>request<{script:ScriptSummary}>(`/api/sessions/${sessionId}/scripts/text`,{method:'POST',body:JSON.stringify(body)})
 export const listScripts=async(sessionId:string)=>(await request<{scripts:ScriptSummary[]}>(`/api/sessions/${sessionId}/scripts`)).scripts
 export const getScript=async(id:string)=>(await request<{script:ScriptDetail}>(`/api/scripts/${id}`)).script
+export const getStudyConfiguration=(id:string)=>request<StudyConfigurationView>(`/api/study-configurations/${id}`)
+export const selectStudyFacade=(id:string,expectedRevision:number,facadeId:string)=>request<StudyConfigurationView>(`/api/study-configurations/${id}/facade`,{method:'PUT',body:JSON.stringify({expectedRevision,facadeId})})
+export const bindStudyResource=(id:string,inputId:string,expectedRevision:number,resourceId:string|null)=>request<StudyConfigurationView>(`/api/study-configurations/${id}/bindings/${encodeURIComponent(inputId)}`,{method:'PUT',body:JSON.stringify({expectedRevision,resourceId})})
+export const mapStudyResource=(id:string,inputId:string,body:{expectedRevision:number;sourceResourceId:string;displayName:string;alias:string;mappings:ColumnMapping[]})=>request<StudyConfigurationView>(`/api/study-configurations/${id}/bindings/${encodeURIComponent(inputId)}/mapping`,{method:'POST',body:JSON.stringify(body)})
+export const updateStudyStruct=(id:string,inputId:string,body:StudyStructUpdate)=>request<StudyConfigurationView>(`/api/study-configurations/${id}/structs/${encodeURIComponent(inputId)}`,{method:'PUT',body:JSON.stringify(body)})
+export const selectStudyResults=(id:string,expectedRevision:number,results:string[])=>request<StudyConfigurationView>(`/api/study-configurations/${id}/results`,{method:'PUT',body:JSON.stringify({expectedRevision,results})})
+export const cancelStudyConfiguration=(id:string,expectedRevision:number)=>request<StudyConfigurationView>(`/api/study-configurations/${id}${params({expectedRevision})}`,{method:'DELETE'})
+export const confirmStudyConfiguration=(id:string,expectedRevision:number,clientOperationId:string)=>request<ManagedWorkflowView>(`/api/study-configurations/${id}/confirm`,{method:'POST',body:JSON.stringify({expectedRevision,clientOperationId})})
+export const getManagedWorkflow=(id:string)=>request<ManagedWorkflowView>(`/api/workflows/${id}`)
+export const cancelManagedWorkflow=(id:string)=>request<ManagedWorkflowView>(`/api/workflows/${id}/cancel`,{method:'POST'})
 export const getWorkspace=(id:string)=>request<Workspace>(`/api/sessions/${id}/workspace`)
 export const listVersions=async(id:string)=>(await request<{versions:ModelVersion[]}>(`/api/sessions/${id}/versions`)).versions
 export const publishDraft=(sessionId:string,draft:{id:string;revision:number},clientPublishId:string,description?:string)=>request<{version:ModelVersion;deduplicated:boolean;replayed:boolean}>(`/api/sessions/${sessionId}/versions`,{method:'POST',body:JSON.stringify({expectedDraftId:Number(draft.id),expectedDraftRevision:draft.revision,clientPublishId,description})})
@@ -92,6 +103,8 @@ export async function uploadReplacementFiles(resourceId:string,clientBatchId:str
 export const searchHistory=async(query:string)=>(await request<{items:HistoryHit[]}>(`/api/history/search${params({query})}`)).items
 export const listRuns=async(sessionId:string)=>(await request<{runs:SimulationRun[]}>(`/api/sessions/${sessionId}/runs`)).runs
 export const getRun=(id:string)=>request<SimulationRun>(`/api/runs/${id}`)
+export const previewRunDeletion=(id:string)=>request<RunDeletionPreview>(`/api/runs/${id}/deletion-preview`,{method:'POST'})
+export const deleteRun=(id:string,impactToken:string)=>request<void>(`/api/runs/${id}${params({impactToken})}`,{method:'DELETE'},async()=>undefined)
 export const listRunDatasets=async(id:string)=>(await request<{datasets:DatasetMetadata[]}>(`/api/runs/${id}/datasets`)).datasets
 export const createRun=(scriptId:string,clientRunId:string)=>request<{run:SimulationRun;replayed:boolean}>(`/api/scripts/${scriptId}/runs`,{method:'POST',body:JSON.stringify({clientRunId})})
 export const getDataset=(id:string)=>request<DatasetMetadata>(`/api/datasets/${id}`)
@@ -101,6 +114,8 @@ export const getAnalysis=(id:string)=>request<AnalysisRun>(`/api/analysis-runs/$
 export const getComparison=(id:string)=>request<RunComparison>(`/api/run-comparisons/${id}`)
 export const deleteDataset=(id:string)=>request<{datasetId:string;tombstone:unknown}>(`/api/datasets/${id}`,{method:'DELETE'})
 export const getStorageUsage=()=>request<StorageUsage>('/api/storage-usage')
+export const previewScriptRetry=(scriptId:string,clientRetryId:string)=>request<RetryPreviewView>(`/api/scripts/${scriptId}/retry-previews`,{method:'POST',body:JSON.stringify({clientRetryId})})
+export const confirmScriptRetry=(previewId:string,confirmed=true)=>request<ManagedWorkflowView>(`/api/retry-previews/${previewId}/confirm`,{method:'POST',body:JSON.stringify({confirmed})})
 export async function downloadDataset(id:string,name='dataset'){
   const res=await fetch(apiUrl(`/api/datasets/${id}/download`)); if(!res.ok){const error=await errorFrom(res);if(res.status===401)emitAuthenticationRequired();throw error}
   return {blob:await res.blob(),filename:`${name}.parquet`}

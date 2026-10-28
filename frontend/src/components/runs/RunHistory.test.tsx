@@ -23,7 +23,7 @@ const makeDataset = (id: string, name: string, rowCount: number, sizeBytes: numb
   schemaHash: 'h'.repeat(64), lineage: [],
 })
 const state = (runs: SimulationRun[], overrides: Partial<RunHistoryState> = {}): RunHistoryState => ({
-  runs, status: 'ready', error: null, reload: vi.fn(), ...overrides,
+  runs, status: 'ready', error: null, reload: vi.fn(), previewDeletion:vi.fn(), deleteRun:vi.fn(), ...overrides,
 })
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -34,7 +34,7 @@ function deferred<T>() {
 describe('RunHistory', () => {
   beforeEach(() => mockedListRunDatasets.mockReset())
 
-  it('renders an informative collapsed summary without requesting results or offering deletion', () => {
+  it('renders an informative collapsed summary and offers terminal deletion without requesting results', () => {
     render(<RunHistory history={state([makeRun()])} datasetRevision={0} onOpenDataset={vi.fn()} />)
     const header = screen.getByRole('button', { name: /静态潮流/ })
     expect(header).toHaveAttribute('aria-expanded', 'false')
@@ -42,8 +42,42 @@ describe('RunHistory', () => {
     expect(header).toHaveTextContent('long-script.rss')
     expect(header).toHaveTextContent('模型版本 3')
     expect(header).toHaveTextContent('耗时 2 秒')
-    expect(screen.queryByText(/删除/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button',{name:'删除运行 9'})).toBeInTheDocument()
     expect(mockedListRunDatasets).not.toHaveBeenCalled()
+  })
+
+  it('uses the main area to locate the exact script while details remain independent',()=>{
+    const locate=vi.fn()
+    mockedListRunDatasets.mockResolvedValue([])
+    render(<RunHistory history={state([makeRun({scriptMessageId:'message-7'})])} datasetRevision={0} onOpenDataset={vi.fn()} onLocateScript={locate}/>)
+    fireEvent.click(screen.getByRole('button',{name:/静态潮流/}))
+    expect(locate).toHaveBeenCalledWith('message-7')
+    expect(screen.queryByText('计算结果（0）')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button',{name:'展开运行详情'}))
+    expect(screen.getByRole('button',{name:'收起运行详情'})).toHaveAttribute('aria-expanded','true')
+  })
+
+  it('loads deletion impact and deletes only after explicit confirmation',async()=>{
+    const previewDeletion=vi.fn().mockResolvedValue({impactToken:'token',status:'succeeded',resultCount:2,resultBytes:1024,derivedReferenceCount:1,promotedReferenceCount:1,resultIds:[1,2],expiresAt:'x'}),deleteRun=vi.fn().mockResolvedValue(undefined)
+    const onRunDeleted=vi.fn()
+    render(<RunHistory history={state([makeRun()],{previewDeletion,deleteRun})} datasetRevision={0} onOpenDataset={vi.fn()} onRunDeleted={onRunDeleted}/>)
+    fireEvent.click(screen.getByRole('button',{name:'删除运行 9'}))
+    expect(await screen.findByRole('dialog',{name:'删除运行记录'})).toHaveTextContent('2 个直接结果')
+    expect(deleteRun).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button',{name:'确认删除'}))
+    await waitFor(()=>expect(deleteRun).toHaveBeenCalledWith('9','token'))
+    expect(onRunDeleted).toHaveBeenCalledWith('9',['1','2'])
+  })
+
+  it('focuses the deletion dialog and cancellation performs no mutation',async()=>{
+    const previewDeletion=vi.fn().mockResolvedValue({impactToken:'token',status:'failed',resultCount:0,resultBytes:0,derivedReferenceCount:0,promotedReferenceCount:0,resultIds:[],expiresAt:'x'}),deleteRun=vi.fn()
+    render(<RunHistory history={state([makeRun({status:'failed'})],{previewDeletion,deleteRun})} datasetRevision={0} onOpenDataset={vi.fn()}/>)
+    fireEvent.click(screen.getByRole('button',{name:'删除运行 9'}))
+    const cancel=await screen.findByRole('button',{name:'取消'})
+    await waitFor(()=>expect(cancel).toHaveFocus())
+    fireEvent.click(cancel)
+    expect(screen.queryByRole('dialog',{name:'删除运行记录'})).not.toBeInTheDocument()
+    expect(deleteRun).not.toHaveBeenCalled()
   })
 
   it('loads every result only after expansion and opens the selected dataset', async () => {

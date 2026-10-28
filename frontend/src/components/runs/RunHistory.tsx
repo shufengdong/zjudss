@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { listRunDatasets } from '../../api/client'
 import type { RunHistoryState } from '../../hooks/useRunHistory'
 import type { DatasetMetadata, SimulationRun } from '../../types'
+import type { RunDeletionPreview } from '../../types'
 import {
   formatBytes,
   formatDuration,
@@ -99,10 +100,12 @@ function RunDetails({ run, detail, now, onRetry, onOpenDataset }: {
   </div>
 }
 
-export default function RunHistory({ history, datasetRevision, onOpenDataset }: {
+export default function RunHistory({ history, datasetRevision, onOpenDataset, onLocateScript, onRunDeleted }: {
   history: RunHistoryState
   datasetRevision: number
   onOpenDataset: (datasetId: string) => void
+  onLocateScript?:(messageId:string)=>Promise<void>|void
+  onRunDeleted?:(runId:string,resultIds:string[])=>void
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const expandedRef = useRef(expanded)
@@ -112,6 +115,24 @@ export default function RunHistory({ history, datasetRevision, onOpenDataset }: 
   const previousStatuses = useRef<Record<string, SimulationRun['status']>>({})
   const hasLiveRuns = history.runs.some((run) => run.status === 'queued' || run.status === 'running')
   const [now, setNow] = useState(() => Date.now())
+  const[deletion,setDeletion]=useState<{run:SimulationRun;preview:RunDeletionPreview}|null>(null),[deleting,setDeleting]=useState(false),[deleteError,setDeleteError]=useState<string|null>(null)
+  const dialogRef=useRef<HTMLDivElement|null>(null),cancelDeleteRef=useRef<HTMLButtonElement|null>(null)
+
+  useEffect(()=>{
+    if(!deletion)return
+    if(!deleting)cancelDeleteRef.current?.focus()
+    const onKeyDown=(event:KeyboardEvent)=>{
+      if(event.key==='Escape'&&!deleting){event.preventDefault();setDeletion(null);return}
+      if(event.key!=='Tab')return
+      const controls=Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])')??[])
+      if(controls.length===0)return
+      const first=controls[0],last=controls[controls.length-1]
+      if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus()}
+      else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus()}
+    }
+    document.addEventListener('keydown',onKeyDown)
+    return()=>document.removeEventListener('keydown',onKeyDown)
+  },[deletion,deleting])
 
   useEffect(() => {
     if (!hasLiveRuns) return
@@ -188,6 +209,8 @@ export default function RunHistory({ history, datasetRevision, onOpenDataset }: 
     expandedRef.current = next
     setExpanded(next)
   }
+  const previewDelete=async(run:SimulationRun)=>{setDeleteError(null);try{setDeletion({run,preview:await history.previewDeletion(run.id)})}catch(cause){setDeleteError(requestError(cause))}}
+  const confirmDelete=async()=>{if(!deletion)return;setDeleting(true);setDeleteError(null);try{await history.deleteRun(deletion.run.id,deletion.preview.impactToken);onRunDeleted?.(deletion.run.id,deletion.preview.resultIds.map(String));setDeletion(null)}catch(cause){setDeleteError(requestError(cause))}finally{setDeleting(false)}}
 
   if (history.status === 'loading') {
     return <div aria-live="polite" className="p-4 text-xs text-slate-500">正在加载运行记录…</div>
@@ -202,14 +225,7 @@ export default function RunHistory({ history, datasetRevision, onOpenDataset }: 
     {history.runs.map((run) => {
       const isExpanded = expanded.has(run.id)
       const detailId = `run-details-${run.id}`
-      return <article key={run.id} className="overflow-hidden rounded-lg border bg-white text-xs">
-        <button
-          type="button"
-          aria-expanded={isExpanded}
-          aria-controls={detailId}
-          onClick={() => toggle(run)}
-          className="block w-full px-3 py-3 text-left"
-        >
+      const summary=<>
           <span className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800">{runTitle(run)}</span>
             <span className={`shrink-0 rounded px-2 py-0.5 ${statusClass(run.status)}`}>{runStatusLabel(run.status)}</span>
@@ -217,9 +233,11 @@ export default function RunHistory({ history, datasetRevision, onOpenDataset }: 
           <span className="mt-1 block truncate text-slate-500">{run.scriptName} · 模型版本 {run.modelVersionId}</span>
           <span className="mt-1 flex items-center text-slate-400">
             <span>耗时 {formatDuration(runDurationMs(run, now))} · {formatTimestamp(run.createdAt)}</span>
-            <span className="ml-auto pl-2 text-brand-600">{isExpanded ? '收起详情' : '展开详情'}</span>
+            {!onLocateScript&&<span className="ml-auto pl-2 text-brand-600">{isExpanded ? '收起详情' : '展开详情'}</span>}
           </span>
-        </button>
+        </>
+      return <article key={run.id} className="overflow-hidden rounded-lg border bg-white text-xs">
+        <div className="flex items-stretch">{onLocateScript?<button type="button" disabled={!run.scriptMessageId} onClick={()=>run.scriptMessageId?void onLocateScript(run.scriptMessageId):undefined} className="min-w-0 flex-1 px-3 py-3 text-left disabled:cursor-default">{summary}{!run.scriptMessageId&&<span className="mt-1 block text-amber-600">脚本尚未生成，无法定位</span>}</button>:<button type="button" aria-expanded={isExpanded} aria-controls={detailId} onClick={()=>toggle(run)} className="block min-w-0 flex-1 px-3 py-3 text-left">{summary}</button>}{onLocateScript&&<button type="button" aria-label={isExpanded?'收起运行详情':'展开运行详情'} aria-expanded={isExpanded} aria-controls={detailId} onClick={()=>toggle(run)} className="border-l px-3 text-brand-600">{isExpanded?'收起':'详情'}</button>}{['succeeded','failed'].includes(run.status)&&<button type="button" aria-label={`删除运行 ${run.id}`} onClick={()=>void previewDelete(run)} className="border-l px-3 text-red-600">删除</button>}</div>
         {isExpanded && <div id={detailId}>
           <RunDetails
             run={run}
@@ -232,5 +250,7 @@ export default function RunHistory({ history, datasetRevision, onOpenDataset }: 
       </article>
     })}
     {history.status === 'ready' && history.runs.length === 0 && <p className="text-xs text-slate-400">暂无运行记录</p>}
+    {deleteError&&<p role="alert" className="rounded bg-red-50 p-2 text-xs text-red-700">{deleteError}</p>}
+    {deletion&&<div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4"><div ref={dialogRef} role="dialog" aria-modal="true" aria-label="删除运行记录" aria-describedby="run-deletion-impact" className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl"><h2 className="font-semibold">删除运行记录</h2><div id="run-deletion-impact"><p className="mt-2 text-sm">将删除运行 #{deletion.run.id} 及 {deletion.preview.resultCount} 个直接结果（{formatBytes(deletion.preview.resultBytes)}）。</p><p className="mt-2 text-xs text-slate-600">{deletion.preview.derivedReferenceCount} 个派生引用、{deletion.preview.promotedReferenceCount} 个提升资源将保留墓碑血缘。</p></div><div className="mt-4 flex justify-end gap-2"><button ref={cancelDeleteRef} type="button" disabled={deleting} onClick={()=>setDeletion(null)} className="rounded border px-3 py-1.5">取消</button><button type="button" disabled={deleting} onClick={()=>void confirmDelete()} className="rounded bg-red-600 px-3 py-1.5 text-white">{deleting?'删除中…':'确认删除'}</button></div></div></div>}
   </div>
 }

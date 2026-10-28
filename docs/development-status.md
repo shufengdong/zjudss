@@ -7,7 +7,7 @@
 > [`2026-10-27-v4-independent-data-resources-managed-studies.md`](superpowers/plans/2026-10-27-v4-independent-data-resources-managed-studies.md)。
 > 当前 eig-rs 已提供全部门面的完整传递输入、Struct 参数卡和结果 schema，外部机器合同门禁已经满足。V4 Task 1
 > 的空库持久化合同、Task 2 的动态研究门面目录、Task 3 的有界进程执行边界、Task 4 的可恢复统一上传批次和
-> Task 5 的独立数据资源发布/管理、Task 6 的目录驱动研究配置、Task 7 的 durable 工作流消息、历史锚定与会话删除合同、Task 8 的 V4 对话 Agent bundle、Task 9 的受管工作流持久状态机、Task 10 的生成/执行/自动修正、Task 11 的脚本重跑、失败重试和运行删除，以及 Task 12 的统一上传与数据文件工作台已经实现。
+> Task 5 的独立数据资源发布/管理、Task 6 的目录驱动研究配置、Task 7 的 durable 工作流消息、历史锚定与会话删除合同、Task 8 的 V4 对话 Agent bundle、Task 9 的受管工作流持久状态机、Task 10 的生成/执行/自动修正、Task 11 的脚本重跑、失败重试和运行删除、Task 12 的统一上传与数据文件工作台，以及 Task 13 的研究确认与受管执行前端已经实现。
 > 本文未明确标为 V4 已完成的其余内容仍描述进入 V4 前已验证的 V3 产品行为。
 
 ## V4 implementation progress
@@ -26,7 +26,8 @@
 | Task 7：durable 消息、历史锚定与会话删除 | complete | 3 种 revisioned 操作卡、`messageId:revision` SSE、连续 around window、影响 token 删除与统一取消 |
 | Task 8：V4 Agent bundle 与受控工具 | complete | `v4.0.0`、5 个按需 skills、22 个对话工具、无 `create_script`/`plan_study` 权限 |
 | Task 12：统一上传与数据文件工作台 | complete | 旧 model-import 前端已移除、durable batch 恢复、用途/隐藏 sheet/双子事务确认、资源分页预览/下载/删除/replacement、模型版本描述 |
-| Tasks 13–15 | planned | 以 V4 实施计划为准 |
+| Task 13：研究确认与受管执行前端 | complete | 对话内完整上传/配置卡、目录类型参数、revision stale 刷新、attempt/取消/失败重试、精确脚本定位、run 删除影响确认 |
+| Tasks 14–15 | planned | 以 V4 实施计划为准 |
 
 旧 `/model-imports` 前端协议和“确认合并”界面已经移除，不提供兼容层。现有旧版 Playwright 旅程将在 Task 14
 统一替换为 V4 upload batch、数据资源和受管研究全链路旅程。

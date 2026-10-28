@@ -276,6 +276,9 @@
     - runner: vitest
       file: frontend/src/api/client.test.ts
       name: sends only the unified multipart fields accepted by the backend
+    - runner: vitest
+      file: frontend/src/components/messages/UploadBatchCard.test.tsx
+      name: uses the complete batch confirmation controls in the conversation
     - runner: playwright
       file: integration-tests/e2e/upload-batches-v4.spec.ts
       name: unified upload publishes and manages independent data resources through public routes
@@ -710,9 +713,21 @@
 - id: MANAGED-STUDY-CONFIGURATION-001
   source: docs/api-design.md#managed-study-configurations
   title: Catalog-driven studies require a complete revisioned configuration before confirmation
-  layers: [database, application, api, agent]
+  layers: [database, application, api, agent, browser]
   lanes: [pr, release]
   tests:
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: explains the selected facade differences and sends the current revision
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: renders bool, semantic number, enum, string, date and unit fields and preserves typed values
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: refreshes a stale configuration and shows the server error without confirming
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: offers generation only for the complete summary and confirms explicitly
     - runner: rust
       file: backend/tests/study_configurations.rs
       name: explicit_facade_creates_catalog_driven_cards_without_a_model
@@ -766,9 +781,21 @@
 - id: MANAGED-STUDY-WORKFLOW-001
   source: docs/api-design.md#managed-study-workflows
   title: Confirmed studies create one durable managed workflow and provisional run per session
-  layers: [database, application, api, agent]
+  layers: [database, application, api, agent, browser]
   lanes: [pr, release]
   tests:
+    - runner: vitest
+      file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
+      name: keeps attempts collapsed and reveals only sanitized diagnostics on demand
+    - runner: vitest
+      file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
+      name: cancels once while an idempotent request is pending
+    - runner: vitest
+      file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
+      name: lists successful datasets without opening them automatically
+    - runner: vitest
+      file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
+      name: uses 重新尝试 for terminal failure and never labels it 运行
     - runner: rust
       file: backend/tests/managed_workflows.rs
       name: confirmation_is_idempotent_and_creates_one_provisional_run
@@ -952,7 +979,16 @@
       name: terminal_run_deletion_requires_preview_and_tombstones_all_direct_results
     - runner: vitest
       file: frontend/src/components/runs/RunHistory.test.tsx
-      name: renders an informative collapsed summary without requesting results or offering deletion
+      name: renders an informative collapsed summary and offers terminal deletion without requesting results
+    - runner: vitest
+      file: frontend/src/components/runs/RunHistory.test.tsx
+      name: uses the main area to locate the exact script while details remain independent
+    - runner: vitest
+      file: frontend/src/components/runs/RunHistory.test.tsx
+      name: loads deletion impact and deletes only after explicit confirmation
+    - runner: vitest
+      file: frontend/src/components/runs/RunHistory.test.tsx
+      name: focuses the deletion dialog and cancellation performs no mutation
     - runner: vitest
       file: frontend/src/components/runs/RunHistory.test.tsx
       name: loads every result only after expansion and opens the selected dataset

@@ -8,6 +8,9 @@ import AttachmentCard from './AttachmentCard'
 import ComparisonCard from './ComparisonCard'
 import ModelStatusCard from './ModelStatusCard'
 import ScriptCard from './ScriptCard'
+import UploadBatchCard from './UploadBatchCard'
+import StudyConfigurationCard from './StudyConfigurationCard'
+import WorkflowProgressCard from './WorkflowProgressCard'
 
 interface MessageItemProps {
   message: Message
@@ -40,11 +43,11 @@ export default function MessageItem({ message, handlers }: MessageItemProps) {
     case 'script':
       return <ScriptCard script={message.script} onRun={handlers.onRunScript} notify={handlers.notify}/>
     case 'upload-batch':
-      return <div className="mx-4 my-2 rounded-lg border bg-white p-3 text-sm">上传批次 {message.card.batchId}：{message.card.state}</div>
+      return <UploadBatchCard message={message} batch={handlers.uploadBatches?.find((batch) => batch.id === message.card.batchId)} actions={handlers.uploadBatchActions} onOpen={handlers.onOpenUploadBatch} notify={handlers.notify}/>
     case 'study-config':
-      return <div className="mx-4 my-2 rounded-lg border bg-white p-3 text-sm">研究配置：{message.card.state}</div>
+      return <StudyConfigurationCard message={message} onWorkflowStarted={handlers.onWorkflowChanged} notify={handlers.notify}/>
     case 'workflow-progress':
-      return <div className="mx-4 my-2 rounded-lg border bg-white p-3 text-sm">研究工作流：{message.card.state}{message.card.attempts.length>0&&<details className="mt-2"><summary>执行尝试（{message.card.attempts.length}）</summary><ul>{message.card.attempts.map((attempt,index)=><li key={index}>第 {attempt.executionIndex} 次执行 / 第 {attempt.repairIndex} 次修正：{attempt.state}</li>)}</ul></details>}</div>
+      return <WorkflowProgressCard message={message} onRetry={handlers.onRetryScript} onChanged={handlers.onWorkflowChanged} notify={handlers.notify}/>
     default:
       return null
   }

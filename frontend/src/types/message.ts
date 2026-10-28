@@ -1,5 +1,7 @@
 import type { ResultOutputRef } from './dataset'
 import type { ScriptSummary } from './script'
+import type { StudyConfigurationView } from './studyConfiguration'
+import type { UploadBatchActions, UploadBatchView } from './uploadBatch'
 export const MESSAGE_TYPES = ['user','assistant','tool-call','progress','result','attachment','model-status','comparison','script','upload-batch','study-config','workflow-progress'] as const
 export type MessageType=(typeof MESSAGE_TYPES)[number]
 export type ToolStatus='running'|'success'|'failed'
@@ -18,7 +20,7 @@ export interface ComparisonMessage extends BaseMessage{type:'comparison';compari
 export interface ScriptMessage extends BaseMessage{type:'script';script:ScriptSummary}
 export interface EventDiagnostic{code:string;message:string}
 export interface UploadBatchMessage extends BaseMessage{type:'upload-batch';card:{batchId:string;batchRevision:number;state:string;candidates:{id:string;name:string;state:string}[];modelTransactionState:string;resourceTransactionState:string;diagnostic?:EventDiagnostic}}
-export interface StudyConfigMessage extends BaseMessage{type:'study-config';card:{configurationId:string;revision:number;state:string;actionCard:unknown}}
+export interface StudyConfigMessage extends BaseMessage{type:'study-config';card:{configurationId:string;revision:number;state:string;actionCard:StudyConfigurationView}}
 export interface WorkflowProgressMessage extends BaseMessage{type:'workflow-progress';card:{workflowId:string;state:string;executionIndex:number;executionMax:number;repairIndex:number;repairMax:number;elapsedMs:number;attempts:{executionIndex:number;repairIndex:number;state:string;elapsedMs:number;failureCode?:string}[];scriptId?:string;outputDatasetIds:string[];failureCode?:string}}
 export type Message=UserMessage|AssistantMessage|ToolCallMessage|ProgressMessage|ResultMessage|AttachmentMessage|ModelStatusMessage|ComparisonMessage|ScriptMessage|UploadBatchMessage|StudyConfigMessage|WorkflowProgressMessage
-export interface MessageHandlers{onOpenDataset:(datasetId:string)=>void;onOpenComparison:(comparisonId:string)=>void;onRunScript:(script:ScriptSummary)=>Promise<void>;notify:(text:string)=>void}
+export interface MessageHandlers{onOpenDataset:(datasetId:string)=>void;onOpenComparison:(comparisonId:string)=>void;onRunScript:(script:ScriptSummary)=>Promise<void>;onRetryScript?:(scriptId:string)=>Promise<void>;onOpenUploadBatch?:()=>void;uploadBatches?:UploadBatchView[];uploadBatchActions?:UploadBatchActions;onWorkflowChanged?:()=>void;notify:(text:string)=>void}
