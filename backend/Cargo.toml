@@ -10,7 +10,7 @@ name = "zjudss"
 [features]
 default = []
 e2e-test = []
-release-test = []
+release-test = ["e2e-test"]
 
 [dependencies]
 async-trait = "0.1"

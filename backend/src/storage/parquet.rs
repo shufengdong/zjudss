@@ -144,4 +144,40 @@ impl ParquetInspector {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| ParquetError::new("parquet_read_failed", e.to_string()))
     }
+
+    pub fn first_column_with_nulls(
+        path: &Path,
+        columns: &[String],
+    ) -> Result<Option<String>, ParquetError> {
+        if columns.is_empty() {
+            return Ok(None);
+        }
+        let file = std::fs::File::open(path)
+            .map_err(|e| ParquetError::new("parquet_read_failed", e.to_string()))?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+            .map_err(|e| ParquetError::new("parquet_footer_invalid", e.to_string()))?;
+        let indices = columns
+            .iter()
+            .map(|name| {
+                builder
+                    .schema()
+                    .index_of(name)
+                    .map(|index| (name, index))
+                    .map_err(|_| ParquetError::new("parquet_column_not_found", name))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for batch in builder
+            .build()
+            .map_err(|e| ParquetError::new("parquet_read_failed", e.to_string()))?
+        {
+            let batch =
+                batch.map_err(|e| ParquetError::new("parquet_read_failed", e.to_string()))?;
+            for (name, index) in &indices {
+                if batch.column(*index).null_count() > 0 {
+                    return Ok(Some((*name).clone()));
+                }
+            }
+        }
+        Ok(None)
+    }
 }

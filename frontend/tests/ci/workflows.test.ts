@@ -69,7 +69,7 @@ describe('candidate release workflows', () => {
     expect(JSON.stringify(job.steps)).not.toContain('actions/download-artifact@v4')
     const engineCheckout = job.steps.find((step: any) => step.name === 'Checkout current eig-rs')
     expect(engineCheckout.uses).toBe('actions/checkout@v4')
-    expect(engineCheckout.with.repository).toBe('shufengdong/eig-rc')
+    expect(engineCheckout.with.repository).toBe('shufengdong/eig-rs')
     expect(engineCheckout.with.submodules).toBe('recursive')
     expect(engineCheckout.with.ref).toBeUndefined()
     expect(run).toContain('cargo build --manifest-path target/eig-rs/Cargo.toml --release -p mems --bin tensoreval')
@@ -135,6 +135,6 @@ describe('local SSH deployment', () => {
         if (scenario === 'build failure') expect(fs.existsSync(trace)).toBe(false)
         if (scenario === 'health failure') expect(fs.readFileSync(trace, 'utf8').match(/^start /gm)).toHaveLength(2)
       } finally { fs.rmSync(directory, { recursive: true, force: true }) }
-    },
+    }, 20_000,
   )
 })

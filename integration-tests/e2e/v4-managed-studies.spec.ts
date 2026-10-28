@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures'
 import { createSessionFromPage } from './helpers/journeys'
-import { newtonScript, prepareNewtonStudy, publishExampleModel } from './helpers/managedStudies'
+import { newtonScript, prepareNewtonStudy, publishExampleModel, settleNewtonConfiguration } from './helpers/managedStudies'
 import { send } from './helpers/journeys'
 
 test('managed Newton study confirms, repairs one engine failure, and publishes only the successful datasets', async ({ appPage, control }) => {
@@ -22,7 +22,10 @@ test('managed Newton study confirms, repairs one engine failure, and publishes o
   edited = await api.put(`/api/study-configurations/${configuration.id}/results`, { data: { expectedRevision: configured.revision, results: configured.results.selected } })
   expect(edited.status()).toBe(200)
   configured = await edited.json()
+  expect(configured.status, JSON.stringify(configured, null, 2)).toBe('ready_to_confirm')
+  await page.reload()
   await expect(configuration.card).toContainText(`修订 ${configured.revision}`)
+  await settleNewtonConfiguration(page, configuration.card)
 
   const baseline = await control.trace() as { author: string[]; authorRepairCount: number; engine: Array<{ scenario: string }> }
   await control.enqueueAuthor({ kind: 'script', content: newtonScript })
@@ -116,8 +119,6 @@ test('failed managed script previews changed inputs and retries only after confi
   const sessionId = await createSessionFromPage(page, '失败研究重试')
   await publishExampleModel(page, api, sessionId)
   const configuration = await prepareNewtonStudy(page, api, sessionId, control)
-  const configurationView = await (await api.get(`/api/study-configurations/${configuration.id}`)).json() as any
-  const paraId = configurationView.inputs.find((input: any) => input.inputId === 'para').binding.resourceId as string
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
     await control.enqueueAuthor({ kind: 'script', content: newtonScript })
@@ -128,22 +129,30 @@ test('failed managed script previews changed inputs and retries only after confi
   const source = await (await confirmResponse).json() as { id: number }
   await expect.poll(async () => ((await (await api.get(`/api/workflows/${source.id}`)).json()) as { status: string }).status, { timeout: 30_000 }).toBe('failed')
   const failed = await (await api.get(`/api/workflows/${source.id}`)).json() as { finalScriptResourceId: number }
+  const frozenConfiguration = await (await api.get(`/api/study-configurations/${configuration.id}`)).json() as any
+  const paraId = frozenConfiguration.inputs.find((input: any) => input.inputId === 'para').binding.resourceId as string
+  expect(paraId).toBeTruthy()
 
   const para = await (await api.get(`/api/data-resources/${paraId}`)).json() as { contentHash: string }
   const replacement = await api.post(`/api/data-resources/${paraId}/structured-replacement-previews`, { data: {
     expectedContentHash: para.contentHash,
     schemaRef: 'frames.para',
-    values: { max_iter: 120, max_control_iter: 30, tol: 1e-6, line_model: 'modified' },
+    values: { base_frequency_hz: 50, max_iter: 120, max_control_iter: 30, tol: 1e-6, line_model: 'modified' },
   } })
   expect(replacement.status(), await replacement.text()).toBe(200)
   const replacementBody = await replacement.json() as { previewToken: string }
-  expect((await api.post(`/api/data-resource-replacement-previews/${replacementBody.previewToken}/confirm`, { data: { action: 'replace' } })).status()).toBe(200)
+  const replacementConfirmation = await api.post(`/api/data-resource-replacement-previews/${replacementBody.previewToken}/confirm`, { data: { action: 'replace' } })
+  const replacementConfirmationText = await replacementConfirmation.text()
+  expect(replacementConfirmation.status(), replacementConfirmationText).toBe(200)
+  const replacementResource = (JSON.parse(replacementConfirmationText) as { resource: { id: string; contentHash: string } }).resource
+  expect(replacementResource.id).not.toBe(paraId)
+  expect(replacementResource.contentHash).not.toBe(para.contentHash)
 
   const preview = await api.post(`/api/scripts/${failed.finalScriptResourceId}/retry-previews`, { data: { clientRetryId: `retry-${Date.now()}` } })
   const previewText = await preview.text()
   expect(preview.status(), previewText).toBe(200)
   const previewBody = JSON.parse(previewText) as { retryPreviewId: string; changes: unknown[]; workflow: null }
-  expect(previewBody.retryPreviewId).toBeTruthy()
+  expect(previewBody.retryPreviewId, previewText).toBeTruthy()
   expect(previewBody.changes.length).toBeGreaterThan(0)
   expect(previewBody.workflow).toBeNull()
 

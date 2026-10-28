@@ -198,9 +198,7 @@ impl WorkflowWorker {
                     locked: locked.clone(),
                     inputs: inputs.clone(),
                     engine_docs: self.engine_docs(&locked.function),
-                    instruction:
-                        "使用冻结输入 alias 直接调用已确认门面；只输出完整 RSS 脚本，不要解释。"
-                            .into(),
+                    instruction: "所有冻结 alias 已由运行环境注入。只写一条直接结果绑定，严格按冻结结果名、函数名和输入顺序调用；不要读取或重新赋值任何输入。只输出完整 RSS 脚本，不要解释。".into(),
                 };
                 tokio::select! {
                     result = self.author.generate(request) => result,
@@ -216,7 +214,7 @@ impl WorkflowWorker {
                     diagnostic: repair_diagnostic.clone(),
                     locked_contract: locked.clone(),
                     inputs: inputs.clone(),
-                    instruction: "只输出修改后的完整脚本，不要解释".into(),
+                    instruction: "必须依据 diagnostic 和 sanitizedStderr 修改 currentScript；冻结 alias 已由运行环境注入，不得读取、构造或重新赋值。只输出修改后的完整脚本，不要解释".into(),
                 };
                 tokio::select! {
                     result = self.author.repair(request) => result,
@@ -706,6 +704,14 @@ impl WorkflowWorker {
                     "schemaRef":result.schema_ref,
                 })
             })?;
+            validate_non_null_values(&output.path, &contract.fields).map_err(|message| {
+                json!({
+                    "code":"result_contract_invalid",
+                    "message":message,
+                    "resultName":result.name,
+                    "schemaRef":result.schema_ref,
+                })
+            })?;
             if !output.metadata.snappy {
                 return Err(json!({
                     "code":"result_contract_invalid",
@@ -940,10 +946,13 @@ pub(crate) fn validate_schema(
         let expected_dtype = canonical_arrow(&expected.dtype);
         let expected_unit =
             (expected.unit.0 != "not_applicable").then_some(expected.unit.0.as_str());
+        let unit_mismatch = actual
+            .unit
+            .as_deref()
+            .is_some_and(|actual| Some(actual) != expected_unit);
         if actual.name != expected.name
             || !dtype_matches(&actual.dtype, &expected.dtype)
-            || actual.nullable != expected.nullable
-            || actual.unit.as_deref() != expected_unit
+            || unit_mismatch
         {
             return Err(format!(
                 "结果列 {} 不符合合同: expected {}/{}/{:?}, actual {}/{}/{:?}",
@@ -958,6 +967,22 @@ pub(crate) fn validate_schema(
         }
     }
     Ok(())
+}
+
+pub(crate) fn validate_non_null_values(
+    path: &std::path::Path,
+    expected: &[SchemaFieldContract],
+) -> Result<(), String> {
+    let columns = expected
+        .iter()
+        .filter(|field| !field.nullable)
+        .map(|field| field.name.clone())
+        .collect::<Vec<_>>();
+    match crate::storage::ParquetInspector::first_column_with_nulls(path, &columns) {
+        Ok(Some(name)) => Err(format!("结果列 {name} 含 null，不符合非空合同")),
+        Ok(None) => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 fn canonical_arrow(dtype: &DataTypeContract) -> String {
@@ -985,13 +1010,20 @@ fn canonical_arrow(dtype: &DataTypeContract) -> String {
 
 fn dtype_matches(actual: &str, expected: &DataTypeContract) -> bool {
     match expected {
+        DataTypeContract::Primitive { name } if name == "str" => {
+            matches!(actual, "Utf8" | "LargeUtf8" | "Utf8View")
+        }
         DataTypeContract::Constructor { name, element }
             if matches!(name.as_str(), "list" | "matrix") =>
         {
             let element = canonical_arrow(element);
-            actual == format!("List({element})")
-                || actual.starts_with(&format!("List({element},"))
-                || actual.starts_with(&format!("List(non-null {element}"))
+            ["List", "LargeList", "ListView", "LargeListView"]
+                .iter()
+                .any(|kind| {
+                    actual == format!("{kind}({element})")
+                        || actual.starts_with(&format!("{kind}({element},"))
+                        || actual.starts_with(&format!("{kind}(non-null {element}"))
+                })
         }
         _ => actual == canonical_arrow(expected),
     }
@@ -1066,8 +1098,9 @@ impl Drop for PrivateTree {
 
 #[cfg(test)]
 mod tests {
-    use super::dtype_matches;
-    use crate::catalog::DataTypeContract;
+    use super::{dtype_matches, validate_schema};
+    use crate::catalog::{DataTypeContract, SchemaFieldContract, UnitContract};
+    use crate::storage::{ParquetColumn, ParquetMetadata};
 
     fn constructor(name: &str, element: &str) -> DataTypeContract {
         DataTypeContract::Constructor {
@@ -1086,12 +1119,49 @@ mod tests {
     }
 
     #[test]
-    fn rejects_large_list_and_wrong_element_types() {
+    fn accepts_large_list_and_rejects_wrong_element_types() {
         let expected = constructor("list", "f64");
-        assert!(!dtype_matches(
+        assert!(dtype_matches(
             "LargeList(Float64, field: 'element')",
             &expected
         ));
         assert!(!dtype_matches("List(Utf8, field: 'element')", &expected));
+    }
+
+    #[test]
+    fn accepts_arrow_string_storage_variants_for_string_contracts() {
+        let expected = DataTypeContract::Primitive { name: "str".into() };
+        assert!(dtype_matches("Utf8", &expected));
+        assert!(dtype_matches("LargeUtf8", &expected));
+        assert!(dtype_matches("Utf8View", &expected));
+        assert!(!dtype_matches("BinaryView", &expected));
+    }
+
+    #[test]
+    fn logical_schema_accepts_physical_nullability_and_missing_unit_metadata() {
+        let metadata = ParquetMetadata {
+            columns: vec![ParquetColumn {
+                name: "value".into(),
+                dtype: "LargeList(Float64, field: 'element')".into(),
+                nullable: true,
+                unit: None,
+            }],
+            row_count: 1,
+            size_bytes: 1,
+            snappy: true,
+        };
+        let expected = vec![SchemaFieldContract {
+            name: "value".into(),
+            dtype: constructor("list", "f64"),
+            required: true,
+            nullable: false,
+            unit: UnitContract("V".into()),
+            card: None,
+        }];
+        assert!(validate_schema(&metadata, &expected).is_ok());
+
+        let mut conflicting = metadata;
+        conflicting.columns[0].unit = Some("A".into());
+        assert!(validate_schema(&conflicting, &expected).is_err());
     }
 }

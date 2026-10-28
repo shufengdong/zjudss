@@ -53,7 +53,7 @@
         "docs/dsa_function_reference.md"
       ],
       "path": "skills/study-planning.md",
-      "sha256": "71f71ae765d9968accfd5d3fd95800694792503d1d0ae64a2f0f699eebebe084"
+      "sha256": "e03fd6da99babe1696c96963ff283a1c8708e48333d44b5a176d3a534c30642a"
     },
     {
       "id": "rss-generation",
@@ -95,7 +95,7 @@
         "docs/rsdss_function_reference.md"
       ],
       "path": "skills/result-analysis.md",
-      "sha256": "864999da5024ef0adc947c6b61f54ac2b39a407807a309d155d83a719372f7ab"
+      "sha256": "6bcd88ac847c5a40bf0d766fbfc3b3a097b8f64896f797761b7caa8ca9338423"
     },
     {
       "id": "comparison",

@@ -37,6 +37,12 @@ export function expectEngineReleaseEvidence(report: any) {
   invariant(/^[a-f0-9]{64}$/.test(report.binarySha256 ?? ''), 'engine binary hash is invalid')
   invariant(report.bundleExamples > 0, 'release engine has no bundle examples')
   invariant(report.importableExamples > 0, 'release engine has no importable examples')
+  invariant(report.facadeCatalogEntries > 0, 'release engine has no facade catalog entries')
+  invariant(report.enabledFacades === report.facadeCatalogEntries, 'release engine did not enable every facade')
+  invariant(Array.isArray(report.facadeDiagnostics) && report.facadeDiagnostics.length === 0,
+    'release engine has facade diagnostics')
+  invariant(report.contractChecks?.staticModelImport && report.contractChecks?.staticImportDataframes === 21,
+    'release engine static import contract is incomplete')
   invariant(
     report.bundleExamples === report.importableExamples + report.nonImportableExamples
       && report.nonImportableDetails?.length === report.nonImportableExamples,
@@ -53,14 +59,16 @@ interface AgentTurnMessage {
 }
 
 const allowedTools = new Set([
-  'inspect_workspace', 'plan_study', 'search_examples', 'inspect_example', 'modify_model', 'create_script',
+  'inspect_workspace', 'read_model_dataframe', 'search_study_facades', 'prepare_study',
+  'search_examples', 'inspect_example', 'modify_model',
   'list_result_datasets',
   'run_result_analysis', 'create_dataset_view', 'compare_simulations',
   'list_simulation_history', 'search_chat_history', 'read_chat_context', 'get_storage_usage',
   'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section',
+  'list_data_resources', 'read_data_resource', 'update_data_resource_alias', 'promote_result_dataset',
 ])
 const sideEffectTools = new Set([
-  'modify_model', 'create_script',
+  'prepare_study', 'modify_model', 'update_data_resource_alias', 'promote_result_dataset',
   'run_result_analysis', 'create_dataset_view', 'compare_simulations',
 ])
 
@@ -85,14 +93,17 @@ export function agentTurnCompleted(messages: AgentTurnMessage[], requiredTools: 
 
 function assertStableIds(call: ToolTraceEntry) {
   const visit = (value: unknown, key = '') => {
-    if (key === 'studyPlanId') {
-      invariant(typeof value === 'string' && /^study-plan:[a-f0-9]{64}$/.test(value), `${call.toolName}.${key} is not an opaque study plan ID`)
-    } else if (key === 'exampleId' || key === 'example_id') {
+    if (value === null || value === undefined) return
+    if (key === 'exampleId' || key === 'example_id') {
       invariant(typeof value === 'string' && /^ex_[a-f0-9]+$/.test(value), `${call.toolName}.${key} is not a stable example ID`)
     } else if (key === 'engineResourceSnapshot') {
       invariant(typeof value === 'string' && /^ers_[a-f0-9]+$/.test(value), `${call.toolName}.${key} is not a stable snapshot ID`)
     } else if (/Id$/.test(key) && key !== 'callId') {
-      invariant(Number.isInteger(value) && Number(value) > 0, `${call.toolName}.${key} is not a positive stable ID`)
+      invariant(
+        (Number.isInteger(value) && Number(value) > 0)
+          || (typeof value === 'string' && /^[A-Za-z][A-Za-z0-9:_-]*$/.test(value)),
+        `${call.toolName}.${key} is not a stable ID`,
+      )
     }
     if (typeof value === 'string') {
       invariant(!value.startsWith('/') && !value.includes('../') && !value.includes('://'), `${call.toolName} contains a path or URL argument`)

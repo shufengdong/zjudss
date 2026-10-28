@@ -48,12 +48,14 @@ describe('WorkflowProgressCard', () => {
   })
 
   it('lists successful datasets without opening them automatically', async () => {
-    vi.mocked(getManagedWorkflow).mockResolvedValue(workflow('succeeded'))
-    render(<WorkflowProgressCard message={message('succeeded', ['21', '22'])} notify={vi.fn()} />)
+    vi.mocked(getManagedWorkflow).mockResolvedValue({ ...workflow('succeeded'), outputDatasetIds: ['21', '22'] })
+    const changed = vi.fn()
+    render(<WorkflowProgressCard message={message('succeeded', ['21', '22'])} onChanged={changed} notify={vi.fn()} />)
     expect(await screen.findByText('结果数据集 #21')).toBeInTheDocument()
     expect(screen.getByText('结果数据集 #22')).toBeInTheDocument()
     expect(screen.getByText(/1\.0 秒/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /查看/ })).not.toBeInTheDocument()
+    await waitFor(() => expect(changed).toHaveBeenCalledTimes(1))
   })
 
   it('uses 重新尝试 for terminal failure and never labels it 运行', async () => {

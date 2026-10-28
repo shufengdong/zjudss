@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useManagedWorkflow } from '../../hooks/useManagedWorkflow'
 import type { WorkflowProgressMessage } from '../../types'
 
@@ -23,12 +23,23 @@ export default function WorkflowProgressCard({ message, onRetry, onChanged, noti
   const [cancelling, setCancelling] = useState(false)
   const [retrying, setRetrying] = useState(false)
   const [attemptsExpanded, setAttemptsExpanded] = useState(false)
+  const terminalNotified = useRef(false)
   const state = workflow?.status ?? message.card.state
   useEffect(() => {
     if (terminal.has(state)) return
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [state])
+  useEffect(() => {
+    if (!terminal.has(state)) {
+      terminalNotified.current = false
+      return
+    }
+    if (workflow && !terminalNotified.current) {
+      terminalNotified.current = true
+      onChanged?.()
+    }
+  }, [onChanged, state, workflow])
   const attempts = workflow?.attempts ?? []
   const workflowElapsed = workflow
     ? Math.max(0, (terminal.has(state) && workflow.finishedAt ? new Date(workflow.finishedAt).getTime() : now) - new Date(workflow.createdAt).getTime())

@@ -402,6 +402,26 @@ impl SchemaRegistry {
             .iter()
             .map(|field| self.parse_field(field, &kind, schema_ref))
             .collect::<Result<Vec<_>, _>>()?;
+        if let Some(required) = definition
+            .get("required_for_imported_network")
+            .and_then(Value::as_object)
+        {
+            for name in required.keys() {
+                let field = fields
+                    .iter_mut()
+                    .find(|field| field.name == *name)
+                    .ok_or_else(|| {
+                        CatalogError::new(
+                            "catalog_schema_invalid",
+                            format!(
+                                "{schema_ref} required_for_imported_network 引用未知字段 {name}"
+                            ),
+                        )
+                    })?;
+                field.required = true;
+                field.nullable = false;
+            }
+        }
         let mut rules = array(contract.get("rules"), "contract.rules", schema_ref)?
             .iter()
             .map(|rule| parse_rule(rule, schema_ref))
@@ -757,10 +777,15 @@ fn parse_frame(kind: &str, value: &Value) -> Option<FrameSchema> {
     {
         let mut required = BTreeMap::new();
         let mut optional = BTreeMap::new();
+        let required_for_imported_network = value
+            .get("required_for_imported_network")
+            .and_then(Value::as_object);
         for column in columns {
             let name = normalize_name(column.get("name")?.as_str()?);
             let dtype = column.get("dtype")?.as_str()?.to_string();
-            if column.get("required")?.as_bool()? {
+            if column.get("required")?.as_bool()?
+                || required_for_imported_network.is_some_and(|fields| fields.contains_key(&name))
+            {
                 required.insert(name, dtype);
             } else {
                 optional.insert(name, dtype);

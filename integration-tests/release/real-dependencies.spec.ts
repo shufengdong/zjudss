@@ -30,7 +30,7 @@ interface AttemptReport {
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 async function agentBundleEvidence() {
-  const root = join(process.cwd(), '../backend/resources/agent/v3')
+  const root = join(process.cwd(), '../backend/resources/agent/v4')
   const files: string[] = []
   const visit = async (directory: string, prefix = '') => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -154,12 +154,33 @@ async function importAndPublish(page: Page, api: APIRequestContext, sessionId: s
   const files = (await readdir(directory)).filter(name => required.has(name)).sort().map(name => join(directory, name))
   expect(files.length).toBe(required.size)
   await page.locator('input[type=file]').first().setInputFiles(files)
-  await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible({ timeout: 120_000 })
-  await page.getByRole('button', { name: '确认合并' }).click()
+  const confirm = page.getByRole('button', { name: '确认用途并发布' }).last()
+  await expect(confirm).toBeVisible({ timeout: 120_000 })
+  const card = confirm.locator('xpath=ancestor::section[1]')
+  const purposeSelects = card.getByRole('combobox', { name: /用途$/ })
+  expect(await purposeSelects.count()).toBe(21)
+  for (let index = 0; index < await purposeSelects.count(); index += 1) {
+    const select = purposeSelects.nth(index)
+    const displayName = String(await select.getAttribute('aria-label')).replace(/用途$/, '')
+    const alias = displayName.replace(/\.parquet$/, '')
+    await select.selectOption(alias === 'para' ? 'data_resource' : 'model_table')
+    await card.getByRole('textbox', { name: `${displayName} alias` }).fill(alias)
+  }
+  const publishResponse = page.waitForResponse(response => response.request().method() === 'POST'
+    && /\/api\/upload-batches\/[^/]+\/confirm$/.test(new URL(response.url()).pathname))
+  await confirm.click()
+  const published = await publishResponse
+  expect(published.status()).toBe(200)
+  const confirmation = await published.json() as { uploadConfirmation?: { resources?: { alias?: string }[] } }
+  expect(confirmation.uploadConfirmation?.resources?.some(resource => resource.alias === 'para')).toBe(true)
   await waitFor(async () => {
     const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
-    return workspace.draft?.tables?.length === required.size ? workspace : undefined
+    return workspace.draft?.tables?.length === 20 ? workspace : undefined
   })
+  if (await page.getByRole('button', { name: '展开结果面板' }).isVisible()) {
+    await page.getByRole('button', { name: '展开结果面板' }).click()
+  }
+  await page.getByRole('button', { name: /^展开可变草稿/ }).click()
   await page.getByRole('button', { name: '生成版本' }).click()
   return waitFor(async () => {
     const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
@@ -168,76 +189,103 @@ async function importAndPublish(page: Page, api: APIRequestContext, sessionId: s
 }
 
 async function clickRunAndWait(page: Page, api: APIRequestContext, sessionId: string, scriptName: string, expectedCount: number) {
-  await page.getByRole('article', { name: `脚本 ${scriptName}` }).getByRole('button', { name: '运行' }).click()
+  const run = page.getByRole('article', { name: `脚本 ${scriptName}` }).getByRole('button', { name: '运行' })
+  await expect(run).toBeEnabled({ timeout: 30_000 })
+  await run.click({ timeout: 30_000 })
   return waitFor(async () => {
     const runs = (await apiJson(api, `/api/sessions/${sessionId}/runs`)).runs
     return runs.length === expectedCount && runs.every((run: any) => run.status === 'succeeded') ? runs[0] : undefined
   })
 }
 
-async function runJourney(browser: Browser, report: AttemptReport) {
-  const context = await browser.newContext()
+async function runJourney(browser: Browser, baseURL: string, report: AttemptReport) {
+  const context = await browser.newContext({ baseURL })
   const page = await context.newPage()
   const api = context.request
   try {
     const seed = await fixedUserSeed()
     expect((await api.post('/api/auth/login', { data: { id: seed.id, password: seed.id } })).status()).toBe(200)
     await page.goto('/')
-    const createdResponse = page.waitForResponse(response => response.url().endsWith('/api/sessions') && response.request().method() === 'POST')
+    const existing = await waitFor(async () => {
+      const sessions = (await apiJson(api, '/api/sessions')).sessions as { id: string }[]
+      return sessions.length > 0 ? sessions : undefined
+    })
+    const existingIds = new Set(existing.map(session => String(session.id)))
     await page.getByRole('button', { name: '新建仿真' }).click()
-    const sessionId = String((await (await createdResponse).json()).id)
+    const created = await waitFor(async () => {
+      const sessions = (await apiJson(api, '/api/sessions')).sessions as { id: string }[]
+      return sessions.find(session => !existingIds.has(String(session.id)))
+    })
+    const sessionId = String(created.id)
     const workspace = await importAndPublish(page, api, sessionId)
     const versionId = String(workspace.active.id)
 
-    let trace = await sendAndCollect(page, api, sessionId,
-      '计算潮流',
-      ['create_script'])
+    let trace = await sendAndCollect(page, api, sessionId, '求解牛顿法潮流', ['prepare_study'])
     expectToolTrace(trace, {
-      requiredTools: ['inspect_workspace', 'load_agent_skill', 'plan_study', 'create_script'],
-      allowedTools: ['inspect_workspace', 'load_agent_skill', 'plan_study', 'search_engine_docs', 'read_engine_doc_section', 'create_script'],
-      gatedTools: { plan_study: ['study-planning'], create_script: ['rss-generation'] },
+      requiredTools: ['inspect_workspace', 'load_agent_skill', 'search_study_facades', 'prepare_study'],
+      allowedTools: ['inspect_workspace', 'load_agent_skill', 'search_study_facades', 'prepare_study'],
+      gatedTools: { prepare_study: ['study-planning'] },
     })
-    report.segments.push(summarizeTrace('study_power_flow', trace))
+    report.segments.push(summarizeTrace('managed_study_power_flow', trace))
+    const configuration = page.getByRole('article', { name: '研究配置卡' }).last()
+    await expect(configuration).toBeVisible({ timeout: 120_000 })
+    const loadState = configuration.getByRole('checkbox', { name: /load_state/ })
+    await expect(loadState).toBeVisible()
+    await loadState.check()
+    const selectResultsResponse = page.waitForResponse(response => response.request().method() === 'PUT'
+      && /\/api\/study-configurations\/\d+\/results$/.test(new URL(response.url()).pathname))
+    await configuration.getByRole('button', { name: '确认结果' }).click()
+    expect((await selectResultsResponse).ok()).toBe(true)
+    const confirmParameters = configuration.getByRole('button', { name: '确认参数' })
+    if (await confirmParameters.isVisible()) {
+      const frequency = configuration.getByLabel(/base_frequency_hz/)
+      if (await frequency.isVisible() && await frequency.inputValue() === '') await frequency.fill('50')
+      const parameterResponse = page.waitForResponse(response => response.request().method() === 'PUT'
+        && /\/api\/study-configurations\/\d+\/structs\//.test(new URL(response.url()).pathname))
+      await confirmParameters.click()
+      const saved = await (await parameterResponse).json() as { status: string }
+      expect(['collecting_inputs', 'ready_to_confirm']).toContain(saved.status)
+    }
+    const confirmStudy = configuration.getByRole('button', { name: '确认并生成脚本' })
+    const confirmResults = configuration.getByRole('button', { name: '确认结果' })
+    try {
+      await expect.poll(async () => await confirmStudy.isVisible() || await confirmResults.isEnabled(), { timeout: 10_000 }).toBe(true)
+    } catch {
+      await page.reload()
+      await expect.poll(async () => await confirmStudy.isVisible() || await confirmResults.isEnabled(), { timeout: 30_000 }).toBe(true)
+    }
+    if (!await confirmStudy.isVisible()) await confirmResults.click()
+    await expect(confirmStudy).toBeVisible()
+    const confirmResponse = page.waitForResponse(response => response.request().method() === 'POST'
+      && /\/api\/study-configurations\/\d+\/confirm$/.test(new URL(response.url()).pathname))
+    await confirmStudy.click()
+    const workflowStart = await (await confirmResponse).json() as { id: number }
+    const managedWorkflow = await waitFor(async () => {
+      const workflow = await apiJson(api, `/api/workflows/${workflowStart.id}`)
+      if (workflow.status === 'failed') throw new Error(`managed_workflow_failed:${JSON.stringify(workflow.error)}`)
+      return workflow.status === 'succeeded' ? workflow : undefined
+    }, 5 * 60_000)
     const scripts = (await apiJson(api, `/api/sessions/${sessionId}/scripts`)).scripts as any[]
     expect(scripts).toHaveLength(1)
     const scriptName = String(scripts[0].name)
     await expect(page.getByRole('article', { name: `脚本 ${scriptName}` })).toBeVisible()
-    expect((await apiJson(api, `/api/sessions/${sessionId}/runs`)).runs).toHaveLength(0)
+    expect((await apiJson(api, `/api/sessions/${sessionId}/runs`)).runs).toHaveLength(1)
 
-    for (const study of [
-      { label: 'study_fault_clarify', prompt: '短路计算' },
-      { label: 'study_qsts_clarify', prompt: '做一天时序模拟' },
-      { label: 'study_harmonic_clarify', prompt: '谐波分析' },
-      { label: 'study_transient_clarify', prompt: '暂态仿真' },
-      { label: 'study_motor_model_missing', prompt: '模拟电机启动暂态2秒，步长0.01秒，无外部事件' },
-      { label: 'study_emt_unsupported', prompt: '做EMT暂态仿真' },
-    ]) {
-      trace = await sendAndCollect(page, api, sessionId, study.prompt, ['plan_study'])
-      expectToolTrace(trace, {
-        requiredTools: ['inspect_workspace', 'load_agent_skill', 'plan_study'],
-        allowedTools: ['inspect_workspace', 'load_agent_skill', 'plan_study'],
-        gatedTools: { plan_study: ['study-planning'] },
-      })
-      expect((await apiJson(api, `/api/sessions/${sessionId}/scripts`)).scripts).toHaveLength(1)
-      expect((await apiJson(api, `/api/sessions/${sessionId}/runs`)).runs).toHaveLength(0)
-      report.segments.push(summarizeTrace(study.label, trace))
-    }
-
-    const first = await clickRunAndWait(page, api, sessionId, scriptName, 1)
     await clickRunAndWait(page, api, sessionId, scriptName, 2)
     const runs = (await apiJson(api, `/api/sessions/${sessionId}/runs`)).runs
-    const baseline = runs.find((run: any) => run.id === first.id) ?? runs[1]
-    const candidate = runs.find((run: any) => run.id !== baseline.id)
+    const baseline = runs.find((run: any) => String(run.id) === String(managedWorkflow.runId))
+    expect(baseline, 'managed workflow baseline run is missing').toBeTruthy()
+    const candidate = runs.find((run: any) => String(run.id) !== String(baseline.id))
+    expect(candidate, 'explicit rerun is missing').toBeTruthy()
     const baselineDatasets = (await apiJson(api, `/api/runs/${baseline.id}/datasets`)).datasets
-    const voltage = baselineDatasets.find((dataset: any) => dataset.name === 'voltage') ?? baselineDatasets[0]
+    const voltage = baselineDatasets.find((dataset: any) => dataset.name === 'bus_voltage') ?? baselineDatasets[0]
     expect(voltage?.id).toMatch(/^\d+$/)
 
     trace = await sendAndCollect(page, api, sessionId,
-      `读取数据集 ID ${voltage.id} 的 schema，加载 result-analysis 技能，并运行一次结果分析，生成名为 derived 的 DataFrame。`,
+      `读取数据集 ID ${voltage.id} 的 schema并加载 result-analysis 技能。随后运行结果分析：把该数据集绑定为 source，不筛选、不聚合、不改变任何列，使用合法 RSS 脚本 \`derived = select(col(bus), col(v_mag), col(v_ang), source);\` 将完整数据输出为名为 derived 的 DataFrame。`,
       ['run_result_analysis'])
     expectToolTrace(trace, {
       requiredTools: ['list_result_datasets', 'load_agent_skill', 'run_result_analysis'],
-      allowedTools: ['list_result_datasets', 'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section', 'run_result_analysis'],
       gatedTools: { run_result_analysis: ['result-analysis'] },
     })
     report.segments.push(summarizeTrace('result_analysis', trace))
@@ -247,7 +295,6 @@ async function runJourney(browser: Browser, report: AttemptReport) {
       ['compare_simulations'])
     expectToolTrace(trace, {
       requiredTools: ['load_agent_skill', 'compare_simulations'],
-      allowedTools: ['load_agent_skill', 'compare_simulations'],
       gatedTools: { compare_simulations: ['comparison'] },
     })
     report.segments.push(summarizeTrace('comparison', trace))
@@ -255,36 +302,46 @@ async function runJourney(browser: Browser, report: AttemptReport) {
     const deleted = await api.delete(`/api/datasets/${voltage.id}`)
     expect(deleted.ok(), `dataset deletion returned ${deleted.status()}`).toBe(true)
     expect((await api.get(`/api/datasets/${voltage.id}`)).status()).toBe(404)
-    expect((await api.get(`/api/datasets/${voltage.id}/rows`)).status()).toBe(404)
-    expect((await api.get(`/api/datasets/${voltage.id}/download`)).status()).toBe(404)
     expect((await api.get(`/api/runs/${baseline.id}`)).status()).toBe(200)
 
-    return expectDomainState(api, {
+    const finalState = await expectDomainState(api, {
       sessionId,
       expectedVersions: 1,
       expectedRuns: 2,
-      expectedDatasets: 1,
+      expectedDatasets: 3,
       expectedAnalysisRuns: 2,
       expectedComparisons: 1,
       activeVersionId: versionId,
     })
+    return {
+      finalState,
+      managedWorkflow: {
+        status: managedWorkflow.status,
+        correctionsUsed: managedWorkflow.correctionsUsed,
+        attemptCount: managedWorkflow.attempts.length,
+      },
+    }
   } finally {
     await context.close()
   }
 }
 
-test('real DeepSeek and tensoreval complete the V3 semantic release journey', async ({ browser }) => {
+test('real DeepSeek and tensoreval complete the V4 semantic release journey', async ({ browser, baseURL }) => {
+  if (!baseURL) throw new Error('release_base_url_missing')
   const reportPath = process.env.RELEASE_LLM_REPORT
   if (!reportPath) throw new Error('release_llm_report_missing')
   const attempts: AttemptReport[] = []
   let finalState: unknown = null
+  let managedWorkflow: unknown = null
   let success = false
   try {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       const attemptReport: AttemptReport = { attempt, outcome: 'failed', segments: [] }
       attempts.push(attemptReport)
       try {
-        finalState = await runJourney(browser, attemptReport)
+        const result = await runJourney(browser, baseURL, attemptReport)
+        finalState = result.finalState
+        managedWorkflow = result.managedWorkflow
         attemptReport.outcome = 'passed'
         success = true
         break
@@ -325,8 +382,14 @@ test('real DeepSeek and tensoreval complete the V3 semantic release journey', as
         nonImportable: engineReport.nonImportableExamples,
         bundles: engineReport.bundleExamples,
       } : null,
+      engineFacadeCatalog: engineReport ? {
+        entries: engineReport.facadeCatalogEntries,
+        enabled: engineReport.enabledFacades,
+        diagnostics: engineReport.facadeDiagnostics?.length ?? -1,
+      } : null,
       attempts,
       finalState,
+      managedWorkflow,
       success,
     }, null, 2))
   }

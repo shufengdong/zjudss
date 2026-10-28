@@ -80,6 +80,61 @@ describe('StudyConfigurationCard', () => {
     })))
   })
 
+  it('requires every catalog-required Struct field before confirming parameters', () => {
+    const current = configuration({
+      status: 'collecting_inputs', inputs: [{
+        inputId: 'para', alias: 'para', kind: 'struct', schemaRef: 'frames.para', required: true, position: 1,
+        binding: { resourceId: null }, resourceOptions: [],
+        structCard: { schemaRef: 'frames.para', fields: [card({ name: 'base_frequency_hz', required: true, nullable: false, dtype: { kind: 'primitive', name: 'f64' } })], values: {} },
+      }],
+    })
+    render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
+    const confirm = screen.getByRole('button', { name: '确认参数' })
+    expect(confirm).toBeDisabled()
+    fireEvent.change(screen.getByLabelText(/base_frequency_hz/), { target: { value: '50' } })
+    expect(confirm).toBeEnabled()
+  })
+
+  it('keeps a pending Struct replacement visible after the configuration is reloaded', async () => {
+    const current = configuration({
+      status: 'collecting_inputs', inputs: [{
+        inputId: 'para', alias: 'para', kind: 'struct', schemaRef: 'frames.para', required: true, position: 1,
+        binding: { resourceId: 'resource-7', mapping: { baselineValues: { base_frequency_hz: null, max_iter: 20 }, replacementAction: null } },
+        resourceOptions: [],
+        structCard: {
+          schemaRef: 'frames.para',
+          fields: [
+            card({ name: 'base_frequency_hz', required: true, nullable: false, dtype: { kind: 'primitive', name: 'f64' } }),
+            card({ name: 'max_iter', dtype: { kind: 'primitive', name: 'u32' } }),
+          ],
+          values: { base_frequency_hz: 50, max_iter: 20 },
+        },
+      }],
+    })
+    vi.mocked(updateStudyStruct).mockResolvedValue({ ...current, status: 'ready_to_confirm', revision: 8 })
+    render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
+    expect(screen.getByText('已修改：base_frequency_hz')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '确认参数' }))
+    await waitFor(() => expect(updateStudyStruct).toHaveBeenCalledWith('41', 'para', expect.objectContaining({
+      expectedRevision: 7, replacementAction: 'replace',
+    })))
+  })
+
+  it('shows the final confirmation after saving the last required parameter', async () => {
+    const current = configuration({
+      status: 'collecting_inputs', inputs: [{
+        inputId: 'para', alias: 'para', kind: 'struct', schemaRef: 'frames.para', required: true, position: 1,
+        binding: { resourceId: null }, resourceOptions: [],
+        structCard: { schemaRef: 'frames.para', fields: [card({ name: 'base_frequency_hz', required: true, nullable: false, dtype: { kind: 'primitive', name: 'f64' } })], values: {} },
+      }],
+    })
+    vi.mocked(updateStudyStruct).mockResolvedValue({ ...current, status: 'ready_to_confirm', revision: 8 })
+    render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
+    fireEvent.change(screen.getByLabelText(/base_frequency_hz/), { target: { value: '50' } })
+    fireEvent.click(screen.getByRole('button', { name: '确认参数' }))
+    expect(await screen.findByRole('button', { name: '确认并生成脚本' })).toBeInTheDocument()
+  })
+
   it('refreshes a stale configuration and shows the server error without confirming', async () => {
     const current = configuration()
     vi.mocked(selectStudyFacade).mockRejectedValue(new ApiError(409, '配置已过期', 'configuration_stale'))

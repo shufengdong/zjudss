@@ -7,9 +7,9 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 use zjudss::agent::{ScriptAuthor, ScriptGenerationRequest, ScriptRepairRequest};
 use zjudss::application::{
-    CandidateDecision, CandidatePurpose, ConfirmStudyRequest, LockedStudyContract,
-    PrepareStudyRequest, PublishDraftRequest, ReplacementAction, UpdateStudyStructRequest,
-    WorkflowInputSnapshot,
+    CandidateDecision, CandidatePurpose, ConfirmStudyRequest, CreateRunRequest,
+    LockedStudyContract, PrepareStudyRequest, PublishDraftRequest, ReplacementAction,
+    UpdateStudyStructRequest, WorkflowInputSnapshot,
 };
 use zjudss::db::repositories::{ManagedWorkflowRepo, ManagedWorkflowRepoError};
 use zjudss::testing::{AuthorTurn, ScriptedAuthor};
@@ -248,7 +248,13 @@ async fn confirmation_transaction_rejects_an_active_model_changed_after_preparat
         .prepare_confirmation(&user, configuration.id, configuration.revision)
         .await
         .unwrap();
-    assert!(prepared.replacement_actions.is_empty());
+    let replacements = app
+        .state
+        .data_resource_service
+        .materialize_study_replacements(&user, &prepared)
+        .await
+        .unwrap();
+    assert_eq!(prepared.replacement_actions.len(), 1);
     let mut conn = app.pool.get().unwrap();
     diesel::sql_query("UPDATE workspaces SET active_version_id=NULL WHERE session_id=?1")
         .bind::<diesel::sql_types::Integer, _>(session.id)
@@ -260,7 +266,7 @@ async fn confirmation_transaction_rejects_an_active_model_changed_after_preparat
         .confirm_and_start(
             &user.id,
             prepared,
-            vec![],
+            replacements,
             "active-race".into(),
             3,
             "test".into(),
@@ -286,19 +292,6 @@ async fn one_live_workflow_per_session_and_cancel_is_idempotent() {
         .await
         .unwrap();
     let first_config = ready_study(&app, &user, session.id).await;
-    let first = app
-        .state
-        .managed_workflow_service
-        .confirm_configuration_and_start(
-            &user,
-            first_config.id,
-            ConfirmStudyRequest {
-                expected_revision: first_config.revision,
-                client_operation_id: "first".into(),
-            },
-        )
-        .await
-        .unwrap();
     let second_config = app
         .state
         .study_configuration_service
@@ -309,6 +302,19 @@ async fn one_live_workflow_per_session_and_cancel_is_idempotent() {
                 facade_id: "static_power_flow_radial".into(),
                 intent: json!({"request":"再算一次潮流"}),
                 derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let first = app
+        .state
+        .managed_workflow_service
+        .confirm_configuration_and_start(
+            &user,
+            first_config.id,
+            ConfirmStudyRequest {
+                expected_revision: first_config.revision,
+                client_operation_id: "first".into(),
             },
         )
         .await
@@ -664,6 +670,117 @@ async fn confirmation_atomically_replaces_struct_resource_and_freezes_new_artifa
     .unwrap();
     assert_ne!(frozen.resource_id, old_id);
     assert_eq!(frozen.old_status, "replaced");
+}
+
+#[tokio::test]
+async fn save_as_new_struct_keeps_the_facade_alias_for_engine_injection() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "save para as new", 1)
+        .await
+        .unwrap();
+    let configuration = ready_study(&app, &user, session.id).await;
+    let para = configuration
+        .inputs
+        .iter()
+        .find(|input| input.input_id == "para")
+        .unwrap();
+    let mut values = para.struct_card.as_ref().unwrap().values.clone();
+    let previous = values["line_model"].as_str().unwrap_or("exact");
+    values["line_model"] = json!(if previous.eq_ignore_ascii_case("exact") {
+        "modified"
+    } else {
+        "exact"
+    });
+    let edited = app
+        .state
+        .study_configuration_service
+        .update_struct(
+            &user,
+            configuration.id,
+            "para",
+            UpdateStudyStructRequest {
+                expected_revision: configuration.revision,
+                values,
+                replacement_action: Some(ReplacementAction::SaveAsNew),
+            },
+        )
+        .await
+        .unwrap();
+    let workflow = app
+        .state
+        .managed_workflow_service
+        .confirm_configuration_and_start(
+            &user,
+            edited.id,
+            ConfirmStudyRequest {
+                expected_revision: edited.revision,
+                client_operation_id: "save-as-new-confirm".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    #[derive(QueryableByName)]
+    struct FrozenAliases {
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        resource_id: String,
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        input_alias: String,
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        resource_alias: String,
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        selected_results: String,
+    }
+    let mut conn = app.pool.get().unwrap();
+    let aliases = diesel::sql_query(
+        "SELECT i.resource_id,i.input_alias,json_extract(i.snapshot_json,'$.resourceAlias') resource_alias,json_extract(w.locked_contract_json,'$.structs[0].fields.result') selected_results FROM workflow_input_snapshots i JOIN managed_workflows w ON w.id=i.workflow_id WHERE i.workflow_id=?1 AND i.input_name='para'",
+    )
+    .bind::<diesel::sql_types::Integer, _>(workflow.id)
+    .get_result::<FrozenAliases>(&mut conn)
+    .unwrap();
+    assert_eq!(aliases.input_alias, "para");
+    assert_ne!(aliases.resource_alias, aliases.input_alias);
+    assert_eq!(aliases.selected_results, "bus_voltage");
+    drop(conn);
+
+    let candidate = app
+        .state
+        .managed_workflow_service
+        .record_candidate_script(
+            &user,
+            workflow.id,
+            "generation",
+            None,
+            "bus_voltage = ds_newton_raphson_pf(bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para);",
+            Some("test".into()),
+        )
+        .await
+        .unwrap();
+    let terminal = app
+        .state
+        .managed_workflow_service
+        .finalize_with_script(&user, workflow.id, candidate.attempts[0].id, true, None)
+        .await
+        .unwrap();
+    let rerun = app
+        .state
+        .run_service
+        .create(
+            &user,
+            terminal.final_script_resource_id.unwrap(),
+            CreateRunRequest {
+                client_run_id: "save-as-new-rerun".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let frozen: Value = serde_json::from_str(&rerun.run.input_snapshot_json).unwrap();
+    assert_eq!(frozen["resources"][0]["alias"], "para");
+    assert_eq!(frozen["resources"][0]["resourceId"], aliases.resource_id);
 }
 
 #[tokio::test]

@@ -1,4 +1,4 @@
-# V4 HTTP 与 SSE API（实施中）
+# V4 HTTP 与 SSE API
 
 > 本文跟随已实现的 V4 公共接口更新。Tasks 1–12 的统一上传、独立资源、研究配置、受管执行、重试和删除接口已实现；
 > 对话内完整配置卡和运行到脚本消息定位界面已经接入。已确认的行为边界见
@@ -44,12 +44,15 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 | POST | `/api/data-resource-replacement-previews/{token}/confirm` | 以 Replace/SaveAsNew/Cancel 确认参数覆盖 |
 | POST | `/api/data-resources/{id}/deletion-preview` | 生成资源引用影响和短期删除 token |
 | DELETE | `/api/data-resources/{id}` | 以 impact token 幂等删除并释放直接 artifact 引用 |
+| POST | `/api/study-configurations/{id}/confirm` | 以当前 revision 最终确认并原子创建受管 workflow/provisional run |
 | GET/DELETE | `/api/study-configurations/{id}` | 读取配置卡/以 `expectedRevision` 取消未确认配置 |
 | PUT | `/api/study-configurations/{id}/facade` | 以 revision 更换目录门面并重建输入/结果卡 |
 | PUT | `/api/study-configurations/{id}/bindings/{inputId}` | 选择或清除兼容的普通数据资源 |
 | POST | `/api/study-configurations/{id}/bindings/{inputId}/mapping` | 受控列选择/重命名/类型转换并发布不可变派生资源后绑定 |
 | PUT | `/api/study-configurations/{id}/structs/{inputId}` | 更新 Struct 卡草稿并声明 Replace/SaveAsNew 意图 |
 | PUT | `/api/study-configurations/{id}/results` | 提交有序且唯一的结果集合 |
+| GET | `/api/workflows/{id}` | 查询受管执行、attempt、脚本锚点和结果数据集 |
+| POST | `/api/workflows/{id}/cancel` | 幂等取消非终态受管执行 |
 | GET/POST | `/api/sessions/{id}/scripts` | 列表/上传单个 `.rss` |
 | POST | `/api/sessions/{id}/scripts/text` | 以文本创建脚本 |
 | GET | `/api/scripts/{id}` | 懒加载脚本全文 |
@@ -65,8 +68,12 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 | POST | `/api/versions/{id}/activate` | 激活历史版本；草稿需确认放弃 |
 | POST | `/api/versions/{id}/deletion-preview` | 生成短期删除影响 token |
 | POST | `/api/scripts/{id}/runs` | 唯一运行创建入口 |
+| POST | `/api/scripts/{id}/retry-previews` | 失败 Agent 脚本按当前输入创建重试或差异预览 |
+| POST | `/api/retry-previews/{id}/confirm` | 用户确认输入差异后创建派生 workflow |
 | GET | `/api/sessions/{id}/runs` | 运行记录 |
 | GET | `/api/runs/{id}` | 冻结运行快照 |
+| POST | `/api/runs/{id}/deletion-preview` | 返回终态运行、直接结果和派生引用影响 token |
+| DELETE | `/api/runs/{id}` | 以 impact token 原子 tombstone 运行与全部直接结果 |
 | GET | `/api/runs/{id}/datasets` | 运行的存活结果 |
 | GET/DELETE | `/api/datasets/{id}` | 元数据/删除单个结果 |
 | GET | `/api/datasets/{id}/rows` | cursor 分页投影 |
@@ -131,7 +138,8 @@ schemaRef、规范字段和 expected content hash，确认前不创建资源，�
 模型输入只按门面声明从 active 版本的实际表名动态绑定；`para` 等 Struct 只绑定普通数据资源。兼容资源唯一时可
 预选，多个兼容资源必须由用户选择；同门面的历史 Struct 只返回复用建议，不能静默沿用。Struct 卡由规范 schema
 生成字段类型、单位、范围和枚举；修改已绑定资源时必须选择 Replace 或 SaveAsNew，没有来源时只生成新资源命令。
-卡片保存只记录草稿和受控 replacement command，不提前覆盖资源。
+卡片保存只记录草稿和受控 replacement command，不提前覆盖资源。Struct 差异按 JSON 数值语义比较，`50` 与
+`50.0` 不产生虚假的资源修改。
 
 Data 输入的 mapping 只接受源列到目标列的受控映射。服务端按目标 schema 转换为 Snappy Parquet，经统一上传发布
 事务创建 `sourceKind=mapping` 的新普通资源，并冻结源资源 ID、目标 schema 和映射血缘；不会修改源资源。结果集合
@@ -161,8 +169,10 @@ script 消息时一次性绑定，之后不可更换。正常完成、取消或�
 结果诊断、冻结合同和“只输出修改后的完整脚本，不要解释”。发送内容按 UTF-8 边界保留 64 KiB 首尾；完整有界 stderr
 仅保存为审计 artifact，不进入普通 API、消息、搜索或模型请求。
 
-成功要求结果稳定名称集合与冻结选择完全相等，每个文件是可读 Snappy Parquet 且完整列名、类型、nullability、unit
-与当前启动 snapshot 中冻结的 result schema 相等；零行合法。全部结果验证通过后，最终 attempt、脚本资源/消息锚点、
+成功要求结果稳定名称集合与冻结选择完全相等，每个文件是可读 Snappy Parquet，列名与顺序必须精确一致。逻辑字符串
+接受 Arrow `Utf8/LargeUtf8/Utf8View`，逻辑 list/matrix 接受 `List/LargeList/ListView/LargeListView` 且元素类型必须
+匹配；物理 Arrow nullable 标志不直接替代数据合同，服务会扫描合同声明为非空的列并拒绝实际 null。输出携带 unit
+元数据时必须与冻结合同一致；tensoreval 未写 unit 元数据时允许缺省，不能接受冲突单位。零行合法。全部结果验证通过后，最终 attempt、脚本资源/消息锚点、
 run、所有 result dataset 和 workflow 终态在同一数据库事务发布，任一失败不留下部分结果。取消可中断正在等待的
 ScriptAuthor 或引擎 future，并由既有终态事务收敛。
 
@@ -221,6 +231,10 @@ adapter/IO/校验错误映射为受控 `error.code`/`error.message`。adapter �
 `DELETE /api/runs/{id}?impactToken=...` 原子 tombstone run 和全部存活直接结果并释放其 artifact 引用。排队/运行中返回
 `run_busy`，任一直接结果正被分析消费时返回 `result_busy`；已完成的派生、比较、视图和提升资源保留冻结血缘。
 全部运行路由保持跨用户 404，创建仍只由显式按钮触发。
+
+运行比较只选择同名、稳定键兼容且至少含一个同 dtype/同 unit 标量数值列的数据集。服务端生成受控 RSS：先用
+`select` 重命名左右数值列，再按稳定键 `join`，最后用 `with_columns` 生成 `delta_*`；不依赖 eig-rs 目录中不存在的
+私有比较函数。列表值保留为原始结果供表格/分析查看，不被伪装成标量差值。
 
 ## Messages and errors
 

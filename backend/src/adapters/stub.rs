@@ -26,6 +26,30 @@ impl StubEngine {
             )
         })?;
         for (index, table) in STATIC_IMPORT_OUTPUTS.into_iter().enumerate() {
+            if table == "para" {
+                let schema = Arc::new(Schema::new(vec![
+                    Field::new("base_frequency_hz", DataType::Float64, false),
+                    Field::new("max_iter", DataType::Int64, true),
+                    Field::new("result", DataType::Utf8, true),
+                ]));
+                let batch = RecordBatch::try_new(
+                    schema.clone(),
+                    vec![
+                        Arc::new(Float64Array::from(vec![50.0])),
+                        Arc::new(Int64Array::from(vec![Some(100)])),
+                        Arc::new(StringArray::from(vec![None::<&str>])),
+                    ],
+                )
+                .map_err(|error| {
+                    AdapterError::new(
+                        "stub_parquet_failed",
+                        super::ErrorCategory::Internal,
+                        error.to_string(),
+                    )
+                })?;
+                write_import_fixture(&spec, table, schema, &batch)?;
+                continue;
+            }
             let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Utf8, false)]));
             let values = if index == 0 {
                 StringArray::from(vec!["stub"])
@@ -40,35 +64,7 @@ impl StubEngine {
                         error.to_string(),
                     )
                 })?;
-            let file = std::fs::File::create(spec.result_dir.join(format!("{table}.parquet")))
-                .map_err(|error| {
-                    AdapterError::new(
-                        "stub_parquet_failed",
-                        super::ErrorCategory::Io,
-                        error.to_string(),
-                    )
-                })?;
-            let properties = WriterProperties::builder()
-                .set_compression(Compression::SNAPPY)
-                .build();
-            let mut writer =
-                ArrowWriter::try_new(file, schema, Some(properties)).map_err(|error| {
-                    AdapterError::new(
-                        "stub_parquet_failed",
-                        super::ErrorCategory::Internal,
-                        error.to_string(),
-                    )
-                })?;
-            writer
-                .write(&batch)
-                .and_then(|_| writer.close().map(|_| ()))
-                .map_err(|error| {
-                    AdapterError::new(
-                        "stub_parquet_failed",
-                        super::ErrorCategory::Internal,
-                        error.to_string(),
-                    )
-                })?;
+            write_import_fixture(&spec, table, schema, &batch)?;
         }
         let dataframes = super::import::order_model_outputs(
             validate_outputs(&spec.result_dir, OutputLimits::default())?.datasets,
@@ -210,6 +206,43 @@ impl StubEngine {
             })?;
         validate_outputs(&spec.result_dir, OutputLimits::default())
     }
+}
+
+fn write_import_fixture(
+    spec: &ImportSpec,
+    table: &str,
+    schema: Arc<Schema>,
+    batch: &RecordBatch,
+) -> Result<(), AdapterError> {
+    let file = std::fs::File::create(spec.result_dir.join(format!("{table}.parquet"))).map_err(
+        |error| {
+            AdapterError::new(
+                "stub_parquet_failed",
+                super::ErrorCategory::Io,
+                error.to_string(),
+            )
+        },
+    )?;
+    let properties = WriterProperties::builder()
+        .set_compression(Compression::SNAPPY)
+        .build();
+    let mut writer = ArrowWriter::try_new(file, schema, Some(properties)).map_err(|error| {
+        AdapterError::new(
+            "stub_parquet_failed",
+            super::ErrorCategory::Internal,
+            error.to_string(),
+        )
+    })?;
+    writer
+        .write(batch)
+        .and_then(|_| writer.close().map(|_| ()))
+        .map_err(|error| {
+            AdapterError::new(
+                "stub_parquet_failed",
+                super::ErrorCategory::Internal,
+                error.to_string(),
+            )
+        })
 }
 
 #[async_trait]

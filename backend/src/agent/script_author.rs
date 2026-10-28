@@ -9,6 +9,27 @@ use crate::application::{LockedStudyContract, WorkflowInputSnapshot};
 
 use super::{AgentBuildRequest, AgentFactory, DeepSeekAgentFactory, LlmConfig};
 
+const SCRIPT_AUTHOR_RULES: &str = r#"你是受控 RSS 脚本作者。请求 JSON 中 locked/lockedContract 是不可改变的冻结合同。
+运行环境已经按 locked.inputAliases 注入全部 DataFrame，包括 Struct DataFrame；不得读取、导入、构造、重新赋值或重命名这些变量。
+完整脚本只写一条直接结果绑定：左侧严格使用 locked.results 中的 name，右侧严格调用一次 locked.function，实参严格按 locked.inputAliases 的原顺序逐项引用。
+不得使用 read_table、read、read_csv、read_parquet、import_dss、struct、print 或其他辅助函数，不得追加裸变量表达式。
+只输出纯 RSS 源码，不要解释，不要使用 Markdown 代码围栏。修正脚本时必须按 diagnostic 和 sanitizedStderr 修复 currentScript，不得原样返回已被拒绝的脚本。"#;
+
+fn normalize_script_output(output: &str) -> String {
+    let trimmed = output.trim();
+    let Some(after_fence) = trimmed.strip_prefix("```") else {
+        return trimmed.to_string();
+    };
+    let Some(first_line_end) = after_fence.find('\n') else {
+        return trimmed.to_string();
+    };
+    let fenced = &after_fence[first_line_end + 1..];
+    let Some(last_fence) = fenced.rfind("```") else {
+        return trimmed.to_string();
+    };
+    fenced[..last_fence].trim().to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineDocRef {
@@ -97,11 +118,9 @@ impl DeepSeekScriptAuthor {
         let mut last_error = None;
         for attempt in 0..=self.model_retry_max {
             let agent = match self.factory.build(AgentBuildRequest {
-                    tools: Vec::new(),
-                    system_prompt: format!(
-                        "你是受控 RSS 脚本作者。根据冻结合同{purpose}。只输出完整脚本，不要解释，不要使用 import_dss 或其他导入模型的方法。"
-                    ),
-                }) {
+                tools: Vec::new(),
+                system_prompt: format!("根据冻结合同{purpose}。\n{SCRIPT_AUTHOR_RULES}"),
+            }) {
                 Ok(agent) => agent,
                 Err(error) => {
                     if last_error.is_none() {
@@ -115,7 +134,7 @@ impl DeepSeekScriptAuthor {
                 }
             };
             match agent.prompt(payload.clone()).await {
-                Ok(script) => return Ok(script.output().to_string()),
+                Ok(script) => return Ok(normalize_script_output(&script.output())),
                 Err(error) => {
                     last_error = Some(error.to_string());
                     if attempt < self.model_retry_max {
@@ -141,5 +160,37 @@ impl ScriptAuthor for DeepSeekScriptAuthor {
 
     async fn repair(&self, request: ScriptRepairRequest) -> Result<String, ScriptAuthorError> {
         self.complete("修正脚本", &request).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn author_contract_forbids_rebinding_and_markdown() {
+        for required in [
+            "不得读取、导入、构造、重新赋值或重命名",
+            "locked.inputAliases",
+            "locked.results",
+            "locked.function",
+            "不得使用 read_table",
+            "不要使用 Markdown 代码围栏",
+            "不得原样返回",
+        ] {
+            assert!(SCRIPT_AUTHOR_RULES.contains(required), "missing {required}");
+        }
+    }
+
+    #[test]
+    fn normalizes_one_markdown_fence_from_provider_output() {
+        assert_eq!(
+            normalize_script_output("```rss\n[result] = solve(table, para);\n```"),
+            "[result] = solve(table, para);"
+        );
+        assert_eq!(
+            normalize_script_output("[result] = solve(table, para);\n"),
+            "[result] = solve(table, para);"
+        );
     }
 }

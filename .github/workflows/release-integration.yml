@@ -1,4 +1,4 @@
-name: V3 candidate release gate
+name: V4 candidate release gate
 
 on:
   workflow_dispatch:
@@ -32,7 +32,7 @@ jobs:
       - name: Checkout current eig-rs
         uses: actions/checkout@v4
         with:
-          repository: shufengdong/eig-rc
+          repository: shufengdong/eig-rs
           path: target/eig-rs
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable

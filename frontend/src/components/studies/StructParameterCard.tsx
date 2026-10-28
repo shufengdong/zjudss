@@ -26,6 +26,17 @@ function fieldUnit(field: SchemaFieldContract): string | null {
   return field.unit && field.unit !== 'not_applicable' ? field.unit : null
 }
 
+function replacementBaseline(input: StudyInputCard): Record<string, unknown> {
+  const mapping = input.binding.mapping
+  if (mapping && typeof mapping === 'object' && !Array.isArray(mapping)) {
+    const baseline = (mapping as Record<string, unknown>).baselineValues
+    if (baseline && typeof baseline === 'object' && !Array.isArray(baseline)) {
+      return baseline as Record<string, unknown>
+    }
+  }
+  return input.structCard!.values
+}
+
 export default function StructParameterCard({ input, busy, onSave }: {
   input: StudyInputCard
   busy: boolean
@@ -33,6 +44,7 @@ export default function StructParameterCard({ input, busy, onSave }: {
 }) {
   const card = input.structCard!
   const defaults = useMemo(() => defaultValues(card.fields), [card.fields])
+  const baseline = replacementBaseline(input)
   const [values, setValues] = useState<Record<string, unknown>>(card.values)
   const [action, setAction] = useState<ReplacementAction>(input.binding.resourceId ? 'replace' : 'save_as_new')
   useEffect(() => setValues(card.values), [card.values])
@@ -44,8 +56,10 @@ export default function StructParameterCard({ input, busy, onSave }: {
     }
     return { ...current, [name]: value }
   })
-  const changedFields = card.fields.filter((field) => JSON.stringify(values[field.name]) !== JSON.stringify(card.values[field.name])).map((field) => field.name)
+  const changedFields = card.fields.filter((field) => JSON.stringify(values[field.name]) !== JSON.stringify(baseline[field.name])).map((field) => field.name)
   const replacementAction = input.binding.resourceId && changedFields.length > 0 ? action : undefined
+  const missingRequired = card.fields.some((field) => field.required
+    && (values[field.name] === undefined || values[field.name] === null || values[field.name] === ''))
 
   return <section className="rounded-lg border p-3 text-xs">
     <h3 className="font-semibold">参数：{input.alias}</h3>
@@ -85,7 +99,7 @@ export default function StructParameterCard({ input, busy, onSave }: {
         <option value="save_as_new">另存为新资源</option>
       </select>}
       <button type="button" disabled={busy} onClick={() => setValues(defaults)} className="rounded border px-2 py-1.5">恢复默认</button>
-      <button type="button" disabled={busy} onClick={() => onSave(values, replacementAction)} className="ml-auto rounded bg-brand-500 px-3 py-1.5 text-white">确认参数</button>
+      <button type="button" disabled={busy || missingRequired} onClick={() => onSave(values, replacementAction)} className="ml-auto rounded bg-brand-500 px-3 py-1.5 text-white disabled:opacity-40">确认参数</button>
     </div>
   </section>
 }

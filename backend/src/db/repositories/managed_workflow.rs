@@ -1318,7 +1318,7 @@ fn publish_replacements(
             .find(|input| input.input_id == material.input_id)
         {
             input.resource_id = material.resource_id.clone();
-            input.alias = alias.clone();
+            input.resource_alias = alias.clone();
             input.schema_ref = material.schema_ref.clone();
             input.schema_hash = material.schema_hash.clone();
             input.content_hash = material.content_hash.clone();
@@ -1328,7 +1328,8 @@ fn publish_replacements(
                 .resources
                 .push(crate::application::FrozenStudyInput {
                     input_id: material.input_id.clone(),
-                    alias: alias.clone(),
+                    alias: action.input_alias.clone(),
+                    resource_alias: alias.clone(),
                     kind: "struct".into(),
                     resource_id: material.resource_id.clone(),
                     schema_ref: material.schema_ref.clone(),
@@ -1413,7 +1414,7 @@ fn freeze_inputs(
         .get_result::<Resource>(conn)
         .optional()?
         .ok_or(ManagedWorkflowRepoError::ConfigurationStale)?;
-        if row.alias != resource.alias
+        if row.alias != resource.resource_alias
             || row.schema_hash != resource.schema_hash
             || row.sha256 != resource.content_hash
         {
@@ -1447,6 +1448,7 @@ struct RetryFrozenInput {
     model_version_id: Option<i32>,
     artifact_id: i32,
     input_alias: String,
+    resource_alias: Option<String>,
     schema_ref: Option<String>,
     schema_hash: Option<String>,
     content_hash: String,
@@ -1548,11 +1550,18 @@ fn retry_material(
             {
                 changes.push(json!({"input":frozen.input_name,"kind":"model","before":{"modelVersionId":frozen.model_version_id,"contentHash":frozen.content_hash},"after":{"modelVersionId":active.version_id,"contentHash":frame.content_hash}}));
             }
-            inputs.push(RetryFrozenInput { input_name: frozen.input_name.clone(), input_kind: "model".into(), resource_id: None, model_version_id: Some(active.version_id), artifact_id: frame.artifact_id, input_alias: alias.into(), schema_ref: None, schema_hash: None, content_hash: frame.content_hash.clone(), snapshot: json!({"tableName":alias,"schema":serde_json::from_str::<serde_json::Value>(&frame.schema_json).unwrap_or_default(),"modelContentHash":active.content_hash}) });
+            inputs.push(RetryFrozenInput { input_name: frozen.input_name.clone(), input_kind: "model".into(), resource_id: None, model_version_id: Some(active.version_id), artifact_id: frame.artifact_id, input_alias: alias.into(), resource_alias: None, schema_ref: None, schema_hash: None, content_hash: frame.content_hash.clone(), snapshot: json!({"tableName":alias,"schema":serde_json::from_str::<serde_json::Value>(&frame.schema_json).unwrap_or_default(),"modelContentHash":active.content_hash}) });
         } else {
-            let alias = frozen
+            let input_alias = frozen
                 .input_alias
                 .as_deref()
+                .ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?;
+            let frozen_snapshot: serde_json::Value = serde_json::from_str(&frozen.snapshot_json)
+                .map_err(|error| RepoError::Storage(error.to_string()))?;
+            let resource_alias = frozen_snapshot
+                .get("resourceAlias")
+                .or_else(|| frozen_snapshot.get("resource_alias"))
+                .and_then(serde_json::Value::as_str)
                 .ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?;
             #[derive(QueryableByName)]
             struct Resource {
@@ -1572,7 +1581,7 @@ fn retry_material(
                 lineage_json: String,
             }
             let resource = diesel::sql_query("SELECT d.id,d.normalized_artifact_id artifact_id,d.schema_hash,a.sha256 content_hash,d.declared_schema_ref schema_ref,d.source_kind,d.lineage_json FROM data_resources d JOIN artifacts a ON a.id=d.normalized_artifact_id WHERE d.session_id=?1 AND lower(d.alias)=lower(?2) AND d.status='live'")
-                .bind::<diesel::sql_types::Integer,_>(source.workflow.session_id).bind::<diesel::sql_types::Text,_>(alias).get_result::<Resource>(conn).optional()?.ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?;
+                .bind::<diesel::sql_types::Integer,_>(source.workflow.session_id).bind::<diesel::sql_types::Text,_>(resource_alias).get_result::<Resource>(conn).optional()?.ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?;
             if resource.schema_ref.as_deref() != frozen.schema_ref.as_deref() {
                 return Err(ManagedWorkflowRepoError::RetryInputUnavailable);
             }
@@ -1582,7 +1591,7 @@ fn retry_material(
             {
                 changes.push(json!({"input":frozen.input_name,"kind":frozen.input_kind,"before":{"resourceId":frozen.resource_id,"contentHash":frozen.content_hash,"schemaHash":frozen.schema_hash},"after":{"resourceId":resource.id,"contentHash":resource.content_hash,"schemaHash":resource.schema_hash}}));
             }
-            inputs.push(RetryFrozenInput { input_name: frozen.input_name.clone(), input_kind: frozen.input_kind.clone(), resource_id: Some(resource.id.clone()), model_version_id: None, artifact_id: resource.artifact_id, input_alias: alias.into(), schema_ref: resource.schema_ref.clone(), schema_hash: Some(resource.schema_hash.clone()), content_hash: resource.content_hash.clone(), snapshot: json!({"resourceId":resource.id,"alias":alias,"schemaRef":resource.schema_ref,"schemaHash":resource.schema_hash,"contentHash":resource.content_hash,"sourceKind":resource.source_kind,"lineage":serde_json::from_str::<serde_json::Value>(&resource.lineage_json).unwrap_or(serde_json::Value::Null)}) });
+            inputs.push(RetryFrozenInput { input_name: frozen.input_name.clone(), input_kind: frozen.input_kind.clone(), resource_id: Some(resource.id.clone()), model_version_id: None, artifact_id: resource.artifact_id, input_alias: input_alias.into(), resource_alias: Some(resource_alias.into()), schema_ref: resource.schema_ref.clone(), schema_hash: Some(resource.schema_hash.clone()), content_hash: resource.content_hash.clone(), snapshot: json!({"resourceId":resource.id,"alias":input_alias,"resourceAlias":resource_alias,"schemaRef":resource.schema_ref,"schemaHash":resource.schema_hash,"contentHash":resource.content_hash,"sourceKind":resource.source_kind,"lineage":serde_json::from_str::<serde_json::Value>(&resource.lineage_json).unwrap_or(serde_json::Value::Null)}) });
         }
     }
     let model_inputs = inputs
@@ -1591,7 +1600,7 @@ fn retry_material(
         .collect::<Vec<_>>();
     let input_snapshot_json = json!({
         "model": model_inputs.first().map(|first| json!({"modelVersionId":first.model_version_id,"contentHash":active.as_ref().map(|value|value.content_hash.clone()),"tables":model_inputs.iter().map(|input|input.input_alias.clone()).collect::<Vec<_>>()})),
-        "resources": inputs.iter().filter(|input| input.input_kind != "model").map(|input|json!({"inputId":input.input_name,"alias":input.input_alias,"kind":input.input_kind,"resourceId":input.resource_id,"schemaRef":input.schema_ref,"schemaHash":input.schema_hash,"contentHash":input.content_hash})).collect::<Vec<_>>()
+        "resources": inputs.iter().filter(|input| input.input_kind != "model").map(|input|json!({"inputId":input.input_name,"alias":input.input_alias,"resourceAlias":input.resource_alias,"kind":input.input_kind,"resourceId":input.resource_id,"schemaRef":input.schema_ref,"schemaHash":input.schema_hash,"contentHash":input.content_hash})).collect::<Vec<_>>()
     }).to_string();
     let changes = serde_json::Value::Array(changes);
     let impact = json!({"sourceWorkflowId":source_workflow_id,"scriptId":script_id,"clientRetryId":client_retry_id,"engineSnapshotId":engine_snapshot_id,"facadeContractHash":current_facade_hash,"inputs":inputs,"changes":changes});

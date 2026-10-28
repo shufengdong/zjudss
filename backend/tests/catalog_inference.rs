@@ -189,3 +189,42 @@ fn malformed_catalog_error_is_stable() {
     let error = SchemaCatalog::from_value("v", &json!({"frames":{}})).unwrap_err();
     assert_eq!(error.code(), "catalog_invalid");
 }
+
+#[test]
+fn imported_network_requirements_participate_in_contract_inference() {
+    let catalog = SchemaCatalog::from_value(
+        "v",
+        &json!({
+            "schema_version": 2,
+            "frames": {
+                "para": {
+                    "required_for_imported_network": {"base_frequency_hz": "f64"},
+                    "contract": {
+                        "columns": [
+                            {"name":"base_frequency_hz","dtype":"f64","required":false},
+                            {"name":"result","dtype":"str","required":false}
+                        ],
+                        "stableKeys": []
+                    }
+                }
+            }
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        catalog.frames[0].required.get("base_frequency_hz"),
+        Some(&"f64".to_string())
+    );
+    assert_eq!(
+        infer_table(
+            &table(
+                "para.parquet",
+                &[("base_frequency_hz", "f64"), ("result", "str")],
+            ),
+            &catalog,
+        )
+        .table_kind
+        .as_deref(),
+        Some("para")
+    );
+}

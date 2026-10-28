@@ -319,8 +319,12 @@ async fn imported_case_binds_exact_active_tables_and_independent_para_resource()
         .unwrap();
     assert_eq!(prepared.locked.function, "ds_newton_raphson_pf");
     assert_eq!(prepared.inputs.model.unwrap().tables.len(), 20);
-    assert_eq!(prepared.locked.structs[0].resource_diff, json!([]));
-    assert!(prepared.replacement_actions.is_empty());
+    assert_eq!(
+        prepared.locked.structs[0].resource_diff,
+        json!([{"field":"result","before":null,"after":"bus_voltage"}])
+    );
+    assert_eq!(prepared.replacement_actions.len(), 1);
+    assert_eq!(prepared.replacement_actions[0].action, "create_new");
 }
 
 #[tokio::test]

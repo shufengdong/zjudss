@@ -705,7 +705,7 @@
       name: conversational_agent_cannot_create_a_generic_script
     - runner: release
       file: scripts/test-release-integration
-      name: real DeepSeek and tensoreval complete the semantic release journey
+      name: real DeepSeek and tensoreval complete the V4 semantic release journey
   assertions: [tool calls are controlled and persisted, skills are loaded on demand, prepare_study is a durable success even if provider finalization fails, conversational tools cannot create or run scripts]
   fixtures: [embedded V4 agent bundle]
   contracts:
@@ -722,6 +722,9 @@
   layers: [database, application, api, agent, browser]
   lanes: [pr, release]
   tests:
+    - runner: release
+      file: scripts/test-release-integration
+      name: real DeepSeek and tensoreval complete the V4 semantic release journey
     - runner: playwright
       file: integration-tests/e2e/v4-managed-studies.spec.ts
       name: managed Newton study confirms, repairs one engine failure, and publishes only the successful datasets
@@ -796,6 +799,9 @@
   layers: [database, application, api, agent, browser]
   lanes: [pr, release]
   tests:
+    - runner: release
+      file: scripts/test-release-integration
+      name: real DeepSeek and tensoreval complete the V4 semantic release journey
     - runner: playwright
       file: integration-tests/e2e/v4-managed-studies.spec.ts
       name: managed Newton study confirms, repairs one engine failure, and publishes only the successful datasets
@@ -856,6 +862,9 @@
   layers: [database, application, adapter, agent]
   lanes: [pr, release]
   tests:
+    - runner: release
+      file: scripts/test-release-integration
+      name: real DeepSeek and tensoreval complete the V4 semantic release journey
     - runner: playwright
       file: integration-tests/e2e/v4-managed-studies.spec.ts
       name: managed Newton study confirms, repairs one engine failure, and publishes only the successful datasets
@@ -898,6 +907,9 @@
   layers: [database, application, agent]
   lanes: [pr, release]
   tests:
+    - runner: release
+      file: scripts/test-release-engine
+      name: real_engine_imports_all_examples_and_runs_representative_studies
     - runner: playwright
       file: integration-tests/e2e/v4-managed-studies.spec.ts
       name: managed Newton study confirms, repairs one engine failure, and publishes only the successful datasets

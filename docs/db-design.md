@@ -1,4 +1,4 @@
-# V4 数据库设计（实施中）
+# V4 数据库设计
 
 > 当前 initial migration 已切换为 V4 空库 schema，不迁移或兼容 V3 数据。数据资源、运行输入绑定、可空
 > run→script message 锚点、运行/直接结果 tombstone 删除的完整产品要求见
@@ -35,6 +35,9 @@ scope 引用的内容寻址 artifact；数据库保存所有权、状态、hash�
 每个 session 只有一个 workspace，每个 workspace 最多一个 draft；草稿和版本内的 `table_name` 唯一。
 发布版本的内容与 DataFrame 行由触发器禁止修改，同一 workspace 的存活 `content_hash` 唯一。active version
 必须属于当前 workspace。
+
+`model_versions.description` 是最多 200 个 Unicode 字符的冻结展示信息，不参与 `content_hash`。相同内容再次发布时
+复用已有版本及其原描述，不能借重复发布改写描述；空描述由服务端根据规范 diff 生成确定性摘要。
 
 `messages` 的普通对话记录保持追加写入；可更新操作卡以非空 `operation_id` 在同一 `session_id + kind` 下唯一，内容变化时在
 原行递增 `revision`，相同终态重放不创建新行也不推进 revision。`upload_batches.revision` 由数据库在每次事实更新后单调递增；

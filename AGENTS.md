@@ -1,6 +1,6 @@
 # AGENTS.md
 
-配电网仿真智能体 V3：Rust/Axum/rig 后端 + React/TypeScript/ECharts 前端。Agent 通过受控工具
+配电网仿真智能体 V4：Rust/Axum/rig 后端 + React/TypeScript/ECharts 前端。Agent 通过受控工具
 管理模型工作区、调用仿真、分析 Parquet 结果并恢复历史；领域写操作以自然语言消息为主。
 
 ## 开始工作前
@@ -9,7 +9,7 @@
 2. 接口改动读 `docs/api-design.md` 与 `frontend/src/types/`；数据库改动读 `docs/db-design.md`；前端行为
    读 `docs/frontend-design.md`。
 3. 引擎资源、Prompt 或工具改动读 `docs/agent-prompt-skills-design.md`；发布和集成测试改动读
-   `docs/v3-deployment.md` 与 `docs/integration-testing-design.md`。
+   `docs/v4-deployment.md` 与 `docs/integration-testing-design.md`。
 4. 除非用户另行要求，直接在 `master` 修改，不自行创建 feature worktree。提交时保留并排除用户已有的
    未提交或已暂存文件。
 
@@ -37,7 +37,7 @@ cd ..
 ```
 
 生产启动必须配置 `TENSOREVAL_BIN`、`SPARROWZZ_DIR` 和 LLM secret；不会自动回退到测试 stub。具体配置
-见 `docs/v3-deployment.md`。候选发布的真实依赖门禁也见该文档。
+见 `docs/v4-deployment.md`。候选发布的真实依赖门禁也见该文档。
 
 ## 项目结构与权威来源
 
@@ -47,8 +47,8 @@ cd ..
 - `backend/src/tools/`：Agent 工具，只接受稳定资源 ID 和受控参数。
 - `backend/src/adapters/`：所有 `tensoreval` 进程调用的唯一边界。
 - `backend/src/engine_resources/`：启动 preflight、引擎文档/catalog/案例快照。
-- `backend/migrations/00000000000000_initial/`：V3 空库初始化的权威 schema。
-- `backend/resources/agent/v3/manifest.json`：Agent bundle、engine contract、资源 hash 和允许工具的权威清单。
+- `backend/migrations/00000000000000_initial/`：V4 空库初始化的权威 schema。
+- `backend/resources/agent/v4/manifest.json`：Agent bundle、engine contract、资源 hash 和允许工具的权威清单。
 - `frontend/src/types/`：前端使用的公共 DTO 类型；HTTP 语义以 `docs/api-design.md` 为准。
 - `integration-tests/catalog/features.yaml`：机器可读功能目录和测试追溯入口。
 

@@ -29,6 +29,18 @@ async fn catalog_search_returns_all_matching_facades_with_user_visible_differenc
 }
 
 #[tokio::test]
+async fn natural_language_solver_search_ranks_the_specific_facade() {
+    let app = TestApp::spawn().await;
+    let matches = app
+        .state
+        .study_planning_service
+        .search("牛顿法潮流 power flow Newton", None);
+
+    assert_eq!(matches.enabled.len(), 1);
+    assert_eq!(matches.enabled[0].function, "ds_newton_raphson_pf");
+}
+
+#[tokio::test]
 async fn explicit_newton_is_not_replaced_by_radial() {
     let app = TestApp::spawn().await;
     let matches = app

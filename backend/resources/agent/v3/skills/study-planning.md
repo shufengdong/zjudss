@@ -5,7 +5,7 @@
 
 ## 执行步骤
 1. 先调用 `inspect_workspace`，了解当前会话是否有 active 模型和可用表；草稿、历史运行和案例不能替代 active 模型。
-2. 从用户原话提取查询词；用户明确给出函数名时必须把原函数名传给 `search_study_facades.explicitFunction`，不得按拓扑替换径向法或 Newton。
+2. 从用户原话提取查询词。只有用户原文包含目录中的完整函数标识（例如 `ds_newton_raphson_pf`）时才原样传给 `search_study_facades.explicitFunction`；算法名称（如 Newton/牛顿法）和研究名称放在 `query` 中，`explicitFunction` 传 null。不得猜测函数标识或按拓扑替换用户选择。
 3. 调用 `search_study_facades`。多个可用门面时，用 `title`、`description` 和 `differences` 一次说明差别并让用户选择；禁用门面必须显示其诊断。
 4. 门面唯一后调用 `prepare_study`，完整传入用户意图。服务端从目录生成全部模型、Data、Struct 和结果卡片；工具成功后等待用户操作配置卡及最终确认，不生成脚本、不运行仿真。
 

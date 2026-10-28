@@ -1,5 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const backendPort = Number(process.env.RELEASE_BACKEND_PORT ?? '18081')
+const frontendPort = Number(process.env.RELEASE_FRONTEND_PORT ?? '15183')
+const backendOrigin = `http://127.0.0.1:${backendPort}`
+const frontendOrigin = `http://127.0.0.1:${frontendPort}`
+
 export default defineConfig({
   testDir: '../integration-tests/release',
   testMatch: 'real-dependencies.spec.ts',
@@ -11,7 +16,7 @@ export default defineConfig({
   outputDir: '../target/release-integration/playwright-artifacts',
   reporter: [['line']],
   use: {
-    baseURL: 'http://127.0.0.1:15183',
+    baseURL: frontendOrigin,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     ...devices['Desktop Chrome'],
@@ -20,18 +25,22 @@ export default defineConfig({
     {
       command: 'cargo run --quiet --bin zjudss',
       cwd: '../backend',
-      url: 'http://127.0.0.1:8080/health',
+      env: {
+        ...process.env,
+        BIND_ADDR: `127.0.0.1:${backendPort}`,
+      },
+      url: `${backendOrigin}/health`,
       reuseExistingServer: false,
       timeout: 180_000,
     },
     {
-      command: 'npm run dev -- --host 127.0.0.1 --port 15183 --strictPort',
+      command: `npm run dev -- --host 127.0.0.1 --port ${frontendPort} --strictPort`,
       cwd: '.',
       env: {
         ...process.env,
-        VITE_API_TARGET: 'http://127.0.0.1:8080',
+        VITE_API_TARGET: backendOrigin,
       },
-      url: 'http://127.0.0.1:15183',
+      url: frontendOrigin,
       reuseExistingServer: false,
       timeout: 120_000,
     },

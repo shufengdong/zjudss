@@ -533,6 +533,10 @@ impl RunService {
                     .map_err(|message| {
                         RunError::ResultContract("result_contract_invalid", message)
                     })?;
+                super::workflow_worker::validate_non_null_values(&dataset.path, &schema.fields)
+                    .map_err(|message| {
+                        RunError::ResultContract("result_contract_invalid", message)
+                    })?;
             }
         }
         let mut staged_artifacts = Vec::new();

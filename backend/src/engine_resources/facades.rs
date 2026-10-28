@@ -212,26 +212,37 @@ impl FacadeRegistry {
             .split_whitespace()
             .map(|term| term.to_lowercase())
             .collect::<Vec<_>>();
-        let enabled = self
+        let scored = self
             .enabled
             .values()
-            .filter(|facade| {
+            .filter_map(|facade| {
                 if terms.is_empty() {
-                    return true;
+                    return Some((facade, 0));
                 }
-                let haystack = format!(
-                    "{} {} {} {} {} {}",
-                    facade.id,
-                    facade.function,
-                    facade.family,
-                    facade.title,
-                    facade.description,
-                    facade.differences.join(" ")
+                let core = format!(
+                    "{} {} {} {} {}",
+                    facade.id, facade.function, facade.family, facade.title, facade.description
                 )
                 .to_lowercase();
-                terms.iter().all(|term| haystack.contains(term))
+                let differences = facade.differences.join(" ").to_lowercase();
+                let score = terms.iter().fold(0_u32, |score, term| {
+                    score
+                        + if core.contains(term) {
+                            2
+                        } else if differences.contains(term) {
+                            1
+                        } else {
+                            0
+                        }
+                });
+                (score > 0).then_some((facade, score))
             })
-            .cloned()
+            .collect::<Vec<_>>();
+        let highest_score = scored.iter().map(|(_, score)| *score).max().unwrap_or(0);
+        let enabled = scored
+            .into_iter()
+            .filter(|(_, score)| *score == highest_score)
+            .map(|(facade, _)| facade.clone())
             .collect();
         FacadeSearchResult {
             enabled,

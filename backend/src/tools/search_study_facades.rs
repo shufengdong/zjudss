@@ -35,7 +35,7 @@ impl Tool for SearchStudyFacadesTool {
     type Error = DomainToolError;
 
     fn description(&self) -> String {
-        "按当前 eig-rs 研究目录搜索可用门面；显式函数名优先，并返回方法差异与禁用诊断。调用前加载 study-planning skill。".into()
+        "按当前 eig-rs 研究目录搜索可用门面；explicitFunction 仅接受用户原文中的完整 ds_ 函数标识，Newton/牛顿法等算法名称放入 query；返回方法差异与禁用诊断。调用前加载 study-planning skill。".into()
     }
 
     fn parameters(&self) -> Value {

@@ -21,6 +21,10 @@ describe('release semantic assertions', () => {
       importableExamples: 99,
       nonImportableExamples: 4,
       nonImportableDetails: Array.from({ length: 4 }, (_, index) => ({ exampleId: `ex_${index}` })),
+      facadeCatalogEntries: 15,
+      enabledFacades: 15,
+      facadeDiagnostics: [],
+      contractChecks: { staticModelImport: true, staticImportDataframes: 21 },
     }
     expect(() => expectEngineReleaseEvidence(report)).not.toThrow()
     expect(() => expectEngineReleaseEvidence({
@@ -35,46 +39,45 @@ describe('release semantic assertions', () => {
       { id: 2, type: 'tool-call', callId: 'inspect', toolName: 'inspect_workspace', status: 'running' },
       { id: 3, type: 'tool-call', callId: 'inspect', toolName: 'inspect_workspace', status: 'success' },
       { id: 4, type: 'assistant' },
-    ], ['create_script'])).toBe(false)
+    ], ['prepare_study'])).toBe(false)
     expect(agentTurnCompleted([
       { id: 1, type: 'assistant' },
       { id: 2, type: 'tool-call', callId: 'inspect', toolName: 'inspect_workspace', status: 'success' },
-      { id: 3, type: 'tool-call', callId: 'create', toolName: 'create_script', status: 'success' },
+      { id: 3, type: 'tool-call', callId: 'prepare', toolName: 'prepare_study', status: 'success' },
       { id: 4, type: 'assistant' },
-    ], ['create_script'])).toBe(true)
+    ], ['prepare_study'])).toBe(true)
   })
 
   test('accepts stable IDs and skills loaded before gated tools', () => {
     expect(() => expectToolTrace([
-      call('load_agent_skill', 'success', { skill_id: 'rss-generation' }),
-      call('create_script', 'running', { name: '潮流分析' }),
-      call('create_script', 'success', { name: '潮流分析' }),
+      call('load_agent_skill', 'success', { skill_id: 'study-planning' }),
+      call('search_study_facades', 'success', { explicitFunction: 'ds_newton_raphson_pf' }),
+      call('prepare_study', 'running', { facadeId: 'static_power_flow_newton', derivedFromWorkflowId: null }),
+      call('prepare_study', 'success', { facadeId: 'static_power_flow_newton', derivedFromWorkflowId: null }),
     ], {
-      requiredTools: ['create_script'],
-      gatedTools: { create_script: ['rss-generation'] },
+      requiredTools: ['prepare_study'],
+      gatedTools: { prepare_study: ['study-planning'] },
     })).not.toThrow()
     expect(() => expectToolTrace([
       call('load_agent_skill', 'success', { skill_id: 'study-planning' }),
-      call('plan_study', 'running', { request: { studyType: 'static_power_flow' } }),
-      call('plan_study', 'success', { request: { studyType: 'static_power_flow' } }),
-      call('load_agent_skill', 'success', { skill_id: 'rss-generation' }),
-      call('create_script', 'running', { name: '潮流分析', studyPlanId: `study-plan:${'a'.repeat(64)}` }),
-      call('create_script', 'success', { name: '潮流分析', studyPlanId: `study-plan:${'a'.repeat(64)}` }),
+      call('search_study_facades', 'success', { explicitFunction: 'ds_newton_raphson_pf' }),
+      call('prepare_study', 'running', { facadeId: 'static_power_flow_newton' }),
+      call('prepare_study', 'success', { facadeId: 'static_power_flow_newton' }),
     ], {
-      requiredTools: ['plan_study', 'create_script'],
-      gatedTools: { plan_study: ['study-planning'], create_script: ['rss-generation'] },
+      requiredTools: ['search_study_facades', 'prepare_study'],
+      gatedTools: { prepare_study: ['study-planning'] },
     })).not.toThrow()
   })
 
   test('rejects illegal tools, unstable IDs, failed tools, and missing skill ordering', () => {
     expect(() => expectToolTrace([call('shell', 'success')], { requiredTools: ['shell'] })).toThrow(/disallowed/)
     expect(() => expectToolTrace([call('inspect_example', 'success', { exampleId: '/tmp/case.rss' })], { requiredTools: ['inspect_example'] })).toThrow(/stable example ID/)
-    expect(() => expectToolTrace([call('create_script', 'failed', { name: 'x' })], { requiredTools: ['create_script'] })).toThrow(/did not succeed/)
+    expect(() => expectToolTrace([call('prepare_study', 'failed', { facadeId: 'test' })], { requiredTools: ['prepare_study'] })).toThrow(/did not succeed/)
     expect(() => expectToolTrace([
-      call('create_script', 'running', { name: 'x' }),
-      call('load_agent_skill', 'success', { skill_id: 'rss-generation' }),
-      call('create_script', 'success', { name: 'x' }),
-    ], { requiredTools: ['create_script'], gatedTools: { create_script: ['rss-generation'] } })).toThrow(/not loaded before/)
+      call('prepare_study', 'running', { facadeId: 'test' }),
+      call('load_agent_skill', 'success', { skill_id: 'study-planning' }),
+      call('prepare_study', 'success', { facadeId: 'test' }),
+    ], { requiredTools: ['prepare_study'], gatedTools: { prepare_study: ['study-planning'] } })).toThrow(/not loaded before/)
   })
 
   test('requires a failed side effect to recover with the same tool', () => {
@@ -110,12 +113,12 @@ describe('release semantic assertions', () => {
     })).toThrow(/unexpected successful tool search_examples/)
 
     expect(() => expectToolTrace([
-      call('create_script', 'success', { name: 'x' }),
-      call('create_script', 'success', { name: 'x' }),
+      call('prepare_study', 'success', { facadeId: 'test' }),
+      call('prepare_study', 'success', { facadeId: 'test' }),
     ], {
-      requiredTools: ['create_script'],
-      allowedTools: ['create_script'],
-    })).toThrow(/create_script succeeded 2 times/)
+      requiredTools: ['prepare_study'],
+      allowedTools: ['prepare_study'],
+    })).toThrow(/prepare_study succeeded 2 times/)
   })
 
   test('paginates the complete message history with nextBeforeId', async () => {

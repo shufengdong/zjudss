@@ -211,6 +211,7 @@ pub struct FrozenModelInput {
 pub struct FrozenStudyInput {
     pub input_id: String,
     pub alias: String,
+    pub resource_alias: String,
     pub kind: String,
     pub resource_id: String,
     pub schema_ref: String,
@@ -229,6 +230,7 @@ pub struct WorkflowInputSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct PreparedResourceReplacement {
     pub input_id: String,
+    pub input_alias: String,
     pub source_resource_id: Option<String>,
     pub action: String,
     pub values: Value,
@@ -719,6 +721,11 @@ impl StudyConfigurationService {
         let mut frozen_resources = Vec::new();
         let mut structs = Vec::new();
         let mut replacements = Vec::new();
+        let selected_result_names = aggregate
+            .results
+            .iter()
+            .map(|result| result.result_name.clone())
+            .collect::<Vec<_>>();
         for input in &facade.inputs {
             let binding = aggregate
                 .bindings
@@ -738,7 +745,8 @@ impl StudyConfigurationService {
                 }
                 frozen_resources.push(FrozenStudyInput {
                     input_id: input.id.clone(),
-                    alias: resource.resource.alias,
+                    alias: input.alias.clone(),
+                    resource_alias: resource.resource.alias,
                     kind: kind_name(input.kind).into(),
                     resource_id: resource.resource.id,
                     schema_ref: input.schema_ref.clone(),
@@ -752,9 +760,12 @@ impl StudyConfigurationService {
                     .iter()
                     .find(|value| value.input_name == input.id)
                     .ok_or_else(|| Self::invalid("configuration_stale", "Struct 参数缺失"))?;
-                let fields: Value = serde_json::from_str(&value.values_json).map_err(|_| {
+                let mut fields: Value = serde_json::from_str(&value.values_json).map_err(|_| {
                     Self::invalid("configuration_stale", "Struct 参数持久化内容无效")
                 })?;
+                let selector_changed =
+                    apply_result_selectors(&facade, input, &mut fields, &selected_result_names)?;
+                validate_struct_values(Some(self.schema(&input.schema_ref)?), &fields)?;
                 let frozen = frozen_resources
                     .iter()
                     .find(|resource| resource.input_id == input.id);
@@ -767,9 +778,10 @@ impl StudyConfigurationService {
                     resource_diff: struct_differences(binding, &fields),
                 });
                 let action = struct_action(binding);
-                if frozen.is_none() || action.is_some() {
+                if frozen.is_none() || action.is_some() || selector_changed {
                     replacements.push(PreparedResourceReplacement {
                         input_id: input.id.clone(),
+                        input_alias: input.alias.clone(),
                         source_resource_id: frozen.map(|resource| resource.resource_id.clone()),
                         action: action.unwrap_or("create_new").into(),
                         values: fields,
@@ -1216,11 +1228,61 @@ fn struct_differences(binding: &StudyInputBindingRecord, current: &Value) -> Val
             .iter()
             .filter_map(|(field, value)| {
                 let old = before.get(field).cloned().unwrap_or(Value::Null);
-                (old != *value)
+                (!json_values_equivalent(&old, value))
                     .then(|| serde_json::json!({"field":field,"before":old,"after":value}))
             })
             .collect(),
     )
+}
+
+fn json_values_equivalent(left: &Value, right: &Value) -> bool {
+    if left == right {
+        return true;
+    }
+    let (Some(left), Some(right)) = (left.as_number(), right.as_number()) else {
+        return false;
+    };
+    if let (Some(left), Some(right)) = (left.as_i64(), right.as_i64()) {
+        return left == right;
+    }
+    if let (Some(left), Some(right)) = (left.as_u64(), right.as_u64()) {
+        return left == right;
+    }
+    left.as_f64()
+        .zip(right.as_f64())
+        .is_some_and(|(left, right)| left == right)
+}
+
+fn apply_result_selectors(
+    facade: &FacadeContract,
+    input: &FacadeInputContract,
+    fields: &mut Value,
+    selected_results: &[String],
+) -> Result<bool, StudyConfigurationError> {
+    let object = fields.as_object_mut().ok_or_else(|| {
+        StudyConfigurationService::invalid("struct_values_invalid", "Struct 参数必须是对象")
+    })?;
+    let mut changed = false;
+    for constraint in &facade.result_constraints {
+        let ResultSelectionRule::OrderedUniqueSelection { selector, .. } = constraint else {
+            continue;
+        };
+        let Some((selector_input, field)) = selector.split_once('.') else {
+            return Err(StudyConfigurationService::invalid(
+                "configuration_stale",
+                "结果选择器格式无效",
+            ));
+        };
+        if selector_input != input.alias && selector_input != input.id {
+            continue;
+        }
+        let value = Value::String(selected_results.join(","));
+        if object.get(field) != Some(&value) {
+            object.insert(field.to_string(), value);
+            changed = true;
+        }
+    }
+    Ok(changed)
 }
 
 fn map_version_error(error: VersionRepoError) -> StudyConfigurationError {
@@ -1477,4 +1539,29 @@ fn validate_results(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn struct_differences_treats_equivalent_json_numbers_as_equal() {
+        let binding = StudyInputBindingRecord {
+            configuration_id: 1,
+            input_name: "para".into(),
+            input_kind: "struct".into(),
+            model_table_name: None,
+            resource_id: Some("resource-1".into()),
+            mapping_json: Some(
+                serde_json::json!({"baselineValues":{"base_frequency_hz":50.0}}).to_string(),
+            ),
+            ordinal: 1,
+        };
+
+        assert_eq!(
+            struct_differences(&binding, &serde_json::json!({"base_frequency_hz":50})),
+            serde_json::json!([])
+        );
+    }
 }

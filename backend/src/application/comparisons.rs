@@ -290,8 +290,13 @@ fn rss_identifier(value: &str) -> bool {
 }
 
 fn comparison_script(compatibility: &Value) -> String {
-    let keys = serde_json::to_string(compatibility.get("stableKeys").unwrap_or(&json!([])))
-        .unwrap_or_else(|_| "[]".into());
+    let keys = compatibility
+        .get("stableKeys")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
     let values = compatibility
         .get("values")
         .and_then(Value::as_array)
@@ -299,10 +304,68 @@ fn comparison_script(compatibility: &Value) -> String {
         .flatten()
         .filter_map(|value| value.get("column").and_then(Value::as_str))
         .collect::<Vec<_>>();
-    let values = serde_json::to_string(&values).unwrap_or_else(|_| "[]".into());
-    format!("result = compare_frames(baseline, candidate, keys={keys}, values={values})\n")
+    let baseline_projection = keys
+        .iter()
+        .map(|column| format!("    col({column})"))
+        .chain(
+            values
+                .iter()
+                .map(|column| format!("    alias(col({column}), baseline_{column})")),
+        )
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let candidate_projection = keys
+        .iter()
+        .map(|column| format!("    col({column})"))
+        .chain(
+            values
+                .iter()
+                .map(|column| format!("    alias(col({column}), candidate_{column})")),
+        )
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let key_list = format!("[{}]", keys.join(", "));
+    let deltas = values
+        .iter()
+        .map(|column| {
+            format!("    alias(col(candidate_{column}) - col(baseline_{column}), delta_{column})")
+        })
+        .collect::<Vec<_>>()
+        .join(",\n");
+    format!(
+        "baseline_selected = select(\n{baseline_projection},\n    baseline\n);\n\
+candidate_selected = select(\n{candidate_projection},\n    candidate\n);\n\
+aligned = join(baseline_selected, candidate_selected, {key_list}, {key_list}, \"full\");\n\
+result = with_columns(\n{deltas},\n    aligned\n);\n"
+    )
 }
 
 fn result_ref(dataset: &RunDataset) -> ResultOutputRef {
     ResultOutputRef::from_dataset(dataset)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::comparison_script;
+    use serde_json::json;
+
+    #[test]
+    fn comparison_script_uses_supported_frame_functions() {
+        let script = comparison_script(&json!({
+            "stableKeys": ["bus", "phase"],
+            "values": [
+                {"column":"v_re","dtype":"Float64","unit":"V"},
+                {"column":"v_im","dtype":"Float64","unit":"V"}
+            ]
+        }));
+
+        assert!(script.contains("baseline_selected = select("));
+        assert!(script.contains("candidate_selected = select("));
+        assert!(script.contains("aligned = join("));
+        assert!(script.contains("result = with_columns("));
+        assert!(script.contains("delta_v_re"));
+        assert!(script.contains("delta_v_im"));
+        assert!(!script.contains("compare_frames"));
+        assert!(script.trim_end().ends_with(';'));
+    }
 }

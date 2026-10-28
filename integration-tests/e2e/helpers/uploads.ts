@@ -29,7 +29,12 @@ export async function confirmLatestModelUpload(page: Page) {
   const purposeSelects = card.getByRole('combobox', { name: /用途$/ })
   for (let index = 0; index < await purposeSelects.count(); index += 1) {
     const select = purposeSelects.nth(index)
-    await select.selectOption((await select.getAttribute('aria-label')) === 'para用途' ? 'data_resource' : 'model_table')
+    const displayName = String(await select.getAttribute('aria-label')).replace(/用途$/, '')
+    const alias = displayName.replace(/\.parquet$/, '')
+    await select.selectOption(alias === 'para' ? 'data_resource' : 'model_table')
+    if (displayName.endsWith('.parquet')) {
+      await card.getByRole('textbox', { name: `${displayName} alias` }).fill(alias)
+    }
   }
   const responsePromise = page.waitForResponse((response) => response.request().method() === 'POST' && /\/api\/upload-batches\/[^/]+\/confirm$/.test(new URL(response.url()).pathname))
   await confirm.click()

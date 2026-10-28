@@ -29,6 +29,9 @@ struct ReleaseReport {
     importable_examples: usize,
     non_importable_examples: usize,
     non_importable_details: Vec<NonImportableExample>,
+    facade_catalog_entries: usize,
+    enabled_facades: usize,
+    facade_diagnostics: Vec<String>,
     discovered_study_types: Vec<String>,
     contract_checks: ContractChecks,
     representative_runs: Vec<RunReport>,
@@ -45,6 +48,7 @@ struct NonImportableExample {
 #[serde(rename_all = "camelCase")]
 struct ContractChecks {
     static_model_import: bool,
+    static_import_dataframes: usize,
     single_solve_model_import: bool,
     named_parquet_input: bool,
     result_dir: bool,
@@ -269,6 +273,7 @@ async fn verify_expr_df(
 
     ContractChecks {
         static_model_import,
+        static_import_dataframes: 21,
         single_solve_model_import,
         named_parquet_input: true,
         result_dir: true,
@@ -280,23 +285,40 @@ async fn verify_expr_df(
     }
 }
 
-fn representative_examples(examples: &[EngineExample]) -> Vec<&EngineExample> {
-    let mut selected = Vec::new();
-    for study_type in [
-        "execution_plan",
-        "static_power_flow",
-        "fault_study",
-        "harmonic",
-    ] {
-        if let Some(example) = examples.iter().find(|example| {
-            example.importable
-                && example
-                    .manifest
-                    .as_ref()
-                    .is_some_and(|manifest| manifest.study.kind == study_type)
-        }) {
-            selected.push(example);
-        }
+fn representative_examples(
+    examples: &[EngineExample],
+) -> std::collections::BTreeMap<&str, Vec<&EngineExample>> {
+    let discovered = examples
+        .iter()
+        .filter_map(|example| {
+            example
+                .manifest
+                .as_ref()
+                .map(|manifest| manifest.study.kind.as_str())
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut selected = std::collections::BTreeMap::<_, Vec<_>>::new();
+    for example in examples.iter().filter(|example| example.importable) {
+        let Some(manifest) = example.manifest.as_ref() else {
+            continue;
+        };
+        selected
+            .entry(manifest.study.kind.as_str())
+            .or_default()
+            .push(example);
+    }
+    let missing = discovered
+        .iter()
+        .filter(|study_type| !selected.contains_key(**study_type))
+        .copied()
+        .collect::<Vec<_>>();
+    assert!(
+        missing.is_empty(),
+        "release_engine_study_family_without_importable_example:{}",
+        missing.join(",")
+    );
+    for candidates in selected.values_mut() {
+        candidates.sort_by_key(|example| (example.size_bytes, example.file_count, &example.id));
     }
     selected
 }
@@ -414,6 +436,26 @@ async fn real_engine_imports_all_examples_and_runs_representative_studies() {
         .filter(|example| example.importable)
         .count();
     let non_importable_examples = bundle_examples - importable_examples;
+    let facade_catalog_entries = snapshot.facades.catalog_entry_count();
+    let enabled_facades = snapshot.facades.enabled_count();
+    let facade_diagnostics = snapshot
+        .facades
+        .diagnostics()
+        .into_iter()
+        .map(|diagnostic| diagnostic.code.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        facade_catalog_entries > 0,
+        "release_engine_facade_catalog_empty"
+    );
+    assert_eq!(
+        enabled_facades, facade_catalog_entries,
+        "release_engine_facade_disabled"
+    );
+    assert!(
+        facade_diagnostics.is_empty(),
+        "release_engine_facade_diagnostics"
+    );
     assert!(importable_examples > 0, "release_engine_importable_empty");
     let importable = import_all_examples(&snapshot, &temp.path().join("imports"));
     assert_eq!(
@@ -444,10 +486,18 @@ async fn real_engine_imports_all_examples_and_runs_representative_studies() {
         .into_iter()
         .collect::<Vec<_>>();
     let mut representative_runs = Vec::new();
-    for example in cases {
-        let study_type = &example.manifest.as_ref().unwrap().study.kind;
-        representative_runs
-            .push(run_representative(&engine, &snapshot, example, study_type, temp.path()).await);
+    for (study_type, candidates) in cases {
+        let mut representative = None;
+        for example in candidates {
+            let run =
+                run_representative(&engine, &snapshot, example, study_type, temp.path()).await;
+            let success = run.success;
+            representative = Some(run);
+            if success {
+                break;
+            }
+        }
+        representative_runs.push(representative.expect("study family has importable candidates"));
     }
 
     let report = ReleaseReport {
@@ -467,6 +517,9 @@ async fn real_engine_imports_all_examples_and_runs_representative_studies() {
                 diagnostics: example.diagnostics.clone(),
             })
             .collect(),
+        facade_catalog_entries,
+        enabled_facades,
+        facade_diagnostics,
         discovered_study_types,
         contract_checks,
         representative_runs,

@@ -1,10 +1,11 @@
-# V3 部署与发布
+# V4 部署与发布
 
 ## Empty database cutover
 
-V3 不读取前两个未上线版本。部署前停止旧进程，备份后删除旧 SQLite 与 DATA_DIR，从空目录执行唯一 initial
-migration。`backend/resources/init_users.csv` 必须为 `ID,NAME`；初始密码等于 ID。种子 SHA-256 变化会让已有库
-启动失败，此时必须再次同时重置数据库和 DATA_DIR。
+V4 不迁移或兼容任何旧数据库。切换前停止服务，备份后同时移走旧 SQLite 文件和整个 `DATA_DIR`，再从空目录
+执行唯一 initial migration；只删除其中一项会留下无法解释的 artifact 或元数据，禁止启动。确认新版本稳定前保留备份，
+但不能把旧库或旧 artifact 混入 V4 目录。`backend/resources/init_users.csv` 必须为 `ID,NAME`；初始密码等于 ID。
+种子 SHA-256 变化会让已有库启动失败，此时也必须再次同时重置数据库和 `DATA_DIR`。
 
 ## Required configuration
 
@@ -14,6 +15,24 @@ binary 必须支持命名 Parquet input、`--result-dir`、`--output-format parq
 语法不由 zjudss 静态校验。资源目录必须包含受支持 schema 的 catalog、可安全读取的文档与案例。启动从当前目录动态计算资源
 snapshot，不固定 eig-rs/sparrowzz commit、binary SHA、资源 hash 或案例数量。生产没有 stub 回退，也不会自动
 checkout、pull、reset、clean、构建或改写配置的 eig-rs 工作树。
+
+应用配置及默认值如下；`TENSOREVAL_BIN`、`SPARROWZZ_DIR`、LLM secret 没有生产回退值。
+
+| 变量 | 默认值 |
+|---|---:|
+| `BIND_ADDR` | `127.0.0.1:8080` |
+| `DATABASE_URL` | `sqlite://backend.db` |
+| `DATA_DIR` | `data` |
+| `AGENT_BUNDLE_VERSION` | `v4.0.0` |
+| `SESSION_TTL_DAYS` / `SESSION_COOKIE_SECURE` | `30` / `false` |
+| `AGENT_MAX_CONCURRENT_RUNS` / `AGENT_MAX_USER_RUNS` / `AGENT_QUEUE_CAPACITY` | `8` / `2` / `32` |
+| `TENSOREVAL_TIMEOUT_MS` / `AGENT_MODEL_RETRY_MAX` | `120000` / `2` |
+| `SCRIPT_REPAIR_MAX_ATTEMPTS` / `SCRIPT_REPAIR_STDERR_MAX_BYTES` | `3` / `65536` |
+| `ENGINE_PROCESS_OUTPUT_MAX_BYTES` | `1048576` |
+| `UPLOAD_SINGLE_FILE_LIMIT_BYTES` / `UPLOAD_BATCH_LIMIT_BYTES` / `UPLOAD_STAGING_TTL_HOURS` | `52428800` / `524288000` / `24` |
+| `ARCHIVE_MAX_ENTRIES` / `ARCHIVE_MAX_EXPANDED_BYTES` / `ARCHIVE_MAX_COMPRESSION_RATIO` | `1000` / `2147483648` / `100` |
+| `USER_ARTIFACT_LIMIT` / `USER_STORAGE_LIMIT_BYTES` / `STORAGE_WARNING_RATIO` | `20000` / `21474836480` / `0.8` |
+| `RESULT_MAX_FILES` / `RESULT_MAX_FILE_BYTES` / `RESULT_MAX_TOTAL_BYTES` | `100` / `536870912` / `2147483648` |
 
 `SPARROWZZ_DIR` 直接指向 `eig-rs/sparrowzz`；案例根固定为 `SPARROWZZ_DIR/dss/rssbundle`。候选资源必须让每个案例以直接包含
 `manifest.json` 的 `.rssbundle` 目录发布；中间目录只用于分类。manifest 声明的入口和 files 必须是 bundle 内安全
@@ -32,7 +51,12 @@ checkout、pull、reset、clean、构建或改写配置的 eig-rs 工作树。
 SESSION_COOKIE_SECURE=true
 ```
 
-Cookie 固定 HttpOnly、SameSite=Lax、Path=/。当前相同 ID/密码约定仅用于已批准的第三版试用，不应宣称安全。
+Cookie 固定 HttpOnly、SameSite=Lax、Path=/。当前相同 ID/密码约定仅用于已批准的试用环境，不应宣称安全。
+
+旧环境变量 `OWNER_ARTIFACT_LIMIT`、`OWNER_STORAGE_LIMIT_BYTES`、`AGENT_MAX_OWNER_RUNS` 会被启动配置明确拒绝。
+V4 只接受 `USER_ARTIFACT_LIMIT`、`USER_STORAGE_LIMIT_BYTES`、`AGENT_MAX_USER_RUNS`。其他默认值和完整模板以
+`backend/.env.example` 为准；生产至少显式设置 `DATABASE_URL`、`DATA_DIR`、`TENSOREVAL_BIN`、
+`SPARROWZZ_DIR`、`DEEPSEEK_API_KEY` 和 `SESSION_COOKIE_SECURE=true`。
 
 ## Build and start
 
@@ -107,14 +131,24 @@ git diff --check
 ./scripts/check-functional-coverage --require-release
 ```
 
-真实旅程从固定用户登录开始，导入直接 DataFrame、确认草稿、显式生成版本、让 Agent 创建脚本、确认没有自动
-运行、点击运行两次、执行结果分析和运行比较，再删除一个来源结果并验证运行及物化派生仍可读取。引擎门禁
+真实旅程从固定用户登录开始，上传 21 个静态导入 DataFrame 并确认拆分为 20 张模型表和一个 `para` 普通资源，
+显式生成版本，让对话 Agent 通过动态目录建立研究配置，用户确认后由 ScriptAuthor 生成、执行并在需要时修正脚本；
+成功后再次点击脚本“运行”，对 list 型 `bus_voltage` 做真实 `select` 结果分析，并用带稳定键和标量数值列的
+`load_state` 验证运行比较，再删除一个来源结果并验证运行及物化派生仍可读取。引擎门禁
 另外真实执行两种 import profile、命名 input、多个 Snappy Parquet 输出和失败诊断。报告保存测试 ID、Agent
 bundle hash、用户 seed hash/数量、engine contract/checks 和 binary hash，不保存用户 ID、密码、Cookie、secret
 或物理路径；同时记录动态 `engineResourceSnapshot`、rssbundle 发现/可导入/不可导入数量、发现的 study 类型与代表
 运行。binary hash 和 snapshot 是本次证据，不是接收门槛。真实门禁要求至少一个 rssbundle 和一个可导入案例，
-并为当前存在的 `execution_plan`、`static_power_flow`、`fault_study`、`harmonic` 类型各运行一个可导入代表；不
-断言精确案例数。个别坏案例以脱敏诊断报告，不阻断其他案例。
+要求动态门面 `enabled_count == catalog_entry_count` 且零诊断，并为当前存在的 study family 各运行一个代表合同；
+不写死门面数或案例数。个别坏案例可以在案例报告中保留脱敏诊断；当前真实门面目录的任何诊断都会让候选发布失败。
+
+结果验收按逻辑 Arrow 类型族处理字符串和 list/matrix，非空合同通过实际值扫描证明；缺失 unit 元数据允许通过，但
+存在且冲突的 unit 必须拒绝。该规则用于适配真实 tensoreval 的 `Utf8View`、`LargeList` 和物理 nullable 表示，不会
+放宽列名、顺序、元素类型或实际 null。
+
+服务重启会恢复未完成上传和受管 workflow；可安全继续的工作进入队列，无法继续的执行收敛为稳定终态。每次启动只读取
+当前 `SPARROWZZ_DIR` 并发布新的不可变 snapshot；运行中的历史继续引用旧 snapshot。资源树变化后必须重启，单独替换
+`TENSOREVAL_BIN` 则由下一次 adapter 调用直接读取当前普通文件。
 
 ## Failure handling
 

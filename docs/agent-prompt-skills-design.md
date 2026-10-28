@@ -11,6 +11,10 @@ engine contract、允许工具和文件 SHA-256；启动时完整验证。Agent 
 `troubleshooting`。结果分析和比较要求先加载对应 skill；实际引用保存在资源/运行/
 分析快照中。
 
+`result-analysis` 明确要求每条 RSS 声明以分号结束，右侧必须是返回 DataFrame 的函数调用；完整复制也要根据实际
+schema 使用 `select(col(...), source)`，不能生成 `derived = source` 这类 alias 直赋值。用户在同一条消息中要求先读
+schema 再执行分析时，Agent 必须在读取后继续调用 `run_result_analysis`，不能只汇报 schema 后结束本轮。
+
 ## Tool authority
 
 当前运行时允许工具共 22 个：
@@ -34,7 +38,11 @@ draft、读取运行/结果并创建派生分析或比较。规划或分析普�
 发布/激活/删除版本、删除结果、创建脚本或创建运行。`prepare_study` 成功即表示本轮配置准备完成；后续 provider
 收尾失败不会用通用错误覆盖已持久化的配置卡。
 
-研究请求遵循 `load study-planning -> inspect_workspace -> search_study_facades -> prepare_study`。显式函数名优先，目录搜索不会根据网络拓扑改写用户选择；候选不唯一时 Agent 展示 `differences`，禁用门面显示合同诊断。`prepare_study` 创建持久化配置卡，由服务端按门面动态展开实际 model/Data/Struct/结果输入。多个兼容资源不能猜选，同门面历史 Struct 只形成复用建议。配置卡未最终确认前，Agent 不得生成或运行受管脚本。旧 `plan_study` 工具及请求内 plan ID 已从运行时删除。
+研究请求遵循 `load study-planning -> inspect_workspace -> search_study_facades -> prepare_study`。只有用户原文包含完整
+`ds_...` 标识时才传 `explicitFunction`；Newton/牛顿法等算法名称保留在自然语言 `query`，目录搜索按核心字段与差异
+相关度返回最匹配门面，不会根据网络拓扑改写用户选择。候选不唯一时 Agent 展示 `differences`，禁用门面显示合同诊断。
+`prepare_study` 创建持久化配置卡，由服务端按门面动态展开实际 model/Data/Struct/结果输入。多个兼容资源不能猜选，
+同门面历史 Struct 只形成复用建议。配置卡未最终确认前，Agent 不得生成或运行受管脚本；运行时不存在绕过配置卡的旧规划或聊天脚本创建权限。
 
 模型修改遵循 `inspect_workspace -> read_model_dataframe -> modify_model`。`read_model_dataframe` 只在加载
 `model-intake` skill 后可用，scope 只能是 active 或携带准确 expected draft 的 draft；查询只允许表名、最多

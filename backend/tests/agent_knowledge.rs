@@ -64,6 +64,12 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     assert_eq!(study_skill.metadata.version, "1.3.0");
     let study_planning = &study_skill.content;
     assert!(study_planning.contains("search_study_facades"));
+    assert!(study_planning.contains("只有用户原文包含目录中的完整函数标识"));
+    assert!(study_planning.contains("算法名称（如 Newton/牛顿法）"));
+    let result_analysis = knowledge.skill("result-analysis").unwrap().content.as_str();
+    assert!(result_analysis.contains("右侧必须是返回 DataFrame 的函数调用"));
+    assert!(result_analysis.contains("分号"));
+    assert!(result_analysis.contains("必须继续调用 `run_result_analysis`"));
     assert!(study_planning.contains("prepare_study"));
     assert!(study_planning.contains("explicitFunction"));
     assert!(study_planning.contains("多个资源时必须由用户选择"));
@@ -73,6 +79,11 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     assert!(!study_planning.contains("bus, line, linecode"));
     assert!(knowledge.system_prompt.contains("inspect_workspace"));
     assert!(knowledge.system_prompt.contains("search_study_facades"));
+    assert!(
+        knowledge
+            .system_prompt
+            .contains("只有用户原文包含完整的 `ds_...` 函数标识")
+    );
     assert!(knowledge.system_prompt.contains("prepare_study"));
     assert!(knowledge.system_prompt.contains("确认并生成脚本"));
     assert!(!knowledge.system_prompt.contains("plan_study"));

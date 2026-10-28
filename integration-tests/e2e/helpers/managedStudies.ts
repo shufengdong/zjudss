@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import type { APIRequestContext, Page } from '@playwright/test'
+import type { APIRequestContext, Locator, Page } from '@playwright/test'
 import { expect } from '../fixtures'
 import type { ControlClient } from './control'
 import { send } from './journeys'
@@ -13,6 +13,21 @@ export const newtonScript = `[bus_voltage] = ds_newton_raphson_pf(
     generator, ibr, switch, shunt, capacitor, reactor, spectrum,
     control_profile, xy_curve, storage, para
 );`
+
+export async function settleNewtonConfiguration(page: Page, configuration: Locator) {
+  const confirmConfiguration = configuration.getByRole('button', { name: '确认并生成脚本' })
+  const confirmParameters = configuration.getByRole('button', { name: '确认参数' })
+  await expect.poll(async () => await confirmConfiguration.isVisible() || await confirmParameters.isVisible()).toBe(true)
+  if (!await confirmConfiguration.isVisible()) {
+    const frequency = configuration.getByLabel(/base_frequency_hz/)
+    if (await frequency.isVisible() && await frequency.inputValue() === '') await frequency.fill('50')
+    const response = page.waitForResponse(candidate => candidate.request().method() === 'PUT'
+      && /\/api\/study-configurations\/\d+\/structs\//.test(new URL(candidate.url()).pathname))
+    await confirmParameters.click()
+    expect((await response).ok()).toBe(true)
+  }
+  await expect(confirmConfiguration).toBeVisible()
+}
 
 export async function publishExampleModel(page: Page, api: APIRequestContext, sessionId: string) {
   await page.locator('input[type=file]').nth(1).setInputFiles(resolve(fixtures, 'bundle/demo.rssbundle'))
@@ -43,17 +58,7 @@ export async function prepareNewtonStudy(page: Page, api: APIRequestContext, ses
   const configuration = page.getByRole('article', { name: '研究配置卡' }).last()
   const snapshot = await (await api.get(`/api/sessions/${sessionId}/messages`)).json() as { messages: Array<{ type: string; card?: { configurationId?: string } }> }
   await expect(configuration, JSON.stringify(snapshot, null, 2)).toContainText('牛顿-拉夫逊潮流')
-  const confirmParameters = configuration.getByRole('button', { name: '确认参数' })
-  if (await confirmParameters.isVisible()) {
-    await confirmParameters.click()
-  }
-  const confirmConfiguration = configuration.getByRole('button', { name: '确认并生成脚本' })
-  const confirmResults = configuration.getByRole('button', { name: '确认结果' })
-  await expect.poll(async () => await confirmConfiguration.isVisible() || await confirmResults.isEnabled()).toBe(true)
-  if (!await confirmConfiguration.isVisible()) {
-    await confirmResults.click()
-  }
-  await expect(confirmConfiguration).toBeVisible()
+  await settleNewtonConfiguration(page, configuration)
   const message = [...snapshot.messages].reverse().find(item => item.type === 'study-config' && item.card?.configurationId)
   expect(message?.card?.configurationId).toBeTruthy()
   return { card: configuration, id: message!.card!.configurationId! }

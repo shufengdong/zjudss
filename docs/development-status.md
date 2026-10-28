@@ -1,4 +1,4 @@
-# V4 开发状态（实施中）
+# V4 开发状态
 
 > V4 规划：负荷预测等辅助 DataFrame 将使用独立数据资源库，不再进入模型版本；V4 从空数据库建立，
 > 不迁移或兼容 V3 持久化数据。已确认需求见
@@ -7,8 +7,8 @@
 > [`2026-10-27-v4-independent-data-resources-managed-studies.md`](superpowers/plans/2026-10-27-v4-independent-data-resources-managed-studies.md)。
 > 当前 eig-rs 已提供全部门面的完整传递输入、Struct 参数卡和结果 schema，外部机器合同门禁已经满足。V4 Task 1
 > 的空库持久化合同、Task 2 的动态研究门面目录、Task 3 的有界进程执行边界、Task 4 的可恢复统一上传批次和
-> Task 5 的独立数据资源发布/管理、Task 6 的目录驱动研究配置、Task 7 的 durable 工作流消息、历史锚定与会话删除合同、Task 8 的 V4 对话 Agent bundle、Task 9 的受管工作流持久状态机、Task 10 的生成/执行/自动修正、Task 11 的脚本重跑、失败重试和运行删除、Task 12 的统一上传与数据文件工作台，以及 Task 13 的研究确认与受管执行前端已经实现。
-> 本文未明确标为 V4 已完成的其余内容仍描述进入 V4 前已验证的 V3 产品行为。
+> Task 5 的独立数据资源发布/管理、Task 6 的目录驱动研究配置、Task 7 的 durable 工作流消息、历史锚定与会话删除合同、Task 8 的 V4 对话 Agent bundle、Task 9 的受管工作流持久状态机、Task 10 的生成/执行/自动修正、Task 11 的脚本重跑、失败重试和运行删除、Task 12 的统一上传与数据文件工作台、Task 13 的研究确认与受管执行前端、Task 14 的确定性全链路验收，以及 Task 15 的真实依赖发布门禁已经实现。
+> 当前运行合同已经切换到 V4；历史 plans/spec 仅保留实施记录。
 
 ## V4 implementation progress
 
@@ -24,18 +24,19 @@
 | Task 10：脚本生成、执行与自动修正 | complete | 结构合同检查、冻结输入树、共享调度与会话取消、tensoreval 立即执行、3 次修正/4 次执行上限、64 KiB 脱敏诊断、精确结果合同、独占原子结果发布与崩溃孤儿回收 |
 | Task 11：脚本重跑、失败重试与运行删除 | complete | 最新所需输入冻结、开放/精确结果合同、派生 retry workflow、输入差异确认、run/result 原子 tombstone、artifact 引用释放 |
 | Task 7：durable 消息、历史锚定与会话删除 | complete | 3 种 revisioned 操作卡、`messageId:revision` SSE、连续 around window、影响 token 删除与统一取消 |
-| Task 8：V4 Agent bundle 与受控工具 | complete | `v4.0.0`、5 个按需 skills、22 个对话工具、无 `create_script`/`plan_study` 权限 |
-| Task 12：统一上传与数据文件工作台 | complete | 旧 model-import 前端已移除、durable batch 恢复、用途/隐藏 sheet/双子事务确认、资源分页预览/下载/删除/replacement、模型版本描述 |
+| Task 8：V4 Agent bundle 与受控工具 | complete | `v4.0.0`、5 个按需 skills、22 个对话工具、无聊天脚本创建或旧规划权限 |
+| Task 12：统一上传与数据文件工作台 | complete | 旧模型导入前端已移除、durable batch 恢复、用途/隐藏 sheet/双子事务确认、资源分页预览/下载/删除/replacement、模型版本描述 |
 | Task 13：研究确认与受管执行前端 | complete | 对话内完整上传/配置卡、目录类型参数、revision stale 刷新、attempt/取消/失败重试、精确脚本定位、run 删除影响确认 |
-| Tasks 14–15 | planned | 以 V4 实施计划为准 |
+| Task 14：确定性全链路测试与功能追溯 | complete | 29 条 Playwright 旅程；326/326 功能证据、274/274 公共合同、PR 覆盖 100% |
+| Task 15：文档、真实依赖门禁与发布切换 | complete | V4 当前文档与空库部署合同；动态真实引擎门禁；固定用户登录、DeepSeek 规划、受管执行/重跑、分析、比较和删除语义旅程 |
 
-旧 `/model-imports` 前端协议和“确认合并”界面已经移除，不提供兼容层。现有旧版 Playwright 旅程将在 Task 14
-统一替换为 V4 upload batch、数据资源和受管研究全链路旅程。
+旧模型导入前端协议和旧确认界面已经移除，不提供兼容层。Playwright 已统一使用 V4 upload batch、
+数据资源和受管研究全链路旅程。
 
 ## Current release
 
-第三版已直接替换前两个未上线版本。当前产品合同是 DataFrame 模型、独立 RSS 脚本、用户显式运行和可删除的
-单个结果；数据库只支持空库初始化，不存在旧协议兼容层。
+V4 已直接替换未上线的旧版本。当前产品合同是模型版本、独立 Data/Struct 资源、目录驱动研究配置、确认后受管
+生成/执行/修正，以及可再次运行和删除的脚本结果；数据库只支持空库初始化，不存在旧协议兼容层。
 
 | Area | Status | Evidence |
 |---|---|---|
@@ -48,7 +49,7 @@
 | 结果与派生 | complete | 单结果删除、分析、物化视图、比较、tombstone 血缘 |
 | 前端 | complete | 三列/窄屏、运行摘要与失败原因/耗时/全结果选择、结果数据表/图表、active/draft/历史模型表只读工作台、登录用户菜单 |
 | Agent bundle | complete | V4 `v4.0.0`、22 个受控工具；`search_study_facades`/`prepare_study` 准备配置卡，对话 Agent 无通用脚本创建权限 |
-| 发布门禁 | complete | deterministic Rust/Vitest/build/Playwright/coverage；真实依赖另行执行 |
+| 发布门禁 | complete | deterministic Rust/Vitest/build/Playwright/coverage；真实 eig-rs/tensoreval 与 DeepSeek 候选门禁 |
 
 ## Runtime contracts
 
@@ -67,7 +68,7 @@
   `prepare_study` 持久化 revisioned 配置卡。model 输入仅绑定 active 的实际门面表，Struct/Data 绑定普通资源，
   多资源必须选择，列映射发布带血缘的新 Parquet 资源。结果集合按 fixed/minimum/conditional 目录约束校验。
   `prepare_confirmation` 重新检查 revision、snapshot、门面 hash、active 模型和资源内容，生成 Task 9 原子事务使用的
-  locked contract/input snapshot/replacement commands；confirm 公共路由原子创建受管 workflow 与 provisional run，并由无工具 ScriptAuthor 生成候选。候选先经过只证明冻结函数、alias 顺序和结果绑定未变化的结构合同检查，再通过统一 adapter 调用 tensoreval。非零退出或可修正的结果限制/合同错误最多修正 3 次；超时、监控、路径、配额和基础设施错误立即失败。成功仅在全部结果名称和 Snappy Parquet schema 精确匹配后原子发布。
+  locked contract/input snapshot/replacement commands；confirm 公共路由原子创建受管 workflow 与 provisional run，并由无工具 ScriptAuthor 生成候选。候选先经过只证明冻结函数、alias 顺序和结果绑定未变化的结构合同检查，再通过统一 adapter 调用 tensoreval。非零退出或可修正的结果限制/合同错误最多修正 3 次；超时、监控、路径、配额和基础设施错误立即失败。成功仅在全部结果名称、列顺序、逻辑 dtype、实际非空值和可用 unit 元数据满足 Snappy Parquet 结果合同时原子发布。
 - 模型表读取：active、准确 draft revision 和历史版本均支持元数据、分页投影与 Parquet 下载；Agent 可通过
   有界等值查询读取实际行后再修改，读取不改变模型生命周期。
 
@@ -113,7 +114,7 @@ Markdown、单篇 4 MiB、文档合计 64 MiB、2,048 个案例、每案例 10,0
 
 `init_users.csv` 是编译输入，密码初始等于 ID。CSV 字节变化后启动会返回
 `user_seed_mismatch_reset_required`；必须同时重置 SQLite 与 DATA_DIR。公网可访问配置见
-`docs/v3-deployment.md`，当前用户密码策略是已接受的试用风险。
+`docs/v4-deployment.md`，当前用户密码策略是已接受的试用风险。
 
 ## Verification
 
@@ -125,5 +126,6 @@ Vite/Axum/SQLite/CAS 的身份、导入、分层案例目录与窄屏详情、�
 研究配置合同由 `backend/tests/study_configurations.rs` 覆盖：显式 Newton、目录动态模型输入、保护模型范围、独立
 `para`、多资源不猜选、Struct replacement intent、revision/用户隔离、无提前 confirm 路由及受控列映射发布。
 
-当前后端基线通过 `cargo fmt --all -- --check`、
-`cargo clippy --all-targets --all-features -- -D warnings` 及 `cargo test --features e2e-test`。
+当前确定性基线通过 `cargo fmt --all -- --check`、`cargo clippy --all-targets --all-features -- -D warnings`、
+`cargo test --features e2e-test`、Vitest、生产构建、29 条 Playwright 旅程及 100% PR 功能追溯；候选门禁另以真实
+DeepSeek、当前 eig-rs/tensoreval、动态门面与案例快照完成规划、执行、分析、比较和删除全旅程。
