@@ -5,8 +5,11 @@ import {
   getModelDataFrame,
   getModelDataFrameRows,
   login,
+  listDataResources,
   previewSessionDeletion,
+  publishDraft,
   request,
+  uploadBatchFiles,
 } from './client'
 import type { ModelDataFrameSource } from '../types'
 
@@ -104,5 +107,33 @@ describe('model dataframe requests', () => {
       '/api/draft-dataframes/12/rows?draftId=8&expectedDraftRevision=3&limit=2&columns=id',
       '/api/draft-dataframes/12/download?draftId=8&expectedDraftRevision=3',
     ])
+  })
+})
+
+describe('V4 upload and resource requests', () => {
+  it('sends only the unified multipart fields accepted by the backend', async () => {
+    const response = { uploadBatch: { id: 'batch-1' } }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(response), { status: 202 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const file = new File(['id\n1'], 'data.csv')
+    await uploadBatchFiles('7', 'client-1', [{ id: 'file-1', file, relativePath: 'folder/data.csv' }])
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/sessions/7/upload-batches')
+    expect(init.method).toBe('POST')
+    const form = init.body as FormData
+    expect(Array.from(form.keys())).toEqual(['clientBatchId', 'file.file-1', 'relativePaths'])
+    expect(form.get('clientBatchId')).toBe('client-1')
+    expect(JSON.parse(String(form.get('relativePaths')))).toEqual({ 'file-1': 'folder/data.csv' })
+  })
+
+  it('keeps opaque resource cursors and publishes the optional version description', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ resources: [], nextCursor: null }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ version: { id: 'v' }, deduplicated: false, replayed: false }), { status: 201 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await listDataResources('9', { cursor: 'opaque cursor', limit: 50 })
+    await publishDraft('9', { id: '4', revision: 3 }, 'publish-1', '牛顿法基线')
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/sessions/9/data-resources?cursor=opaque+cursor&limit=50')
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({ expectedDraftId: 4, expectedDraftRevision: 3, clientPublishId: 'publish-1', description: '牛顿法基线' })
   })
 })

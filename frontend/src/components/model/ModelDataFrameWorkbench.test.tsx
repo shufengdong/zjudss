@@ -32,7 +32,7 @@ describe('ModelDataFrameWorkbench', () => {
 
   it('reloads the workspace and relocates the same draft table after conflict', async () => {
     vi.mocked(useModelDataFrame).mockReturnValue(loaded(true))
-    const next: Workspace = { id: 'w', sessionId: 's', active: null, activeModelImports: [], draft: { id: 'd2', workspaceId: 'w', baseVersionId: null, revision: 3, diagnostics: {}, createdAt: 'x', updatedAt: 'x', tables: [{ id: 'f2', tableName: 'bus', artifactId: 'a', schema: [], rowCount: 1, contentHash: 'h' }] } }
+    const next: Workspace = { id: 'w', sessionId: 's', active: null, draft: { id: 'd2', workspaceId: 'w', baseVersionId: null, revision: 3, diagnostics: {}, createdAt: 'x', updatedAt: 'x', tables: [{ id: 'f2', tableName: 'bus', artifactId: 'a', schema: [], rowCount: 1, contentHash: 'h' }] } }
     const change = vi.fn()
     render(<ModelDataFrameWorkbench source={source} onClose={vi.fn()} onSourceChange={change} reloadWorkspace={vi.fn().mockResolvedValue(next)} notify={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: '重新加载最新修订' }))
@@ -41,7 +41,7 @@ describe('ModelDataFrameWorkbench', () => {
 
   it('closes with a notice when the conflicted draft table disappeared', async () => {
     vi.mocked(useModelDataFrame).mockReturnValue(loaded(true))
-    const next: Workspace = { id: 'w', sessionId: 's', active: null, draft: null, activeModelImports: [] }
+    const next: Workspace = { id: 'w', sessionId: 's', active: null, draft: null }
     const close = vi.fn(), notify = vi.fn()
     render(<ModelDataFrameWorkbench source={source} onClose={close} onSourceChange={vi.fn()} reloadWorkspace={vi.fn().mockResolvedValue(next)} notify={notify} />)
     fireEvent.click(screen.getByRole('button', { name: '重新加载最新修订' }))

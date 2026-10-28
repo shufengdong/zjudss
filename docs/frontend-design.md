@@ -1,9 +1,7 @@
-# 前端设计（V4 迁移中）
+# 前端设计（V4 实施中）
 
-> 以下界面仍是进入 V4 前的 V3 基线。后端 Task 4 已切换到统一 upload batch 协议，现有前端导入卡尚未迁移，
-> 由 Task 12 一次完成统一上传交互和数据文件工作台；在 Task 12 完成前不把本节描述当作当前可联调合同。
-> V4 将在右侧工作台新增持久的“数据文件”入口，并增加研究确认卡、运行删除及运行到历史脚本
-> 的精确定位，用于负荷预测等不参与模型版本管理的 DataFrame；需求见
+> 右侧工作台已经使用 V4 统一上传和独立数据资源协议。研究确认卡、受管进度以及运行到历史脚本
+> 的精确定位由后续任务接入；独立资源需求见
 > [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)。
 
 ## Layout
@@ -17,14 +15,28 @@
 ## Upload routing
 
 Composer 固定按钮支持文件和目录：`.rss` 逐个创建脚本；DSS/bundle/ZIP/CSV/Excel/Parquet 合并为一次
-模型导入；其他扩展名在客户端标记失败。导入卡展示阶段、候选、整表目标与诊断，用户用“确认合并”或“抛弃”
-完成决策。窄屏出现确认项时工作区 drawer 可显式打开。
+统一 upload batch；其他扩展名在客户端标记失败。批次卡展示模型和数据两个子事务状态、候选、sheet、用途与诊断。
+用户显式选择 `model_table|data_resource|skip` 后发布；全选排除隐藏 sheet，部分成功时分别显示两个子事务状态，
+只重试失败的一侧。批次稳定 ID 来自 durable `upload-batch` 消息，刷新后逐项恢复，切换会话立即清空旧队列。
 
 ## Workspace
 
-模型工作区显示当前 active、可变 draft、未决导入和不可变版本历史。只有非空 draft 显示“生成版本”；点击后
-发布并自动激活。激活历史版本遇到 draft 时使用明确确认框放弃草稿。版本删除先读取影响预览，再提交一次性
-impact token。前端不把这些固定动作伪装成聊天消息。
+模型工作区显示当前 active、可变 draft 和不可变版本历史；未决统一上传集中显示在“数据文件”页。只有非空 draft
+显示“生成版本”，并提供最多 200 个 Unicode 字符的可选单行描述。发布后使用服务端响应中的冻结描述刷新列表；
+内容去重时明确显示复用的已有版本及其原描述。失败保留输入，成功或切换会话清空输入。激活历史版本遇到 draft
+时使用明确确认框放弃草稿。版本删除先读取影响预览，再提交一次性 impact token。
+
+## Data resources
+
+右侧“数据文件”页列出当前会话的普通 DataFrame 资源，显示 display name、稳定 alias、schemaRef（若有）、来源、
+行列数、大小、状态和创建信息。`para` 与负荷曲线等资源使用同一列表和生命周期，不进入模型版本。列表用 opaque
+cursor 分页且按稳定资源 ID 去重；迟到的旧会话响应不能覆盖当前页面。
+
+“查看”按稳定资源 ID 打开 cursor 分页表格；规范文件始终可下载，只有 `originalAvailable=true` 时显示原文件入口。
+删除先读取 impact preview，再在命名确认框中展示未确认配置、冻结引用和历史引用，确认后才携 token 删除。
+“重新上传”建立 replacement batch，旧资源在处理期间仍可用；差异确认提供“覆盖当前资源”“另存为新资源”与
+“取消替换”三个动作，终态后刷新 alias owner。当前 snapshot 明确给出 Struct schema 且资源为单行时显示
+“修改参数”，普通表不显示该按钮；实际参数卡由研究确认界面承载。
 
 当前 active 和可变 draft 默认各自收起，摘要分别显示版本或修订号、表格数量和总行数；两个区块独立展开，
 同一会话内 workspace 刷新保留用户选择，切换会话时恢复默认收起。不存在 active 或 draft 时继续显示原空状态，
@@ -90,7 +102,7 @@ ECharts option。比较和物化视图通过稳定 ID 打开。数据分页将 A
 DELETE，确认时携带预览 token，提交期间禁用重复操作。影响已变化时刷新预览后由用户再次确认。删除最后一个会话后建立同样的
 替代会话，保证发送、上传和案例应用都有明确归属。
 会话准备期间不渲染上述主操作；初始化失败显示持久的重试和退出入口，不保留可点击的无效控件。
-workspace、imports、scripts、runs 和 usage 独立加载；切换 session 时清理导入队列，避免旧会话卡片泄漏。401 统一进入登录页，
+workspace、upload batches、data resources、scripts、runs 和 usage 独立加载；切换 session 时清理上传队列和资源页，避免旧会话卡片泄漏。401 统一进入登录页，
 SSE resync 触发有界重载。
 
 ## Accessibility

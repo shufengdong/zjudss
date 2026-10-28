@@ -1,30 +1,29 @@
-# 配电网仿真智能体 V3 架构
+# 配电网仿真智能体 V4 架构
 
-> 本文描述当前 V3。V4 将新增与模型版本分离的数据资源库和受管研究工作流，并以空数据库作为新基线；规划见
+> V4 使用与模型版本分离的数据资源库和受管研究工作流，并以空数据库作为新基线；需求见
 > [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)。
 
 ## Scope
 
-V3 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axum 应用、SQLite 元数据与
+V4 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axum 应用、SQLite 元数据与
 内容寻址 artifact 存储、DeepSeek agent，以及只能经 `backend/src/adapters/` 调用的 tensoreval 组成。
 不存在旧模型/任务协议的迁移、双读或兼容路由。
 
 ## Runtime flow
 
 ```text
-固定用户登录 → 会话 → 模型导入 → 可变草稿 → 用户生成版本并自动激活
-                                           ↓
-上传/Agent 创建 RSS 脚本 → 用户点击运行 → SimulationRun → Snappy Parquet 结果
-                                                        ↓
-                                         分析 / 视图 / 比较（独立物化）
+固定用户登录 → 会话 → 统一上传批次 → 用途确认 ┬→ 模型表 → 可变草稿 → 生成并激活版本
+                                                └→ 普通 Data/Struct 资源
+自然语言研究需求 → 配置卡确认 → 受管脚本生成/执行/修正 → Snappy Parquet 结果
+已成功/手写/上传 RSS 脚本 → 用户点击运行 → 使用最新所需资源 → 新结果
 ```
 
-- `.dss`、DSS 目录、`.dssbundle`、`.rssbundle`、ZIP、CSV、Excel 和 Parquet 进入模型导入流水线。
-- adapter 把模型来源转换成规范命名的 Parquet DataFrame；只有这些 DataFrame 进入草稿和版本。
+- `.dss`、DSS 目录、`.dssbundle`、`.rssbundle`、ZIP、CSV、Excel 和 Parquet 进入统一上传批次；确认前不发布。
+- 每个候选显式选择模型表、普通数据资源或跳过。模型候选进入草稿，Data/Struct 候选成为可替换的独立资源；静态导入的 `para` 属于普通资源。
 - `.rss` 是会话脚本资源，不属于模型版本。创建脚本不会运行；只有脚本卡片“运行”按钮能创建运行。
 - 内置案例只来自 `SPARROWZZ_DIR/dss/rssbundle`。普通目录形成分类，直接包含
   `manifest.json` 的 `.rssbundle` 目录形成案例；`SPARROWZZ_DIR/dss` 其他位置的 `.rss` 不进入案例库。
-- 运行冻结模型内容 hash、脚本 artifact/hash、engine contract 和 Agent 来源信息。
+- 受管工作流冻结确认时的模型、资源、门面、结果合同和 engine snapshot；脚本再次“运行”时按其输入合同解析最新资源。
 - 分析、视图和比较保存输入快照与独立 artifact；来源结果删除后，派生结果通过 tombstone 血缘继续解释。
 
 ## Boundaries
@@ -39,9 +38,9 @@ V3 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axu
 
 ## Consistency and recovery
 
-模型导入在最终确认事务前不改草稿。草稿写入比较 `{id, revision}`；发布和运行使用 client id 幂等。
-服务重启把处理中导入和 queued/running 运行收敛为带 `service_restarted` 诊断的失败态，已提交消息、版本和
-结果保持不变。SSE 先持久化消息再广播，支持 `Last-Event-ID` replay 与 resync。
+统一上传在最终确认前不改草稿或资源库；确认使用相互独立的模型和资源子事务，允许部分成功后只重试失败侧。
+草稿写入比较 `{id, revision}`，发布、确认和运行使用 client id 幂等。服务重启恢复 upload batch 和受管工作流，
+无法继续的执行收敛为带稳定诊断的终态，已提交消息、版本、资源和结果保持不变。SSE 先持久化消息再广播。
 
 引擎资源在启动时从当前 `SPARROWZZ_DIR` 读取并按字节生成 snapshot ID；发布阶段再次校验源 hash，并原子复制
 到 `DATA_DIR/system/engine-resources/<snapshotId>`。案例导入只读取这个不可变发布树。源文件在扫描与发布之间变化、
@@ -50,7 +49,7 @@ V3 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axu
 
 案例扫描显式解析 manifest 的 schema/artifact、入口、study、source、files 和 inputs。单个无效 manifest 仍形成
 带脱敏诊断的不可导入叶节点，不阻断其他案例。应用案例时先验证不可变快照中 `manifest.json` 和
-`manifest.files` 全部哈希，再按该清单进入普通模型导入确认；bundle 内未声明文件不会被读取或暂存。HTTP、前端与
+`manifest.files` 全部哈希，再按该清单进入统一上传用途确认；bundle 内未声明文件不会被读取或暂存。HTTP、前端与
 Agent 工具共享同一规范目录和 manifest 解释结果，并且都不返回物理路径。
 
 ## Backend code organization
@@ -71,4 +70,4 @@ repository 的异步请求路径把 Diesel 同步 SQLite 操作封装在 `spawn_
 ## Capacity and trust
 
 Agent 调度默认实例 8、每用户 2、每会话 1、等待 32；引擎进程默认 4。artifact 配额按固定用户的可信
-storage scope 计费。当前固定用户密码与 ID 相同是已明确接受的第三版试用约束，不代表安全身份方案。
+storage scope 计费。当前固定用户密码与 ID 相同是已明确接受的试用约束，不代表安全身份方案。

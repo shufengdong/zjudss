@@ -1,13 +1,15 @@
-# V3 DataFrame 模型、脚本与运行设计
+# V4 DataFrame 模型、资源、脚本与运行设计
 
 ## Model lifecycle
 
 模型的唯一规范表示是一组 `{tableName, Snappy Parquet artifact, schema, rowCount, contentHash}`。DSS、目录、
-bundle、ZIP 和表格文件只是导入来源；adapter 解析后返回 DataFrame 候选。单个 `.rss` 永远归为脚本。
+bundle、ZIP 和表格文件只是统一上传来源；adapter 解析后返回 DataFrame 候选。单个 `.rss` 永远归为脚本。
+候选必须选择 `model_table|data_resource|skip`；只有模型表进入草稿和版本，`para`、负荷预测等 Data/Struct
+作为普通本地资源按稳定 ID、alias、schema/content hash 和 replacement 血缘管理。
 
-导入首先持久化来源与状态，然后异步检查/规范化。用户选择候选并确认后，服务在同一事务中比较 expected
-draft、创建或复制 draft、按 `tableName` 整表覆盖、revision 增加一次并转移 artifact 引用。放弃、失败和
-应用完成都释放不再需要的 staging 来源。
+上传首先持久化可恢复批次，然后异步检查/规范化。用户选择候选并确认后，模型子事务比较 expected draft、创建或
+复制 draft、按 `tableName` 整表覆盖并推进 revision；资源子事务发布普通资源。两个子事务独立结算，部分成功只
+保留失败侧所需的 staging 引用。放弃、失败和应用完成都幂等释放不再需要的来源。
 
 DSS `Redirect`/`Compile` 依赖相对当前文件进行词法规范化。允许使用 `.`，也允许规范化后仍位于本次私有
 输入树内的 `..`；绝对路径、平台前缀和任何越过输入树根的父目录引用返回 `input_path_invalid`。规范化后的
@@ -33,8 +35,9 @@ artifact 引用。模型表读取不创建 `result_datasets`，不增加 artifac
 
 ## Case library
 
-案例列表只展示可模型化来源。“使用案例”固定按钮以 engine resource snapshot 和稳定 example ID 创建普通
-ModelImport；随后展示相同候选与覆盖预览，必须再次“确认合并”。案例不会自动发布、创建脚本或运行。
+案例列表只展示可导入来源。“使用案例”固定按钮以 engine resource snapshot 和稳定 example ID 创建统一
+upload batch；随后展示 20 张静态模型表和普通 `para` 资源候选，必须确认用途后才发布。案例不会自动生成版本、
+创建脚本或运行。
 
 ## Model mutation
 

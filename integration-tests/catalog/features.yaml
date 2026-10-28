@@ -227,7 +227,7 @@
 
 - id: UPLOAD-001
   source: docs/integration-testing-design.md#coverage-matrix
-  title: V3 upload classification separates model sources from RSS scripts
+  title: V4 upload classification keeps RSS scripts separate from unified DataFrame batches
   layers: [api, adapter]
   lanes: [pr]
   tests:
@@ -255,6 +255,27 @@
   layers: [api, application, adapter, browser]
   lanes: [pr]
   tests:
+    - runner: vitest
+      file: frontend/src/hooks/useUploadBatches.test.ts
+      name: uploads all supported non-RSS files in one unified batch
+    - runner: vitest
+      file: frontend/src/hooks/useUploadBatches.test.ts
+      name: keeps every dependency in an uploaded model directory inside one unified batch
+    - runner: vitest
+      file: frontend/src/hooks/useUploadBatches.test.ts
+      name: recovers durable batch ids and clears them when the session changes
+    - runner: vitest
+      file: frontend/src/hooks/useUploadBatches.test.ts
+      name: adds newly observed durable ids without clearing batches already accepted in the session
+    - runner: vitest
+      file: frontend/src/hooks/useUploadBatches.test.ts
+      name: never includes hidden sheets in select-all
+    - runner: vitest
+      file: frontend/src/hooks/useUploadBatches.test.ts
+      name: reuses the confirmation operation id when the same request is retried after a lost response
+    - runner: vitest
+      file: frontend/src/api/client.test.ts
+      name: sends only the unified multipart fields accepted by the backend
     - runner: playwright
       file: integration-tests/e2e/upload-batches-v4.spec.ts
       name: unified upload publishes and manages independent data resources through public routes
@@ -333,9 +354,27 @@
 - id: DATA-RESOURCE-001
   source: docs/superpowers/specs/2026-10-26-independent-data-resources-design.md#resource-identity-and-naming
   title: Independent DataFrame resources publish, replace, read, analyze, promote, and delete by stable ID
-  layers: [api, application, agent, database]
+  layers: [api, application, agent, database, browser]
   lanes: [pr]
   tests:
+    - runner: vitest
+      file: frontend/src/hooks/useDataResources.test.ts
+      name: isolates resources by session and ignores a late previous response
+    - runner: vitest
+      file: frontend/src/hooks/useDataResources.test.ts
+      name: appends cursor pages without duplicating resources
+    - runner: vitest
+      file: frontend/src/components/resources/DataResourcePanel.test.tsx
+      name: shows para as an ordinary resource and only offers parameter editing for a struct-compatible single row
+    - runner: vitest
+      file: frontend/src/components/resources/DataResourcePanel.test.tsx
+      name: loads deletion impact before requiring explicit confirmation
+    - runner: vitest
+      file: frontend/src/components/resources/DataResourcePanel.test.tsx
+      name: requires one of the three explicit actions for a replacement batch
+    - runner: vitest
+      file: frontend/src/components/resources/DataResourceWorkbench.test.tsx
+      name: reads metadata and appends opaque cursor pages for the stable resource id
     - runner: playwright
       file: integration-tests/e2e/upload-batches-v4.spec.ts
       name: unified upload publishes and manages independent data resources through public routes
@@ -582,6 +621,15 @@
   layers: [api, application, browser]
   lanes: [pr]
   tests:
+    - runner: vitest
+      file: frontend/src/components/workspace/WorkspacePanel.test.tsx
+      name: submits an optional bounded description and displays the persisted version description
+    - runner: vitest
+      file: frontend/src/components/workspace/WorkspacePanel.test.tsx
+      name: reports the original description when identical content reuses a version
+    - runner: vitest
+      file: frontend/src/api/client.test.ts
+      name: keeps opaque resource cursors and publishes the optional version description
     - runner: rust
       file: backend/tests/model_versions.rs
       name: model_version_description_defaults_from_canonical_diff
@@ -591,7 +639,7 @@
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
       name: CSV imports merge by whole table, stale runs are rejected, and history activation/deletion is explicit
-  assertions: [publish requires confirmation, activation is explicit, deletion uses fresh impact token]
+  assertions: [publish accepts an optional bounded description and displays the persisted response, duplicate content preserves the original description, activation is explicit, deletion uses fresh impact token]
   fixtures: [two model versions]
   contracts:
     - "route:GET /api/sessions/{id}/versions"

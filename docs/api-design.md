@@ -1,14 +1,15 @@
 # V4 HTTP 与 SSE API（实施中）
 
-> 本文跟随已实现的 V4 公共接口逐任务更新。Task 7 已实现 revisioned durable message、历史锚定窗口和会话影响预览删除；最终确认/自动执行、运行删除和运行到脚本消息定位接口仍待后续任务实现。已确认的行为边界见
+> 本文跟随已实现的 V4 公共接口更新。Tasks 1–12 的统一上传、独立资源、研究配置、受管执行、重试和删除接口已实现；
+> 对话内完整配置卡和运行到脚本消息定位界面由 Task 13 接入。已确认的行为边界见
 > [`2026-10-26-independent-data-resources-design.md`](superpowers/specs/2026-10-26-independent-data-resources-design.md)；
-> 路由和 DTO 将在实施方案中确定，当前接口表不提前声明未实现能力。
+> 当前接口表只记录已经实现并可验证的能力。
 
 ## Conventions
 
 除 `/health` 与登录外，所有路由要求 HttpOnly 登录 Cookie。ID 出网为字符串，时间为 ISO 8601，字段为
 camelCase。跨用户与不存在资源统一 404。错误响应为
-`{"error":"…","code":"stable_code","details":…}`。上传使用 multipart；模型导入返回 202，运行创建返回
+`{"error":"…","code":"stable_code","details":…}`。上传使用 multipart；upload batch 创建返回 202，运行创建返回
 202（幂等重放为 200）。
 
 ## Routes

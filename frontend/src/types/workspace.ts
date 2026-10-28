@@ -1,8 +1,7 @@
-import type { ModelImport } from './modelImport'
 export interface DataframeTable {id:string;tableName:string;artifactId:string;schema:unknown[];rowCount:number;contentHash:string}
 export interface WorkspaceDraft {id:string;workspaceId:string;baseVersionId:string|null;revision:number;diagnostics:unknown;tables:DataframeTable[];createdAt:string;updatedAt:string}
-export interface ModelVersion {id:string;workspaceId:string;contentHash:string;sourceSummary:unknown;engineContractVersion:string;tables:DataframeTable[];createdAt:string}
-export interface Workspace {id:string;sessionId:string;active:ModelVersion|null;draft:WorkspaceDraft|null;activeModelImports:ModelImport[]}
+export interface ModelVersion {id:string;workspaceId:string;contentHash:string;description:string;sourceSummary:unknown;engineContractVersion:string;tables:DataframeTable[];createdAt:string}
+export interface Workspace {id:string;sessionId:string;active:ModelVersion|null;draft:WorkspaceDraft|null}
 export interface VersionDeletionPreview {impactToken:string;runCount:number;resultCount:number;reclaimableBytes:number;expiresAt:string}
 export interface ExampleManifestFile {path:string;role:string;sha256:string}
 export interface ExampleManifestSummary {
