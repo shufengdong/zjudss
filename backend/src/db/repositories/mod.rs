@@ -33,9 +33,10 @@ pub use managed_workflow::{
 };
 pub use message::MessageRepo;
 pub use result::{DeleteResultError, DeletedResult, LineageRow, ResultRepo, ResultViewRow};
+pub(crate) use run::RunArtifactOutputs;
 pub use run::{
-    CreateRun, CreatedRun, NewRunDataset, RunContext, RunDataset, RunModelFrame, RunRepo,
-    RunRepoError,
+    CreateRun, CreatedRun, NewRunDataset, RunContext, RunDataset, RunDeletionImpact, RunModelFrame,
+    RunRepo, RunRepoError,
 };
 pub use script::ScriptRepo;
 pub use session::{SessionDeletionImpact, SessionRepo};

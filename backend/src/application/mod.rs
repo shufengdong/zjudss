@@ -79,15 +79,17 @@ pub use events::{
 };
 pub use history::{HistoryError, HistoryService};
 pub use managed_workflows::{
-    ConfirmStudyRequest, ManagedWorkflowService, ManagedWorkflowView, WorkflowAttemptSummary,
-    WorkflowError,
+    ConfirmRetryRequest, ConfirmStudyRequest, ManagedWorkflowService, ManagedWorkflowView,
+    RetryPreviewView, RetryStudyRequest, WorkflowAttemptSummary, WorkflowError,
 };
 pub use model_dataframes::{
     DraftReadExpectation, ModelDataFrameQuery, ModelDataFrameQueryResult, ModelDataFrameReadError,
     ModelDataFrameReadService, ModelReadScope,
 };
 pub use model_patch::{ModelChange, ModelMutationError, ModelPatch, ModelPatchService};
-pub use runs::{CreateRunRequest, RunError, RunService, RunSubmission, RunSummary};
+pub use runs::{
+    CreateRunRequest, RunDeletionPreview, RunError, RunService, RunSubmission, RunSummary,
+};
 pub use scheduler::{
     AppError, RunScheduler, RunTicket, SchedulerError, SessionCancellationRegistry,
 };
@@ -612,6 +614,9 @@ impl AppState {
             events: events.clone(),
             session_cancellations: session_cancellations.clone(),
             data_dir: data_dir.clone(),
+            snapshot: engine_snapshot.clone(),
+            engine_timeout: managed_engine_timeout,
+            result_max_file_bytes: managed_result_max_file_bytes,
         });
         let case_import_service = CaseImportService::new(
             engine_snapshot.clone(),
@@ -679,6 +684,7 @@ impl AppState {
             managed_engine_timeout,
             managed_result_max_file_bytes,
             managed_workflow_auto_start,
+            ScriptRepo::new(pool.clone()),
         );
         Self {
             pool,

@@ -55,11 +55,13 @@ V4 创建时只验证名称、UTF-8 和大小，RSS 语法与运行可行性完�
 
 ## Run lifecycle
 
-只有 `POST /api/scripts/{id}/runs`（脚本卡片按钮）创建 SimulationRun。创建事务验证脚本/session、当前 active
-版本和当前输入，并冻结模型/脚本 hash。worker 在私有输入树中按表名物化 DataFrame，调用 adapter
+只有 `POST /api/scripts/{id}/runs`（脚本卡片按钮）创建 SimulationRun。创建事务验证脚本/session，并按脚本类型冻结当前输入：
+成功 Agent 脚本只解析门面实际需要的最新 active 表和资源 alias，manual/upload 脚本使用存在时的全部 active 表及全部 live
+Data resource；没有 active 也允许执行。worker 在私有输入树中按表名物化 DataFrame，调用 adapter
 `RunMode::Dataframe`；adapter 在运行中和退出后验证全部 Snappy Parquet 输出并一次性返回，失败清理整个未发布目录。
 
-运行不可删除。历史版本删除会在 impact token 校验后 tombstone 该版本、绑定运行和原始结果。
+终态运行在 impact token 校验后与全部直接结果原子 tombstone；非终态或任一直接结果被分析消费时拒绝整批删除。历史版本删除
+继续按版本影响规则处理，已完成的派生和提升资源通过冻结血缘保持可读。
 
 ## Results and derived resources
 

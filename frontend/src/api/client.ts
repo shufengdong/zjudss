@@ -76,7 +76,7 @@ export const searchHistory=async(query:string)=>(await request<{items:HistoryHit
 export const listRuns=async(sessionId:string)=>(await request<{runs:SimulationRun[]}>(`/api/sessions/${sessionId}/runs`)).runs
 export const getRun=(id:string)=>request<SimulationRun>(`/api/runs/${id}`)
 export const listRunDatasets=async(id:string)=>(await request<{datasets:DatasetMetadata[]}>(`/api/runs/${id}/datasets`)).datasets
-export const createRun=(scriptId:string,modelVersionId:string,clientRunId:string)=>request<{run:SimulationRun;replayed:boolean}>(`/api/scripts/${scriptId}/runs`,{method:'POST',body:JSON.stringify({modelVersionId,clientRunId})})
+export const createRun=(scriptId:string,clientRunId:string)=>request<{run:SimulationRun;replayed:boolean}>(`/api/scripts/${scriptId}/runs`,{method:'POST',body:JSON.stringify({clientRunId})})
 export const getDataset=(id:string)=>request<DatasetMetadata>(`/api/datasets/${id}`)
 export const getDatasetRows=(id:string,q:{cursor?:string;limit?:number;columns?:string}={})=>request<DatasetPage>(`/api/datasets/${id}/rows${params(q)}`)
 export const getDatasetView=(id:string)=>request<DatasetViewData>(`/api/dataset-views/${id}/data`)

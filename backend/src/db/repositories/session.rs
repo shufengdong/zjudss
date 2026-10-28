@@ -350,6 +350,14 @@ impl SessionRepo {
                        UNION ALL
                        SELECT script_artifact_id FROM simulation_runs WHERE session_id=?1 AND script_artifact_id IS NOT NULL
                        UNION ALL
+                       SELECT CAST(json_extract(j.value,'$.artifactId') AS INTEGER)
+                       FROM simulation_runs r,json_each(r.input_snapshot_json,'$.model.frames') j
+                       WHERE r.session_id=?1 AND json_extract(j.value,'$.artifactId') IS NOT NULL
+                       UNION ALL
+                       SELECT CAST(json_extract(j.value,'$.artifactId') AS INTEGER)
+                       FROM simulation_runs r,json_each(r.input_snapshot_json,'$.resources') j
+                       WHERE r.session_id=?1 AND json_extract(j.value,'$.artifactId') IS NOT NULL
+                       UNION ALL
                        SELECT i.artifact_id FROM workflow_input_snapshots i
                        JOIN managed_workflows w ON w.id=i.workflow_id
                        WHERE w.session_id=?1 AND i.artifact_id IS NOT NULL
@@ -441,9 +449,6 @@ impl SessionRepo {
                 )
                 .bind::<diesel::sql_types::Integer, _>(session_id)
                 .execute(conn)?;
-                diesel::sql_query("DELETE FROM messages WHERE session_id=?1")
-                    .bind::<diesel::sql_types::Integer, _>(session_id)
-                    .execute(conn)?;
                 diesel::sql_query("DELETE FROM result_analysis_runs WHERE session_id=?1")
                     .bind::<diesel::sql_types::Integer, _>(session_id)
                     .execute(conn)?;
@@ -454,6 +459,9 @@ impl SessionRepo {
                     .bind::<diesel::sql_types::Integer, _>(session_id)
                     .execute(conn)?;
                 diesel::sql_query("DELETE FROM simulation_runs WHERE session_id=?1")
+                    .bind::<diesel::sql_types::Integer, _>(session_id)
+                    .execute(conn)?;
+                diesel::sql_query("DELETE FROM messages WHERE session_id=?1")
                     .bind::<diesel::sql_types::Integer, _>(session_id)
                     .execute(conn)?;
                 diesel::sql_query(

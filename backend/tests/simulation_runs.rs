@@ -75,7 +75,6 @@ async fn post_run(
     app: &TestApp,
     cookie: &str,
     script_id: &str,
-    version_id: &str,
     client_id: &str,
 ) -> axum::response::Response {
     app.router
@@ -84,9 +83,7 @@ async fn post_run(
             Request::post(format!("/api/scripts/{script_id}/runs"))
                 .header("cookie", cookie)
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({"modelVersionId":version_id,"clientRunId":client_id}).to_string(),
-                ))
+                .body(Body::from(json!({"clientRunId":client_id}).to_string()))
                 .unwrap(),
         )
         .await
@@ -96,8 +93,8 @@ async fn post_run(
 #[tokio::test]
 async fn deleting_a_session_with_a_completed_run_removes_its_history_and_storage() {
     let app = TestApp::spawn().await;
-    let (user, cookie, session_id, version_id, script_id) = setup(&app).await;
-    let response = post_run(&app, &cookie, &script_id, &version_id, "delete-session-run").await;
+    let (user, cookie, session_id, _version_id, script_id) = setup(&app).await;
+    let response = post_run(&app, &cookie, &script_id, "delete-session-run").await;
     assert_eq!(response.status(), StatusCode::ACCEPTED);
     let value: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
@@ -168,8 +165,8 @@ async fn failed_run_publishes_a_terminal_failed_progress_event() {
     let engine = ScenarioEngine::default();
     engine.enqueue(EngineScenario::RunFailure);
     let app = TestApp::spawn_with_engine(std::sync::Arc::new(engine)).await;
-    let (user, cookie, session_id, version_id, script_id) = setup(&app).await;
-    let response = post_run(&app, &cookie, &script_id, &version_id, "failed-run").await;
+    let (user, cookie, session_id, _version_id, script_id) = setup(&app).await;
+    let response = post_run(&app, &cookie, &script_id, "failed-run").await;
     assert_eq!(response.status(), StatusCode::ACCEPTED);
     let value: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
@@ -254,18 +251,84 @@ async fn failed_run_publishes_a_terminal_failed_progress_event() {
     );
 }
 
+#[cfg(feature = "e2e-test")]
+#[tokio::test]
+async fn empty_result_run_reports_stable_error_and_can_be_deleted_atomically() {
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::Empty);
+    let app = TestApp::spawn_with_engine(std::sync::Arc::new(engine)).await;
+    let (user, cookie, _session_id, _version_id, script_id) = setup(&app).await;
+    let response = post_run(&app, &cookie, &script_id, "empty-result-run").await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    let run_id = value["run"]["id"].as_str().unwrap().parse::<i32>().unwrap();
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let run = app.state.run_service.find(&user, run_id).await.unwrap();
+            if run.status == "failed" {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let detail = app
+        .router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/runs/{run_id}"))
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail.status(), StatusCode::OK);
+    let detail: Value =
+        serde_json::from_slice(&to_bytes(detail.into_body(), 1024 * 1024).await.unwrap()).unwrap();
+    assert_eq!(detail["error"]["code"], "no_result_dataset");
+
+    let preview = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/runs/{run_id}/deletion-preview"))
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), StatusCode::OK);
+    let preview: Value =
+        serde_json::from_slice(&to_bytes(preview.into_body(), 1024 * 1024).await.unwrap()).unwrap();
+    assert_eq!(preview["resultCount"], 0);
+    let token = preview["impactToken"].as_str().unwrap();
+    let deleted = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/runs/{run_id}?impactToken={token}"))
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    assert!(app.state.run_service.find(&user, run_id).await.is_err());
+}
+
 #[tokio::test]
 async fn successful_run_publishes_a_terminal_done_progress_event() {
     let app = TestApp::spawn().await;
-    let (user, cookie, session_id, version_id, script_id) = setup(&app).await;
-    let response = post_run(
-        &app,
-        &cookie,
-        &script_id,
-        &version_id,
-        "successful-progress",
-    )
-    .await;
+    let (user, cookie, session_id, _version_id, script_id) = setup(&app).await;
+    let response = post_run(&app, &cookie, &script_id, "successful-progress").await;
     assert_eq!(response.status(), StatusCode::ACCEPTED);
     let value: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
@@ -318,17 +381,7 @@ async fn only_explicit_click_route_creates_idempotent_frozen_runs_and_results() 
             .is_empty(),
         "creating a script must never auto-run"
     );
-    let mismatch = post_run(&app, &cookie, &script_id, "999999", "race").await;
-    assert_eq!(mismatch.status(), StatusCode::CONFLICT);
-    assert!(
-        app.state
-            .run_service
-            .list(&user, session_id, 50)
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    let response = post_run(&app, &cookie, &script_id, &version_id, "click-one").await;
+    let response = post_run(&app, &cookie, &script_id, "click-one").await;
     assert_eq!(response.status(), StatusCode::ACCEPTED);
     let value: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
@@ -337,7 +390,8 @@ async fn only_explicit_click_route_creates_idempotent_frozen_runs_and_results() 
     assert_eq!(value["run"]["modelVersionId"], version_id);
     assert_eq!(value["run"]["scriptResourceId"], script_id);
     assert_eq!(value["run"]["scriptName"], "flow.rss");
-    let retry = post_run(&app, &cookie, &script_id, &version_id, "click-one").await;
+    assert!(value["run"]["scriptMessageId"].is_string());
+    let retry = post_run(&app, &cookie, &script_id, "click-one").await;
     assert_eq!(retry.status(), StatusCode::OK);
     let retry: Value =
         serde_json::from_slice(&to_bytes(retry.into_body(), 1024 * 1024).await.unwrap()).unwrap();
@@ -423,7 +477,7 @@ async fn only_explicit_click_route_creates_idempotent_frozen_runs_and_results() 
     .unwrap();
     assert_eq!(payload["runId"], run_id);
     assert!(payload.get("taskId").is_none());
-    let second = post_run(&app, &cookie, &script_id, &version_id, "click-two").await;
+    let second = post_run(&app, &cookie, &script_id, "click-two").await;
     assert_eq!(second.status(), StatusCode::ACCEPTED);
     let second: Value =
         serde_json::from_slice(&to_bytes(second.into_body(), 1024 * 1024).await.unwrap()).unwrap();
@@ -445,8 +499,8 @@ async fn only_explicit_click_route_creates_idempotent_frozen_runs_and_results() 
 #[tokio::test]
 async fn runs_and_result_lists_are_session_and_user_scoped() {
     let app = TestApp::spawn().await;
-    let (user, cookie, session_id, version_id, script_id) = setup(&app).await;
-    let response = post_run(&app, &cookie, &script_id, &version_id, "scope-run").await;
+    let (user, cookie, session_id, _version_id, script_id) = setup(&app).await;
+    let response = post_run(&app, &cookie, &script_id, "scope-run").await;
     let value: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
             .unwrap();
@@ -471,4 +525,56 @@ async fn runs_and_result_lists_are_session_and_user_scoped() {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
     let _ = user;
+}
+
+#[tokio::test]
+async fn manual_script_runs_once_without_an_active_model_and_freezes_its_message_anchor() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let cookie = app.login_cookie("alice@example.com").await;
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "resource-only run", 1)
+        .await
+        .unwrap();
+    let script = app
+        .state
+        .script_service
+        .create(
+            &user,
+            session.id,
+            CreateScriptRequest {
+                name: "resource-only.rss".into(),
+                content: "result = source".into(),
+                source: ScriptSource::Manual,
+                agent_bundle_version: None,
+                agent_skill_refs: vec![],
+                study_plan: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let response = post_run(&app, &cookie, &script.id, "manual-without-model").await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert!(value["run"]["modelVersionId"].is_null());
+    assert!(value["run"]["scriptMessageId"].is_string());
+    let run_id = value["run"]["id"].as_str().unwrap().parse().unwrap();
+    let run = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let run = app.state.run_service.find(&user, run_id).await.unwrap();
+            if matches!(run.status.as_str(), "succeeded" | "failed") {
+                break run;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(run.status, "succeeded", "{:?}", run.error_json);
+    assert_eq!(run.run_kind, "manual");
 }

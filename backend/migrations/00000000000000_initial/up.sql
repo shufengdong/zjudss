@@ -621,7 +621,7 @@ CREATE TRIGGER validate_workspace_active_update BEFORE UPDATE OF active_version_
  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM model_versions WHERE id=NEW.active_version_id AND workspace_id=NEW.id AND deleted_at_ms IS NULL) THEN RAISE(ABORT,'invalid active model version') END;
 END;
 CREATE TRIGGER live_session_messages_insert BEFORE INSERT ON messages WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
-CREATE TRIGGER live_session_messages_update BEFORE UPDATE ON messages WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
+CREATE TRIGGER live_session_messages_update BEFORE UPDATE ON messages WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') AND NOT(OLD.run_id IS NOT NULL AND NEW.run_id IS NULL) BEGIN SELECT RAISE(ABORT,'session is not live'); END;
 CREATE TRIGGER live_session_workspaces_insert BEFORE INSERT ON workspaces WHEN NOT EXISTS(SELECT 1 FROM sessions WHERE id=NEW.session_id AND deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
 CREATE TRIGGER live_session_workspace_drafts_insert BEFORE INSERT ON workspace_drafts WHEN NOT EXISTS(SELECT 1 FROM workspaces w JOIN sessions s ON s.id=w.session_id WHERE w.id=NEW.workspace_id AND s.deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;
 CREATE TRIGGER live_session_workspace_drafts_update BEFORE UPDATE ON workspace_drafts WHEN NOT EXISTS(SELECT 1 FROM workspaces w JOIN sessions s ON s.id=w.session_id WHERE w.id=NEW.workspace_id AND s.deletion_status='live') BEGIN SELECT RAISE(ABORT,'session is not live'); END;

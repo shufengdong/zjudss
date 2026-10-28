@@ -1,6 +1,7 @@
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::adapters::{
     ENGINE_CONTRACT_VERSION, ErrorCategory, NamedInput, RunMode, RunSpec, SimEngine,
@@ -8,19 +9,21 @@ use crate::adapters::{
 use crate::auth::CurrentUser;
 use crate::db::models::SimulationRun;
 use crate::db::repositories::{
-    CreateRun, NewRunDataset, RepoError, RunDataset, RunRepo, RunRepoError, ScriptRepo,
+    ArtifactDraft, CreateRun, NewRunDataset, RepoError, RunArtifactOutputs, RunDataset,
+    RunDeletionImpact, RunRepo, RunRepoError, ScriptRepo,
 };
-use crate::storage::{ParquetInspector, StageLimits};
+use crate::engine_resources::EngineResourceSnapshot;
+use crate::storage::{ArtifactStore, ParquetInspector, StageLimits};
 
 use super::{
-    ArtifactError, ArtifactMetadata, ArtifactService, EventBus, EventWriter, MessageRepo,
-    OperationKind, OperationRef, ResultOutputRef, RunScheduler, Stage, StageStatus, now_ms,
+    ArtifactError, ArtifactService, EventBus, EventWriter, MessageRepo, OperationKind,
+    OperationRef, ResultOutputRef, RunScheduler, Stage, StageStatus, ms_to_iso, now_ms,
 };
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CreateRunRequest {
-    pub model_version_id: String,
     pub client_run_id: String,
 }
 
@@ -37,6 +40,15 @@ pub struct RunSummary {
     pub script_name: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunDeletionPreview {
+    pub impact_token: String,
+    #[serde(flatten)]
+    pub impact: RunDeletionImpact,
+    pub expires_at: String,
+}
+
 #[derive(Debug)]
 pub enum RunError {
     NotFound,
@@ -46,6 +58,11 @@ pub enum RunError {
     IdempotencyConflict,
     QueueFull,
     Invalid(String),
+    ResultContract(&'static str, String),
+    RunBusy,
+    ResultBusy,
+    InvalidDeletionImpactToken,
+    DeletionImpactChanged,
     Artifact(ArtifactError),
     Adapter(crate::adapters::AdapterError),
     Repository(RepoError),
@@ -61,6 +78,11 @@ impl std::fmt::Display for RunError {
             Self::IdempotencyConflict => write!(f, "clientRunId 已用于不同运行"),
             Self::QueueFull => write!(f, "运行队列已满"),
             Self::Invalid(v) => write!(f, "{v}"),
+            Self::ResultContract(_, v) => write!(f, "{v}"),
+            Self::RunBusy => write!(f, "运行尚未结束"),
+            Self::ResultBusy => write!(f, "运行结果正在被使用"),
+            Self::InvalidDeletionImpactToken => write!(f, "删除确认已失效"),
+            Self::DeletionImpactChanged => write!(f, "删除影响已经变化"),
             Self::Artifact(v) => write!(f, "{v}"),
             Self::Adapter(v) => write!(f, "{v}"),
             Self::Repository(v) => write!(f, "{v}"),
@@ -91,6 +113,10 @@ impl From<RunRepoError> for RunError {
             RunRepoError::ScriptInvalid => Self::ScriptStaticInvalid,
             RunRepoError::ScriptIncompatible(m) => Self::ScriptIncompatible(m),
             RunRepoError::IdempotencyConflict => Self::IdempotencyConflict,
+            RunRepoError::RunBusy => Self::RunBusy,
+            RunRepoError::ResultBusy => Self::ResultBusy,
+            RunRepoError::InvalidDeletionToken => Self::InvalidDeletionImpactToken,
+            RunRepoError::DeletionImpactChanged => Self::DeletionImpactChanged,
         }
     }
 }
@@ -106,6 +132,9 @@ pub struct RunService {
     events: EventBus,
     session_cancellations: crate::application::SessionCancellationRegistry,
     data_dir: PathBuf,
+    snapshot: Arc<EngineResourceSnapshot>,
+    engine_timeout: std::time::Duration,
+    result_max_file_bytes: u64,
 }
 
 pub(crate) struct RunServiceDependencies {
@@ -118,6 +147,9 @@ pub(crate) struct RunServiceDependencies {
     pub events: EventBus,
     pub session_cancellations: crate::application::SessionCancellationRegistry,
     pub data_dir: PathBuf,
+    pub snapshot: Arc<EngineResourceSnapshot>,
+    pub engine_timeout: std::time::Duration,
+    pub result_max_file_bytes: u64,
 }
 
 impl RunService {
@@ -132,6 +164,9 @@ impl RunService {
             events,
             session_cancellations,
             data_dir,
+            snapshot,
+            engine_timeout,
+            result_max_file_bytes,
         } = dependencies;
         Self {
             repo,
@@ -143,6 +178,9 @@ impl RunService {
             events,
             session_cancellations,
             data_dir,
+            snapshot,
+            engine_timeout,
+            result_max_file_bytes,
         }
     }
     pub async fn create(
@@ -156,10 +194,6 @@ impl RunService {
                 "clientRunId 必须为 1 到 128 个字符".into(),
             ));
         }
-        let version_id = request
-            .model_version_id
-            .parse::<i32>()
-            .map_err(|_| RunError::Invalid("modelVersionId 无效".into()))?;
         let script = self.repo_for_script(user, script_id).await?;
         let ticket = self
             .scheduler
@@ -171,7 +205,6 @@ impl RunService {
                 &user.id,
                 CreateRun {
                     script_id,
-                    model_version_id: version_id,
                     client_run_id: request.client_run_id,
                     engine_contract_version: ENGINE_CONTRACT_VERSION.into(),
                     created_at_ms: now_ms(),
@@ -190,10 +223,9 @@ impl RunService {
                 if *cancelled.borrow() {
                     return;
                 }
-                tokio::select! {
-                    _ = cancelled.changed() => {}
-                    _ = ticket.run(service.execute(principal, run_id)) => {}
-                }
+                let _ = ticket
+                    .run_cancellable(service.execute(principal, run_id), &mut cancelled)
+                    .await;
             });
         }
         Ok(RunSubmission {
@@ -277,6 +309,42 @@ impl RunService {
             .await
             .map_err(Into::into)
     }
+    pub async fn preview_deletion(
+        &self,
+        user: &CurrentUser,
+        id: i32,
+    ) -> Result<RunDeletionPreview, RunError> {
+        let mut bytes = [0_u8; 32];
+        getrandom::fill(&mut bytes).expect("operating system random source unavailable");
+        let token = hex::encode(bytes);
+        let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
+        let now = now_ms();
+        let expires = now + 5 * 60 * 1000;
+        let impact = self
+            .repo
+            .preview_deletion(&user.id, id, token_hash, expires, now)
+            .await?;
+        Ok(RunDeletionPreview {
+            impact_token: token,
+            impact,
+            expires_at: ms_to_iso(expires),
+        })
+    }
+    pub async fn delete(
+        &self,
+        user: &CurrentUser,
+        id: i32,
+        impact_token: &str,
+    ) -> Result<(), RunError> {
+        if impact_token.len() != 64 {
+            return Err(RunError::InvalidDeletionImpactToken);
+        }
+        let token_hash = hex::encode(Sha256::digest(impact_token.as_bytes()));
+        self.repo
+            .delete_run(&user.id, id, token_hash, now_ms())
+            .await?;
+        Ok(())
+    }
     async fn execute(&self, user: CurrentUser, id: i32) {
         if let Err(error) = self.execute_inner(&user, id).await {
             let run = self.repo.find(&user.id, id).await.ok();
@@ -287,7 +355,11 @@ impl RunService {
             eprintln!("[run] failed id={id}, stage={failed_stage}: {error}");
             let reason = public_failure_reason(&error);
             let (engine_output, exit_code) = engine_failure_details(&error);
-            let mut failure = serde_json::json!({"code":"run_failed","reason":reason});
+            let code = match &error {
+                RunError::ResultContract(code, _) => *code,
+                _ => "run_failed",
+            };
+            let mut failure = serde_json::json!({"code":code,"reason":reason});
             if let Some(engine_output) = engine_output {
                 failure["engineOutput"] = serde_json::Value::String(engine_output);
             }
@@ -348,6 +420,7 @@ impl RunService {
         let result = root.join("result");
         std::fs::create_dir_all(&input).map_err(RunError::Io)?;
         std::fs::create_dir_all(&result).map_err(RunError::Io)?;
+        let _cleanup = RunTreeCleanup(root.clone());
         let script_artifact_id = context
             .run
             .script_artifact_id
@@ -402,11 +475,68 @@ impl RunService {
                 script_path,
                 named_inputs: named,
                 result_dir: result,
-                timeout: std::time::Duration::from_secs(300),
+                timeout: self.engine_timeout,
             })
             .await
-            .map_err(RunError::Adapter)?;
-        let mut committed = Vec::new();
+            .map_err(map_engine_run_error)?;
+        if output.datasets.is_empty() {
+            return Err(RunError::ResultContract(
+                "no_result_dataset",
+                "脚本没有生成结果数据集".into(),
+            ));
+        }
+        let actual_names = output
+            .datasets
+            .iter()
+            .map(|dataset| dataset.name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        if actual_names.len() != output.datasets.len()
+            || actual_names.iter().any(|name| !valid_result_name(name))
+        {
+            return Err(RunError::ResultContract(
+                "result_contract_invalid",
+                "结果名称不合法或重复".into(),
+            ));
+        }
+        if let Some(contract_json) = context.run.result_contract_json.as_deref() {
+            let contract: Vec<super::FrozenResultContract> = serde_json::from_str(contract_json)
+                .map_err(|_| {
+                    RunError::ResultContract("result_contract_invalid", "冻结结果合同无效".into())
+                })?;
+            let expected = contract
+                .iter()
+                .map(|result| result.name.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            if expected != actual_names || contract.len() != output.datasets.len() {
+                return Err(RunError::ResultContract(
+                    "result_contract_invalid",
+                    "结果名称集合与冻结合同不一致".into(),
+                ));
+            }
+            for expected in contract {
+                let dataset = output
+                    .datasets
+                    .iter()
+                    .find(|dataset| dataset.name == expected.name)
+                    .expect("name set checked");
+                let schema = self
+                    .snapshot
+                    .schemas
+                    .resolve(&expected.schema_ref)
+                    .map_err(|_| {
+                        RunError::ResultContract(
+                            "result_contract_invalid",
+                            "冻结结果 schema 不可用".into(),
+                        )
+                    })?;
+                super::workflow_worker::validate_schema(&dataset.metadata, &schema.fields)
+                    .map_err(|message| {
+                        RunError::ResultContract("result_contract_invalid", message)
+                    })?;
+            }
+        }
+        let mut staged_artifacts = Vec::new();
+        let mut drafts = Vec::new();
         let mut datasets = Vec::new();
         for output in output.datasets {
             let metadata = ParquetInspector::metadata(&output.path)
@@ -420,31 +550,25 @@ impl RunService {
                 .stage(
                     std::fs::File::open(&output.path).map_err(RunError::Io)?,
                     StageLimits {
-                        max_bytes: 500 * 1024 * 1024,
+                        max_bytes: self.result_max_file_bytes,
                     },
                 )
                 .map_err(ArtifactError::from)?;
-            let artifact = match self
-                .artifacts
-                .commit(user.storage_scope_id, staged, ArtifactMetadata::parquet())
-                .await
-            {
-                Ok(v) => v,
-                Err(error) => {
-                    for artifact_id in committed {
-                        let _ = self
-                            .artifacts
-                            .release(user.storage_scope_id, artifact_id)
-                            .await;
-                    }
-                    return Err(error.into());
-                }
-            };
-            committed.push(artifact.id);
+            let size_bytes = i64::try_from(staged.size_bytes)
+                .map_err(|_| RunError::Invalid("结果过大".into()))?;
+            drafts.push(ArtifactDraft {
+                sha256: staged.sha256.clone(),
+                size_bytes,
+                storage_path: ArtifactStore::relative_path(&staged.sha256),
+                format: "parquet".into(),
+                media_type: Some("application/vnd.apache.parquet".into()),
+                created_at_ms: now_ms(),
+            });
+            staged_artifacts.push(staged);
             let (schema_json, schema_hash) =
                 crate::application::datasets::schema_json_and_hash(&metadata);
             datasets.push(NewRunDataset {
-                artifact_id: artifact.id,
+                artifact_id: 0,
                 result_name: output.name,
                 schema_json,
                 schema_hash,
@@ -453,7 +577,46 @@ impl RunService {
                 created_at_ms: now_ms(),
             });
         }
-        match self.repo.complete(&user.id, id, datasets, now_ms()).await {
+        let store = self.artifacts.store().clone();
+        let _publication_guard = self.artifacts.exclusive_publication_guard().await;
+        let publish_store = store.clone();
+        let published_new = Arc::new(Mutex::new(Vec::<String>::new()));
+        let published_by_callback = published_new.clone();
+        let publication = self
+            .repo
+            .complete_with_artifact_outputs(
+                &user.id,
+                RunArtifactOutputs {
+                    scope_id: user.storage_scope_id,
+                    run_id: id,
+                    drafts,
+                    datasets,
+                    finished_at_ms: now_ms(),
+                },
+                move |index, path| {
+                    let existed = publish_store
+                        .resolve(path)
+                        .map_err(|error| RepoError::Storage(error.to_string()))?
+                        .is_file();
+                    publish_store
+                        .publish(&mut staged_artifacts[index], path)
+                        .map_err(|error| RepoError::Storage(error.to_string()))?;
+                    if !existed {
+                        published_by_callback
+                            .lock()
+                            .expect("published run paths")
+                            .push(path.to_string());
+                    }
+                    Ok(())
+                },
+            )
+            .await;
+        if publication.is_err() {
+            for path in published_new.lock().expect("published run paths").iter() {
+                let _ = store.remove(path);
+            }
+        }
+        match publication {
             Ok(results) => {
                 let _ = writer
                     .progress(
@@ -472,19 +635,17 @@ impl RunService {
                         results.iter().map(run_output_ref).collect(),
                     )
                     .await;
-                let _ = std::fs::remove_dir_all(root);
                 Ok(())
             }
-            Err(error) => {
-                for artifact_id in committed {
-                    let _ = self
-                        .artifacts
-                        .release(user.storage_scope_id, artifact_id)
-                        .await;
-                }
-                Err(error.into())
-            }
+            Err(error) => Err(error.into()),
         }
+    }
+}
+
+struct RunTreeCleanup(PathBuf);
+impl Drop for RunTreeCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
@@ -497,10 +658,31 @@ fn public_failure_reason(error: &RunError) -> &'static str {
             ErrorCategory::Io => "io",
             ErrorCategory::Internal => "engine",
         },
-        RunError::Invalid(_) => "result",
+        RunError::Invalid(_) | RunError::ResultContract(_, _) => "result",
         RunError::Artifact(_) | RunError::Io(_) => "io",
         _ => "internal",
     }
+}
+
+fn map_engine_run_error(error: crate::adapters::AdapterError) -> RunError {
+    match error.code.as_str() {
+        "result_empty" => {
+            RunError::ResultContract("no_result_dataset", "脚本没有生成结果数据集".into())
+        }
+        "result_name_invalid"
+        | "result_name_duplicate"
+        | "result_format_invalid"
+        | "result_compression_invalid" => {
+            RunError::ResultContract("result_contract_invalid", error.message)
+        }
+        _ => RunError::Adapter(error),
+    }
+}
+
+fn valid_result_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    matches!(chars.next(), Some('a'..='z' | 'A'..='Z' | '_'))
+        && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 fn engine_failure_details(error: &RunError) -> (Option<String>, Option<i32>) {

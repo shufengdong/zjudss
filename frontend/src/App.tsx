@@ -1,6 +1,6 @@
 import{useCallback,useEffect,useMemo,useReducer,useRef,useState}from'react'
 import type{Message,MessageHandlers,OpenDataFrame,Session,User}from'./types'
-import{ApiError,applyExample,createRun,createScriptText,createSession,deleteSession as deleteSessionApi,getCurrentUser,listSessions,logout,postMessage,previewSessionDeletion,renameSession as renameSessionApi}from'./api/client'
+import{applyExample,createRun,createScriptText,createSession,deleteSession as deleteSessionApi,getCurrentUser,listSessions,logout,postMessage,previewSessionDeletion,renameSession as renameSessionApi}from'./api/client'
 import{useSessionFeed}from'./hooks/useSessionFeed';import{useWorkspace}from'./hooks/useWorkspace';import{useModelImports}from'./hooks/useModelImports'
 import{useRunHistory}from'./hooks/useRunHistory';import{useStorageUsage}from'./hooks/useStorageUsage';import{useMediaQuery}from'./hooks/useMediaQuery'
 import HistorySidebar from'./components/history/HistorySidebar';import Composer from'./components/Composer';import UploadQueue from'./components/uploads/UploadQueue'
@@ -47,9 +47,9 @@ function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
       setSessions(values=>values.map(session=>session.id===selectedId?{...session,title:sessionTitle}:session))
     }).catch(e=>{remove(selectedId,optimistic.id);setDraft(content);notify(e instanceof Error?e.message:'发送失败')})
   },[selectedId,add,remove,notify])
-  const runScript=useCallback(async(script:Extract<Message,{type:'script'}>['script'])=>{const active=workspaceState.workspace?.active;if(!active){notify('请先生成或激活模型版本');return}try{await createRun(script.id,active.id,crypto.randomUUID?.()??`${Date.now()}-${Math.random()}`);notify('运行已提交')}catch(error){if(error instanceof ApiError&&error.code==='active_model_changed')await reloadWorkspace();throw error}},[workspaceState.workspace?.active?.id,notify,reloadWorkspace])
+  const runScript=useCallback(async(script:Extract<Message,{type:'script'}>['script'])=>{await createRun(script.id,crypto.randomUUID?.()??`${Date.now()}-${Math.random()}`);notify('运行已提交')},[notify])
   const createScript=useCallback(async(content:string)=>{if(!selectedId)return;await createScriptText(selectedId,{name:`manual-${Date.now()}.rss`,content});notify('脚本已创建')},[selectedId,notify])
-  const handlers:MessageHandlers=useMemo(()=>({onOpenDataset:id=>setOpenDataFrame({kind:'result',datasetId:id}),onOpenComparison:setComparisonId,onRunScript:runScript,activeVersionId:workspaceState.workspace?.active?.id??null,notify}),[notify,runScript,workspaceState.workspace?.active?.id])
+  const handlers:MessageHandlers=useMemo(()=>({onOpenDataset:id=>setOpenDataFrame({kind:'result',datasetId:id}),onOpenComparison:setComparisonId,onRunScript:runScript,notify}),[notify,runScript])
   const invalidateDataFrame=useCallback((target:{kind:'model-draft';draftId:string}|{kind:'model-version';versionId:string})=>setOpenDataFrame(current=>{if(!current||current.kind==='result')return current;if(target.kind==='model-draft'&&current.kind==='model-draft'&&current.draftId===target.draftId)return null;if(target.kind==='model-version'&&current.kind==='model-version'&&current.versionId===target.versionId)return null;return current}),[])
   if(sessionLoadState!=='ready')return <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 text-center text-sm text-slate-600">
     {sessionLoadState==='loading'?<p>正在准备会话…</p>:<div role="alert" className="rounded-xl border border-red-200 bg-white p-6 shadow-sm"><p className="text-red-700">会话初始化失败，请重试</p><div className="mt-4 flex justify-center gap-2"><button type="button" onClick={()=>setSessionLoadAttempt(value=>value+1)} className="rounded-lg bg-brand-500 px-3 py-1.5 text-white">重试</button><button type="button" onClick={onLogout} className="rounded-lg border px-3 py-1.5">退出登录</button></div></div>}

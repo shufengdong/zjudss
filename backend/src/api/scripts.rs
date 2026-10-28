@@ -113,3 +113,20 @@ pub async fn detail(
         json!({"script":state.script_service.detail(&user,id).await?}),
     ))
 }
+
+pub async fn retry_preview(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+    Json(body): Json<crate::application::RetryStudyRequest>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(
+        serde_json::to_value(
+            state
+                .managed_workflow_service
+                .preview_retry(&user, id, body)
+                .await?,
+        )
+        .map_err(|error| ApiError::internal(error.to_string()))?,
+    ))
+}

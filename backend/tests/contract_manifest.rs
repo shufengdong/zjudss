@@ -10,8 +10,8 @@ fn production_router_and_manifest_share_one_declaration() {
         .map(|route| (route.method, route.path))
         .collect::<HashSet<_>>();
 
-    assert_eq!(routes.len(), 71);
-    assert_eq!(unique.len(), 71);
+    assert_eq!(routes.len(), 75);
+    assert_eq!(unique.len(), 75);
     assert!(unique.contains(&("GET", "/health")));
     assert!(unique.contains(&("POST", "/api/auth/login")));
     assert!(unique.contains(&("POST", "/api/auth/logout")));
@@ -65,6 +65,10 @@ fn production_router_and_manifest_share_one_declaration() {
             .any(|(_, path)| path.contains("model-imports"))
     );
     assert!(unique.contains(&("POST", "/api/sessions/{id}/scripts/text")));
+    assert!(unique.contains(&("POST", "/api/scripts/{id}/retry-previews")));
+    assert!(unique.contains(&("POST", "/api/retry-previews/{id}/confirm")));
+    assert!(unique.contains(&("POST", "/api/runs/{id}/deletion-preview")));
+    assert!(unique.contains(&("DELETE", "/api/runs/{id}")));
     assert!(unique.contains(&("GET", "/api/run-comparisons/{id}")));
     for path in [
         "/api/model-dataframes/{id}",
@@ -96,7 +100,8 @@ fn contract_manifest_contains_all_public_enums() {
             "durable_workflow_messages",
             "v4_conversational_agent",
             "managed_study_workflows",
-            "managed_script_execution_and_repair"
+            "managed_script_execution_and_repair",
+            "run_retry_and_deletion"
         ]
     );
 
@@ -225,6 +230,14 @@ fn contract_manifest_contains_all_public_enums() {
         "script_candidate_store_failed",
         "result_publish_failed",
         "stderr_audit_failed",
+        "run_busy",
+        "no_result_dataset",
+        "client_retry_id_invalid",
+        "retry_not_available",
+        "study_contract_changed",
+        "invalid_retry_preview",
+        "retry_input_unavailable",
+        "retry_impact_changed",
     ] {
         assert!(
             manifest.stable_error_codes.contains(&code),

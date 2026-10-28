@@ -127,8 +127,8 @@ async fn scripts_are_immutable_and_lazy_readable_without_static_rss_validation()
     assert_eq!(first.validation_status, "valid");
     assert!(first.preview_truncated);
     assert_eq!(first.preview.lines().count(), 20);
-    assert!(!first.can_run);
-    assert_eq!(first.disabled_reason.as_deref(), Some("no_active_model"));
+    assert!(first.can_run);
+    assert_eq!(first.disabled_reason, None);
 
     let detail = app
         .state

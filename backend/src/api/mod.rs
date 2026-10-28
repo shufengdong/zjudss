@@ -8,6 +8,7 @@ mod datasets;
 mod events;
 mod examples;
 mod model_dataframes;
+mod retries;
 mod runs;
 mod scripts;
 mod sessions;
@@ -22,7 +23,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
 use axum::middleware;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, patch, post, put};
+use axum::routing::{delete, get, patch, post, put};
 
 use crate::adapters::AdapterError;
 use crate::application::AnalysisError;
@@ -338,6 +339,36 @@ impl From<RunError> for ApiError {
                 status: StatusCode::UNPROCESSABLE_ENTITY,
                 message,
                 code: "invalid_run",
+                details: None,
+            },
+            RunError::ResultContract(code, message) => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message,
+                code,
+                details: None,
+            },
+            RunError::RunBusy => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "run_busy",
+                details: None,
+            },
+            RunError::ResultBusy => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "result_busy",
+                details: None,
+            },
+            RunError::InvalidDeletionImpactToken => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "invalid_deletion_impact_token",
+                details: None,
+            },
+            RunError::DeletionImpactChanged => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "deletion_impact_changed",
                 details: None,
             },
             RunError::Artifact(error) => error.into(),
@@ -753,8 +784,24 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
         ["POST"]
     );
     add_route!("/api/scripts/{id}/runs", post(runs::create), ["POST"]);
+    add_route!(
+        "/api/scripts/{id}/retry-previews",
+        post(scripts::retry_preview),
+        ["POST"]
+    );
+    add_route!(
+        "/api/retry-previews/{id}/confirm",
+        post(retries::confirm),
+        ["POST"]
+    );
     add_route!("/api/sessions/{id}/runs", get(runs::list), ["GET"]);
     add_route!("/api/runs/{id}", get(runs::get), ["GET"]);
+    add_route!(
+        "/api/runs/{id}/deletion-preview",
+        post(runs::deletion_preview),
+        ["POST"]
+    );
+    add_route!("/api/runs/{id}", delete(runs::delete), ["DELETE"]);
     add_route!("/api/runs/{id}/datasets", get(runs::datasets), ["GET"]);
     add_route!(
         "/api/datasets/{id}",

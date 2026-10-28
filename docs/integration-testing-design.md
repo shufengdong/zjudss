@@ -31,6 +31,10 @@ Task 10 另以 `backend/tests/script_repair.rs` 覆盖首次生成后立即执�
 引擎调用和预算差异、3 次修正对应最多 4 次执行、候选配额失败终态化、结果合同拒绝后无部分发布、超时不修正、
 64 KiB 脱敏 prompt、审计 stderr 隔离，以及生成阶段取消；`artifact_store.rs` 还验证没有数据库记录的崩溃遗留 CAS
 对象可由 GC 回收。这些是行为测试，不能由状态枚举注册测试替代。
+Task 11 由 `simulation_runs.rs`、`workflow_retries.rs` 和 `result_deletion.rs` 覆盖资源型手写脚本无 active 执行、
+规范 script message 锚点、按门面读取最新所需输入、开放/冻结结果合同、失败脚本在输入不变时直接派生以及输入变化时
+差异确认、完整新修正预算、派生脚本血缘、终态删除 preview/token、`run_busy`/`result_busy`、全部直接结果原子 tombstone、
+artifact 配额释放、重复删除和派生/提升血缘保留。
 schema 资源的 SaveAsNew alias 分配、过期/跨路径失效 preview 回收、同用户跨会话去重原文件的引用隔离、普通资源
 分析输入/冻结血缘、并发 confirm 原文件幂等提交、同一确认声明只能取得一次执行锁、精确重放跨暂存 TTL 仍只读返回、显式 alias 冲突重放保持冻结失败语义、活动确认期间候选冻结与 DELETE 冲突、到期避让以及重启先汇总
 已提交子事务、confirm/discard 与 parse/discard 竞争不复活终态、模型替换
@@ -50,10 +54,11 @@ revision 冲突恢复；Agent 对模型行的严格类型等值读取、完整�
 运行成功进度终态、Arrow 字符串视图分页和不同宽度数据集详情居中；分析、视图、比较在来源删除后继续读取；
 两用户隔离（包含六个模型表读取端点）；重启收敛与 FTS 局部失败；配额、恶意归档和模型表窄屏响应式无障碍。
 
-RUN-001 在 Rust 层验证创建、重放、列表和详情都返回绑定脚本的必填 `scriptName`，在 Vitest 层验证中文摘要、终态/动态耗时、
+RUN-001 在 Rust 层验证创建、重放、列表和详情都返回绑定脚本的必填 `scriptName` 与精确可空 `scriptMessageId`，并验证
+运行输入由后端冻结、失败脚本 retry 分支和终态运行删除；在 Vitest 层验证中文摘要、终态/动态耗时、
 失败详情、运行列表与结果加载错误、按运行请求代次隔离和 `datasetRevision` 刷新，在 Playwright 层验证显式运行产生的两个结果
 都出现在展开记录中，并能选择非首个 `loss` 打开工作台；真实失败场景验证实际阶段、退出码和多行 tensoreval 报错可见，绝对路径
-被隐藏且不请求数据集。运行记录仍不可删除，脚本仍不自动运行。
+被隐藏且不请求数据集。脚本仍不自动运行；Task 13 为运行记录接入定位、retry 差异确认和删除确认控件。
 
 应用层 scripted-agent 测试额外覆盖配置卡已创建后的 provider 收尾失败不覆盖成功、对话 Agent 无脚本创建权限；
 并用“求解牛顿法潮流”等原始短指令验证显式函数选择不被拓扑改写，缺 Data/Struct、资源歧义和禁用门面都只返回

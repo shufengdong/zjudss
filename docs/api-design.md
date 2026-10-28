@@ -199,7 +199,9 @@ manifest、角色化文件哈希和验证诊断。两个工具只读，Agent 无
 `{name, content}` 直接以文本创建（`sourceKind: "manual"`）。两条路径只做名称、UTF-8 和大小校验后不可变落盘，
 不使用 zjudss RSS 静态语法校验器；语法和运行可行性以用户点击运行后 tensoreval 的退出码、stderr 和结果为准。
 脚本详情返回全文；列表和消息只返回有界预览。V4 受管研究已提供确认、workflow 查询与取消接口；生成、执行和自动
-修正循环由后续任务接入该持久状态机。当前普通运行请求仍为 `{modelVersionId, clientRunId}`。Agent 没有普通运行、
+修正循环由受管工作流执行。普通运行请求为 `{clientRunId}`，前端不提交模型版本。后端在创建 run 的事务中按脚本类型
+解析并冻结当前输入：成功 Agent 脚本只读取冻结门面实际需要的当前 active 表和同 alias 的 live Data resource；
+manual/upload 脚本读取存在时的全部 active 表和全部 live Data resource，没有 active 仍可执行。Agent 没有普通运行、
 激活或删除工具。
 
 运行创建响应、session 运行列表和单运行详情中的 `SimulationRun` 都包含 `scriptName`；首份受管脚本生成前显示“脚本尚未
@@ -208,8 +210,16 @@ manifest、角色化文件哈希和验证诊断。两个工具只读，Agent 无
 和 skill refs；`GET /api/runs/{id}/datasets` 只列出该运行当前仍存活的全部结果数据集。失败时保留实际执行阶段；API 将内部
 adapter/IO/校验错误映射为受控 `error.code`/`error.message`。adapter 对 stdout/stderr 分别持续排空、保留有界首尾并
 记录完整 hash；tensoreval 以非零状态退出时保留实际退出码。原始有界 stderr 只供后续受限审计，普通 API 继续只返回脱敏摘要；没有该标记的
-旧记录仍丢弃原始 message，因此不会返回历史调用栈或服务器路径。四个既有运行路由、
-跨用户 404、显式按钮创建和运行不可删除的语义不变。
+旧记录仍丢弃原始 message，因此不会返回历史调用栈或服务器路径。manual/upload 使用开放结果合同，至少产生一个
+名称合法且唯一的 Snappy Parquet；成功 Agent 脚本再次运行沿用冻结的结果名称和 schema 合同，合同漂移以
+`result_contract_invalid` 失败且不修正。`POST /api/scripts/{id}/retry-previews` 只面向失败的受管 Agent 脚本：当前输入
+未变化时直接创建带完整新修正预算的派生 workflow，变化时返回持久差异；用户通过
+`POST /api/retry-previews/{id}/confirm` 确认后冻结最新输入，门面 hash 变化返回 `study_contract_changed`。
+
+终态运行通过 `POST /api/runs/{id}/deletion-preview` 获取短期影响 token，再用
+`DELETE /api/runs/{id}?impactToken=...` 原子 tombstone run 和全部存活直接结果并释放其 artifact 引用。排队/运行中返回
+`run_busy`，任一直接结果正被分析消费时返回 `result_busy`；已完成的派生、比较、视图和提升资源保留冻结血缘。
+全部运行路由保持跨用户 404，创建仍只由显式按钮触发。
 
 ## Messages and errors
 

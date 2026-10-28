@@ -887,6 +887,21 @@
     - runner: rust
       file: backend/tests/simulation_runs.rs
       name: successful_run_publishes_a_terminal_done_progress_event
+    - runner: rust
+      file: backend/tests/simulation_runs.rs
+      name: manual_script_runs_once_without_an_active_model_and_freezes_its_message_anchor
+    - runner: rust
+      file: backend/tests/simulation_runs.rs
+      name: empty_result_run_reports_stable_error_and_can_be_deleted_atomically
+    - runner: rust
+      file: backend/tests/workflow_retries.rs
+      name: unchanged_failed_agent_script_starts_a_derived_retry_with_a_fresh_budget
+    - runner: rust
+      file: backend/tests/workflow_retries.rs
+      name: changed_inputs_require_confirmation_and_freeze_the_new_active_model
+    - runner: rust
+      file: backend/tests/result_deletion.rs
+      name: terminal_run_deletion_requires_preview_and_tombstones_all_direct_results
     - runner: vitest
       file: frontend/src/components/runs/RunHistory.test.tsx
       name: renders an informative collapsed summary without requesting results or offering deletion
@@ -902,13 +917,25 @@
     - runner: vitest
       file: frontend/src/components/runs/RunHistory.test.tsx
       name: refreshes expanded results after deletion and ignores the obsolete response
-  assertions: [run binds immutable script name and active version, run and result lists remain readable, successful run progress has no running stage, run cards default collapsed with localized status and duration, failed runs show bounded sanitized tensoreval output and exit code without requesting datasets, expanded successful runs list every live dataset and open the selected one, list and dataset failures retry, result deletion invalidates expanded result caches, scripts never auto-run and runs have no delete action]
+  assertions: [run binds an immutable script and canonical message anchor while freezing the latest required active model and live resources, resource-only manual scripts run without an active model, successful Agent scripts execute once without repair, failed Agent scripts retry through a derived workflow with a fresh correction budget and explicit confirmation when inputs changed, run and result lists remain readable, successful run progress has no running stage, failed runs show bounded sanitized tensoreval output and exit code, terminal run deletion requires a fresh impact token and atomically tombstones all direct results, scripts never auto-run]
   fixtures: [published model, valid RSS script, successful and failed runs, multi-result run]
   contracts:
     - "route:POST /api/scripts/{id}/runs"
     - "route:GET /api/sessions/{id}/runs"
     - "route:GET /api/runs/{id}"
     - "route:GET /api/runs/{id}/datasets"
+    - "route:POST /api/scripts/{id}/retry-previews"
+    - "route:POST /api/retry-previews/{id}/confirm"
+    - "route:POST /api/runs/{id}/deletion-preview"
+    - "route:DELETE /api/runs/{id}"
+    - "error:run_busy"
+    - "error:no_result_dataset"
+    - "error:client_retry_id_invalid"
+    - "error:retry_not_available"
+    - "error:study_contract_changed"
+    - "error:invalid_retry_preview"
+    - "error:retry_input_unavailable"
+    - "error:retry_impact_changed"
     - "tool:list_simulation_history"
 
 - id: DATASET-001

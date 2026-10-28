@@ -351,35 +351,17 @@ impl ScriptService {
 
     async fn summary(
         &self,
-        user: &CurrentUser,
+        _user: &CurrentUser,
         script: &ScriptResource,
         content: &str,
     ) -> Result<ScriptSummary, ScriptError> {
         let required_aliases: Vec<String> =
             serde_json::from_str(&script.required_aliases_json).unwrap_or_default();
         let outputs: Vec<String> = serde_json::from_str(&script.outputs_json).unwrap_or_default();
-        let active = self
-            .repo
-            .active_aliases(&user.id, script.session_id)
-            .await?;
         let (can_run, disabled_reason) = if script.validation_status == "invalid" {
             (false, Some("script_static_invalid".into()))
-        } else if let Some(aliases) = active {
-            let missing = required_aliases
-                .iter()
-                .filter(|required| !aliases.contains(required))
-                .cloned()
-                .collect::<Vec<_>>();
-            if missing.is_empty() {
-                (true, None)
-            } else {
-                (
-                    false,
-                    Some(format!("missing_model_aliases:{}", missing.join(","))),
-                )
-            }
         } else {
-            (false, Some("no_active_model".into()))
+            (true, None)
         };
         let lines = content.lines().collect::<Vec<_>>();
         let preview_truncated = lines.len() > SCRIPT_PREVIEW_LINES;

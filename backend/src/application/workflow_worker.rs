@@ -925,7 +925,7 @@ fn public_engine_diagnostic(error: &AdapterError, sanitized: &SanitizedDiagnosti
     })
 }
 
-fn validate_schema(
+pub(crate) fn validate_schema(
     metadata: &ParquetMetadata,
     expected: &[SchemaFieldContract],
 ) -> Result<(), String> {

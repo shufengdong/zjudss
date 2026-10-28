@@ -63,6 +63,33 @@ pub async fn datasets(
         json!({"datasets":state.dataset_service.list(&user,id).await?}),
     ))
 }
+pub async fn deletion_preview(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(
+        serde_json::to_value(state.run_service.preview_deletion(&user, id).await?)
+            .map_err(|error| ApiError::internal(error.to_string()))?,
+    ))
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteQuery {
+    impact_token: String,
+}
+pub async fn delete(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+    Query(query): Query<DeleteQuery>,
+) -> Result<StatusCode, ApiError> {
+    state
+        .run_service
+        .delete(&user, id, &query.impact_token)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
 fn run_json(summary: RunSummary) -> Value {
     let RunSummary { run, script_name } = summary;
     let public_error = public_run_error(&run.status, run.error_json.as_deref());
@@ -95,7 +122,12 @@ fn public_run_error(status: &str, raw: Option<&str>) -> Option<Value> {
         Some("internal") => "计算服务发生内部错误",
         _ => "运行失败，未提供可用原因",
     };
-    let mut error = json!({"code":"run_failed","message":message});
+    let public_code = match code {
+        Some("result_contract_invalid") => "result_contract_invalid",
+        Some("no_result_dataset") => "no_result_dataset",
+        _ => "run_failed",
+    };
+    let mut error = json!({"code":public_code,"message":message});
     if let Some(engine_output) = parsed
         .as_ref()
         .and_then(|value| value.get("engineOutput"))

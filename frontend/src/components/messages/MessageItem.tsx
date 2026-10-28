@@ -38,7 +38,7 @@ export default function MessageItem({ message, handlers }: MessageItemProps) {
     case 'comparison':
       return <ComparisonCard message={message} handlers={handlers} />
     case 'script':
-      return <ScriptCard script={message.script} activeVersionId={handlers.activeVersionId} onRun={handlers.onRunScript} notify={handlers.notify}/>
+      return <ScriptCard script={message.script} onRun={handlers.onRunScript} notify={handlers.notify}/>
     case 'upload-batch':
       return <div className="mx-4 my-2 rounded-lg border bg-white p-3 text-sm">上传批次 {message.card.batchId}：{message.card.state}</div>
     case 'study-config':

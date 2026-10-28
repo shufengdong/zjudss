@@ -73,7 +73,7 @@ async fn create_completed_run(app: &TestApp) -> (zjudss::auth::CurrentUser, Stri
         .draft
         .unwrap()
         .draft;
-    let version = app
+    let _version = app
         .state
         .version_service
         .publish(
@@ -114,7 +114,6 @@ async fn create_completed_run(app: &TestApp) -> (zjudss::auth::CurrentUser, Stri
                 .header("content-type", "application/json")
                 .body(Body::from(
                     json!({
-                        "modelVersionId": version.version.version.id.to_string(),
                         "clientRunId": "result-run"
                     })
                     .to_string(),
@@ -232,6 +231,56 @@ async fn deleting_one_result_hides_content_releases_quota_and_keeps_run() {
 }
 
 #[tokio::test]
+async fn terminal_run_deletion_requires_preview_and_tombstones_all_direct_results() {
+    let app = TestApp::spawn().await;
+    let (_user, cookie, run_id, dataset_id) = create_completed_run(&app).await;
+
+    let preview = request(
+        &app,
+        &cookie,
+        "POST",
+        format!("/api/runs/{run_id}/deletion-preview"),
+    )
+    .await;
+    assert_eq!(preview.status(), StatusCode::OK);
+    let preview: Value =
+        serde_json::from_slice(&to_bytes(preview.into_body(), 1024 * 1024).await.unwrap()).unwrap();
+    assert_eq!(preview["resultCount"], 1);
+    assert_eq!(preview["resultIds"][0], dataset_id);
+    let token = preview["impactToken"].as_str().unwrap();
+
+    let deleted = request(
+        &app,
+        &cookie,
+        "DELETE",
+        format!("/api/runs/{run_id}?impactToken={token}"),
+    )
+    .await;
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    for path in [
+        format!("/api/runs/{run_id}"),
+        format!("/api/runs/{run_id}/datasets"),
+        format!("/api/datasets/{dataset_id}"),
+    ] {
+        assert_eq!(
+            request(&app, &cookie, "GET", path).await.status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+    assert_eq!(
+        request(
+            &app,
+            &cookie,
+            "DELETE",
+            format!("/api/runs/{run_id}?impactToken={token}"),
+        )
+        .await
+        .status(),
+        StatusCode::NO_CONTENT
+    );
+}
+
+#[tokio::test]
 async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_lineage() {
     let app = TestApp::spawn().await;
     let (user, cookie, run_id, source_id) = create_completed_run(&app).await;
@@ -263,6 +312,35 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
             .execute(&mut conn).unwrap();
         id
     };
+    let run_preview = request(
+        &app,
+        &cookie,
+        "POST",
+        format!("/api/runs/{run_id}/deletion-preview"),
+    )
+    .await;
+    assert_eq!(run_preview.status(), StatusCode::OK);
+    let run_preview: Value = serde_json::from_slice(
+        &to_bytes(run_preview.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let run_delete = request(
+        &app,
+        &cookie,
+        "DELETE",
+        format!(
+            "/api/runs/{run_id}?impactToken={}",
+            run_preview["impactToken"].as_str().unwrap()
+        ),
+    )
+    .await;
+    assert_eq!(run_delete.status(), StatusCode::CONFLICT);
+    let run_delete: Value =
+        serde_json::from_slice(&to_bytes(run_delete.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert_eq!(run_delete["code"], "result_busy");
     let busy = request(
         &app,
         &cookie,
@@ -355,6 +433,32 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
 }
 
 #[tokio::test]
+async fn nonterminal_run_cannot_create_a_deletion_preview() {
+    let app = TestApp::spawn().await;
+    let (_user, cookie, run_id, _dataset_id) = create_completed_run(&app).await;
+    let mut conn = app.pool.get().unwrap();
+    diesel::sql_query(
+        "UPDATE simulation_runs SET status='running',stage='run',finished_at_ms=NULL WHERE id=?1",
+    )
+    .bind::<diesel::sql_types::Integer, _>(run_id)
+    .execute(&mut conn)
+    .unwrap();
+    drop(conn);
+    let response = request(
+        &app,
+        &cookie,
+        "POST",
+        format!("/api/runs/{run_id}/deletion-preview"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert_eq!(body["code"], "run_busy");
+}
+
+#[tokio::test]
 async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outputs() {
     let app = TestApp::spawn().await;
     let (user, cookie, baseline_run_id, source_id) = create_completed_run(&app).await;
@@ -443,7 +547,6 @@ async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outpu
             &user,
             baseline.script_resource_id.unwrap(),
             CreateRunRequest {
-                model_version_id: baseline.model_version_id.unwrap().to_string(),
                 client_run_id: "comparison-candidate".into(),
             },
         )
@@ -477,7 +580,6 @@ async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outpu
             &user,
             baseline.script_resource_id.unwrap(),
             CreateRunRequest {
-                model_version_id: baseline.model_version_id.unwrap().to_string(),
                 client_run_id: "comparison-baseline".into(),
             },
         )
