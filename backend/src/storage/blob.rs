@@ -223,6 +223,43 @@ impl ArtifactStore {
         format!("objects/{}/{}", &sha256[..2], sha256)
     }
 
+    pub(crate) fn object_paths(&self) -> Result<Vec<String>, StorageError> {
+        let objects = self.data_dir.join("objects");
+        let mut paths = Vec::new();
+        for prefix in std::fs::read_dir(&objects)
+            .map_err(|error| StorageError::new("artifact_scan_failed", error.to_string()))?
+        {
+            let prefix = prefix
+                .map_err(|error| StorageError::new("artifact_scan_failed", error.to_string()))?;
+            if !prefix
+                .file_type()
+                .map_err(|error| StorageError::new("artifact_scan_failed", error.to_string()))?
+                .is_dir()
+            {
+                continue;
+            }
+            for object in std::fs::read_dir(prefix.path())
+                .map_err(|error| StorageError::new("artifact_scan_failed", error.to_string()))?
+            {
+                let object = object.map_err(|error| {
+                    StorageError::new("artifact_scan_failed", error.to_string())
+                })?;
+                if object
+                    .file_type()
+                    .map_err(|error| StorageError::new("artifact_scan_failed", error.to_string()))?
+                    .is_file()
+                {
+                    paths.push(format!(
+                        "objects/{}/{}",
+                        prefix.file_name().to_string_lossy(),
+                        object.file_name().to_string_lossy()
+                    ));
+                }
+            }
+        }
+        Ok(paths)
+    }
+
     pub fn resolve(&self, relative_path: &str) -> Result<PathBuf, StorageError> {
         let relative = Path::new(relative_path);
         if relative.is_absolute()

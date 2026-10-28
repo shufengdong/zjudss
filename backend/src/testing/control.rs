@@ -392,6 +392,7 @@ pub async fn run_e2e_server(
             std::time::Duration::from_secs(30 * 24 * 60 * 60),
             false,
         ),
+        None,
     );
     let control = ControlState::new(config.control_token, llm, engine).with_app(&state);
     let router = crate::build_router(state).merge(control_router(control));

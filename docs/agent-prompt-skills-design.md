@@ -49,6 +49,10 @@ shell 命令和任意图表 option。`modify_model` 使用 `tableName + rowKey +
 `search_study_facades` 只接收查询词和可选显式函数名；`prepare_study` 只接收目录 facade ID、结构化原始意图和可选来源 workflow ID；比较使用两个 run ID。模型范围不存在、查询无效、输出过大、草稿 revision
 冲突和表不存在分别使用稳定错误码，工具响应不包含 artifact 路径。
 
+配置确认后的脚本由独立无工具 ScriptAuthor 处理，不把脚本生成能力重新开放给对话 Agent。generation 请求只含冻结合同、
+冻结输入快照和按函数检索的有界引擎文档片段；repair 请求固定包含当前脚本全文、脱敏且最多 64 KiB 的 stderr、结构/结果
+诊断与冻结合同，并明确要求“只输出修改后的完整脚本，不要解释”。原始 stderr、服务器路径和 secret 不进入 LLM。
+
 ## Engine knowledge
 
 服务启动时从当前 `SPARROWZZ_DIR` 动态发现、验证并发布不可变 snapshot，索引受控文档章节、catalog 和案例。

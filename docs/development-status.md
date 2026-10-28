@@ -7,7 +7,7 @@
 > [`2026-10-27-v4-independent-data-resources-managed-studies.md`](superpowers/plans/2026-10-27-v4-independent-data-resources-managed-studies.md)。
 > 当前 eig-rs 已提供全部门面的完整传递输入、Struct 参数卡和结果 schema，外部机器合同门禁已经满足。V4 Task 1
 > 的空库持久化合同、Task 2 的动态研究门面目录、Task 3 的有界进程执行边界、Task 4 的可恢复统一上传批次和
-> Task 5 的独立数据资源发布/管理、Task 6 的目录驱动研究配置、Task 7 的 durable 工作流消息、历史锚定与会话删除合同、Task 8 的 V4 对话 Agent bundle 及 Task 9 的受管工作流持久状态机已经实现；生成、执行和自动修正循环由 Task 10 接入。
+> Task 5 的独立数据资源发布/管理、Task 6 的目录驱动研究配置、Task 7 的 durable 工作流消息、历史锚定与会话删除合同、Task 8 的 V4 对话 Agent bundle、Task 9 的受管工作流持久状态机及 Task 10 的生成、执行、结果合同校验和自动修正循环已经实现。
 > 本文未明确标为 V4 已完成的其余内容仍描述进入 V4 前已验证的 V3 产品行为。
 
 ## V4 implementation progress
@@ -21,9 +21,10 @@
 | Task 5：独立数据资源发布与管理 | complete | model/resource 双子事务、普通 Data/Struct 资源、替换/删除/提升、资源分析与物化视图、4 个 Agent 工具 |
 | Task 6：目录驱动研究配置 | complete | revision 状态机、动态 model/Data/Struct/结果卡、复用建议、多资源消歧、受控列映射、最终确认准备合同、2 个 Agent 工具 |
 | Task 9：受管工作流状态机 | complete | 原子确认、Struct 资源发布、冻结输入、provisional run、专用 ScriptAuthor、candidate/父 attempt、查询/取消 API、启动恢复 |
+| Task 10：脚本生成、执行与自动修正 | complete | 结构合同检查、冻结输入树、共享调度与会话取消、tensoreval 立即执行、3 次修正/4 次执行上限、64 KiB 脱敏诊断、精确结果合同、独占原子结果发布与崩溃孤儿回收 |
 | Task 7：durable 消息、历史锚定与会话删除 | complete | 3 种 revisioned 操作卡、`messageId:revision` SSE、连续 around window、影响 token 删除与统一取消 |
 | Task 8：V4 Agent bundle 与受控工具 | complete | `v4.0.0`、5 个按需 skills、22 个对话工具、无 `create_script`/`plan_study` 权限 |
-| Tasks 10–15 | planned | 以 V4 实施计划为准 |
+| Tasks 11–15 | planned | 以 V4 实施计划为准 |
 
 Task 5 的完整后端测试和统一上传/独立数据资源公共 API Playwright 旅程已通过。完整旧版 Playwright 套件仍依赖已删除的
 `/model-imports` 协议和“确认合并”界面，剩余迁移属于 Task 12 前端工作区任务，不恢复旧协议作为兼容层。
@@ -40,7 +41,7 @@ Task 5 的完整后端测试和统一上传/独立数据资源公共 API Playwri
 | 独立数据资源 | complete | 会话唯一 alias、原文件/规范 Parquet、Struct 覆盖预览、重新上传替换、删除影响、结果提升、分析/物化视图输入 |
 | 草稿与版本 | complete | expected revision、整表覆盖、显式发布/激活、影响预览删除 |
 | 案例库 | complete | rssbundle 目录树、manifest 详情/搜索、无效叶诊断、严格清单导入、窄屏浏览 |
-| 脚本 | transitioning | 上传/Agent 创建已改为保存候选并把语法/运行可行性交给 tensoreval；V4 受管确认与结果合同在 Tasks 9–11 完成 |
+| 脚本 | transitioning | 受管 Agent 脚本已实现候选持久化、直接执行、自动修正和冻结结果合同；成功脚本再次运行、失败脚本“重新尝试”和手写脚本语义由 Task 11 完成 |
 | 运行 | complete | 仅按钮创建、active race、含脚本名的冻结快照、私有输入树、可展开失败详情与多 Parquet 结果 |
 | 结果与派生 | complete | 单结果删除、分析、物化视图、比较、tombstone 血缘 |
 | 前端 | complete | 三列/窄屏、运行摘要与失败原因/耗时/全结果选择、结果数据表/图表、active/draft/历史模型表只读工作台、登录用户菜单 |
@@ -64,7 +65,7 @@ Task 5 的完整后端测试和统一上传/独立数据资源公共 API Playwri
   `prepare_study` 持久化 revisioned 配置卡。model 输入仅绑定 active 的实际门面表，Struct/Data 绑定普通资源，
   多资源必须选择，列映射发布带血缘的新 Parquet 资源。结果集合按 fixed/minimum/conditional 目录约束校验。
   `prepare_confirmation` 重新检查 revision、snapshot、门面 hash、active 模型和资源内容，生成 Task 9 原子事务使用的
-  locked contract/input snapshot/replacement commands；confirm 公共路由原子创建受管 workflow 与 provisional run，脚本生成、执行和自动修正由 Task 10 接入。
+  locked contract/input snapshot/replacement commands；confirm 公共路由原子创建受管 workflow 与 provisional run，并由无工具 ScriptAuthor 生成候选。候选先经过只证明冻结函数、alias 顺序和结果绑定未变化的结构合同检查，再通过统一 adapter 调用 tensoreval。非零退出或可修正的结果限制/合同错误最多修正 3 次；超时、监控、路径、配额和基础设施错误立即失败。成功仅在全部结果名称和 Snappy Parquet schema 精确匹配后原子发布。
 - 模型表读取：active、准确 draft revision 和历史版本均支持元数据、分页投影与 Parquet 下载；Agent 可通过
   有界等值查询读取实际行后再修改，读取不改变模型生命周期。
 

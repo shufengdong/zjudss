@@ -1,18 +1,23 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::PathBuf;
+use std::sync::Arc;
 
+use crate::adapters::SimEngine;
+use crate::agent::ScriptAuthor;
 use crate::agent::knowledge::AgentKnowledge;
 use crate::auth::CurrentUser;
 use crate::db::repositories::{
     ManagedWorkflowAggregate, ManagedWorkflowRepo, ManagedWorkflowRepoError, NewWorkflowCandidate,
     RepoError,
 };
+use crate::engine_resources::EngineResourceSnapshot;
 use crate::storage::StageLimits;
 
 use super::{
-    AppEvent, ArtifactMetadata, ArtifactService, DataResourceService, EventBus,
-    StudyConfigurationError, StudyConfigurationService, WorkflowAttemptCard, WorkflowProgressCard,
-    ms_to_iso, now_ms,
+    AppEvent, ArtifactMetadata, ArtifactService, DataResourceService, EventBus, RunScheduler,
+    SessionCancellationRegistry, StudyConfigurationError, StudyConfigurationService,
+    WorkflowAttemptCard, WorkflowProgressCard, ms_to_iso, now_ms,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -120,9 +125,12 @@ pub struct ManagedWorkflowService {
     data_resources: DataResourceService,
     agent_bundle_version: String,
     correction_budget: i32,
+    worker: super::workflow_worker::WorkflowWorker,
+    auto_start: bool,
 }
 
 impl ManagedWorkflowService {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         repo: ManagedWorkflowRepo,
         configurations: StudyConfigurationService,
@@ -131,15 +139,40 @@ impl ManagedWorkflowService {
         data_resources: DataResourceService,
         knowledge: &AgentKnowledge,
         correction_budget: usize,
+        author: Arc<dyn ScriptAuthor>,
+        engine: Arc<dyn SimEngine>,
+        snapshot: Arc<EngineResourceSnapshot>,
+        data_dir: PathBuf,
+        scheduler: RunScheduler,
+        session_cancellations: SessionCancellationRegistry,
+        engine_timeout: std::time::Duration,
+        result_max_file_bytes: u64,
+        auto_start: bool,
     ) -> Self {
+        let agent_bundle_version = knowledge.manifest.agent_bundle_version.clone();
+        let worker = super::workflow_worker::WorkflowWorker::new(
+            repo.clone(),
+            artifacts.clone(),
+            author,
+            engine,
+            snapshot,
+            data_dir,
+            agent_bundle_version.clone(),
+            scheduler,
+            session_cancellations,
+            engine_timeout,
+            result_max_file_bytes,
+        );
         Self {
             repo,
             configurations,
             events,
             artifacts,
             data_resources,
-            agent_bundle_version: knowledge.manifest.agent_bundle_version.clone(),
+            agent_bundle_version,
             correction_budget: i32::try_from(correction_budget).unwrap_or(i32::MAX),
+            worker,
+            auto_start,
         }
     }
 
@@ -195,7 +228,7 @@ impl ManagedWorkflowService {
                 now_ms(),
             )
             .await;
-        let aggregate = match result {
+        let (aggregate, should_start) = match result {
             Ok(outcome) => {
                 if !outcome.replacements_consumed {
                     for artifact_id in artifact_ids {
@@ -205,7 +238,7 @@ impl ManagedWorkflowService {
                             .await;
                     }
                 }
-                outcome.aggregate
+                (outcome.aggregate, outcome.replacements_consumed)
             }
             Err(error) => {
                 for artifact_id in artifact_ids {
@@ -219,6 +252,9 @@ impl ManagedWorkflowService {
         };
         let view = view(aggregate);
         self.publish(&view);
+        if should_start && self.auto_start {
+            self.worker.start(user.clone(), view.id, view.session_id);
+        }
         Ok(view)
     }
 
@@ -239,6 +275,7 @@ impl ManagedWorkflowService {
         user: &CurrentUser,
         workflow_id: i32,
     ) -> Result<ManagedWorkflowView, WorkflowError> {
+        self.worker.cancel(workflow_id);
         let aggregate = self
             .repo
             .cancel(&user.id, workflow_id, now_ms())
@@ -247,6 +284,17 @@ impl ManagedWorkflowService {
         let view = view(aggregate);
         self.publish(&view);
         Ok(view)
+    }
+
+    pub async fn execute_confirmed(
+        &self,
+        user: &CurrentUser,
+        workflow_id: i32,
+    ) -> Result<(), WorkflowError> {
+        self.worker
+            .run(user, workflow_id)
+            .await
+            .map_err(|message| WorkflowError::Invalid("workflow_execution_failed", message))
     }
 
     pub async fn record_candidate_script(

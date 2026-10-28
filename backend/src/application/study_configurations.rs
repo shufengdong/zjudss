@@ -167,7 +167,7 @@ pub struct StudyConfigurationView {
     pub results: StudyResultCard,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CanonicalStructValue {
     pub input_id: String,
@@ -178,14 +178,14 @@ pub struct CanonicalStructValue {
     pub resource_diff: Value,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FrozenResultContract {
     pub name: String,
     pub schema_ref: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LockedStudyContract {
     pub configuration_id: i32,
@@ -198,7 +198,7 @@ pub struct LockedStudyContract {
     pub results: Vec<FrozenResultContract>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FrozenModelInput {
     pub model_version_id: i32,
@@ -206,7 +206,7 @@ pub struct FrozenModelInput {
     pub tables: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FrozenStudyInput {
     pub input_id: String,
@@ -218,7 +218,7 @@ pub struct FrozenStudyInput {
     pub content_hash: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowInputSnapshot {
     pub model: Option<FrozenModelInput>,

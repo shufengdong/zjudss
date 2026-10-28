@@ -158,6 +158,22 @@ async fn object_paths_stay_inside_data_dir_and_gc_removes_unreferenced_blobs() {
 }
 
 #[tokio::test]
+async fn startup_gc_removes_cas_blobs_without_database_rows() {
+    let app = TestApp::spawn().await;
+    let service = &app.state.artifact_service;
+    let hash = "a".repeat(64);
+    let relative = zjudss::storage::ArtifactStore::relative_path(&hash);
+    let path = service.store().resolve(&relative).unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, b"orphaned by transaction rollback").unwrap();
+
+    let report = service.collect_unreferenced().await.unwrap();
+
+    assert_eq!(report.removed_artifacts, 1);
+    assert!(!path.exists());
+}
+
+#[tokio::test]
 async fn opened_read_survives_release_and_collection_without_persisting_a_reference() {
     let app = TestApp::spawn().await;
     let service = &app.state.artifact_service;

@@ -152,6 +152,19 @@ script 消息时一次性绑定，之后不可更换。正常完成、取消或�
 稳定 script 消息锚点；只有候选尚未产生时终态 run 才继续为空。服务重启把非终态 workflow、attempt 和 run 收敛为
 `service_restarted`，不从临时文件续跑。
 
+首次确认提交后，后端立即调用无工具 `ScriptAuthor` 生成候选并保存 candidate artifact。结构检查只验证冻结门面函数、
+输入 alias/顺序、Struct 资源引用和结果绑定未变化；一般 RSS 语义与运行可行性以 tensoreval 为准。候选通过结构检查后
+立即使用确认时冻结的 model/Data/Struct artifact 构造私有命名输入树并执行。非零退出、结果数量/大小限制和
+`result_contract_invalid` 可进入修正；`engine_timeout`、`result_monitor_failed`、路径安全、配额和基础设施错误直接失败。
+默认最多 3 个 repair candidate，因此最多 4 次引擎调用。每个 repair prompt 固定包含当前完整脚本、脱敏 stderr、结构或
+结果诊断、冻结合同和“只输出修改后的完整脚本，不要解释”。发送内容按 UTF-8 边界保留 64 KiB 首尾；完整有界 stderr
+仅保存为审计 artifact，不进入普通 API、消息、搜索或模型请求。
+
+成功要求结果稳定名称集合与冻结选择完全相等，每个文件是可读 Snappy Parquet 且完整列名、类型、nullability、unit
+与当前启动 snapshot 中冻结的 result schema 相等；零行合法。全部结果验证通过后，最终 attempt、脚本资源/消息锚点、
+run、所有 result dataset 和 workflow 终态在同一数据库事务发布，任一失败不留下部分结果。取消可中断正在等待的
+ScriptAuthor 或引擎 future，并由既有终态事务收敛。
+
 发布请求携带 `expectedDraftId`、`expectedDraftRevision`、`clientPublishId`。成功冻结版本、清空草稿并自动激活。
 激活历史版本只移动 active 指针；存在草稿时必须提交 `discardDraft=true` 以及准确 expected draft。
 

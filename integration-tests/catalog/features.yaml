@@ -754,6 +754,45 @@
     - "error:cancelled_by_user"
     - "error:service_restarted"
 
+- id: MANAGED-SCRIPT-EXECUTION-001
+  source: docs/api-design.md#managed-study-workflows
+  title: Confirmed studies generate execute validate and repair managed RSS scripts
+  layers: [database, application, adapter, agent]
+  lanes: [pr, release]
+  tests:
+    - runner: rust
+      file: backend/tests/script_repair.rs
+      name: generated_script_executes_immediately_and_publishes_exact_results
+    - runner: rust
+      file: backend/tests/script_repair.rs
+      name: nonzero_exit_is_sanitized_repaired_and_then_succeeds
+    - runner: rust
+      file: backend/tests/script_repair.rs
+      name: initial_contract_rejection_does_not_execute_and_repair_consumes_budget
+    - runner: rust
+      file: backend/tests/script_repair.rs
+      name: timeout_is_not_repaired
+    - runner: rust
+      file: backend/tests/script_repair.rs
+      name: repair_budget_allows_at_most_four_engine_calls
+    - runner: rust
+      file: backend/tests/script_repair.rs
+      name: result_contract_rejection_repairs_without_publishing_partial_results
+    - runner: rust
+      file: backend/tests/script_repair.rs
+      name: cancellation_interrupts_the_author_without_creating_a_candidate
+  assertions: [initial generation runs immediately, each candidate and parent attempt is durable, structural contract violations never reach tensoreval, repair candidates consume the configured budget, three repairs permit at most four engine calls, nonzero exits and result contract violations are repairable, timeout monitor path quota and infrastructure failures stop immediately, stderr sent to the model is sanitized and bounded while raw retained bytes remain audit only, cancellation interrupts author or engine work, exact result names and schemas publish atomically without partial datasets]
+  fixtures: [minimal dynamic facade, frozen model and Struct resource, scripted author, scenario engine]
+  contracts:
+    - "error:repair_contract_violated"
+    - "error:result_contract_invalid"
+    - "error:repair_exhausted"
+    - "error:script_generation_model_unavailable"
+    - "error:repair_model_unavailable"
+    - "error:script_candidate_store_failed"
+    - "error:result_publish_failed"
+    - "error:stderr_audit_failed"
+
 - id: ENGINE-FACADE-CATALOG-001
   source: docs/superpowers/plans/2026-10-27-v4-independent-data-resources-managed-studies.md#task-2-从引擎-snapshot-发布全部可用-dataframe-研究门面
   title: Engine snapshots publish independently versioned DataFrame facade contracts

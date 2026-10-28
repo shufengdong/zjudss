@@ -12,19 +12,23 @@ mod data_mapping;
 pub mod data_resources;
 pub(crate) mod dataframe_reader;
 pub mod datasets;
+pub mod diagnostics;
 mod events;
 pub mod history;
+pub mod managed_rss;
 pub mod managed_workflows;
 pub mod model_dataframes;
 pub mod model_patch;
 pub mod runs;
 pub mod scheduler;
+pub mod script_contract;
 pub mod scripts;
 mod study_configurations;
 pub mod study_planning;
 pub mod uploads;
 pub mod versions;
 pub mod visualization;
+pub mod workflow_worker;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -178,6 +182,7 @@ impl AppState {
         agent_factory: Arc<dyn AgentFactory>,
         engine: Arc<dyn SimEngine>,
         auth: AuthService,
+        script_author_override: Option<Arc<dyn ScriptAuthor>>,
     ) -> Self {
         use sha2::{Digest, Sha256};
 
@@ -379,6 +384,10 @@ impl AppState {
             24,
             3,
             2,
+            std::time::Duration::from_secs(120),
+            512 * 1024 * 1024,
+            script_author_override,
+            false,
             ArchiveLimits {
                 max_entries: 100,
                 max_expanded_bytes: 16 * 1024 * 1024,
@@ -508,6 +517,10 @@ impl AppState {
             upload_staging_ttl_hours,
             script_repair_max_attempts,
             agent_model_retry_max,
+            std::time::Duration::from_secs(120),
+            512 * 1024 * 1024,
+            None,
+            true,
             archive_limits,
         )
     }
@@ -528,13 +541,19 @@ impl AppState {
         upload_staging_ttl_hours: u64,
         script_repair_max_attempts: usize,
         agent_model_retry_max: usize,
+        managed_engine_timeout: std::time::Duration,
+        managed_result_max_file_bytes: u64,
+        script_author_override: Option<Arc<dyn ScriptAuthor>>,
+        managed_workflow_auto_start: bool,
         archive_limits: ArchiveLimits,
     ) -> Self {
         let session_repo = SessionRepo::new(pool.clone());
-        let script_author: Arc<dyn ScriptAuthor> = Arc::new(DeepSeekScriptAuthor::from_factory(
-            agent_factory.clone(),
-            agent_model_retry_max,
-        ));
+        let script_author: Arc<dyn ScriptAuthor> = script_author_override.unwrap_or_else(|| {
+            Arc::new(DeepSeekScriptAuthor::from_factory(
+                agent_factory.clone(),
+                agent_model_retry_max,
+            ))
+        });
         let message_repo = MessageRepo::new(pool.clone());
         let events = EventBus::new();
         let session_cancellations = SessionCancellationRegistry::default();
@@ -651,6 +670,15 @@ impl AppState {
             data_resource_service.clone(),
             &agent_knowledge,
             script_repair_max_attempts,
+            script_author.clone(),
+            engine.clone(),
+            engine_snapshot.clone(),
+            data_dir.clone(),
+            scheduler.clone(),
+            session_cancellations.clone(),
+            managed_engine_timeout,
+            managed_result_max_file_bytes,
+            managed_workflow_auto_start,
         );
         Self {
             pool,
@@ -726,6 +754,10 @@ impl AppState {
             24,
             3,
             2,
+            std::time::Duration::from_secs(120),
+            512 * 1024 * 1024,
+            None,
+            true,
             ArchiveLimits::default(),
         )
     }

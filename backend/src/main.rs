@@ -127,6 +127,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         runtime.upload_staging_ttl_hours,
         runtime.script_repair_max_attempts,
         runtime.agent_model_retry_max,
+        std::time::Duration::from_millis(runtime.tensoreval_timeout_ms),
+        runtime.result_max_file_bytes,
+        None,
+        true,
         ArchiveLimits {
             max_entries: runtime.archive_max_entries,
             max_expanded_bytes: runtime.archive_max_expanded_bytes,
@@ -134,6 +138,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             max_file_bytes: runtime.upload_single_file_limit_bytes,
         },
     );
+    state.artifact_service.collect_unreferenced().await?;
     state.upload_batch_service.recover_startup().await?;
     state
         .data_resource_service

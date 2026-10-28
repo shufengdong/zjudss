@@ -234,17 +234,18 @@ impl AgentFactory for ScriptedAgentFactory {
             inner: self.inner.clone(),
             trace_index,
         };
-        let mut server = ToolServer::new();
-        for tool in request.tools {
-            server = server.registered_tool(tool);
+        let builder = AgentBuilder::new(MockCompletionModel::from_stream_turns(turns))
+            .preamble(request.system_prompt)
+            .add_hook(hook);
+        if request.tools.is_empty() {
+            Ok(builder.build())
+        } else {
+            let mut server = ToolServer::new();
+            for tool in request.tools {
+                server = server.registered_tool(tool);
+            }
+            Ok(builder.tool_server_handle(server.run()).build())
         }
-        Ok(
-            AgentBuilder::new(MockCompletionModel::from_stream_turns(turns))
-                .preamble(request.system_prompt)
-                .add_hook(hook)
-                .tool_server_handle(server.run())
-                .build(),
-        )
     }
 }
 

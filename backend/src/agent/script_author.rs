@@ -2,14 +2,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::application::{LockedStudyContract, WorkflowInputSnapshot};
 
 use super::{AgentBuildRequest, AgentFactory, DeepSeekAgentFactory, LlmConfig};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineDocRef {
     pub id: String,
@@ -96,15 +96,24 @@ impl DeepSeekScriptAuthor {
             .map_err(|error| ScriptAuthorError::provider(error.to_string()))?;
         let mut last_error = None;
         for attempt in 0..=self.model_retry_max {
-            let agent = self
-                .factory
-                .build(AgentBuildRequest {
+            let agent = match self.factory.build(AgentBuildRequest {
                     tools: Vec::new(),
                     system_prompt: format!(
                         "你是受控 RSS 脚本作者。根据冻结合同{purpose}。只输出完整脚本，不要解释，不要使用 import_dss 或其他导入模型的方法。"
                     ),
-                })
-                .map_err(|error| ScriptAuthorError::provider(error.to_string()))?;
+                }) {
+                Ok(agent) => agent,
+                Err(error) => {
+                    if last_error.is_none() {
+                        last_error = Some(error.to_string());
+                    }
+                    if attempt < self.model_retry_max {
+                        tokio::time::sleep(Duration::from_millis(50 * (attempt as u64 + 1))).await;
+                        continue;
+                    }
+                    break;
+                }
+            };
             match agent.prompt(payload.clone()).await {
                 Ok(script) => return Ok(script.output().to_string()),
                 Err(error) => {

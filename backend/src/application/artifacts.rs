@@ -146,16 +146,23 @@ impl ArtifactService {
             created_at_ms: now_ms(),
         };
         let store = self.store.clone();
+        let artifacts = self.artifacts.clone();
+        let access_gate = self.access_gate.clone();
         let mut staged = staged;
-        self.artifacts
-            .commit_with_publish(scope_id, draft, move |path| {
-                store
-                    .publish(&mut staged, path)
-                    .map_err(|error| RepoError::Storage(error.to_string()))
-            })
-            .await
-            .map(ArtifactRef::from)
-            .map_err(Into::into)
+        tokio::spawn(async move {
+            let _guard = access_gate.read_owned().await;
+            artifacts
+                .commit_with_publish(scope_id, draft, move |path| {
+                    store
+                        .publish(&mut staged, path)
+                        .map_err(|error| RepoError::Storage(error.to_string()))
+                })
+                .await
+                .map(ArtifactRef::from)
+                .map_err(Into::into)
+        })
+        .await
+        .map_err(|error| ArtifactError::Repository(RepoError::Join(error)))?
     }
 
     pub async fn commit_upload_source(
@@ -177,16 +184,23 @@ impl ArtifactService {
             created_at_ms: now_ms(),
         };
         let store = self.store.clone();
+        let artifacts = self.artifacts.clone();
+        let access_gate = self.access_gate.clone();
         let mut staged = staged;
-        self.artifacts
-            .commit_upload_source_with_publish(scope_id, draft, upload_file_id, move |path| {
-                store
-                    .publish(&mut staged, path)
-                    .map_err(|error| RepoError::Storage(error.to_string()))
-            })
-            .await
-            .map(ArtifactRef::from)
-            .map_err(Into::into)
+        tokio::spawn(async move {
+            let _guard = access_gate.read_owned().await;
+            artifacts
+                .commit_upload_source_with_publish(scope_id, draft, upload_file_id, move |path| {
+                    store
+                        .publish(&mut staged, path)
+                        .map_err(|error| RepoError::Storage(error.to_string()))
+                })
+                .await
+                .map(ArtifactRef::from)
+                .map_err(Into::into)
+        })
+        .await
+        .map_err(|error| ArtifactError::Repository(RepoError::Join(error)))?
     }
 
     pub async fn get_usage(&self, scope_id: i32) -> Result<StorageUsage, ArtifactError> {
@@ -247,6 +261,12 @@ impl ArtifactService {
             .map_err(Into::into)
     }
 
+    pub(crate) async fn exclusive_publication_guard(
+        &self,
+    ) -> tokio::sync::OwnedRwLockWriteGuard<()> {
+        self.access_gate.clone().write_owned().await
+    }
+
     pub async fn collect_unreferenced(&self) -> Result<GcReport, ArtifactError> {
         let _guard = self.access_gate.write().await;
         let mut report = GcReport {
@@ -278,6 +298,25 @@ impl ArtifactService {
                     self.artifacts
                         .record_gc_failure(artifact.storage_path, error.to_string(), now_ms())
                         .await?;
+                }
+            }
+        }
+        let known = self
+            .artifacts
+            .storage_paths()
+            .await?
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        for path in self.store.object_paths()? {
+            if !known.contains(&path) {
+                match self.store.remove(&path) {
+                    Ok(()) => report.removed_artifacts += 1,
+                    Err(error) => {
+                        report.failed_blobs += 1;
+                        self.artifacts
+                            .record_gc_failure(path, error.to_string(), now_ms())
+                            .await?;
+                    }
                 }
             }
         }

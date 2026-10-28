@@ -106,6 +106,28 @@ fn rejects_the_thirty_third_waiting_run() {
     assert_eq!(scheduler.waiting_count(), 0);
 }
 
+#[tokio::test]
+async fn cancelling_a_queued_ticket_releases_capacity_without_running_work() {
+    let scheduler = RunScheduler::new(1, 1, 1);
+    let active = scheduler.try_admit(&scope("active"), 1).unwrap();
+    let queued = scheduler.try_admit(&scope("queued"), 2).unwrap();
+    assert_eq!(scheduler.waiting_count(), 1);
+    let (cancel_tx, mut cancel_rx) = watch::channel(false);
+    cancel_tx.send_replace(true);
+
+    let result = queued
+        .run_cancellable(
+            async { panic!("cancelled queued work must not run") },
+            &mut cancel_rx,
+        )
+        .await;
+
+    assert!(result.is_none());
+    assert_eq!(scheduler.waiting_count(), 0);
+    drop(active);
+    assert_eq!(scheduler.active_count(), 0);
+}
+
 async fn response_json(response: axum::response::Response) -> Value {
     let bytes = to_bytes(response.into_body(), 1024 * 1024)
         .await

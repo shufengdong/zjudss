@@ -26,6 +26,7 @@ struct Inner {
     turns: Mutex<VecDeque<AuthorTurn>>,
     barriers: Mutex<HashMap<String, Arc<AuthorBarrier>>>,
     trace: Mutex<Vec<String>>,
+    repair_requests: Mutex<Vec<ScriptRepairRequest>>,
 }
 
 #[derive(Clone, Default)]
@@ -90,6 +91,14 @@ impl ScriptedAuthor {
         self.inner.trace.lock().expect("author trace").clone()
     }
 
+    pub fn repair_requests(&self) -> Vec<ScriptRepairRequest> {
+        self.inner
+            .repair_requests
+            .lock()
+            .expect("author repair requests")
+            .clone()
+    }
+
     async fn next(&self, operation: &str) -> Result<String, ScriptAuthorError> {
         self.inner
             .trace
@@ -138,7 +147,12 @@ impl ScriptAuthor for ScriptedAuthor {
         self.next("generate").await
     }
 
-    async fn repair(&self, _request: ScriptRepairRequest) -> Result<String, ScriptAuthorError> {
+    async fn repair(&self, request: ScriptRepairRequest) -> Result<String, ScriptAuthorError> {
+        self.inner
+            .repair_requests
+            .lock()
+            .expect("author repair requests")
+            .push(request);
         self.next("repair").await
     }
 }

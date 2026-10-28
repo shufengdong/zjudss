@@ -11,7 +11,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 use zjudss::adapters::{SimEngine, StubEngine};
 use zjudss::agent::knowledge::AgentKnowledge;
-use zjudss::agent::{AgentFactory, DeepSeekAgentFactory, LlmConfig};
+use zjudss::agent::{AgentFactory, DeepSeekAgentFactory, LlmConfig, ScriptAuthor};
 use zjudss::application::{AppState, RunScheduler};
 use zjudss::application::{CandidateDecision, CandidatePurpose, UploadFile, UploadSourceKind};
 use zjudss::auth::{AuthService, CurrentUser, UserId};
@@ -200,6 +200,51 @@ impl TestApp {
             .await
     }
 
+    pub async fn spawn_minimal_with_engine_and_agent_factory(
+        engine: std::sync::Arc<dyn SimEngine>,
+        agent_factory: std::sync::Arc<dyn AgentFactory>,
+        script_author: std::sync::Arc<dyn ScriptAuthor>,
+    ) -> Self {
+        let root = tempfile::tempdir().expect("create isolated minimal test root");
+        let data_dir = root.path().join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let database_url = root.path().join("test.db").display().to_string();
+        let pool = db::establish_pool(&database_url).expect("create minimal test database pool");
+        {
+            let mut conn = pool.get().expect("checkout minimal test database");
+            db::run_migrations(&mut conn).expect("run minimal test migrations");
+        }
+        seed_test_users(
+            &pool,
+            b"ID,NAME\ninstance,Instance\nalice,Alice\nbob,Bob\nforeign,Foreign\nalice@example.com,Alice Example\nbob@example.com,Bob Example\nowner:alice@example.com,Alice Owner\nowner:bob@example.com,Bob Owner\nowner:foreign,Foreign Owner\n",
+        );
+        let auth = AuthService::new(
+            pool.clone(),
+            std::time::Duration::from_secs(30 * 24 * 60 * 60),
+            false,
+        );
+        let state = AppState::new_for_e2e(
+            pool.clone(),
+            data_dir,
+            agent_factory,
+            engine,
+            auth,
+            Some(script_author),
+        );
+        zjudss::db::repositories::EngineResourceSnapshotRepo::new(pool.clone())
+            .publish_current(&state.engine_snapshot, zjudss::application::now_ms())
+            .await
+            .expect("publish minimal test engine snapshot");
+        let router = zjudss::build_router(state.clone());
+        Self {
+            router,
+            pool,
+            state,
+            live_engine_root: root.path().join("engine-fixture"),
+            _root: root,
+        }
+    }
+
     pub async fn spawn_with_auth_settings(ttl: std::time::Duration, secure: bool) -> Self {
         Self::spawn_with_scheduler(ttl, secure, RunScheduler::new(8, 2, 32)).await
     }
@@ -243,6 +288,20 @@ impl TestApp {
                 provider: "deepseek".to_string(),
                 model: "test-model".to_string(),
             })),
+        )
+        .await
+    }
+
+    pub async fn spawn_with_engine_and_agent_factory(
+        engine: std::sync::Arc<dyn SimEngine>,
+        agent_factory: std::sync::Arc<dyn AgentFactory>,
+    ) -> Self {
+        Self::spawn_with_scheduler_and_agent_factory(
+            std::time::Duration::from_secs(30 * 24 * 60 * 60),
+            false,
+            RunScheduler::new(8, 2, 32),
+            engine,
+            agent_factory,
         )
         .await
     }
@@ -378,6 +437,10 @@ impl TestApp {
             config.upload_staging_ttl_hours,
             config.script_repair_max_attempts,
             config.agent_model_retry_max,
+            std::time::Duration::from_millis(config.tensoreval_timeout_ms),
+            config.result_max_file_bytes,
+            None,
+            false,
             zjudss::ingestion::ArchiveLimits {
                 max_entries: config.archive_max_entries,
                 max_expanded_bytes: config.archive_max_expanded_bytes,

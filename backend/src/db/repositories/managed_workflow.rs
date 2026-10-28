@@ -3,16 +3,19 @@ use serde_json::json;
 
 use crate::application::PreparedStudyConfirmation;
 use crate::auth::UserId;
-use crate::db::models::{ManagedWorkflowRecord, SimulationRun, WorkflowAttemptRecord};
+use crate::db::models::{
+    ManagedWorkflowRecord, SimulationRun, WorkflowAttemptRecord, WorkflowInputSnapshotRecord,
+};
 use crate::db::{DbPool, schema};
 
-use super::{RepoError, RepoResult};
+use super::{ArtifactDraft, ArtifactRepo, NewRunDataset, RepoError, RepoResult};
 
 #[derive(Debug, Clone)]
 pub struct ManagedWorkflowAggregate {
     pub workflow: ManagedWorkflowRecord,
     pub run: SimulationRun,
     pub attempts: Vec<WorkflowAttemptRecord>,
+    pub inputs: Vec<WorkflowInputSnapshotRecord>,
     pub progress_message_revision: i32,
 }
 
@@ -30,6 +33,20 @@ pub enum ManagedWorkflowRepoError {
     ConfigurationStale,
     TerminalConflict,
 }
+
+impl std::fmt::Display for ManagedWorkflowRepoError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Repository(error) => write!(formatter, "{error}"),
+            Self::WorkflowInProgress(id) => write!(formatter, "workflow {id} is already running"),
+            Self::IdempotencyConflict => write!(formatter, "idempotency conflict"),
+            Self::ConfigurationStale => write!(formatter, "configuration stale"),
+            Self::TerminalConflict => write!(formatter, "workflow terminal conflict"),
+        }
+    }
+}
+
+impl std::error::Error for ManagedWorkflowRepoError {}
 
 impl From<RepoError> for ManagedWorkflowRepoError {
     fn from(value: RepoError) -> Self {
@@ -59,6 +76,35 @@ pub struct NewWorkflowCandidate {
     pub agent_model: Option<String>,
     pub engine_snapshot_id: String,
     pub now_ms: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkflowAttemptUpdate {
+    pub status: String,
+    pub workflow_status: String,
+    pub exit_code: Option<i32>,
+    pub stderr_audit_artifact_id: Option<i32>,
+    pub sanitized_stderr: Option<String>,
+    pub stderr_full_hash: Option<String>,
+    pub stderr_retained_hash: Option<String>,
+    pub stderr_sent_hash: Option<String>,
+    pub stderr_total_bytes: Option<i64>,
+    pub stderr_sent_bytes: Option<i64>,
+    pub stderr_truncated: bool,
+    pub diagnostic_json: Option<String>,
+    pub started: bool,
+    pub finished: bool,
+    pub now_ms: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingRunDataset {
+    pub result_name: String,
+    pub schema_json: String,
+    pub schema_hash: String,
+    pub row_count: i64,
+    pub size_bytes: i64,
+    pub created_at_ms: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -395,6 +441,7 @@ impl ManagedWorkflowRepo {
                                 .to_string(),
                         ),
                         now_ms,
+                        &[],
                     )?;
                 }
                 load_owned(conn, &user, workflow_id)
@@ -475,6 +522,9 @@ impl ManagedWorkflowRepo {
                         } else {
                             "generating"
                         }),
+                        schema::managed_workflows::corrections_used
+                            .eq(schema::managed_workflows::corrections_used
+                                + if candidate.phase == "repair" { 1 } else { 0 }),
                         schema::managed_workflows::updated_at_ms.eq(candidate.now_ms),
                     ))
                     .execute(conn)?;
@@ -495,6 +545,93 @@ impl ManagedWorkflowRepo {
         .map_err(|error| ManagedWorkflowRepoError::Repository(RepoError::Join(error)))?
     }
 
+    pub async fn update_attempt(
+        &self,
+        user: &UserId,
+        workflow_id: i32,
+        attempt_id: i32,
+        update: WorkflowAttemptUpdate,
+    ) -> Result<ManagedWorkflowAggregate, ManagedWorkflowRepoError> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool
+                .get()
+                .map_err(|error| ManagedWorkflowRepoError::Repository(RepoError::Pool(error)))?;
+            conn.immediate_transaction::<_, ManagedWorkflowRepoError, _>(|conn| {
+                let current = load_owned(conn, &user, workflow_id)?;
+                if !matches!(
+                    current.workflow.status.as_str(),
+                    "queued" | "generating" | "executing" | "repairing"
+                ) || current.attempts.last().map(|attempt| attempt.id) != Some(attempt_id)
+                {
+                    return Err(ManagedWorkflowRepoError::TerminalConflict);
+                }
+                let existing_attempt = current.attempts.last().expect("last attempt checked");
+                let changed = diesel::update(
+                    schema::workflow_attempts::table
+                        .find(attempt_id)
+                        .filter(schema::workflow_attempts::workflow_id.eq(workflow_id)),
+                )
+                .set((
+                    schema::workflow_attempts::status.eq(&update.status),
+                    schema::workflow_attempts::exit_code.eq(update.exit_code),
+                    schema::workflow_attempts::stderr_audit_artifact_id
+                        .eq(update.stderr_audit_artifact_id),
+                    schema::workflow_attempts::sanitized_stderr.eq(update.sanitized_stderr),
+                    schema::workflow_attempts::stderr_full_hash.eq(update.stderr_full_hash),
+                    schema::workflow_attempts::stderr_retained_hash.eq(update.stderr_retained_hash),
+                    schema::workflow_attempts::stderr_sent_hash.eq(update.stderr_sent_hash),
+                    schema::workflow_attempts::stderr_total_bytes.eq(update.stderr_total_bytes),
+                    schema::workflow_attempts::stderr_sent_bytes.eq(update.stderr_sent_bytes),
+                    schema::workflow_attempts::stderr_truncated.eq(update.stderr_truncated),
+                    schema::workflow_attempts::result_diagnostics_json.eq(update.diagnostic_json),
+                    schema::workflow_attempts::started_at_ms.eq(if update.started {
+                        Some(update.now_ms)
+                    } else {
+                        existing_attempt.started_at_ms
+                    }),
+                    schema::workflow_attempts::finished_at_ms.eq(if update.finished {
+                        Some(update.now_ms)
+                    } else {
+                        existing_attempt.finished_at_ms
+                    }),
+                ))
+                .execute(conn)?;
+                if changed != 1 {
+                    return Err(ManagedWorkflowRepoError::Repository(RepoError::NotFound));
+                }
+                diesel::update(schema::managed_workflows::table.find(workflow_id))
+                    .set((
+                        schema::managed_workflows::status.eq(&update.workflow_status),
+                        schema::managed_workflows::updated_at_ms.eq(update.now_ms),
+                    ))
+                    .execute(conn)?;
+                diesel::update(schema::simulation_runs::table.find(current.run.id))
+                    .set((
+                        schema::simulation_runs::status.eq(
+                            if update.workflow_status == "executing" {
+                                "running"
+                            } else {
+                                "queued"
+                            },
+                        ),
+                        schema::simulation_runs::stage.eq(&update.workflow_status),
+                        schema::simulation_runs::started_at_ms.eq(if update.started {
+                            Some(update.now_ms)
+                        } else {
+                            current.run.started_at_ms
+                        }),
+                    ))
+                    .execute(conn)?;
+                update_progress_message(conn, workflow_id, &update.workflow_status, update.now_ms)?;
+                load_owned(conn, &user, workflow_id)
+            })
+        })
+        .await
+        .map_err(|error| ManagedWorkflowRepoError::Repository(RepoError::Join(error)))?
+    }
+
     pub async fn finalize_with_script(
         &self,
         user: &UserId,
@@ -502,6 +639,65 @@ impl ManagedWorkflowRepo {
         attempt_id: i32,
         succeeded: bool,
         error_json: Option<String>,
+        now_ms: i64,
+    ) -> Result<ManagedWorkflowAggregate, ManagedWorkflowRepoError> {
+        self.finalize_with_outputs(
+            user,
+            workflow_id,
+            attempt_id,
+            succeeded,
+            error_json,
+            Vec::new(),
+            now_ms,
+        )
+        .await
+    }
+
+    pub async fn fail_without_candidate(
+        &self,
+        user: &UserId,
+        workflow_id: i32,
+        error_json: String,
+        now_ms: i64,
+    ) -> Result<ManagedWorkflowAggregate, ManagedWorkflowRepoError> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool
+                .get()
+                .map_err(|error| ManagedWorkflowRepoError::Repository(RepoError::Pool(error)))?;
+            conn.immediate_transaction::<_, ManagedWorkflowRepoError, _>(|conn| {
+                let current = load_owned(conn, &user, workflow_id)?;
+                if !current.attempts.is_empty() {
+                    return Err(ManagedWorkflowRepoError::TerminalConflict);
+                }
+                terminalize(
+                    conn,
+                    &user,
+                    &current,
+                    None,
+                    "failed",
+                    "failed",
+                    Some(error_json),
+                    now_ms,
+                    &[],
+                )?;
+                load_owned(conn, &user, workflow_id)
+            })
+        })
+        .await
+        .map_err(|error| ManagedWorkflowRepoError::Repository(RepoError::Join(error)))?
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn finalize_with_outputs(
+        &self,
+        user: &UserId,
+        workflow_id: i32,
+        attempt_id: i32,
+        succeeded: bool,
+        error_json: Option<String>,
+        datasets: Vec<NewRunDataset>,
         now_ms: i64,
     ) -> Result<ManagedWorkflowAggregate, ManagedWorkflowRepoError> {
         let pool = self.pool.clone();
@@ -534,12 +730,72 @@ impl ManagedWorkflowRepo {
                     terminal,
                     error_json,
                     now_ms,
+                    &datasets,
                 )?;
                 load_owned(conn, &user, workflow_id)
             })
         })
         .await
         .map_err(|error| ManagedWorkflowRepoError::Repository(RepoError::Join(error)))?
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn finalize_with_artifact_outputs<P>(
+        &self,
+        user: &UserId,
+        storage_scope_id: i32,
+        workflow_id: i32,
+        attempt_id: i32,
+        drafts: Vec<ArtifactDraft>,
+        pending: Vec<PendingRunDataset>,
+        publish: P,
+        now_ms: i64,
+    ) -> Result<ManagedWorkflowAggregate, ManagedWorkflowRepoError>
+    where
+        P: FnMut(usize, &str) -> Result<(), RepoError> + Send + 'static,
+    {
+        if drafts.len() != pending.len() {
+            return Err(ManagedWorkflowRepoError::Repository(
+                RepoError::InvalidState("result_artifact_count_mismatch".into()),
+            ));
+        }
+        let owner = user.0.clone();
+        ArtifactRepo::new(self.pool.clone())
+            .commit_batch_with_publish(storage_scope_id, drafts, publish, move |conn, artifacts| {
+                let current = load_owned(conn, &owner, workflow_id)
+                    .map_err(|error| RepoError::InvalidState(error.to_string()))?;
+                if matches!(current.workflow.status.as_str(), "succeeded" | "failed") {
+                    return Err(RepoError::InvalidState("workflow_terminal_conflict".into()));
+                }
+                let datasets = pending
+                    .iter()
+                    .zip(artifacts)
+                    .map(|(dataset, artifact)| NewRunDataset {
+                        artifact_id: artifact.id,
+                        result_name: dataset.result_name.clone(),
+                        schema_json: dataset.schema_json.clone(),
+                        schema_hash: dataset.schema_hash.clone(),
+                        row_count: dataset.row_count,
+                        size_bytes: dataset.size_bytes,
+                        created_at_ms: dataset.created_at_ms,
+                    })
+                    .collect::<Vec<_>>();
+                terminalize(
+                    conn,
+                    &owner,
+                    &current,
+                    Some(attempt_id),
+                    "succeeded",
+                    "succeeded",
+                    None,
+                    now_ms,
+                    &datasets,
+                )
+                .map_err(|error| RepoError::InvalidState(error.to_string()))
+            })
+            .await
+            .map_err(ManagedWorkflowRepoError::Repository)?;
+        self.find(user, workflow_id).await
     }
 }
 
@@ -553,6 +809,7 @@ fn terminalize(
     run_stage: &str,
     error_json: Option<String>,
     now_ms: i64,
+    datasets: &[NewRunDataset],
 ) -> Result<(), ManagedWorkflowRepoError> {
     let workflow_id = current.workflow.id;
     let selected = if let Some(attempt_id) = attempt_id {
@@ -649,14 +906,33 @@ fn terminalize(
     }
     let attempt_status = if workflow_status == "succeeded" {
         "succeeded"
+    } else if selected.is_some_and(|attempt| {
+        matches!(
+            attempt.status.as_str(),
+            "contract_rejected" | "engine_failed" | "result_rejected"
+        )
+    }) {
+        selected.expect("selected checked").status.as_str()
     } else {
         "engine_failed"
+    };
+    let attempt_error_json = if workflow_status != "succeeded"
+        && selected.is_some_and(|attempt| attempt.result_diagnostics_json.is_some())
+    {
+        selected.and_then(|attempt| attempt.result_diagnostics_json.clone())
+    } else {
+        error_json.clone()
     };
     if let Some(attempt_id) = attempt_id {
         diesel::update(schema::workflow_attempts::table.find(attempt_id))
             .set((
                 schema::workflow_attempts::status.eq(attempt_status),
-                schema::workflow_attempts::result_diagnostics_json.eq(error_json.clone()),
+                schema::workflow_attempts::exit_code.eq(if workflow_status == "succeeded" {
+                    Some(0)
+                } else {
+                    selected.and_then(|attempt| attempt.exit_code)
+                }),
+                schema::workflow_attempts::result_diagnostics_json.eq(attempt_error_json.clone()),
                 schema::workflow_attempts::finished_at_ms.eq(Some(now_ms)),
             ))
             .execute(conn)?;
@@ -678,11 +954,37 @@ fn terminalize(
     } else {
         "failed"
     };
+    if workflow_status == "succeeded" {
+        for dataset in datasets {
+            diesel::insert_into(schema::result_datasets::table)
+                .values(crate::db::models::NewResultDataset {
+                    run_id: Some(current.run.id),
+                    analysis_run_id: None,
+                    artifact_id: Some(dataset.artifact_id),
+                    result_name: dataset.result_name.clone(),
+                    schema_json: dataset.schema_json.clone(),
+                    schema_hash: dataset.schema_hash.clone(),
+                    row_count: dataset.row_count,
+                    size_bytes: dataset.size_bytes,
+                    created_at_ms: dataset.created_at_ms,
+                })
+                .execute(conn)?;
+        }
+    } else if !datasets.is_empty() {
+        return Err(ManagedWorkflowRepoError::Repository(
+            RepoError::InvalidState("failed_workflow_has_results".into()),
+        ));
+    }
     diesel::update(schema::simulation_runs::table.find(current.run.id))
         .set((
             schema::simulation_runs::status.eq(run_status),
             schema::simulation_runs::stage.eq(run_stage),
             schema::simulation_runs::error_json.eq(error_json.clone()),
+            schema::simulation_runs::exit_code.eq(if workflow_status == "succeeded" {
+                Some(0)
+            } else {
+                selected.and_then(|attempt| attempt.exit_code)
+            }),
             schema::simulation_runs::finished_at_ms.eq(Some(now_ms)),
         ))
         .execute(conn)?;
@@ -745,6 +1047,7 @@ pub(crate) fn recover_interrupted_workflows(
                         .to_string(),
                 ),
                 now_ms,
+                &[],
             )
             .map_err(|error| match error {
                 ManagedWorkflowRepoError::Repository(RepoError::Query(error)) => error,
@@ -1188,6 +1491,10 @@ fn load_owned(
         .filter(schema::workflow_attempts::workflow_id.eq(workflow_id))
         .order(schema::workflow_attempts::attempt_number.asc())
         .load::<WorkflowAttemptRecord>(conn)?;
+    let inputs = schema::workflow_input_snapshots::table
+        .filter(schema::workflow_input_snapshots::workflow_id.eq(workflow_id))
+        .order(schema::workflow_input_snapshots::id.asc())
+        .load::<WorkflowInputSnapshotRecord>(conn)?;
     let progress_message_revision = workflow
         .progress_message_id
         .map(|id| {
@@ -1202,6 +1509,7 @@ fn load_owned(
         workflow,
         run,
         attempts,
+        inputs,
         progress_message_revision,
     })
 }

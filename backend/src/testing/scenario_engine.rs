@@ -28,9 +28,17 @@ pub struct DatasetFixture {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdDatasetFixture {
+    pub name: String,
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum EngineScenario {
     Success(Vec<DatasetFixture>),
+    IdSuccess(Vec<IdDatasetFixture>),
     InspectFailure,
     RunFailure,
     Failure {
@@ -205,6 +213,12 @@ impl ScenarioEngine {
             EngineScenario::Success(fixtures) => {
                 for fixture in fixtures {
                     write_fixture(&spec.result_dir, &fixture)?;
+                }
+                validate_outputs(&spec.result_dir, self.inner.limits)
+            }
+            EngineScenario::IdSuccess(fixtures) => {
+                for fixture in fixtures {
+                    write_id_fixture(&spec.result_dir, &fixture)?;
                 }
                 validate_outputs(&spec.result_dir, self.inner.limits)
             }
@@ -420,6 +434,43 @@ fn write_fixture(
         .map_err(|error| failure("scenario_write_failed", error.to_string()))
 }
 
+fn write_id_fixture(
+    result_dir: &std::path::Path,
+    fixture: &IdDatasetFixture,
+) -> Result<(), AdapterError> {
+    validate_fixture_name(&fixture.name)?;
+    let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Utf8, false)]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(StringArray::from(fixture.ids.clone())) as ArrayRef],
+    )
+    .map_err(|error| failure("scenario_fixture_invalid", error.to_string()))?;
+    let file = std::fs::File::create(result_dir.join(format!("{}.parquet", fixture.name)))
+        .map_err(|error| io_failure("scenario_write_failed", error))?;
+    let properties = WriterProperties::builder()
+        .set_compression(Compression::SNAPPY)
+        .set_created_by("scenario-engine-v1".to_string())
+        .build();
+    let mut writer = ArrowWriter::try_new(file, schema, Some(properties))
+        .map_err(|error| failure("scenario_write_failed", error.to_string()))?;
+    writer
+        .write(&batch)
+        .and_then(|_| writer.close().map(|_| ()))
+        .map_err(|error| failure("scenario_write_failed", error.to_string()))
+}
+
+fn validate_fixture_name(name: &str) -> Result<(), AdapterError> {
+    if name.is_empty()
+        || !name.chars().enumerate().all(|(index, value)| {
+            value == '_'
+                || value.is_ascii_alphanumeric() && (index > 0 || value.is_ascii_alphabetic())
+        })
+    {
+        return Err(failure("scenario_fixture_invalid", "非法数据集名称"));
+    }
+    Ok(())
+}
+
 fn failure(code: impl Into<String>, message: impl Into<String>) -> AdapterError {
     AdapterError::new(code, ErrorCategory::Internal, message)
 }
@@ -431,6 +482,7 @@ fn io_failure(code: impl Into<String>, error: std::io::Error) -> AdapterError {
 fn scenario_name(scenario: &EngineScenario) -> &'static str {
     match scenario {
         EngineScenario::Success(_) => "success",
+        EngineScenario::IdSuccess(_) => "id_success",
         EngineScenario::InspectFailure => "inspect_failure",
         EngineScenario::RunFailure => "run_failure",
         EngineScenario::Failure { .. } => "failure",

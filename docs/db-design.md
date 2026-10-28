@@ -68,6 +68,10 @@ commit 在一个 immediate transaction 中检查配额、去重并增加引用�
 失败、放弃或过期会按仍待处理的子事务结算 staging reservation。版本、资源、运行和结果删除在元数据事务完成后
 幂等 release，并由 GC 清理零引用 blob；历史冻结输入通过 artifact 引用或墓碑继续可审计。
 
+所有 artifact 发布持有共享发布锁，结果批量发布和 GC 持有独占锁。受管运行把全部结果 artifact 引用、
+`result_datasets`、run 与 workflow 终态放进同一个 immediate transaction；事务回滚会在独占区段删除本轮新写入对象。
+启动和运行期 GC 同时扫描 `objects/`，回收进程崩溃留下且数据库中不存在的 CAS 对象。
+
 `upload_batches` 以 `(session_id, client_batch_id)` 幂等，保存总状态、model/resource 两个子发布状态以及重新上传时
 受同会话所有权约束的 `replacement_resource_id`；确认时保存可选 `confirm_operation_id` 和规范请求 payload hash，操作 ID
 相同但请求不同会被拒绝。确认正在执行或批次已经全部确认时不能更换操作；一次确认收敛为非终态的
@@ -121,6 +125,12 @@ artifact 并建立持久进度消息。`client_operation_id` 在会话内唯一�
 持有 artifact 引用；会话删除逐引用释放。正常完成、用户取消和启动恢复共用终态事务：存在候选时均发布最后一个候选为
 不可变 script/message/run 锚点，确实尚无候选时才允许终态 managed run 保持空脚本三元组。启动恢复把非终态 workflow、candidate/executing attempt 和 provisional run
 收敛到明确失败态。
+
+Task 10 执行时，generation candidate 不占修正预算，每个 repair candidate 在持久化时递增
+`managed_workflows.corrections_used`。attempt 依次记录 `candidate/contract_rejected/executing/engine_failed/result_rejected/succeeded`
+状态、实际退出码、脱敏 stderr、完整/保留/发送 hash 与字节数；原始有界 stderr 只由
+`stderr_audit_artifact_id` 引用，不进入公共 payload。成功终态事务同时插入全部 `result_datasets` 并绑定最终 script/message/run；
+失败、取消或事务回滚不插入部分结果，私有 result-dir 被清理。
 
 ## Search and recovery
 

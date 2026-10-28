@@ -290,4 +290,50 @@ impl RunTicket {
             }
         }
     }
+
+    pub async fn run_cancellable<F>(
+        mut self,
+        future: F,
+        cancelled: &mut watch::Receiver<bool>,
+    ) -> Option<F::Output>
+    where
+        F: Future,
+    {
+        if *cancelled.borrow() {
+            return None;
+        }
+        let admission = self.admission.take().expect("run ticket can run only once");
+        match admission {
+            Admission::Active(active) => {
+                let result = future.await;
+                drop(active);
+                Some(result)
+            }
+            Admission::Queued(mut waiting) => {
+                let session = tokio::select! {
+                    permit = self.session.clone().acquire_owned() => permit.ok()?,
+                    changed = cancelled.changed() => { let _ = changed; return None; }
+                };
+                let owner = tokio::select! {
+                    permit = self.owner.clone().acquire_owned() => permit.ok()?,
+                    changed = cancelled.changed() => { let _ = changed; return None; }
+                };
+                let global = tokio::select! {
+                    permit = self.inner.global.clone().acquire_owned() => permit.ok()?,
+                    changed = cancelled.changed() => { let _ = changed; return None; }
+                };
+                waiting.release();
+                self.inner.active.fetch_add(1, Ordering::SeqCst);
+                let active = ActiveAdmission {
+                    _owner: owner,
+                    _session: session,
+                    _global: global,
+                    _counter: ActiveCounter::new(self.inner.clone()),
+                };
+                let result = future.await;
+                drop(active);
+                Some(result)
+            }
+        }
+    }
 }

@@ -95,7 +95,8 @@ fn contract_manifest_contains_all_public_enums() {
             "managed_study_configurations",
             "durable_workflow_messages",
             "v4_conversational_agent",
-            "managed_study_workflows"
+            "managed_study_workflows",
+            "managed_script_execution_and_repair"
         ]
     );
 
@@ -216,6 +217,14 @@ fn contract_manifest_contains_all_public_enums() {
         "result_total_too_large",
         "result_symlink_rejected",
         "result_path_escape",
+        "repair_contract_violated",
+        "result_contract_invalid",
+        "repair_exhausted",
+        "script_generation_model_unavailable",
+        "repair_model_unavailable",
+        "script_candidate_store_failed",
+        "result_publish_failed",
+        "stderr_audit_failed",
     ] {
         assert!(
             manifest.stable_error_codes.contains(&code),
