@@ -48,7 +48,7 @@ use crate::db::repositories::{
     MessageRepo, ResultRepo, RunRepo, ScriptRepo, SessionRepo, StorageScopeRepo,
     StudyConfigurationRepo, UploadRepo, VersionRepo,
 };
-use crate::engine_resources::{EngineKnowledge, EngineResourceSnapshot};
+use crate::engine_resources::EngineResourceSnapshot;
 use crate::ingestion::ArchiveLimits;
 use crate::storage::ArtifactStore;
 
@@ -151,6 +151,13 @@ pub struct AppState {
     pub upload_batch_limit_bytes: u64,
 }
 
+#[cfg(feature = "e2e-test")]
+pub struct E2eAppOptions {
+    pub script_author: Option<Arc<dyn ScriptAuthor>>,
+    pub managed_workflow_auto_start: bool,
+    pub full_engine_catalog: bool,
+}
+
 impl AppState {
     pub fn new(pool: DbPool, engine: Arc<dyn SimEngine>, llm: LlmConfig) -> Self {
         Self::new_with_data_dir(pool, engine, llm, resolve_data_dir())
@@ -184,14 +191,11 @@ impl AppState {
         agent_factory: Arc<dyn AgentFactory>,
         engine: Arc<dyn SimEngine>,
         auth: AuthService,
-        script_author_override: Option<Arc<dyn ScriptAuthor>>,
+        options: E2eAppOptions,
     ) -> Self {
         use sha2::{Digest, Sha256};
 
-        use crate::engine_resources::{
-            EngineExample, ExampleManifest, ExampleManifestFile, ExampleSource, ExampleSourceFile,
-            ExampleStudy,
-        };
+        use crate::engine_resources::EngineResourceRegistry;
 
         let engine_root = data_dir
             .parent()
@@ -207,40 +211,31 @@ impl AppState {
         std::fs::write(bundle.join("dss/model.dss"), source_bytes).expect("write e2e model");
         let main_hash = hex::encode(Sha256::digest(main_bytes));
         let source_hash = hex::encode(Sha256::digest(source_bytes));
-        let manifest = ExampleManifest {
-            schema_version: 1,
-            artifact: "mems.dss-rss-bundle".into(),
-            generator: "zjudss-e2e/1".into(),
-            psa_contract_version: "0.1.0".into(),
-            entry: "main.rss".into(),
-            study: ExampleStudy {
-                kind: "execution_plan".into(),
-                compatibility: "opendss-native".into(),
-                solver: Some("radial".into()),
-                results: vec!["voltage".into()],
+        let manifest = serde_json::json!({
+            "schema_version": 1,
+            "artifact": "mems.dss-rss-bundle",
+            "generator": "zjudss-e2e/1",
+            "psa_contract_version": "0.1.0",
+            "entry": "main.rss",
+            "study": {
+                "kind": "execution_plan",
+                "compatibility": "opendss-native",
+                "solver": "radial",
+                "results": ["voltage"]
             },
-            source: ExampleSource {
-                entry: "dss/model.dss".into(),
-                root: "dss".into(),
-                tree_sha256: source_hash.clone(),
+            "source": {
+                "entry": "dss/model.dss",
+                "root": "dss",
+                "tree_sha256": source_hash
             },
-            files: vec![
-                ExampleManifestFile {
-                    path: "dss/model.dss".into(),
-                    role: "dss-entry".into(),
-                    sha256: source_hash.clone(),
-                },
-                ExampleManifestFile {
-                    path: "main.rss".into(),
-                    role: "main-rss".into(),
-                    sha256: main_hash.clone(),
-                },
+            "files": [
+                {"path": "dss/model.dss", "role": "dss-entry", "sha256": source_hash},
+                {"path": "main.rss", "role": "main-rss", "sha256": main_hash}
             ],
-            inputs: serde_json::json!([]),
-        };
+            "inputs": []
+        });
         let manifest_bytes = serde_json::to_vec_pretty(&manifest).expect("serialize e2e manifest");
         std::fs::write(bundle.join("manifest.json"), &manifest_bytes).expect("write e2e manifest");
-        let manifest_hash = hex::encode(Sha256::digest(&manifest_bytes));
         let invalid_relative = "dss/rssbundle/E2E/Demo/Broken.rssbundle";
         let invalid_bytes = b"{";
         std::fs::create_dir_all(engine_root.join(invalid_relative))
@@ -250,123 +245,43 @@ impl AppState {
             invalid_bytes,
         )
         .expect("write invalid e2e manifest");
-        let invalid_hash = hex::encode(Sha256::digest(invalid_bytes));
+        let catalog_dir = engine_root.join("dss/docs/catalog");
+        std::fs::create_dir_all(&catalog_dir).expect("create e2e catalog directory");
+        let dataframes =
+            include_bytes!("../../tests/fixtures/engine_resources/catalog/dataframes.json");
+        let functions =
+            include_bytes!("../../tests/fixtures/engine_resources/catalog/functions.json");
+        let study_facades =
+            include_bytes!("../../tests/fixtures/engine_resources/catalog/study_facades.json");
+        std::fs::write(catalog_dir.join("dataframes.json"), dataframes)
+            .expect("write e2e dataframes catalog");
+        std::fs::write(catalog_dir.join("functions.json"), functions)
+            .expect("write e2e functions catalog");
+        std::fs::write(catalog_dir.join("study_facades.json"), study_facades)
+            .expect("write e2e study facades catalog");
+        std::fs::write(
+            engine_root.join("dss/docs/e2e-guide.md"),
+            b"# E2E guide\nUse deterministic scenarios.",
+        )
+        .expect("write e2e guide");
         // macOS 的临时目录常以 /var 暴露、canonicalize 后变为 /private/var；
         // 快照根必须规范化，否则案例导入的越界检查会误判合法 fixture。
         let engine_root = engine_root
             .canonicalize()
             .expect("canonicalize e2e engine root");
-        let docs = vec![(
-            "docs/e2e-guide.md".to_string(),
-            "# E2E guide\nUse deterministic scenarios.".to_string(),
-        )];
-        let catalog_value = serde_json::json!({
-            "schema_version": 2,
-            "frames": {
-                "bus": {
-                    "required": {"id": "str", "kv": "f64"},
-                    "optional": {"zone": "str"},
-                    "stable_keys": ["id"]
-                },
-                "load": {
-                    "required": {"name": "str", "bus": "str", "p": "f64"},
-                    "optional": {"model": "str"},
-                    "stable_keys": ["name"]
-                },
-                "generator": {
-                    "required": {"name": "str", "bus": "str", "p": "f64"},
-                    "optional": {"dispatch": "str"},
-                    "stable_keys": ["name"]
-                }
-            }
-        });
+        let loaded_snapshot =
+            EngineResourceRegistry::load(&engine_root, &std::collections::HashSet::new())
+                .expect("load complete e2e engine resources");
+        let engine_snapshot = if options.full_engine_catalog {
+            loaded_snapshot
+        } else {
+            EngineResourceSnapshot::minimal("e2e-snapshot", "e2e-contract", engine_root.join("dss"))
+        };
+        let catalog_value = engine_snapshot.catalog_json.clone();
         let catalog = Arc::new(
             SchemaCatalog::from_value("e2e-contract", &catalog_value).expect("e2e catalog valid"),
         );
-        let dynamic_catalog = EngineResourceSnapshot::minimal(
-            "e2e-snapshot",
-            "e2e-contract",
-            engine_root.join("dss"),
-        );
-        let engine_snapshot = Arc::new(EngineResourceSnapshot {
-            id: "e2e-snapshot".into(),
-            contract_version: "e2e-contract".into(),
-            catalog_schema_versions: dynamic_catalog.catalog_schema_versions,
-            dataframes_sha256: String::new(),
-            functions_sha256: String::new(),
-            study_facades_sha256: String::new(),
-            source_root: engine_root.join("dss"),
-            engine_root: engine_root.clone(),
-            catalog_json: catalog_value,
-            functions_json: serde_json::json!({"schema_version": 2, "frame_functions": []}),
-            study_facades_json: dynamic_catalog.study_facades_json,
-            schemas: dynamic_catalog.schemas,
-            facades: dynamic_catalog.facades,
-            catalog_bytes: Default::default(),
-            documents: std::collections::BTreeMap::from([(
-                docs[0].0.clone(),
-                docs[0].1.as_bytes().to_vec(),
-            )]),
-            knowledge: EngineKnowledge::from_documents(&docs),
-            examples: vec![
-                EngineExample {
-                    id: "e2e-demo".into(),
-                    title: "E2E demo".into(),
-                    source_kind: "rssbundle".into(),
-                    category_path: vec!["E2E".into(), "Demo".into()],
-                    bundle_path: bundle_path.into(),
-                    entry_path: Some("main.rss".into()),
-                    manifest: Some(manifest),
-                    file_count: 3,
-                    size_bytes: (manifest_bytes.len() + main_bytes.len() + source_bytes.len())
-                        as u64,
-                    tree_hash: source_hash.clone(),
-                    importable: true,
-                    diagnostics: vec![],
-                    files: vec![
-                        ExampleSourceFile {
-                            virtual_path: "manifest.json".into(),
-                            source_path: format!("{bundle_relative}/manifest.json"),
-                            sha256: manifest_hash,
-                            role: "manifest".into(),
-                        },
-                        ExampleSourceFile {
-                            virtual_path: "dss/model.dss".into(),
-                            source_path: format!("{bundle_relative}/dss/model.dss"),
-                            sha256: source_hash,
-                            role: "dss-entry".into(),
-                        },
-                        ExampleSourceFile {
-                            virtual_path: "main.rss".into(),
-                            source_path: format!("{bundle_relative}/main.rss"),
-                            sha256: main_hash,
-                            role: "main-rss".into(),
-                        },
-                    ],
-                },
-                EngineExample {
-                    id: "e2e-broken".into(),
-                    title: "Broken".into(),
-                    source_kind: "rssbundle".into(),
-                    category_path: vec!["E2E".into(), "Demo".into()],
-                    bundle_path: "E2E/Demo/Broken.rssbundle".into(),
-                    entry_path: None,
-                    manifest: None,
-                    file_count: 1,
-                    size_bytes: invalid_bytes.len() as u64,
-                    tree_hash: invalid_hash.clone(),
-                    importable: false,
-                    diagnostics: vec!["manifest_invalid".into()],
-                    files: vec![ExampleSourceFile {
-                        virtual_path: "manifest.json".into(),
-                        source_path: format!("{invalid_relative}/manifest.json"),
-                        sha256: invalid_hash,
-                        role: "manifest".into(),
-                    }],
-                },
-            ],
-            source_hashes: Default::default(),
-        });
+        let engine_snapshot = Arc::new(engine_snapshot);
         Self::new_with_resources_and_agent_factory(
             pool,
             engine,
@@ -388,8 +303,8 @@ impl AppState {
             2,
             std::time::Duration::from_secs(120),
             512 * 1024 * 1024,
-            script_author_override,
-            false,
+            options.script_author,
+            options.managed_workflow_auto_start,
             ArchiveLimits {
                 max_entries: 100,
                 max_expanded_bytes: 16 * 1024 * 1024,

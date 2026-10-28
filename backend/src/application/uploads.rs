@@ -866,9 +866,17 @@ impl UploadBatchService {
             .files
             .iter()
             .all(|f| extension(&f.file_name) == "dss");
+        let directory_bundle = record.files.iter().any(|file| {
+            file.relative_path.as_deref().is_some_and(|path| {
+                std::path::Path::new(path).components().any(|component| {
+                    let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+                    value.ends_with(".dssbundle") || value.ends_with(".rssbundle")
+                })
+            })
+        });
         let result = if record.files.len() == 1 && extension(&record.files[0].file_name) == "zip" {
             self.process_archive(user, &record, &settings).await
-        } else if all_dss || record.batch.source_kind == "case" {
+        } else if all_dss || directory_bundle || record.batch.source_kind == "case" {
             self.process_dss(user, &record, &settings).await
         } else {
             self.process_tabular(user, &record, &settings).await
@@ -930,12 +938,29 @@ impl UploadBatchService {
         let tree = ArchiveExtractor::extract(&source, &destination, self.archive_limits).map_err(
             |error| UploadBatchError::Invalid("archive_limits_exceeded".into(), error.to_string()),
         )?;
-        if tree.files.is_empty()
-            || !tree
-                .files
-                .values()
-                .all(|entry| extension(&entry.relative_path) == "dss")
-        {
+        let entries = tree.files.values().collect::<Vec<_>>();
+        let all_dss = !entries.is_empty()
+            && entries
+                .iter()
+                .all(|entry| extension(&entry.relative_path) == "dss");
+        let recognized_bundle = entries
+            .iter()
+            .any(|entry| extension(&entry.relative_path) == "dss")
+            && entries.iter().any(|entry| {
+                std::path::Path::new(&entry.relative_path)
+                    .components()
+                    .any(|component| {
+                        let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+                        value.ends_with(".dssbundle") || value.ends_with(".rssbundle")
+                    })
+            })
+            && entries.iter().all(|entry| {
+                matches!(
+                    extension(&entry.relative_path).as_str(),
+                    "dss" | "rss" | "json"
+                )
+            });
+        if !all_dss && !recognized_bundle {
             return Err(UploadBatchError::Invalid(
                 "upload_format_unsupported".into(),
                 "归档必须包含一个 DSS 文件树".into(),

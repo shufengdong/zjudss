@@ -2,14 +2,30 @@ import { useMemo, useState } from 'react'
 import { selectableCandidateIds } from '../../hooks/useUploadBatches'
 import type { CandidateDecision, ReplacementAction, UploadBatchActions, UploadBatchView } from '../../types'
 
+const rssIdentifier = (value: string) => {
+  const normalized = value.normalize('NFKD').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'resource'
+  return /^[A-Za-z_]/.test(normalized) ? normalized : `_${normalized}`
+}
+
 const defaultDecision = (candidate: UploadBatchView['candidates'][number]): CandidateDecision => ({
   candidateId: candidate.id,
   purpose: candidate.purpose ?? 'data_resource',
   selected: candidate.evidence?.hidden === true ? false : candidate.selected,
-  tableName: candidate.proposedAlias ?? candidate.displayName,
+  tableName: rssIdentifier(candidate.proposedAlias ?? candidate.displayName),
   displayName: candidate.displayName,
-  alias: candidate.proposedAlias,
+  alias: rssIdentifier(candidate.proposedAlias ?? candidate.displayName),
 })
+
+const diagnosticMessages = (value: unknown): string[] => {
+  const items = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object' && Array.isArray((value as { errors?: unknown }).errors)
+      ? (value as { errors: unknown[] }).errors
+      : []
+  return items.flatMap((item) => item && typeof item === 'object' && typeof (item as { message?: unknown }).message === 'string'
+    ? [(item as { message: string }).message]
+    : [])
+}
 
 export default function UploadBatchDecisionCard({ batch, actions, notify }: {
   batch: UploadBatchView
@@ -19,6 +35,7 @@ export default function UploadBatchDecisionCard({ batch, actions, notify }: {
   const [decisions, setDecisions] = useState<CandidateDecision[]>(() => batch.candidates.map(defaultDecision))
   const [busy, setBusy] = useState(false)
   const selectable = useMemo(() => selectableCandidateIds(batch.candidates), [batch.candidates])
+  const diagnostics = useMemo(() => diagnosticMessages(batch.diagnostics), [batch.diagnostics])
   const selected = decisions.filter((item) => item.selected && selectable.includes(item.candidateId)).length
   const act = async (work: () => Promise<unknown>) => {
     setBusy(true)
@@ -35,7 +52,8 @@ export default function UploadBatchDecisionCard({ batch, actions, notify }: {
 
   return <section className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs" aria-label={`上传批次 ${batch.id}`}>
     <div className="flex items-center"><h3 className="font-semibold">上传批次 #{batch.id}</h3><span className="ml-auto">{batch.status}</span></div>
-    <p className="mt-1 text-slate-500">模型：{batch.modelPublishStatus} · 数据：{batch.resourcePublishStatus}</p>
+    <p className="mt-1 text-slate-600">模型：{batch.modelPublishStatus} · 数据：{batch.resourcePublishStatus}</p>
+    {diagnostics.length > 0 && <div role="alert" className="mt-2 rounded bg-red-50 p-2 text-red-700">{diagnostics.map((message) => <p key={message}>{message}</p>)}</div>}
     {batch.status === 'awaiting_parse_settings' && <button type="button" disabled={busy || !actions} onClick={() => void act(() => actions!.updateParseSettings(batch.id, { encoding: 'utf-8', headerRow: 0, decimal: '.' }))} className="mt-2 rounded border bg-white px-2 py-1">使用默认解析设置</button>}
     {batch.candidates.length > 0 && <label className="mt-2 flex gap-2 border-b border-blue-200 pb-2">
       <input type="checkbox" checked={selectable.length > 0 && selected === selectable.length} onChange={(event) => setDecisions((values) => values.map((value) => selectable.includes(value.candidateId) ? { ...value, selected: event.target.checked } : value))} />
@@ -46,7 +64,7 @@ export default function UploadBatchDecisionCard({ batch, actions, notify }: {
       const hidden = candidate.evidence?.hidden === true
       return <div key={candidate.id} className={`mt-2 rounded bg-white p-2 ${hidden ? 'opacity-60' : ''}`}>
         <div className="flex items-center gap-2">
-          <input aria-label={`选择 ${candidate.displayName}`} type="checkbox" disabled={hidden} checked={decision.selected && !hidden} onChange={(event) => update(candidate.id, { selected: event.target.checked })} />
+          <input aria-label={`选择 ${candidate.displayName}`} type="checkbox" checked={decision.selected} onChange={(event) => update(candidate.id, { selected: event.target.checked })} />
           <span className="min-w-0 flex-1 truncate">{candidate.displayName}{candidate.sheetName ? ` · ${candidate.sheetName}` : ''}</span>
           {hidden && <span>隐藏 sheet</span>}
         </div>
@@ -54,6 +72,15 @@ export default function UploadBatchDecisionCard({ batch, actions, notify }: {
           <select aria-label={`${candidate.displayName}用途`} value={decision.purpose} onChange={(event) => update(candidate.id, { purpose: event.target.value as CandidateDecision['purpose'] })} className="rounded border px-2 py-1">
             <option value="model_table">模型表</option><option value="data_resource">数据文件</option><option value="skip">跳过</option>
           </select>
+        </label>
+        <label className="mt-2 flex items-center gap-2">alias
+          <input
+            aria-label={`${candidate.displayName}${candidate.sheetName ? ` · ${candidate.sheetName}` : ''} alias`}
+            value={decision.alias ?? decision.tableName ?? ''}
+            disabled={!decision.selected || decision.purpose === 'skip'}
+            onChange={(event) => update(candidate.id, { alias: event.target.value, tableName: event.target.value })}
+            className="min-w-0 flex-1 rounded border px-2 py-1 font-mono"
+          />
         </label>
       </div>
     })}

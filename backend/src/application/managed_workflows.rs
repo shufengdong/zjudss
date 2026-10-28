@@ -83,6 +83,7 @@ pub struct ManagedWorkflowView {
     pub final_script_resource_id: Option<i32>,
     pub run_id: i32,
     pub script_message_id: Option<i32>,
+    pub output_dataset_ids: Vec<String>,
     pub error: Option<Value>,
     pub attempts: Vec<WorkflowAttemptSummary>,
     pub created_at: String,
@@ -614,6 +615,11 @@ fn view(aggregate: ManagedWorkflowAggregate) -> ManagedWorkflowView {
         final_script_resource_id: aggregate.workflow.final_script_resource_id,
         run_id: aggregate.run.id,
         script_message_id: aggregate.run.script_message_id,
+        output_dataset_ids: aggregate
+            .output_dataset_ids
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect(),
         error: aggregate
             .workflow
             .error_json
@@ -676,7 +682,7 @@ fn progress_card(view: &ManagedWorkflowView) -> WorkflowProgressCard {
             })
             .collect(),
         script_id: view.final_script_resource_id.map(|id| id.to_string()),
-        output_dataset_ids: Vec::new(),
+        output_dataset_ids: view.output_dataset_ids.clone(),
         failure_code: view
             .error
             .as_ref()

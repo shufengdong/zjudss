@@ -9,7 +9,7 @@ vi.mock('../../api/client', () => ({ cancelManagedWorkflow: vi.fn(), getManagedW
 const workflow = (status: string): ManagedWorkflowView => ({
   id: 9, sessionId: 1, configurationId: 2, configurationRevision: 3, sourceWorkflowId: null,
   status, correctionBudget: 3, correctionsUsed: 1, progressMessageId: 4, finalScriptResourceId: 7,
-  runId: 8, scriptMessageId: 10, error: status === 'failed' ? { code: 'repair_exhausted', message: '三次修正后仍失败' } : null,
+  runId: 8, scriptMessageId: 10, outputDatasetIds: [], error: status === 'failed' ? { code: 'repair_exhausted', message: '三次修正后仍失败' } : null,
   attempts: [{ id: 1, attemptNumber: 1, parentAttemptId: null, phase: 'execute', status: 'failed',
     scriptContentHash: 'abc', exitCode: 2, sanitizedStderr: 'unknown function', diagnostic: null,
     createdAt: '2026-01-01T00:00:00Z', startedAt: '2026-01-01T00:00:00Z', finishedAt: '2026-01-01T00:00:01Z' }],

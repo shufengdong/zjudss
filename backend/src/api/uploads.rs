@@ -207,7 +207,8 @@ pub(super) async fn publish_upload(
     };
     let diagnostic = view
         .diagnostics
-        .as_array()
+        .get("errors")
+        .and_then(Value::as_array)
         .and_then(|items| items.first())
         .and_then(|item| {
             Some(EventDiagnostic {

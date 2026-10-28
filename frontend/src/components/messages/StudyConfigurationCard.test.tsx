@@ -97,6 +97,7 @@ describe('StudyConfigurationCard', () => {
       id: 1, sessionId: 3, configurationId: 41, configurationRevision: 7, sourceWorkflowId: null,
       status: 'queued', correctionBudget: 3, correctionsUsed: 0, progressMessageId: 1,
       finalScriptResourceId: null, runId: 5, scriptMessageId: null, error: null, attempts: [],
+      outputDatasetIds: [],
       createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', finishedAt: null,
     })
     render(<StudyConfigurationCard message={message(ready)} notify={vi.fn()} />)

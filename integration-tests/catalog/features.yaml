@@ -280,7 +280,7 @@
       file: frontend/src/components/messages/UploadBatchCard.test.tsx
       name: uses the complete batch confirmation controls in the conversation
     - runner: playwright
-      file: integration-tests/e2e/upload-batches-v4.spec.ts
+      file: integration-tests/e2e/v4-data-resources.spec.ts
       name: unified upload publishes and manages independent data resources through public routes
     - runner: playwright
       file: integration-tests/e2e/auth-isolation.spec.ts
@@ -379,7 +379,7 @@
       file: frontend/src/components/resources/DataResourceWorkbench.test.tsx
       name: reads metadata and appends opaque cursor pages for the stable resource id
     - runner: playwright
-      file: integration-tests/e2e/upload-batches-v4.spec.ts
+      file: integration-tests/e2e/v4-data-resources.spec.ts
       name: unified upload publishes and manages independent data resources through public routes
     - runner: rust
       file: backend/tests/data_resources.rs
@@ -485,6 +485,12 @@
   layers: [api, application, agent]
   lanes: [pr]
   tests:
+    - runner: playwright
+      file: integration-tests/e2e/v4-managed-studies.spec.ts
+      name: managed Newton study confirms, repairs one engine failure, and publishes only the successful datasets
+    - runner: playwright
+      file: integration-tests/e2e/v4-managed-studies.spec.ts
+      name: study configuration maps a generic data resource and can be cancelled
     - runner: playwright
       file: integration-tests/e2e/auth-isolation.spec.ts
       name: two users cannot enumerate or guess each other session, message, SSE, run, or dataset resources
@@ -641,7 +647,7 @@
       name: duplicate_model_content_keeps_original_description
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
-      name: CSV imports merge by whole table, stale runs are rejected, and history activation/deletion is explicit
+      name: CSV imports merge by whole table, reruns use the latest active model, and history activation/deletion is explicit
   assertions: [publish accepts an optional bounded description and displays the persisted response, duplicate content preserves the original description, activation is explicit, deletion uses fresh impact token]
   fixtures: [two model versions]
   contracts:
@@ -716,6 +722,12 @@
   layers: [database, application, api, agent, browser]
   lanes: [pr, release]
   tests:
+    - runner: playwright
+      file: integration-tests/e2e/v4-managed-studies.spec.ts
+      name: managed Newton study confirms, repairs one engine failure, and publishes only the successful datasets
+    - runner: playwright
+      file: integration-tests/e2e/v4-managed-studies.spec.ts
+      name: study configuration maps a generic data resource and can be cancelled
     - runner: vitest
       file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
       name: explains the selected facade differences and sends the current revision
@@ -784,6 +796,15 @@
   layers: [database, application, api, agent, browser]
   lanes: [pr, release]
   tests:
+    - runner: playwright
+      file: integration-tests/e2e/v4-managed-studies.spec.ts
+      name: managed Newton study confirms, repairs one engine failure, and publishes only the successful datasets
+    - runner: playwright
+      file: integration-tests/e2e/v4-recovery-security.spec.ts
+      name: a blocked managed workflow can be cancelled, recovered after refresh, and remains user scoped
+    - runner: playwright
+      file: integration-tests/e2e/v4-managed-studies.spec.ts
+      name: failed managed script previews changed inputs and retries only after confirmation
     - runner: vitest
       file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
       name: keeps attempts collapsed and reveals only sanitized diagnostics on demand
@@ -835,6 +856,9 @@
   layers: [database, application, adapter, agent]
   lanes: [pr, release]
   tests:
+    - runner: playwright
+      file: integration-tests/e2e/v4-managed-studies.spec.ts
+      name: managed Newton study confirms, repairs one engine failure, and publishes only the successful datasets
     - runner: rust
       file: backend/tests/script_repair.rs
       name: generated_script_executes_immediately_and_publishes_exact_results
@@ -874,6 +898,9 @@
   layers: [database, application, agent]
   lanes: [pr, release]
   tests:
+    - runner: playwright
+      file: integration-tests/e2e/v4-managed-studies.spec.ts
+      name: managed Newton study confirms, repairs one engine failure, and publishes only the successful datasets
     - runner: rust
       file: backend/tests/engine_resources.rs
       name: accepts_independent_supported_catalog_versions
@@ -922,7 +949,7 @@
   tests:
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
-      name: CSV imports merge by whole table, stale runs are rejected, and history activation/deletion is explicit
+      name: CSV imports merge by whole table, reruns use the latest active model, and history activation/deletion is explicit
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
       name: model import stays a draft until publish and a script runs only after its explicit button
@@ -947,6 +974,12 @@
   layers: [api, application, adapter, browser]
   lanes: [pr]
   tests:
+    - runner: playwright
+      file: integration-tests/e2e/v4-recovery-security.spec.ts
+      name: a blocked managed workflow can be cancelled, recovered after refresh, and remains user scoped
+    - runner: playwright
+      file: integration-tests/e2e/v4-managed-studies.spec.ts
+      name: failed managed script previews changed inputs and retries only after confirmation
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
       name: model import stays a draft until publish and a script runs only after its explicit button
@@ -1161,6 +1194,9 @@
   layers: [api, application, browser]
   lanes: [pr]
   tests:
+    - runner: playwright
+      file: integration-tests/e2e/v4-recovery-security.spec.ts
+      name: a blocked managed workflow can be cancelled, recovered after refresh, and remains user scoped
     - runner: playwright
       file: integration-tests/e2e/resilience.spec.ts
       name: committed sessions, results, and views survive restart while a running script converges and FTS fails locally

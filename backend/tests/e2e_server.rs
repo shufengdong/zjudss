@@ -71,6 +71,7 @@ async fn control_routes_require_token() {
         ("GET", "/__e2e/ready"),
         ("GET", "/__e2e/trace"),
         ("POST", "/__e2e/llm-scenarios"),
+        ("POST", "/__e2e/author-turns"),
         ("POST", "/__e2e/engine-scenarios"),
         ("POST", "/__e2e/barriers/test/release"),
         ("POST", "/__e2e/faults"),
@@ -133,6 +134,10 @@ async fn control_routes_enqueue_scenarios_and_release_known_barriers() {
         (
             "/__e2e/engine-scenarios",
             serde_json::json!({"kind": "run_failure"}),
+        ),
+        (
+            "/__e2e/author-turns",
+            serde_json::json!({"kind": "script", "content": "result = f(data, para);"}),
         ),
     ] {
         let response = router

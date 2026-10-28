@@ -31,6 +31,10 @@ export class ControlClient {
     return this.call('/__e2e/engine-scenarios', { method: 'POST', body: JSON.stringify(scenario) })
   }
 
+  enqueueAuthor(turn: { kind: 'script'; content: string } | { kind: 'error'; message: string } | { kind: 'wait'; barrier_id: string }) {
+    return this.call('/__e2e/author-turns', { method: 'POST', body: JSON.stringify(turn) })
+  }
+
   release(id: string) {
     return this.call(`/__e2e/barriers/${encodeURIComponent(id)}/release`, { method: 'POST' })
   }

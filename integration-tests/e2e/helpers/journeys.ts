@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import type { APIRequestContext, Page } from '@playwright/test'
 import { expect } from '../fixtures'
 import type { ControlClient } from './control'
+import { confirmLatestUpload } from './uploads'
 
 export async function createSessionFromPage(page: Page, title: string) {
   await page.goto('/')
@@ -42,12 +43,11 @@ export async function createSessionFromPage(page: Page, title: string) {
 export async function createReadySession(page: Page, api: APIRequestContext, title: string) {
   const sessionId = await createSessionFromPage(page, title)
   await page.locator('input[type=file]').first().setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/bus.csv'))
-  if (!await page.getByRole('button', { name: '确认合并' }).isVisible() && await page.getByRole('button', { name: '展开结果面板' }).isVisible()) {
+  await confirmLatestUpload(page, 'model_table', { 'bus.csv': 'bus' })
+  await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.revision).toBe(1)
+  if (await page.getByRole('button', { name: '展开结果面板' }).isVisible()) {
     await page.getByRole('button', { name: '展开结果面板' }).click()
   }
-  await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
-  await page.getByRole('button', { name: '确认合并' }).click()
-  await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.revision).toBe(1)
   await page.getByRole('button', { name: /^展开可变草稿/ }).click()
   await page.getByRole('button', { name: '生成版本' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).active?.id).toBeTruthy()

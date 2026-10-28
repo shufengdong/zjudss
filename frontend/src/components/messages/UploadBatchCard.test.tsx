@@ -5,10 +5,11 @@ import UploadBatchCard from './UploadBatchCard'
 
 const batch: UploadBatchView = {
   id: '12', sessionId: '1', clientBatchId: 'client', sourceKind: 'upload', status: 'ready_to_confirm',
-  modelPublishStatus: 'ready', resourcePublishStatus: 'ready', parseSettings: {}, diagnostics: [],
+  modelPublishStatus: 'ready', resourcePublishStatus: 'ready', parseSettings: {},
+  diagnostics: { errors: [{ code: 'upload_warning', message: '需要检查上传内容' }] },
   reservedBytes: 100, expiresAtMs: 1, revision: 2,
   candidates: [
-    { id: 'visible', displayName: '负荷曲线', sheetName: 'load', proposedAlias: 'load_curve', purpose: 'data_resource', evidence: {}, selected: true },
+    { id: 'visible', displayName: 'load.csv', sheetName: 'load', proposedAlias: null, purpose: 'data_resource', evidence: {}, selected: true },
     { id: 'hidden', displayName: '隐藏说明', sheetName: 'help', proposedAlias: 'help', purpose: 'data_resource', evidence: { hidden: true }, selected: false },
   ],
 }
@@ -26,9 +27,12 @@ describe('UploadBatchCard', () => {
     render(<UploadBatchCard message={message} batch={batch} actions={actions} notify={vi.fn()} />)
     expect(screen.getByRole('checkbox', { name: '全选可见工作表' })).toBeChecked()
     expect(screen.getByText('隐藏 sheet')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('需要检查上传内容')
+    expect(screen.getByRole('textbox', { name: 'load.csv · load alias' })).toHaveValue('load_csv')
+    fireEvent.change(screen.getByRole('textbox', { name: 'load.csv · load alias' }), { target: { value: 'load_forecast' } })
     fireEvent.click(screen.getByRole('button', { name: '确认用途并发布' }))
     await waitFor(() => expect(actions.confirm).toHaveBeenCalledWith('12', expect.arrayContaining([
-      expect.objectContaining({ candidateId: 'visible', purpose: 'data_resource', selected: true }),
+      expect.objectContaining({ candidateId: 'visible', purpose: 'data_resource', selected: true, alias: 'load_forecast', tableName: 'load_forecast' }),
     ]), undefined))
   })
 })

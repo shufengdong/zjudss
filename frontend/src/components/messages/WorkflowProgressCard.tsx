@@ -35,6 +35,7 @@ export default function WorkflowProgressCard({ message, onRetry, onChanged, noti
     : 0
   const elapsed = Math.max(message.card.elapsedMs, workflowElapsed)
   const scriptId = workflow?.finalScriptResourceId ? String(workflow.finalScriptResourceId) : message.card.scriptId
+  const outputDatasetIds = workflow?.outputDatasetIds ?? message.card.outputDatasetIds ?? []
   const stop = async () => {
     if (cancelling) return
     setCancelling(true)
@@ -73,7 +74,7 @@ export default function WorkflowProgressCard({ message, onRetry, onChanged, noti
     </section>}
     {state === 'succeeded' && <div className="mt-3 text-xs">
       <p className="text-emerald-700">脚本已生成并执行成功。</p>
-      {message.card.outputDatasetIds.length > 0 && <ul className="mt-2">{message.card.outputDatasetIds.map((id) => <li key={id}>结果数据集 #{id}</li>)}</ul>}
+      {outputDatasetIds.length > 0 && <ul className="mt-2">{outputDatasetIds.map((id) => <li key={id}>结果数据集 #{id}</li>)}</ul>}
     </div>}
     {['failed', 'service_restarted', 'cancelled_by_user'].includes(state) && <div role="alert" className="mt-3 text-xs text-red-700">
       <p>{failureText(workflow?.error ?? message.card.failureCode)}</p>

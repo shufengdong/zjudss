@@ -17,6 +17,7 @@ pub struct ManagedWorkflowAggregate {
     pub run: SimulationRun,
     pub attempts: Vec<WorkflowAttemptRecord>,
     pub inputs: Vec<WorkflowInputSnapshotRecord>,
+    pub output_dataset_ids: Vec<i32>,
     pub progress_message_revision: i32,
 }
 
@@ -1873,6 +1874,21 @@ fn update_progress_message(
             })
         })
         .collect::<Vec<_>>();
+    let output_dataset_ids = workflow
+        .final_run_id
+        .map(|run_id| {
+            schema::result_datasets::table
+                .filter(schema::result_datasets::run_id.eq(run_id))
+                .filter(schema::result_datasets::deleted_at_ms.is_null())
+                .order(schema::result_datasets::id.asc())
+                .select(schema::result_datasets::id)
+                .load::<i32>(conn)
+        })
+        .transpose()?
+        .unwrap_or_default()
+        .into_iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>();
     let payload = json!({
         "workflowId": workflow_id.to_string(),
         "state": state,
@@ -1883,7 +1899,7 @@ fn update_progress_message(
         "elapsedMs": 0,
         "attempts": attempts,
         "scriptId": workflow.final_script_resource_id.map(|id|id.to_string()),
-        "outputDatasetIds": [],
+        "outputDatasetIds": output_dataset_ids,
         "failureCode": workflow.error_json.as_deref().and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok()).and_then(|value| value.get("code").and_then(|code|code.as_str()).map(str::to_string)),
     })
     .to_string();
@@ -1926,6 +1942,12 @@ fn load_owned(
         .filter(schema::workflow_input_snapshots::workflow_id.eq(workflow_id))
         .order(schema::workflow_input_snapshots::id.asc())
         .load::<WorkflowInputSnapshotRecord>(conn)?;
+    let output_dataset_ids = schema::result_datasets::table
+        .filter(schema::result_datasets::run_id.eq(run.id))
+        .filter(schema::result_datasets::deleted_at_ms.is_null())
+        .order(schema::result_datasets::id.asc())
+        .select(schema::result_datasets::id)
+        .load::<i32>(conn)?;
     let progress_message_revision = workflow
         .progress_message_id
         .map(|id| {
@@ -1941,6 +1963,7 @@ fn load_owned(
         run,
         attempts,
         inputs,
+        output_dataset_ids,
         progress_message_revision,
     })
 }

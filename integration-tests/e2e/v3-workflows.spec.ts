@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 import { test, expect } from './fixtures'
 import { createReadySession, send, uploadScriptAndRun } from './helpers/journeys'
+import { confirmLatestUpload } from './helpers/uploads'
 
 test('model import stays a draft until publish and a script runs only after its explicit button', async ({ appPage, control }) => {
   const { page, api, context } = await appPage({ subject: 'studies@example.com' })
@@ -47,9 +48,10 @@ test('model import stays a draft until publish and a script runs only after its 
 
   await page.getByRole('button', { name: '运行记录' }).click()
   const runHeader = page.getByRole('button', { name: /long-script\.rss.*成功/ })
-  await expect(runHeader).toHaveAttribute('aria-expanded', 'false')
-  await runHeader.click()
-  const runCard = runHeader.locator('xpath=..')
+  const runCard = runHeader.locator('xpath=ancestor::article[1]')
+  const detailToggle = runCard.getByRole('button', { name: '展开运行详情' })
+  await expect(detailToggle).toHaveAttribute('aria-expanded', 'false')
+  await detailToggle.click()
   await expect(runCard.getByText('voltage', { exact: true })).toBeVisible()
   await expect(runCard.getByText('loss', { exact: true })).toBeVisible()
   await runCard.getByRole('button', { name: '查看 loss' }).click()
@@ -85,22 +87,6 @@ test('one result can be deleted without deleting its run or sibling result', asy
   expect(after.map((dataset: any) => dataset.name)).toEqual(['keep'])
 })
 
-test('agent-created script is visible but never auto-runs; the user click starts it', async ({ appPage, control }) => {
-  const { page, api } = await appPage({ subject: 'compare@example.com' })
-  const { sessionId } = await createReadySession(page, api, 'Agent 生成脚本')
-  await control.enqueueLlm({ id: 'create-v3-script', expectedPrompt: '生成一个潮流脚本', turns: [
-    { kind: 'tool_call', call_id: 'skill', name: 'load_agent_skill', args: { skill_id: 'rss-generation' } },
-    { kind: 'tool_call', call_id: 'create', name: 'create_script', args: { name: 'agent-flow.rss', content: 'result = 1\n' } },
-    { kind: 'text', text: '脚本已生成，请点击运行' },
-  ] })
-  await send(page, '生成一个潮流脚本')
-  await expect(page.getByText('脚本已生成，请点击运行', { exact: true })).toBeVisible()
-  expect((await (await api.get(`/api/sessions/${sessionId}/runs`)).json()).runs).toHaveLength(0)
-  await control.enqueueEngine({ kind: 'success', data: [{ name: 'result', rows: [['ok', 1]], valueUnit: null }] })
-  await page.getByRole('article', { name: '脚本 agent-flow.rss' }).getByRole('button', { name: '运行' }).click()
-  await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/runs`)).json()).runs[0]?.status).toBe('succeeded')
-})
-
 test('failed run history shows sanitized tensoreval output without requesting datasets', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'studies@example.com' })
   const { sessionId } = await createReadySession(page, api, '失败运行详情')
@@ -114,8 +100,9 @@ test('failed run history shows sanitized tensoreval output without requesting da
   expect(run.status).toBe('failed')
   await page.getByRole('button', { name: '运行记录' }).click()
   const runHeader = page.getByRole('button', { name: /replacement\.rss.*失败/ })
-  await runHeader.click()
-  const detail = runHeader.locator('xpath=..').getByRole('alert')
+  const failedRunCard = runHeader.locator('xpath=ancestor::article[1]')
+  const detail = failedRunCard.getByRole('alert')
+  await failedRunCard.getByRole('button', { name: '展开运行详情' }).click()
   await expect(detail).toContainText('失败阶段：执行计算')
   await expect(detail).toContainText('失败原因：仿真引擎执行失败')
   await expect(detail).toContainText('tensoreval 报错：')
@@ -214,7 +201,7 @@ test('analysis, materialized views, and comparisons survive source-result deleti
   expect(lineage.lineage[0].tombstone.datasetId).toBe(source.id)
 })
 
-test('CSV imports merge by whole table, stale runs are rejected, and history activation/deletion is explicit', async ({ appPage, control }) => {
+test('CSV imports merge by whole table, reruns use the latest active model, and history activation/deletion is explicit', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'dataframe-ready@example.com' })
   const { sessionId, versionId: firstVersion } = await createReadySession(page, api, '版本历史')
   const { run: firstRun } = await uploadScriptAndRun({ page, api, control, sessionId, engine: {
@@ -225,31 +212,31 @@ test('CSV imports merge by whole table, stale runs are rejected, and history act
   expect((await api.get(`/api/scripts/${script.id}`)).status()).toBe(200)
   expect((await api.get(`/api/versions/${firstVersion}`)).status()).toBe(200)
   await page.locator('input[type=file]').first().setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/load.csv'))
-  await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
-  await page.getByRole('button', { name: '确认合并' }).click()
+  await confirmLatestUpload(page, 'model_table', { 'load.csv': 'load' })
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.tables?.length).toBe(2)
   await expect(page.getByRole('button', { name: /^收起可变草稿/ })).toContainText('修订 1')
   await page.locator('input[type=file]').first().setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/multi.xlsx'))
-  await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
-  await page.getByRole('button', { name: '确认合并' }).click()
-  await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.tables?.some((table: any) => table.tableName === 'Loads')).toBe(true)
+  await confirmLatestUpload(page, 'model_table', { Mixed: 'Mixed', Loads: 'Loads', DuplicateColumns: 'DuplicateColumns' })
+  await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.tables?.some((table: any) => table.tableName === 'loads')).toBe(true)
   await expect(page.getByRole('button', { name: /^收起可变草稿/ })).toContainText('修订 2')
   await page.getByRole('button', { name: '生成版本' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/versions`)).json()).versions.length).toBe(2)
   const versions = (await (await api.get(`/api/sessions/${sessionId}/versions`)).json()).versions
-  expect(versions[0].tables.map((table: any) => table.tableName)).toEqual(expect.arrayContaining(['bus', 'load', 'Loads']))
+  expect(versions[0].tables.map((table: any) => table.tableName)).toEqual(expect.arrayContaining(['bus', 'load', 'loads']))
   expect(versions.some((version: any) => version.id === firstVersion)).toBe(true)
   const secondVersion = versions[0].id
   const secondTableCount = versions[0].tables.length
-  const stale = await api.post(`/api/scripts/${script.id}/runs`, { data: { modelVersionId: firstVersion, clientRunId: 'stale-active' } })
-  expect(stale.status()).toBe(409)
-  expect((await stale.json()).code).toBe('active_model_changed')
+  await control.enqueueEngine({ kind: 'success', data: [{ name: 'latest_result', rows: [['x', 2]], valueUnit: null }] })
+  const rerun = await api.post(`/api/scripts/${script.id}/runs`, { data: { clientRunId: 'latest-active' } })
+  expect(rerun.status()).toBe(202)
+  const rerunId = ((await rerun.json()) as { run: { id: string } }).run.id
+  await expect.poll(async () => (await (await api.get(`/api/runs/${rerunId}`)).json()).status).toBe('succeeded')
+  expect((await (await api.get(`/api/runs/${rerunId}`)).json()).modelVersionId).toBe(secondVersion)
 
   await page.getByText(`版本 ${firstVersion} · 1 表`, { exact: true }).locator('..').getByRole('button', { name: '激活' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).active?.id).toBe(firstVersion)
   await page.locator('input[type=file]').first().setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/load.parquet'))
-  await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
-  await page.getByRole('button', { name: '确认合并' }).click()
+  await confirmLatestUpload(page, 'model_table', { 'load.parquet': 'load' })
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.revision).toBe(1)
   page.once('dialog', dialog => dialog.accept())
   await page.getByText(`版本 ${secondVersion} · ${secondTableCount} 表`, { exact: true }).locator('..').getByRole('button', { name: '激活' }).click()
@@ -286,8 +273,7 @@ test('active draft and historical model tables are readable without changing lif
   await page.locator('input[type=file]').first().setInputFiles({
     name: 'bus.csv', mimeType: 'text/csv', buffer: Buffer.from(csv),
   })
-  await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
-  await page.getByRole('button', { name: '确认合并' }).click()
+  await confirmLatestUpload(page, 'model_table', { 'bus.csv': 'bus' })
   let draft: any
   await expect.poll(async () => {
     draft = (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft

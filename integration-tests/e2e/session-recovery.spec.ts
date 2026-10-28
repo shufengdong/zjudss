@@ -48,14 +48,14 @@ test('an empty account bootstraps a session before message, upload, and example 
   await page.getByRole('textbox', { name: '搜索内置案例' }).fill('E2E')
   await page.getByRole('button', { name: 'E2E demo', exact: true }).click()
   await page.getByRole('button', { name: '使用案例“E2E demo”' }).click()
-  await expect(page.getByRole('button', { name: '确认合并' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '确认用途并发布' }).last()).toBeVisible()
 
   const deleted = page.waitForResponse((response) =>
-    response.url().endsWith(`/api/sessions/${created.id}`) && response.request().method() === 'DELETE')
+    new URL(response.url()).pathname === `/api/sessions/${created.id}` && response.request().method() === 'DELETE')
   const replacement = page.waitForResponse((response) =>
     response.url().endsWith('/api/sessions') && response.request().method() === 'POST', { timeout: 10_000 })
-  await page.getByRole('button', { name: '打开“检查空账户会话”的会话操作' }).click()
-  await page.getByRole('button', { name: '删除“检查空账户会话”' }).click()
+  await page.getByRole('button', { name: /打开“.*”的会话操作/ }).first().click()
+  await page.getByRole('button', { name: /删除“.*”/ }).click()
   await page.getByRole('button', { name: '确认删除' }).click()
   expect((await deleted).status()).toBe(204)
   const replacementResponse = await replacement

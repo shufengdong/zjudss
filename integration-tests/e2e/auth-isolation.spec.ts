@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { test, expect } from './fixtures'
 import { directApi, resetBackend } from './helpers/server'
 import { createReadySession, uploadScriptAndRun } from './helpers/journeys'
+import { confirmLatestUpload } from './helpers/uploads'
 
 async function createSession(api: APIRequestContext, title: string) {
   const response = await api.post('/api/sessions', { data: { title } })
@@ -33,10 +34,7 @@ test('two users cannot enumerate or guess each other session, message, SSE, run,
   expect(aliceDatasets).toHaveLength(1)
   const datasetId = aliceDatasets[0].id as string
   await alice.page.locator('input[type=file]').first().setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/load.csv'))
-  if (!await alice.page.getByRole('button', { name: '确认合并' }).isVisible() && await alice.page.getByRole('button', { name: '展开结果面板' }).isVisible()) {
-    await alice.page.getByRole('button', { name: '展开结果面板' }).click()
-  }
-  await alice.page.getByRole('button', { name: '确认合并' }).click()
+  await confirmLatestUpload(alice.page, 'model_table')
   await expect.poll(async () => {
     const value = await (await alice.api.get(`/api/sessions/${aliceSessionId}/workspace`)).json()
     return Boolean(value.draft)

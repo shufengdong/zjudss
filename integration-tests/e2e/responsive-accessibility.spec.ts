@@ -19,9 +19,11 @@ async function expectUserMenuAtSidebarBottom(page: Page, userName: string) {
 
 async function openReplacementRunResult(page: Page) {
   const runHeader = page.getByRole('button', { name: /replacement\.rss.*成功/ })
-  await expect(runHeader).toHaveAttribute('aria-expanded', 'false')
-  await runHeader.click()
-  await runHeader.locator('xpath=..').getByRole('button', { name: '查看 voltage' }).click()
+  const runCard = runHeader.locator('xpath=ancestor::article[1]')
+  const details = runCard.getByRole('button', { name: '展开运行详情' })
+  await expect(details).toHaveAttribute('aria-expanded', 'false')
+  await details.click()
+  await runCard.getByRole('button', { name: '查看 voltage' }).click()
 }
 
 test('desktop three-column workspace completes upload, script, run, and result flows with accessible controls', async ({ appPage, control }) => {

@@ -229,7 +229,11 @@ impl TestApp {
             agent_factory,
             engine,
             auth,
-            Some(script_author),
+            zjudss::application::E2eAppOptions {
+                script_author: Some(script_author),
+                managed_workflow_auto_start: false,
+                full_engine_catalog: false,
+            },
         );
         zjudss::db::repositories::EngineResourceSnapshotRepo::new(pool.clone())
             .publish_current(&state.engine_snapshot, zjudss::application::now_ms())

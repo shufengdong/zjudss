@@ -265,7 +265,7 @@ pub struct WorkflowProgressCard {
     pub attempts: Vec<WorkflowAttemptCard>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub script_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub output_dataset_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_code: Option<String>,

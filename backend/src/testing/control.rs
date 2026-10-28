@@ -16,7 +16,8 @@ use crate::auth::{AuthService, seed_users};
 use crate::db::{self, DbPool};
 
 use super::{
-    EngineScenario, FaultInjector, FaultPoint, ScenarioEngine, ScriptScenario, ScriptedAgentFactory,
+    AuthorTurn, EngineScenario, FaultInjector, FaultPoint, ScenarioEngine, ScriptScenario,
+    ScriptedAgentFactory, ScriptedAuthor,
 };
 
 const CONTROL_HEADER: &str = "x-zjudss-e2e-token";
@@ -99,6 +100,7 @@ pub struct ControlState {
     token: Arc<str>,
     pub llm: Arc<ScriptedAgentFactory>,
     pub engine: Arc<ScenarioEngine>,
+    pub author: Arc<ScriptedAuthor>,
     faults: FaultInjector,
     artifacts: Option<ArtifactService>,
     pool: Option<DbPool>,
@@ -114,10 +116,15 @@ impl ControlState {
             token: Arc::from(token.into()),
             llm,
             engine,
+            author: Arc::new(ScriptedAuthor::default()),
             faults: FaultInjector,
             artifacts: None,
             pool: None,
         }
+    }
+    pub fn with_author(mut self, author: Arc<ScriptedAuthor>) -> Self {
+        self.author = author;
+        self
     }
     pub fn with_app(mut self, state: &AppState) -> Self {
         self.artifacts = Some(state.artifact_service.clone());
@@ -138,6 +145,7 @@ impl ControlState {
 pub fn control_router(state: ControlState) -> Router {
     Router::new()
         .route("/__e2e/llm-scenarios", post(enqueue_llm))
+        .route("/__e2e/author-turns", post(enqueue_author))
         .route("/__e2e/engine-scenarios", post(enqueue_engine))
         .route("/__e2e/barriers/{id}/release", post(release))
         .route("/__e2e/faults", post(inject_fault))
@@ -179,17 +187,40 @@ async fn enqueue_engine(
     state.engine.enqueue(scenario);
     (StatusCode::ACCEPTED, Json(json!({"ok": true})))
 }
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum AuthorTurnRequest {
+    Script { content: String },
+    Error { message: String },
+    Wait { barrier_id: String },
+}
+async fn enqueue_author(
+    State(state): State<ControlState>,
+    Json(turn): Json<AuthorTurnRequest>,
+) -> (StatusCode, Json<Value>) {
+    state.author.enqueue(match turn {
+        AuthorTurnRequest::Script { content } => AuthorTurn::Script(content),
+        AuthorTurnRequest::Error { message } => AuthorTurn::Error(message),
+        AuthorTurnRequest::Wait { barrier_id } => AuthorTurn::Wait(barrier_id),
+    });
+    (StatusCode::ACCEPTED, Json(json!({"ok": true})))
+}
 async fn release(
     State(state): State<ControlState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, StatusCode> {
-    let released = state.llm.release(&id) | state.engine.release(&id);
+    let released = state.llm.release(&id) | state.engine.release(&id) | state.author.release(&id);
     released
         .then(|| Json(json!({"released": true})))
         .ok_or(StatusCode::NOT_FOUND)
 }
 async fn trace(State(state): State<ControlState>) -> Json<Value> {
-    Json(json!({"agent": state.llm.trace(), "engine": state.engine.calls()}))
+    Json(json!({
+        "agent": state.llm.trace(),
+        "author": state.author.trace(),
+        "authorRepairCount": state.author.repair_requests().len(),
+        "engine": state.engine.calls()
+    }))
 }
 async fn ready() -> Json<Value> {
     Json(json!({"ready": true}))
@@ -382,6 +413,7 @@ pub async fn run_e2e_server(
     }
     let llm = Arc::new(ScriptedAgentFactory::default());
     let engine = Arc::new(ScenarioEngine::default());
+    let author = Arc::new(ScriptedAuthor::default());
     let state = AppState::new_for_e2e(
         pool.clone(),
         data_dir,
@@ -392,9 +424,18 @@ pub async fn run_e2e_server(
             std::time::Duration::from_secs(30 * 24 * 60 * 60),
             false,
         ),
-        None,
+        crate::application::E2eAppOptions {
+            script_author: Some(author.clone()),
+            managed_workflow_auto_start: true,
+            full_engine_catalog: true,
+        },
     );
-    let control = ControlState::new(config.control_token, llm, engine).with_app(&state);
+    crate::db::repositories::EngineResourceSnapshotRepo::new(state.pool.clone())
+        .publish_current(&state.engine_snapshot, crate::application::now_ms())
+        .await?;
+    let control = ControlState::new(config.control_token, llm, engine)
+        .with_author(author)
+        .with_app(&state);
     let router = crate::build_router(state).merge(control_router(control));
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     let address = listener.local_addr()?;

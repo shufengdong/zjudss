@@ -661,10 +661,12 @@ impl RunRepo {
                 let mut artifacts = diesel::sql_query("SELECT artifact_id FROM result_datasets WHERE run_id=?1 AND deleted_at_ms IS NULL AND artifact_id IS NOT NULL ORDER BY id")
                     .bind::<Integer,_>(run_id).load::<ArtifactId>(conn)?.into_iter().map(|row| row.artifact_id).collect::<Vec<_>>();
                 if let Some(artifact_id) = run.script_artifact_id { artifacts.push(artifact_id); }
-                let snapshot: FrozenRunInputs = serde_json::from_str(&run.input_snapshot_json)
-                    .map_err(|error| RepoError::Storage(format!("invalid run input snapshot: {error}")))?;
-                artifacts.extend(snapshot.model.iter().flat_map(|model| model.frames.iter().map(|frame| frame.artifact_id)));
-                artifacts.extend(snapshot.resources.iter().map(|resource| resource.artifact_id));
+                if run.managed_workflow_id.is_none() {
+                    let snapshot: FrozenRunInputs = serde_json::from_str(&run.input_snapshot_json)
+                        .map_err(|error| RepoError::Storage(format!("invalid run input snapshot: {error}")))?;
+                    artifacts.extend(snapshot.model.iter().flat_map(|model| model.frames.iter().map(|frame| frame.artifact_id)));
+                    artifacts.extend(snapshot.resources.iter().map(|resource| resource.artifact_id));
+                }
                 let scope_id = schema::users::table.find(&user).select(schema::users::storage_scope_id).first::<i32>(conn)?;
                 super::artifact::release_refs(conn, scope_id, artifacts, now_ms)?;
                 let tombstone = serde_json::json!({"clientRunId":run.client_run_id,"status":run.status,"modelContentHash":run.model_content_hash,"scriptContentHash":run.script_content_hash,"impact":impact}).to_string();
