@@ -17,6 +17,24 @@ async function expectUserMenuAtSidebarBottom(page: Page, userName: string) {
   expect(bottomGap).toBeLessThanOrEqual(12)
 }
 
+async function expectDocumentBoundToViewport(page: Page) {
+  const dimensions = await page.evaluate(() => ({
+    viewportHeight: window.innerHeight,
+    documentHeight: document.documentElement.scrollHeight,
+  }))
+  expect(dimensions.documentHeight).toBe(dimensions.viewportHeight)
+}
+
+async function makeConversationTallerThanViewport(page: Page) {
+  await page.locator('main > div.flex-1.overflow-y-auto').evaluate(element => {
+    const probe = document.createElement('div')
+    probe.dataset.testid = 'long-conversation-layout-probe'
+    probe.style.height = '2000px'
+    probe.setAttribute('aria-hidden', 'true')
+    element.insertBefore(probe, element.querySelector('.sr-only'))
+  })
+}
+
 async function openReplacementRunResult(page: Page) {
   const runHeader = page.getByRole('button', { name: /replacement\.rss.*成功/ })
   const runCard = runHeader.locator('xpath=ancestor::article[1]')
@@ -41,6 +59,8 @@ test('desktop three-column workspace completes upload, script, run, and result f
   await page.getByRole('button', { name: '运行记录' }).click()
   await openReplacementRunResult(page)
   await expect(page.getByRole('columnheader', { name: 'value (pu)' })).toBeVisible()
+  await makeConversationTallerThanViewport(page)
+  await expectDocumentBoundToViewport(page)
   await expectNoSeriousViolations(page)
 })
 
@@ -73,6 +93,7 @@ test('responsive narrow drawers and model tables remain keyboard reachable witho
   await openReplacementRunResult(page)
   await expect(page.getByRole('columnheader', { name: 'value (pu)' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await expectDocumentBoundToViewport(page)
   await expectNoSeriousViolations(page)
   await page.getByRole('button', { name: '关闭数据集' }).click()
   await page.getByRole('button', { name: '关闭结果面板' }).click()
