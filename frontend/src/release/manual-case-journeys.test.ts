@@ -43,6 +43,9 @@ function report(): ManualCaseReport {
     updatedAt: '2026-10-30T00:00:00.000Z',
     discoveredExampleIds: ['ex_a', 'ex_b', 'ex_c'],
     selectedExampleIds: ['ex_a', 'ex_b', 'ex_c'],
+    selectedFacades: { ex_a: 'ds_newton_raphson_pf', ex_b: 'ds_fault_study', ex_c: 'ds_fault_study' },
+    selectedBundlePaths: { ex_a: 'a', ex_b: 'b', ex_c: 'c' },
+    selectedProjectionProfiles: { ex_a: 'pf', ex_b: 'fault', ex_c: 'fault' },
     promptHashes: Object.fromEntries(SUPPORTED_CASE_FACADES.map(facade => [facade, promptSha256(CASE_PROMPTS[facade])])),
     cases: [],
   }
@@ -85,8 +88,8 @@ describe('manual case journey report primitives', () => {
     expect(selectExampleIds(examples, {}, {
       ...report(),
       cases: [
-        { exampleId: 'ex_a', facade: 'ds_newton_raphson_pf', status: 'passed', phase: 'verify_result', durationMs: 10, promptSha256: 'a'.repeat(64) },
-        { exampleId: 'ex_b', facade: 'ds_fault_study', status: 'failed', phase: 'wait_workflow', durationMs: 20, promptSha256: 'b'.repeat(64), error: { code: 'engine_timeout', summary: '引擎超时' } },
+        { exampleId: 'ex_a', bundlePath: 'a', projectionProfile: 'pf', facade: 'ds_newton_raphson_pf', status: 'passed', phase: 'verify_result', durationMs: 10, promptSha256: 'a'.repeat(64) },
+        { exampleId: 'ex_b', bundlePath: 'b', projectionProfile: 'fault', facade: 'ds_fault_study', status: 'failed', phase: 'wait_workflow', durationMs: 20, promptSha256: 'b'.repeat(64), error: { code: 'engine_timeout', summary: '引擎超时' } },
       ],
     })).toEqual(['ex_b', 'ex_c'])
   })
@@ -97,16 +100,21 @@ describe('manual case journey report primitives', () => {
     const reportPath = resolve(directory, 'report.json')
     await initializeReport(reportPath, report())
     await checkpointCase(reportPath, {
-      exampleId: 'ex_a', facade: 'ds_newton_raphson_pf', status: 'passed', phase: 'verify_result', durationMs: 10, promptSha256: 'a'.repeat(64),
+      exampleId: 'ex_a', bundlePath: 'a', projectionProfile: 'pf', facade: 'ds_newton_raphson_pf', status: 'passed', phase: 'verify_result', durationMs: 10, promptSha256: 'a'.repeat(64),
     })
     let current = JSON.parse(await readFile(reportPath, 'utf8'))
     expect(current.summary).toEqual({ discovered: 3, selected: 3, passed: 1, failed: 0, pending: 2 })
+    expect(current.facadeSummary).toEqual({
+      ds_fault_study: { selected: 2, passed: 0, failed: 0, pending: 2 },
+      ds_newton_raphson_pf: { selected: 1, passed: 1, failed: 0, pending: 0 },
+    })
     await checkpointCase(reportPath, {
-      exampleId: 'ex_b', facade: 'ds_fault_study', status: 'failed', phase: 'wait_workflow', durationMs: 20, promptSha256: 'b'.repeat(64), error: { code: 'engine_timeout', summary: '引擎超时' },
+      exampleId: 'ex_b', bundlePath: 'b', projectionProfile: 'fault', facade: 'ds_fault_study', status: 'failed', phase: 'wait_workflow', durationMs: 20, promptSha256: 'b'.repeat(64), error: { code: 'engine_timeout', summary: '引擎超时' },
     })
     current = JSON.parse(await readFile(reportPath, 'utf8'))
     expect(current.cases.map((entry: { exampleId: string }) => entry.exampleId)).toEqual(['ex_a', 'ex_b'])
     expect(current.summary).toEqual({ discovered: 3, selected: 3, passed: 1, failed: 1, pending: 1 })
+    expect(current.facadeSummary.ds_fault_study).toEqual({ selected: 2, passed: 0, failed: 1, pending: 1 })
   })
 
   test('sanitizes failures without retaining secret path cookie stderr or script fields', () => {

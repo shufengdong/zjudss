@@ -19,11 +19,17 @@ export interface ManualCaseFailure {
 
 export interface ManualCaseResult {
   exampleId: string
+  bundlePath: string
+  projectionProfile: string
   facade: string
   status: 'passed' | 'failed'
   phase: string
   durationMs: number
+  phaseDurationsMs?: Record<string, number>
   promptSha256: string
+  sessionId?: string
+  runId?: string
+  datasetIds?: string[]
   error?: ManualCaseFailure
 }
 
@@ -37,13 +43,24 @@ export interface ManualCaseReport {
   updatedAt: string
   discoveredExampleIds: string[]
   selectedExampleIds: string[]
+  selectedFacades: Record<string, string>
+  selectedBundlePaths: Record<string, string>
+  selectedProjectionProfiles: Record<string, string>
   promptHashes: Record<string, string>
   cases: ManualCaseResult[]
   summary?: ReportSummary
+  facadeSummary?: Record<string, FacadeSummary>
 }
 
 export interface ReportSummary {
   discovered: number
+  selected: number
+  passed: number
+  failed: number
+  pending: number
+}
+
+export interface FacadeSummary {
   selected: number
   passed: number
   failed: number
@@ -106,6 +123,17 @@ export function sanitizeCaseFailure(error: unknown, redactions: string[]): Manua
 function withSummary(report: ManualCaseReport): ManualCaseReport {
   const passed = report.cases.filter(result => result.status === 'passed').length
   const failed = report.cases.filter(result => result.status === 'failed').length
+  const facadeSummary: Record<string, FacadeSummary> = {}
+  for (const exampleId of report.selectedExampleIds) {
+    const facade = report.selectedFacades?.[exampleId] ?? 'unknown'
+    const summary = facadeSummary[facade] ?? { selected: 0, passed: 0, failed: 0, pending: 0 }
+    summary.selected += 1
+    const result = report.cases.find(candidate => candidate.exampleId === exampleId)
+    if (result?.status === 'passed') summary.passed += 1
+    else if (result?.status === 'failed') summary.failed += 1
+    else summary.pending += 1
+    facadeSummary[facade] = summary
+  }
   return {
     ...report,
     summary: {
@@ -115,6 +143,7 @@ function withSummary(report: ManualCaseReport): ManualCaseReport {
       failed,
       pending: Math.max(0, report.selectedExampleIds.length - passed - failed),
     },
+    facadeSummary: Object.fromEntries(Object.entries(facadeSummary).sort(([left], [right]) => left.localeCompare(right))),
   }
 }
 

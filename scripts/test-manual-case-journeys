@@ -1,0 +1,71 @@
+#!/bin/sh
+set -eu
+
+# Explicit opt-in: real LLM + real tensoreval case import/publish/study/result journeys.
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if [ "${ZJUDSS_SKIP_DOTENV:-0}" != "1" ] && [ -f "$repo_root/backend/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$repo_root/backend/.env"
+  set +a
+fi
+
+llm_provider=${LLM_PROVIDER:-deepseek}
+export LLM_PROVIDER="$llm_provider"
+case "$llm_provider" in
+  deepseek) llm_required="DEEPSEEK_API_KEY" ;;
+  bailian) llm_required="BAILIAN_API_KEY BAILIAN_BASE_URL LLM_MODEL" ;;
+  *) echo "manual_case_unsupported_llm_provider:$llm_provider" >&2; exit 2 ;;
+esac
+for required in $llm_required TENSOREVAL_BIN SPARROWZZ_DIR; do
+  eval "value=\${$required:-}"
+  if [ -z "$value" ]; then
+    echo "manual_case_missing:$required" >&2
+    exit 2
+  fi
+done
+if [ ! -x "$TENSOREVAL_BIN" ]; then
+  echo "manual_case_binary_invalid" >&2
+  exit 2
+fi
+if [ ! -d "$SPARROWZZ_DIR" ]; then
+  echo "manual_case_sparrowzz_dir_invalid" >&2
+  exit 2
+fi
+
+report_dir="$repo_root/target/manual-case-journeys"
+mkdir -p "$report_dir"
+run_root=$(mktemp -d "$report_dir/run.XXXXXX")
+case "$run_root" in
+  "$report_dir"/run.*) ;;
+  *) echo "manual_case_run_root_invalid" >&2; exit 2 ;;
+esac
+cleanup() {
+  code=$?
+  trap - EXIT INT TERM
+  rm -rf -- "$run_root"
+  exit "$code"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+ports=$(node -e '
+  const net = require("node:net");
+  const servers = [net.createServer(), net.createServer()];
+  Promise.all(servers.map(server => new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+  }))).then(values => Promise.all(servers.map(server => new Promise(resolve => server.close(resolve))))
+    .then(() => process.stdout.write(values.join(" "))));
+')
+set -- $ports
+export MANUAL_CASE_BACKEND_PORT="$1"
+export MANUAL_CASE_FRONTEND_PORT="$2"
+export DATABASE_URL="sqlite://$run_root/manual-cases.db"
+export DATA_DIR="$run_root/data"
+export MANUAL_CASE_REPORT="${MANUAL_CASE_REPORT:-$report_dir/report.json}"
+mkdir -p "$DATA_DIR"
+
+cd "$repo_root/frontend"
+NODE_PATH=./node_modules ./node_modules/.bin/playwright test --config=playwright.manual-cases.config.ts

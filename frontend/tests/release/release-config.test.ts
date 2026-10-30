@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import browserConfig from '../../playwright.config'
+import manualCasesConfig from '../../playwright.manual-cases.config'
 import releaseConfig from '../../playwright.release.config'
 
 describe('release Playwright configuration', () => {
@@ -63,5 +64,24 @@ describe('PR Playwright configuration', () => {
       : [browserConfig.webServer]
 
     expect(servers[0]?.timeout).toBeGreaterThanOrEqual(300_000)
+  })
+})
+
+describe('manual all-case Playwright configuration', () => {
+  test('is opt-in and cannot be selected by ordinary or release browser gates', () => {
+    const root = resolve(import.meta.dirname, '../../..')
+    expect(browserConfig.testDir).toBe('../integration-tests/e2e')
+    expect(releaseConfig.testDir).toBe('../integration-tests/release')
+    expect(manualCasesConfig.testDir).toBe('../integration-tests/manual-case-journeys')
+    expect(manualCasesConfig.testMatch).toBe('all-cases.spec.ts')
+    expect(manualCasesConfig.workers).toBe(1)
+    expect(manualCasesConfig.timeout).toBeGreaterThanOrEqual(6 * 60 * 60_000)
+
+    const packageJson = JSON.parse(readFileSync(resolve(root, 'frontend/package.json'), 'utf8'))
+    expect(JSON.stringify(packageJson.scripts)).not.toContain('test-manual-case-journeys')
+    for (const path of ['scripts/test-release-integration', 'scripts/test-release-engine']) {
+      expect(readFileSync(resolve(root, path), 'utf8')).not.toContain('test-manual-case-journeys')
+    }
+    expect(readFileSync(resolve(root, 'scripts/test-manual-case-journeys'), 'utf8')).toContain('playwright.manual-cases.config.ts')
   })
 })
