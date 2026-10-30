@@ -216,9 +216,11 @@ CASE_JOURNEY_FACADE=ds_fault_study ./scripts/test-manual-case-journeys
 CASE_JOURNEY_RESUME_REPORT=target/manual-case-journeys/report.json ./scripts/test-manual-case-journeys
 ```
 
-入口校验所选 provider、`TENSOREVAL_BIN` 和 `SPARROWZZ_DIR`，建立隔离 SQLite/`DATA_DIR`，使用单 worker，并把逐案例
+入口校验所选 provider、`TENSOREVAL_BIN` 和 `SPARROWZZ_DIR`；Playwright 配置也要求包装脚本生成的显式 opt-in 标记，不能
+直接绕过入口。入口建立隔离 SQLite/`DATA_DIR`，使用单 worker，并把逐案例
 checkpoint 和按门面汇总写入 `target/manual-case-journeys/report.json`。报告只保留 stable ID、bundle/snapshot/prompt hash、
-阶段耗时和稳定错误码，不保存 Cookie、secret、物理路径、原始 stderr 或脚本正文。该命令不会被普通 E2E、PR 或候选发布脚本
+阶段耗时和稳定错误码，不保存 Cookie、secret、物理路径、原始 stderr 或脚本正文；trace/screenshot 写入一次性运行目录并随之清理。
+续跑会拒绝不同 snapshot、bundle 或案例集合，并在原地续跑前备份输入报告。该命令不会被普通 E2E、PR 或候选发布脚本
 调用。只有默认选择下本次发现的全部可导入案例均通过，才能声明全案例语义链路通过；聚焦/续跑仅用于人工诊断和复验。
 
 结果验收按逻辑 Arrow 类型族处理字符串和 list/matrix，非空合同通过实际值扫描证明；缺失 unit 元数据允许通过，但

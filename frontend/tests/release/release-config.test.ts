@@ -2,7 +2,6 @@ import { describe, expect, test } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import browserConfig from '../../playwright.config'
-import manualCasesConfig from '../../playwright.manual-cases.config'
 import releaseConfig from '../../playwright.release.config'
 
 describe('release Playwright configuration', () => {
@@ -68,14 +67,31 @@ describe('PR Playwright configuration', () => {
 })
 
 describe('manual all-case Playwright configuration', () => {
-  test('is opt-in and cannot be selected by ordinary or release browser gates', () => {
+  test('is opt-in and cannot be selected by ordinary or release browser gates', async () => {
     const root = resolve(import.meta.dirname, '../../..')
-    expect(browserConfig.testDir).toBe('../integration-tests/e2e')
-    expect(releaseConfig.testDir).toBe('../integration-tests/release')
-    expect(manualCasesConfig.testDir).toBe('../integration-tests/manual-case-journeys')
-    expect(manualCasesConfig.testMatch).toBe('all-cases.spec.ts')
-    expect(manualCasesConfig.workers).toBe(1)
-    expect(manualCasesConfig.timeout).toBeGreaterThanOrEqual(6 * 60 * 60_000)
+    const runRoot = resolve(root, 'target/manual-case-journeys/run.config-test')
+    const names = ['MANUAL_CASE_OPT_IN', 'MANUAL_CASE_RUN_ROOT', 'DATABASE_URL', 'DATA_DIR'] as const
+    const previous = Object.fromEntries(names.map(name => [name, process.env[name]]))
+    Object.assign(process.env, {
+      MANUAL_CASE_OPT_IN: '1',
+      MANUAL_CASE_RUN_ROOT: runRoot,
+      DATABASE_URL: `sqlite://${runRoot}/manual-cases.db`,
+      DATA_DIR: `${runRoot}/data`,
+    })
+    try {
+      const { default: manualCasesConfig } = await import('../../playwright.manual-cases.config')
+      expect(browserConfig.testDir).toBe('../integration-tests/e2e')
+      expect(releaseConfig.testDir).toBe('../integration-tests/release')
+      expect(manualCasesConfig.testDir).toBe('../integration-tests/manual-case-journeys')
+      expect(manualCasesConfig.testMatch).toBe('all-cases.spec.ts')
+      expect(manualCasesConfig.workers).toBe(1)
+      expect(manualCasesConfig.timeout).toBeGreaterThanOrEqual(6 * 60 * 60_000)
+    } finally {
+      for (const name of names) {
+        if (previous[name] === undefined) delete process.env[name]
+        else process.env[name] = previous[name]
+      }
+    }
 
     const packageJson = JSON.parse(readFileSync(resolve(root, 'frontend/package.json'), 'utf8'))
     expect(JSON.stringify(packageJson.scripts)).not.toContain('test-manual-case-journeys')

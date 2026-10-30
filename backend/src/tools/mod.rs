@@ -46,6 +46,7 @@ use crate::application::{
     ScriptService, StudyConfigurationService, VersionService,
 };
 use crate::auth::{CurrentUser, UserId};
+use crate::db::models::DraftRef;
 use crate::engine_resources::EngineResourceSnapshot;
 
 /// 工具共享服务：引擎适配器 + 绑定到当前 session 的写入器 / 任务仓储 / 限流信号量。
@@ -55,6 +56,7 @@ pub struct ToolServices {
     pub writer: EventWriter,
     pub session_id: i32,
     pub request_message_id: i32,
+    pub publication_authorized: bool,
     pub semaphore: Arc<Semaphore>,
     pub scope: UserId,
     pub principal: CurrentUser,
@@ -66,6 +68,7 @@ pub struct ToolServices {
     pub engine_snapshot: Arc<EngineResourceSnapshot>,
     pub agent_knowledge: Arc<AgentKnowledge>,
     pub loaded_skills: Arc<Mutex<BTreeSet<String>>>,
+    pub inspected_workspace_draft: Arc<Mutex<Option<DraftRef>>>,
     pub study_configurations: StudyConfigurationService,
     pub datasets: DatasetService,
     pub analysis: AnalysisService,
@@ -73,6 +76,181 @@ pub struct ToolServices {
     pub history: HistoryService,
     pub artifact_service: ArtifactService,
     pub data_resources: DataResourceService,
+}
+
+/// 只授权当前用户消息里明确、肯定的模型发布请求。
+///
+/// 这是工具层的纵深防御；Agent Prompt 仍负责引导模型理解用户意图。
+pub fn publication_intent_authorized(prompt: &str) -> bool {
+    let normalized = prompt.trim().to_lowercase();
+    let rejected_markers = [
+        "不要",
+        "不准",
+        "不得",
+        "不允许",
+        "不应",
+        "不能",
+        "不可",
+        "不发布",
+        "别",
+        "禁止",
+        "无需",
+        "无须",
+        "永不",
+        "永远不",
+        "是否",
+        "能否",
+        "可不可以",
+        "可以吗",
+        "如何",
+        "怎么",
+        "告诉我",
+        "说明",
+        "解释",
+        "在哪里",
+        "哪里",
+        "哪些",
+        "什么",
+        "步骤",
+        "哪些步骤",
+        "需要什么",
+        "需要哪些",
+        "取消",
+        "撤销",
+        "放弃",
+        "算了",
+        "并非",
+        "不是",
+        "?",
+        "？",
+        "do not",
+        "don't",
+        "never",
+        "without",
+        "can you",
+        "could you",
+        "would you",
+        "how to",
+        "how do",
+        "cancel",
+        "abort",
+        "stop",
+    ];
+    let has_not_word = normalized
+        .split(|character: char| !character.is_ascii_alphabetic())
+        .any(|word| word == "not");
+    if has_not_word
+        || rejected_markers
+            .iter()
+            .any(|marker| normalized.contains(marker))
+    {
+        return false;
+    }
+
+    let chinese_commands = [
+        "请发布当前模型草稿",
+        "发布当前模型草稿",
+        "请帮我发布当前模型草稿",
+        "帮我发布当前模型草稿",
+        "立即发布当前模型草稿",
+        "现在发布当前模型草稿",
+        "先发布当前模型草稿",
+        "请先发布当前模型草稿",
+        "请发布当前模型版本",
+        "发布当前模型版本",
+        "请帮我发布当前模型版本",
+        "帮我发布当前模型版本",
+        "立即发布当前模型版本",
+        "现在发布当前模型版本",
+        "先发布当前模型版本",
+        "请先发布当前模型版本",
+        "请发布模型版本",
+        "发布模型版本",
+        "发布草稿",
+        "请发布草稿",
+        "请生成当前模型版本",
+        "生成当前模型版本",
+        "请生成模型版本",
+        "生成模型版本",
+    ];
+    let terminal_suffix = |suffix: &str| ["", "。", ".", "！", "!"].contains(&suffix);
+    let description_prefixes = ["，版本描述为", ",版本描述为", "，描述为", ",描述为"];
+    let then_prefixes = ["，然后", ",然后", "然后"];
+    for command in chinese_commands {
+        if let Some(suffix) = normalized.strip_prefix(command) {
+            if terminal_suffix(suffix)
+                || description_prefixes
+                    .iter()
+                    .any(|prefix| suffix.starts_with(prefix))
+            {
+                return true;
+            }
+            for activation_prefix in ["并自动激活", "，并自动激活", ",并自动激活"] {
+                if let Some(tail) = suffix.strip_prefix(activation_prefix) {
+                    return terminal_suffix(tail)
+                        || description_prefixes
+                            .iter()
+                            .any(|prefix| tail.starts_with(prefix));
+                }
+            }
+            for then_prefix in then_prefixes {
+                if let Some(action) = suffix.strip_prefix(then_prefix) {
+                    return ["使用", "准备", "执行"]
+                        .iter()
+                        .any(|verb| action.starts_with(verb));
+                }
+            }
+            return false;
+        }
+    }
+
+    let english_commands = [
+        "please publish the current model draft",
+        "please publish current model draft",
+        "publish the current model draft",
+        "publish current model draft",
+        "please publish the current model version",
+        "please publish current model version",
+        "publish the current model version",
+        "publish current model version",
+        "please publish the current model",
+        "please publish current model",
+        "publish the current model",
+        "publish current model",
+        "please publish the current draft",
+        "publish the current draft",
+        "please publish the current version",
+        "publish the current version",
+    ];
+    let english_description_prefixes = [" with description", ", with description"];
+    for command in english_commands {
+        if let Some(suffix) = normalized.strip_prefix(command) {
+            if terminal_suffix(suffix)
+                || english_description_prefixes
+                    .iter()
+                    .any(|prefix| suffix.starts_with(prefix))
+            {
+                return true;
+            }
+            for activation_prefix in [" and activate", ", and activate"] {
+                if let Some(tail) = suffix.strip_prefix(activation_prefix) {
+                    return terminal_suffix(tail)
+                        || english_description_prefixes
+                            .iter()
+                            .any(|prefix| tail.starts_with(prefix));
+                }
+            }
+            for then_prefix in [", then ", " then "] {
+                if let Some(action) = suffix.strip_prefix(then_prefix) {
+                    return ["use ", "prepare ", "run "]
+                        .iter()
+                        .any(|verb| action.starts_with(verb));
+                }
+            }
+            return false;
+        }
+    }
+    false
 }
 
 impl ToolServices {

@@ -5,8 +5,10 @@ import { join, resolve } from 'node:path'
 import {
   checkpointCase,
   initializeReport,
+  preserveResumeSource,
   sanitizeCaseFailure,
   selectExampleIds,
+  validateResumeReport,
   type ManualCaseReport,
   type ManualCaseResult,
 } from './report'
@@ -73,11 +75,7 @@ async function login(api: APIRequestContext) {
 
 async function readResumeReport(path: string | undefined): Promise<ManualCaseReport | undefined> {
   if (!path) return undefined
-  const value = JSON.parse(await readFile(resolve(path), 'utf8')) as ManualCaseReport
-  if (value.schemaVersion !== 1 || !Array.isArray(value.selectedExampleIds) || !Array.isArray(value.cases)) {
-    throw new Error('manual_case_resume_report_invalid')
-  }
-  return value
+  return JSON.parse(await readFile(resolve(path), 'utf8')) as ManualCaseReport
 }
 
 function selectedMap(examples: DiscoveredExample[], read: (example: DiscoveredExample) => string) {
@@ -86,7 +84,8 @@ function selectedMap(examples: DiscoveredExample[], read: (example: DiscoveredEx
 
 function redactions() {
   return Object.entries(process.env)
-    .filter(([name, value]) => value && /(?:KEY|TOKEN|SECRET|PASSWORD|DATABASE_URL|DATA_DIR)/.test(name))
+    .filter(([name, value]) => value
+      && /(?:KEY|TOKEN|SECRET|PASSWORD|DATABASE_URL|DATA_DIR|SPARROWZZ_DIR|TENSOREVAL_BIN)/.test(name))
     .map(([, value]) => value as string)
 }
 
@@ -97,7 +96,14 @@ test('manually runs every selected case through import, natural-language publish
   await expect(page.getByRole('button', { name: '新建仿真' })).toBeVisible()
 
   const discovered = await discoverExamples(api)
+  const bundle = await agentBundleEvidence()
   const resumeReport = await readResumeReport(process.env.CASE_JOURNEY_RESUME_REPORT)
+  if (resumeReport) validateResumeReport(resumeReport, {
+    engineResourceSnapshot: discovered.engineResourceSnapshot,
+    agentBundleVersion: bundle.version,
+    agentBundleSha256: bundle.sha256,
+    discoveredExampleIds: discovered.examples.map(example => example.exampleId),
+  })
   const selectedIds = selectExampleIds(discovered.examples, {
     exampleId: process.env.CASE_JOURNEY_EXAMPLE_ID,
     facade: process.env.CASE_JOURNEY_FACADE,
@@ -107,13 +113,14 @@ test('manually runs every selected case through import, natural-language publish
   const promptHashes = Object.fromEntries(Object.entries(CASE_PROMPTS)
     .map(([facade, prompt]) => [facade, promptSha256(prompt)]))
   for (const example of discovered.examples) promptForFacade(example.targetFunction)
-  const bundle = await agentBundleEvidence()
   const reportPath = resolve(process.env.MANUAL_CASE_REPORT
     ?? '../target/manual-case-journeys/report.json')
   const now = new Date().toISOString()
+  const runId = `manual-case-${Date.now()}-${randomUUID().slice(0, 8)}`
   const report: ManualCaseReport = {
     schemaVersion: 1,
-    runId: `manual-case-${Date.now()}-${randomUUID().slice(0, 8)}`,
+    runId,
+    resumedFromRunId: resumeReport?.runId,
     engineResourceSnapshot: discovered.engineResourceSnapshot,
     agentBundleVersion: bundle.version,
     agentBundleSha256: bundle.sha256,
@@ -127,15 +134,19 @@ test('manually runs every selected case through import, natural-language publish
     promptHashes,
     cases: [],
   }
-  await initializeReport(reportPath, report)
   expect(selectedExamples.length, 'manual_case_selection_empty').toBeGreaterThan(0)
+  await preserveResumeSource(process.env.CASE_JOURNEY_RESUME_REPORT, reportPath, runId)
+  await initializeReport(reportPath, report)
 
   const failedIds: string[] = []
   for (const example of selectedExamples) {
     const started = Date.now()
     const casePromptSha256 = promptSha256(promptForFacade(example.targetFunction))
+    const casePage = await page.context().newPage()
     try {
-      const evidence = await runCaseJourney(page, api, discovered.engineResourceSnapshot, example)
+      await casePage.goto('/')
+      await expect(casePage.getByRole('button', { name: '新建仿真' })).toBeVisible()
+      const evidence = await runCaseJourney(casePage, api, discovered.engineResourceSnapshot, example)
       const passed: ManualCaseResult = {
         exampleId: example.exampleId,
         bundlePath: example.bundlePath,
@@ -153,7 +164,7 @@ test('manually runs every selected case through import, natural-language publish
       await checkpointCase(reportPath, passed)
       const cleanupStarted = Date.now()
       try {
-        await cleanupSession(page, api, evidence.sessionId)
+        await cleanupSession(casePage, api, evidence.sessionId)
         passed.phaseDurationsMs = {
           ...passed.phaseDurationsMs,
           cleanup_session: Date.now() - cleanupStarted,
@@ -190,6 +201,8 @@ test('manually runs every selected case through import, natural-language publish
         sessionId: failure?.sessionId,
         error: sanitizeCaseFailure(cause, redactions()),
       })
+    } finally {
+      await casePage.close().catch(() => {})
     }
   }
 

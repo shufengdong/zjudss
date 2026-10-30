@@ -64,6 +64,8 @@ export MANUAL_CASE_BACKEND_PORT="$1"
 export MANUAL_CASE_FRONTEND_PORT="$2"
 export DATABASE_URL="sqlite://$run_root/manual-cases.db"
 export DATA_DIR="$run_root/data"
+export MANUAL_CASE_OPT_IN=1
+export MANUAL_CASE_RUN_ROOT="$run_root"
 export MANUAL_CASE_REPORT="${MANUAL_CASE_REPORT:-$report_dir/report.json}"
 mkdir -p "$DATA_DIR"
 

@@ -11,10 +11,13 @@ import {
 import {
   checkpointCase,
   initializeReport,
+  preserveResumeSource,
   sanitizeCaseFailure,
   selectExampleIds,
+  validateResumeReport,
   type ManualCaseReport,
 } from '../../../integration-tests/manual-case-journeys/report'
+import { validateManualCaseEnvironment } from '../../manual-case-guard'
 
 const temporaryDirectories: string[] = []
 
@@ -127,5 +130,59 @@ describe('manual case journey report primitives', () => {
     expect(failure.code).toBe('engine_timeout')
     expect(failure.summary).toContain('<redacted>')
     expect(JSON.stringify(failure)).not.toMatch(/secret-token|session=abc|\/Users\/alice|raw private|forbidden/)
+  })
+
+  test('rejects incompatible resume evidence and preserves a same-path source', async () => {
+    const current = report()
+    const evidence = {
+      engineResourceSnapshot: current.engineResourceSnapshot,
+      agentBundleVersion: current.agentBundleVersion,
+      agentBundleSha256: current.agentBundleSha256,
+      discoveredExampleIds: current.discoveredExampleIds,
+    }
+    expect(() => validateResumeReport(current, evidence)).not.toThrow()
+    expect(() => validateResumeReport(current, {
+      ...evidence,
+      engineResourceSnapshot: 'ers_different',
+    })).toThrow('manual_case_resume_engine_snapshot_mismatch')
+    expect(() => validateResumeReport({
+      ...current,
+      selectedExampleIds: [...current.selectedExampleIds, 'ex_missing'],
+    }, evidence)).toThrow('manual_case_resume_selection_invalid')
+
+    const directory = await mkdtemp(resolve(tmpdir(), 'zjudss-manual-resume-'))
+    temporaryDirectories.push(directory)
+    const reportPath = resolve(directory, 'report.json')
+    await initializeReport(reportPath, current)
+    const backup = await preserveResumeSource(reportPath, reportPath, 'next-run')
+    expect(backup).toBe(`${reportPath}.before-next-run.json`)
+    expect(JSON.parse(await readFile(backup!, 'utf8')).runId).toBe(current.runId)
+  })
+
+  test('redacts complete headers query secrets broader paths and explicit engine locations', () => {
+    const failure = sanitizeCaseFailure({
+      message: 'Authorization: Bearer abc\nCookie: a=1; b=2\nGET /x?token=query-secret at /opt/tensoreval/bin and /usr/local/share/case',
+      cause: new Error('nested-secret at /private/engine/source.rss'),
+    }, ['/engine/private/sparrowzz'])
+    expect(failure.summary).not.toMatch(/abc|a=1|b=2|query-secret|nested-secret|\/opt\/|\/usr\//)
+    expect(failure.summary).toContain('<redacted>')
+  })
+})
+
+describe('manual case execution guard', () => {
+  test('rejects direct execution and accepts only wrapper-scoped storage', () => {
+    expect(() => validateManualCaseEnvironment({})).toThrow('manual_case_explicit_opt_in_required')
+    const root = resolve(import.meta.dirname, '../../../target/manual-case-journeys/run.unit')
+    const valid = {
+      MANUAL_CASE_OPT_IN: '1',
+      MANUAL_CASE_RUN_ROOT: root,
+      DATABASE_URL: `sqlite://${root}/manual-cases.db`,
+      DATA_DIR: `${root}/data`,
+    }
+    expect(validateManualCaseEnvironment(valid)).toBe(root)
+    expect(() => validateManualCaseEnvironment({ ...valid, DATA_DIR: '/tmp/shared-data' }))
+      .toThrow('manual_case_data_dir_invalid')
+    expect(() => validateManualCaseEnvironment({ ...valid, DATABASE_URL: 'sqlite://existing.db' }))
+      .toThrow('manual_case_database_url_invalid')
   })
 })

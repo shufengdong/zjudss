@@ -120,7 +120,8 @@ Data/Struct 输入、结果和可用函数均以本次启动加载的 eig-rs 动
 测试人员需要验证全部当前案例的“导入确认 → 自然语言发布 → 本手册提示词 → 研究确认 → 脚本/修正 → 结果”时，必须从
 仓库根显式运行 `./scripts/test-manual-case-journeys`。该命令耗时长且调用真实 LLM/引擎，不在自动回归、PR 或候选发布门禁中。
 可用 `CASE_JOURNEY_EXAMPLE_ID`、`CASE_JOURNEY_FACADE` 聚焦，或用 `CASE_JOURNEY_RESUME_REPORT` 只选先前失败/未运行案例；
-报告增量写入 `target/manual-case-journeys/report.json`。测试代码原样使用下文带标记的六条手册提示词。
+报告增量写入 `target/manual-case-journeys/report.json`。续跑要求 engine snapshot、Agent bundle 和案例集合与原报告一致；同路径
+覆盖前会保留原报告副本。测试代码原样使用下文带标记的六条手册提示词。
 
 若提示词导致门面不匹配、资源缺失、配置无法完成或 workflow 失败，应保留脱敏报告，由测试人员审阅并修改对应提示词资料和
 本手册，然后筛选重跑；不允许让 LLM 自动改写提示词并静默重试。144/144 projector 成功只证明导入投影，不能据此宣称

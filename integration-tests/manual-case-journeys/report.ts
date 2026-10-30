@@ -1,5 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 
 export interface CaseExampleSummary {
   exampleId: string
@@ -36,6 +36,7 @@ export interface ManualCaseResult {
 export interface ManualCaseReport {
   schemaVersion: 1
   runId: string
+  resumedFromRunId?: string
   engineResourceSnapshot: string
   agentBundleVersion: string
   agentBundleSha256: string
@@ -50,6 +51,52 @@ export interface ManualCaseReport {
   cases: ManualCaseResult[]
   summary?: ReportSummary
   facadeSummary?: Record<string, FacadeSummary>
+}
+
+export interface ResumeEvidence {
+  engineResourceSnapshot: string
+  agentBundleVersion: string
+  agentBundleSha256: string
+  discoveredExampleIds: string[]
+}
+
+export function validateResumeReport(report: ManualCaseReport, evidence: ResumeEvidence): void {
+  if (report.schemaVersion !== 1 || !report.runId
+    || !Array.isArray(report.discoveredExampleIds)
+    || !Array.isArray(report.selectedExampleIds)
+    || !Array.isArray(report.cases)) {
+    throw new Error('manual_case_resume_report_invalid')
+  }
+  if (report.engineResourceSnapshot !== evidence.engineResourceSnapshot) {
+    throw new Error('manual_case_resume_engine_snapshot_mismatch')
+  }
+  if (report.agentBundleVersion !== evidence.agentBundleVersion
+    || report.agentBundleSha256 !== evidence.agentBundleSha256) {
+    throw new Error('manual_case_resume_agent_bundle_mismatch')
+  }
+  const discovered = new Set(evidence.discoveredExampleIds)
+  if (discovered.size !== report.discoveredExampleIds.length
+    || evidence.discoveredExampleIds.length !== report.discoveredExampleIds.length
+    || report.discoveredExampleIds.some(exampleId => !discovered.has(exampleId))) {
+    throw new Error('manual_case_resume_discovery_mismatch')
+  }
+  const selected = new Set(report.selectedExampleIds)
+  if (selected.size !== report.selectedExampleIds.length
+    || report.selectedExampleIds.some(exampleId => !discovered.has(exampleId))
+    || report.cases.some(result => !selected.has(result.exampleId))) {
+    throw new Error('manual_case_resume_selection_invalid')
+  }
+}
+
+export async function preserveResumeSource(
+  resumePath: string | undefined,
+  reportPath: string,
+  nextRunId: string,
+): Promise<string | undefined> {
+  if (!resumePath || resolve(resumePath) !== resolve(reportPath)) return undefined
+  const backupPath = `${resolve(reportPath)}.before-${nextRunId}.json`
+  await copyFile(resolve(resumePath), backupPath)
+  return backupPath
 }
 
 export interface ReportSummary {
@@ -111,9 +158,10 @@ export function sanitizeCaseFailure(error: unknown, redactions: string[]): Manua
   let summary = typeof record.message === 'string' ? record.message : '案例长测失败'
   for (const value of redactions.filter(Boolean)) summary = summary.split(value).join('<redacted>')
   summary = summary
+    .replace(/\b(Authorization|Cookie)\s*:[^\r\n]*/gi, '$1: <redacted>')
     .replace(/Bearer\s+\S+/gi, 'Bearer <redacted>')
-    .replace(/Cookie:\s*\S+/gi, 'Cookie: <redacted>')
-    .replace(/\/(?:Users|home|private|tmp|var)\/[^\s,;]+/g, '<path>')
+    .replace(/([?&](?:api_?key|token|secret|password|signature)=)[^&#\s]+/gi, '$1<redacted>')
+    .replace(/\/(?:Users|home|private|tmp|var|opt|usr|etc)(?:\/[^\s,;:'"?)&#]+)+/g, '<path>')
     .replace(/[\r\n\t\0]+/g, ' ')
     .trim()
   if (summary.length > 240) summary = `${summary.slice(0, 239)}…`

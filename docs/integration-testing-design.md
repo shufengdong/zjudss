@@ -93,7 +93,8 @@ cd ..
 需要人工选择全案例语义长测时，从仓库根显式运行 `./scripts/test-manual-case-journeys`。可设置
 `CASE_JOURNEY_EXAMPLE_ID` 或 `CASE_JOURNEY_FACADE` 聚焦，或用 `CASE_JOURNEY_RESUME_REPORT` 从先前报告只选择失败和未运行
 案例。套件使用独立临时 SQLite/`DATA_DIR`、单 worker 和多小时 timeout，逐案例原子写入脱敏的
-`target/manual-case-journeys/report.json`，结束后清理隔离数据。失败提示词由人审阅修改映射与测试手册，再筛选重跑；
+`target/manual-case-journeys/report.json`；浏览器痕迹也只写入本次临时目录，结束后一并清理。续跑前校验 engine snapshot、
+Agent bundle 和发现/选择的案例集合；输入与输出为同一路径时先保留原报告副本。失败提示词由人审阅修改映射与测试手册，再筛选重跑；
 测试不会让 LLM 自动改写提示词。完整执行前不得根据 `--list`、聚焦案例或 144/144 projector 报告声称全案例语义链路通过。
 
 候选发布执行 `scripts/test-release-integration`。脚本缺省使用 DeepSeek，也可通过 `LLM_PROVIDER=bailian`、

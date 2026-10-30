@@ -197,6 +197,12 @@ export async function runCaseJourney(
       allowedTools: ['load_agent_skill', 'inspect_workspace', 'publish_model_version'],
       gatedTools: { publish_model_version: ['model-intake'] },
     })
+    const orderedCalls = ['load_agent_skill', 'inspect_workspace', 'publish_model_version']
+      .map(toolName => turn.trace.findIndex(call => call.toolName === toolName && call.status === 'running'))
+    if (orderedCalls.some(index => index < 0)
+      || orderedCalls.some((index, position) => position > 0 && index <= orderedCalls[position - 1])) {
+      throw coded('publish_tool_order_invalid')
+    }
     await waitFor(async () => {
       const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`) as any
       return workspace.active && !workspace.draft ? workspace : undefined

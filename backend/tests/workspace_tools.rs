@@ -23,6 +23,7 @@ fn tool_services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
         ),
         session_id: 0,
         request_message_id: 0,
+        publication_authorized: false,
         semaphore: Arc::new(Semaphore::new(1)),
         scope: principal.id.clone(),
         principal,
@@ -34,6 +35,7 @@ fn tool_services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
         engine_snapshot: app.state.engine_snapshot.clone(),
         agent_knowledge: app.state.agent_knowledge.clone(),
         loaded_skills: Arc::new(Mutex::new(BTreeSet::new())),
+        inspected_workspace_draft: Arc::new(Mutex::new(None)),
         study_configurations: app.state.study_configuration_service.clone(),
         datasets: app.state.dataset_service.clone(),
         analysis: app.state.analysis_service.clone(),
@@ -59,7 +61,50 @@ fn tool_services_for_session(
         app.state.events.clone(),
     );
     services.loaded_skills = Arc::new(Mutex::new(BTreeSet::from(["model-intake".to_string()])));
+    services.publication_authorized = true;
     Arc::new(services)
+}
+
+#[test]
+fn publication_authorization_requires_an_explicit_positive_current_message() {
+    use zjudss::tools::publication_intent_authorized;
+
+    assert!(publication_intent_authorized(
+        "请发布当前模型草稿并自动激活"
+    ));
+    assert!(publication_intent_authorized(
+        "发布当前模型版本，然后准备潮流研究"
+    ));
+    assert!(publication_intent_authorized(
+        "Publish the current model draft"
+    ));
+    assert!(!publication_intent_authorized("通过提示词生成脚本和结果"));
+    assert!(!publication_intent_authorized("不要发布，只检查当前草稿"));
+    assert!(!publication_intent_authorized("是否可以发布当前模型版本？"));
+    assert!(!publication_intent_authorized("请不要自动发布当前模型版本"));
+    assert!(!publication_intent_authorized("永远不要发布当前模型版本"));
+    assert!(!publication_intent_authorized("告诉我如何发布当前模型版本"));
+    assert!(!publication_intent_authorized(
+        "Can you publish the current model?"
+    ));
+    assert!(!publication_intent_authorized("Never publish the model"));
+    assert!(!publication_intent_authorized(
+        "引用文字：请发布当前模型版本"
+    ));
+    assert!(!publication_intent_authorized("发布草稿的按钮在哪里"));
+    assert!(!publication_intent_authorized(
+        "发布当前模型版本需要哪些步骤"
+    ));
+    assert!(!publication_intent_authorized(
+        "发布当前模型版本，然后取消发布"
+    ));
+    assert!(!publication_intent_authorized("发布当前模型版本，然后算了"));
+    assert!(!publication_intent_authorized(
+        "发布当前模型草稿并自动激活的按钮在哪里"
+    ));
+    assert!(!publication_intent_authorized(
+        "Publish the current model, then cancel the publication"
+    ));
 }
 
 async fn apply_csv(
@@ -105,9 +150,10 @@ async fn publish_model_version_requires_model_intake_and_publishes_only_the_exac
     .await;
     let services = tool_services_for_session(&app, user.clone(), session.id);
     services.loaded_skills.lock().await.clear();
+    let maximum_description = "界".repeat(200);
     let args = || tools::publish_model_version::Args {
         expected_draft: draft,
-        description: Some("案例导入版本".into()),
+        description: Some(maximum_description.clone()),
     };
     let tool = tools::publish_model_version::PublishModelVersionTool::new(services.clone());
 
@@ -122,8 +168,31 @@ async fn publish_model_version_requires_model_intake_and_publishes_only_the_exac
         .await
         .insert("model-intake".into());
 
+    let missing_inspection = tool
+        .call(&mut ToolContext::new(), args())
+        .await
+        .unwrap_err();
+    assert_eq!(missing_inspection.code, "workspace_inspection_required");
+
+    tools::inspect_workspace::InspectWorkspaceTool::new(services.clone())
+        .call(&mut ToolContext::new(), tools::inspect_workspace::Args {})
+        .await
+        .unwrap();
+
+    let invalid_description = tool
+        .call(
+            &mut ToolContext::new(),
+            tools::publish_model_version::Args {
+                expected_draft: draft,
+                description: Some("界".repeat(201)),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(invalid_description.code, "version_description_invalid");
+
     let published = tool.call(&mut ToolContext::new(), args()).await.unwrap();
-    assert_eq!(published["description"], "案例导入版本");
+    assert_eq!(published["description"], maximum_description);
     assert_eq!(published["active"], true);
     assert_eq!(published["deduplicated"], false);
     assert_eq!(published["replayed"], false);
@@ -144,6 +213,55 @@ async fn publish_model_version_requires_model_intake_and_publishes_only_the_exac
     let serialized = serde_json::to_string(&published).unwrap();
     assert!(!serialized.contains("artifact"));
     assert!(!serialized.contains("path"));
+}
+
+#[tokio::test]
+async fn publish_model_version_rejects_a_tool_call_not_authorized_by_the_current_message() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "unauthorized agent publish", 1)
+        .await
+        .unwrap();
+    let draft = apply_csv(
+        &app,
+        session.id,
+        "unauthorized-agent-publish",
+        "bus.csv",
+        b"id\nb1\n",
+        None,
+    )
+    .await;
+    let mut services = (*tool_services_for_session(&app, user, session.id)).clone();
+    services.publication_authorized = false;
+    let services = Arc::new(services);
+    tools::inspect_workspace::InspectWorkspaceTool::new(services.clone())
+        .call(&mut ToolContext::new(), tools::inspect_workspace::Args {})
+        .await
+        .unwrap();
+
+    let error = tools::publish_model_version::PublishModelVersionTool::new(services)
+        .call(
+            &mut ToolContext::new(),
+            tools::publish_model_version::Args {
+                expected_draft: draft,
+                description: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "publish_authorization_required");
+
+    let workspace = app
+        .state
+        .version_service
+        .workspace(&common::test_user("alice@example.com"), session.id)
+        .await
+        .unwrap();
+    assert!(workspace.active.is_none());
+    assert_eq!(workspace.draft.unwrap().draft.id, draft.id);
 }
 
 #[tokio::test]
@@ -173,8 +291,13 @@ async fn publish_model_version_replays_by_message_and_rejects_stale_or_foreign_d
     .await;
     let mut first_services = (*tool_services_for_session(&app, user.clone(), session.id)).clone();
     first_services.request_message_id = 77;
-    let first_tool =
-        tools::publish_model_version::PublishModelVersionTool::new(Arc::new(first_services));
+    let first_tool = tools::publish_model_version::PublishModelVersionTool::new(Arc::new(
+        first_services.clone(),
+    ));
+    tools::inspect_workspace::InspectWorkspaceTool::new(Arc::new(first_services))
+        .call(&mut ToolContext::new(), tools::inspect_workspace::Args {})
+        .await
+        .unwrap();
     let first_args = || tools::publish_model_version::Args {
         expected_draft: first_draft,
         description: None,
@@ -212,7 +335,11 @@ async fn publish_model_version_replays_by_message_and_rejects_stale_or_foreign_d
     let mut next_services = (*tool_services_for_session(&app, user.clone(), session.id)).clone();
     next_services.request_message_id = 78;
     let next_tool =
-        tools::publish_model_version::PublishModelVersionTool::new(Arc::new(next_services));
+        tools::publish_model_version::PublishModelVersionTool::new(Arc::new(next_services.clone()));
+    tools::inspect_workspace::InspectWorkspaceTool::new(Arc::new(next_services))
+        .call(&mut ToolContext::new(), tools::inspect_workspace::Args {})
+        .await
+        .unwrap();
 
     let stale = next_tool
         .call(

@@ -182,6 +182,9 @@ ScriptAuthor 或引擎 future，并由既有终态事务收敛。
 `expectedDraft: {id, revision}` 与可选描述；内部幂等键由 request message ID 和 draft ref 生成，LLM 不能提供。
 两条路径都复用同一版本服务：成功冻结版本、清空草稿并自动激活，内容重复时复用既有版本。研究、修改、案例导入或
 “生成脚本/结果”意图不会隐式发布；revision 已变化时返回 `draft_revision_conflict`。
+工具运行时不只依赖 Prompt：当前 request message 未明确授权时返回 `publish_authorization_required`，当前轮次未成功执行
+`inspect_workspace` 时返回 `workspace_inspection_required`；描述不合法返回 `version_description_invalid`。授权采用保守的消息开头肯定命令，
+否定、问句、引用和解释请求均不授权。这些失败均不改变工作区。
 激活历史版本只移动 active 指针；存在草稿时必须提交 `discardDraft=true` 以及准确 expected draft。
 
 模型版本表路由只依赖不可变的 `modelDataframeId`。草稿表的三个路由都必须提交 `draftId` 与

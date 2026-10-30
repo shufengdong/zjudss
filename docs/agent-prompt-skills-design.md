@@ -41,6 +41,11 @@ draft、读取运行/结果并创建派生分析或比较。规划或分析普�
 删除版本/结果、创建脚本或创建运行。`prepare_study` 成功即表示本轮配置准备完成；后续 provider
 收尾失败不会用通用错误覆盖已持久化的配置卡。
 
+该发布授权同时由工具运行时强制执行：授权只来自当前 request message，且本轮 `inspect_workspace` 记录的 draft ref
+必须与 `expectedDraft` 完全一致。缺少明确发布意图或本轮检查分别返回 `publish_authorization_required`、
+`workspace_inspection_required`；描述超限返回 `version_description_invalid`，不会发布草稿。运行时只接受消息开头的肯定发布命令；
+否定、问句、引用或“如何发布”等解释请求不构成授权，宁可要求用户用明确命令重述，也不能误发布。
+
 研究请求遵循 `load study-planning -> inspect_workspace -> search_study_facades -> prepare_study`。只有用户原文包含完整
 `ds_...` 标识时才传 `explicitFunction`；Newton/牛顿法等算法名称保留在自然语言 `query`，目录搜索按核心字段与差异
 相关度返回最匹配门面，不会根据网络拓扑改写用户选择。候选不唯一时 Agent 展示 `differences`，禁用门面显示合同诊断。

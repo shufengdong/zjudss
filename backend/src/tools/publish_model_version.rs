@@ -60,7 +60,26 @@ impl Tool for PublishModelVersionTool {
     }
 
     async fn call(&self, _: &mut ToolContext, args: Args) -> Result<Value, Self::Error> {
+        if !self.services.publication_authorized {
+            return Err(DomainToolError::new(
+                "publish_authorization_required",
+                "当前用户消息没有明确要求发布模型版本",
+            ));
+        }
         self.services.require_skill("model-intake").await?;
+        let inspected_draft = *self.services.inspected_workspace_draft.lock().await;
+        let Some(inspected_draft) = inspected_draft else {
+            return Err(DomainToolError::new(
+                "workspace_inspection_required",
+                "发布前必须在当前用户消息处理轮次调用 inspect_workspace",
+            ));
+        };
+        if inspected_draft != args.expected_draft {
+            return Err(DomainToolError::new(
+                "draft_revision_conflict",
+                "expectedDraft 必须与当前轮次 inspect_workspace 返回的草稿完全一致",
+            ));
+        }
         let published = self
             .services
             .versions
@@ -95,11 +114,18 @@ impl Tool for PublishModelVersionTool {
 
 fn map_version_error(error: VersionError) -> DomainToolError {
     match error {
+        VersionError::NotFound => DomainToolError::new("workspace_not_found", error.to_string()),
         VersionError::DraftRevisionConflict => {
             DomainToolError::new("draft_revision_conflict", error.to_string())
         }
-        VersionError::DraftRequired | VersionError::EmptyDraft => {
-            DomainToolError::new("workspace_error", error.to_string())
+        VersionError::DraftRequired => {
+            DomainToolError::new("workspace_draft_required", error.to_string())
+        }
+        VersionError::EmptyDraft => {
+            DomainToolError::new("workspace_draft_empty", error.to_string())
+        }
+        VersionError::Invalid(_) => {
+            DomainToolError::new("version_description_invalid", error.to_string())
         }
         _ => DomainToolError::new("workspace_error", error.to_string()),
     }

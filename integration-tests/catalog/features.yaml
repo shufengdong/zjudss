@@ -672,6 +672,9 @@
       file: backend/tests/workspace_tools.rs
       name: publish_model_version_replays_by_message_and_rejects_stale_or_foreign_drafts
     - runner: rust
+      file: backend/tests/workspace_tools.rs
+      name: publish_model_version_rejects_a_tool_call_not_authorized_by_the_current_message
+    - runner: rust
       file: backend/tests/scripted_agent.rs
       name: explicit_publish_request_uses_exact_draft_and_activates_the_version
     - runner: rust

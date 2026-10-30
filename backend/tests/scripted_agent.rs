@@ -354,9 +354,26 @@ async fn script_or_result_generation_words_do_not_implicitly_publish_a_draft() {
     factory.enqueue(ScriptScenario {
         id: "generation-is-not-publication".into(),
         expected_prompt: Some("根据当前草稿生成研究脚本和结果".into()),
-        turns: vec![ScriptTurn::Text {
-            text: "需要先明确发布模型版本，并在研究配置卡中确认后才能生成脚本。".into(),
-        }],
+        turns: vec![
+            ScriptTurn::ToolCall {
+                call_id: "load-intake".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"model-intake"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "inspect".into(),
+                name: "inspect_workspace".into(),
+                args: json!({}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "unauthorized-publish".into(),
+                name: "publish_model_version".into(),
+                args: json!({"expectedDraft":{"id":draft.id,"revision":draft.revision}}),
+            },
+            ScriptTurn::Text {
+                text: "需要先明确发布模型版本，并在研究配置卡中确认后才能生成脚本。".into(),
+            },
+        ],
     });
 
     assert_eq!(
@@ -364,7 +381,19 @@ async fn script_or_result_generation_words_do_not_implicitly_publish_a_draft() {
         StatusCode::ACCEPTED
     );
     let events = messages(&app, &session).await;
-    assert!(tool_names(&events).is_empty());
+    assert_eq!(
+        tool_names(&events),
+        [
+            "load_agent_skill",
+            "inspect_workspace",
+            "publish_model_version"
+        ]
+    );
+    assert!(
+        serde_json::to_string(&events)
+            .unwrap()
+            .contains("publish_authorization_required")
+    );
     assert_no_script_or_run(&events);
     let workspace = app
         .state
