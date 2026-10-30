@@ -1,9 +1,9 @@
 {
-  "bundleVersion": "v4.0.0",
+  "bundleVersion": "v4.1.0",
   "skills": [
     {
       "id": "model-intake",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "整理上传、表头推断、替换与模型版本",
       "triggers": [
         "upload",
@@ -13,7 +13,8 @@
       "requiredTools": [
         "inspect_workspace",
         "read_model_dataframe",
-        "modify_model"
+        "modify_model",
+        "publish_model_version"
       ],
       "engineContractVersion": "tensoreval-parquet-v3",
       "sources": [
@@ -21,7 +22,7 @@
         "docs/dss_to_rss.md"
       ],
       "path": "skills/model-intake.md",
-      "sha256": "9260edc27b685f34aa9fb8db5a97ab1d088a7968e1c95ae77aa86513286136c6"
+      "sha256": "a0fd8cf918ca395ca8dfc7085fa4dc72fa0bd0b87af6dd59afbf50b3ac62a24e"
     },
     {
       "id": "study-planning",

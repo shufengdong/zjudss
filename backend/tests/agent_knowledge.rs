@@ -36,8 +36,8 @@ fn skill(id: &str, path: &str, tool: &str, content: &str) -> Value {
 
 #[test]
 fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
-    let knowledge = AgentKnowledge::load_embedded("v4.0.0").expect("embedded knowledge");
-    assert_eq!(knowledge.manifest.agent_bundle_version, "v4.0.0");
+    let knowledge = AgentKnowledge::load_embedded("v4.1.0").expect("embedded knowledge");
+    assert_eq!(knowledge.manifest.agent_bundle_version, "v4.1.0");
     assert_eq!(
         knowledge.manifest.engine_contract_version,
         "tensoreval-parquet-v3"
@@ -85,6 +85,18 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
             .contains("只有用户原文包含完整的 `ds_...` 函数标识")
     );
     assert!(knowledge.system_prompt.contains("prepare_study"));
+    assert!(knowledge.system_prompt.contains("明确要求发布当前模型版本"));
+    assert!(knowledge.system_prompt.contains("publish_model_version"));
+    let model_intake = knowledge.skill("model-intake").unwrap();
+    assert_eq!(model_intake.metadata.version, "1.1.0");
+    assert!(
+        model_intake
+            .metadata
+            .required_tools
+            .iter()
+            .any(|tool| tool == "publish_model_version")
+    );
+    assert!(model_intake.content.contains("publish_model_version"));
     assert!(knowledge.system_prompt.contains("确认并生成脚本"));
     assert!(!knowledge.system_prompt.contains("plan_study"));
     assert!(!knowledge.system_prompt.contains("create_script"));

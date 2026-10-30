@@ -131,6 +131,26 @@ describe('release semantic assertions', () => {
     })).not.toThrow()
   })
 
+  test('accepts one skill-gated model publication and rejects repeated publication', () => {
+    const trace = [
+      call('load_agent_skill', 'success', { skill_id: 'model-intake' }),
+      call('inspect_workspace', 'success'),
+      call('publish_model_version', 'running', { expectedDraft: { id: 41, revision: 7 } }),
+      call('publish_model_version', 'success', { expectedDraft: { id: 41, revision: 7 } }),
+    ]
+    expect(() => expectToolTrace(trace, {
+      requiredTools: ['publish_model_version'],
+      gatedTools: { publish_model_version: ['model-intake'] },
+    })).not.toThrow()
+    expect(() => expectToolTrace([
+      ...trace,
+      call('publish_model_version', 'success', { expectedDraft: { id: 41, revision: 7 } }),
+    ], {
+      requiredTools: ['publish_model_version'],
+      gatedTools: { publish_model_version: ['model-intake'] },
+    })).toThrow(/publish_model_version succeeded 2 times/)
+  })
+
   test('rejects illegal tools, unstable IDs, failed tools, and missing skill ordering', () => {
     expect(() => expectToolTrace([call('shell', 'success')], { requiredTools: ['shell'] })).toThrow(/disallowed/)
     expect(() => expectToolTrace([call('inspect_example', 'success', { exampleId: '/tmp/case.rss' })], { requiredTools: ['inspect_example'] })).toThrow(/stable example ID/)

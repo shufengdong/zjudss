@@ -122,7 +122,8 @@ fn contract_manifest_contains_all_public_enums() {
             "workflow-progress",
         ]
     );
-    assert_eq!(manifest.tool_names.len(), 22);
+    assert_eq!(manifest.tool_names.len(), 23);
+    assert!(manifest.tool_names.contains(&"publish_model_version"));
     assert!(!manifest.tool_names.contains(&"create_script"));
     assert!(manifest.tool_names.contains(&"search_study_facades"));
     assert!(manifest.tool_names.contains(&"prepare_study"));

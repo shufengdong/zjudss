@@ -146,7 +146,7 @@ async fn seed_canonical_draft(app: &TestApp, user: &CurrentUser, session_id: i32
     .await
 }
 
-async fn publish_agent_study_model(app: &TestApp, session_id: i32) {
+async fn seed_agent_study_draft(app: &TestApp, session_id: i32) -> DraftRef {
     let user = common::test_user("instance");
     let tables: [(&str, &[u8]); 8] = [
         ("bus", b"id\nsource\nb1\n"),
@@ -162,7 +162,12 @@ async fn publish_agent_study_model(app: &TestApp, session_id: i32) {
     for (sequence, (table_name, csv)) in tables.into_iter().enumerate() {
         draft = Some(apply_csv(app, &user, session_id, table_name, csv, draft, sequence).await);
     }
-    let draft = draft.unwrap();
+    draft.unwrap()
+}
+
+async fn publish_agent_study_model(app: &TestApp, session_id: i32) {
+    let user = common::test_user("instance");
+    let draft = seed_agent_study_draft(app, session_id).await;
     app.state
         .version_service
         .publish(
@@ -194,6 +199,181 @@ fn assert_no_script_or_run(events: &[Value]) {
             .all(|event| event["type"] != "script" && event["type"] != "simulation-run"),
         "events: {events:#?}"
     );
+}
+
+#[tokio::test]
+async fn explicit_publish_request_uses_exact_draft_and_activates_the_version() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let session = create_session(&app).await;
+    let session_id = session.parse().unwrap();
+    let draft = seed_canonical_draft(&app, &common::test_user("instance"), session_id).await;
+    factory.enqueue(ScriptScenario {
+        id: "explicit-model-publish".into(),
+        expected_prompt: Some("发布当前模型草稿，描述为案例导入版本".into()),
+        turns: vec![
+            ScriptTurn::ToolCall {
+                call_id: "load-intake".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"model-intake"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "inspect".into(),
+                name: "inspect_workspace".into(),
+                args: json!({}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "publish".into(),
+                name: "publish_model_version".into(),
+                args: json!({
+                    "expectedDraft":{"id":draft.id,"revision":draft.revision},
+                    "description":"案例导入版本"
+                }),
+            },
+            ScriptTurn::Text {
+                text: "当前模型草稿已发布并自动激活。".into(),
+            },
+        ],
+    });
+
+    assert_eq!(
+        post_and_wait(&app, &session, "发布当前模型草稿，描述为案例导入版本").await,
+        StatusCode::ACCEPTED
+    );
+    let events = messages(&app, &session).await;
+    assert_eq!(
+        tool_names(&events),
+        [
+            "load_agent_skill",
+            "inspect_workspace",
+            "publish_model_version"
+        ]
+    );
+    let workspace = app
+        .state
+        .version_service
+        .workspace(&common::test_user("instance"), session_id)
+        .await
+        .unwrap();
+    assert!(workspace.draft.is_none());
+    assert_eq!(
+        workspace.active.unwrap().version.description,
+        "案例导入版本"
+    );
+    assert_no_script_or_run(&events);
+}
+
+#[tokio::test]
+async fn publish_then_study_request_continues_to_prepare_configuration_without_bypassing_confirmation()
+ {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let session = create_session(&app).await;
+    let session_id = session.parse().unwrap();
+    let draft = seed_agent_study_draft(&app, session_id).await;
+    factory.enqueue(ScriptScenario {
+        id: "publish-then-study".into(),
+        expected_prompt: Some("发布当前模型版本，然后使用 ds_newton_raphson_pf 准备潮流研究".into()),
+        turns: vec![
+            ScriptTurn::ToolCall {
+                call_id: "load-intake".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"model-intake"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "inspect".into(),
+                name: "inspect_workspace".into(),
+                args: json!({}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "publish".into(),
+                name: "publish_model_version".into(),
+                args: json!({"expectedDraft":{"id":draft.id,"revision":draft.revision}}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "load-planning".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"study-planning"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "search".into(),
+                name: "search_study_facades".into(),
+                args: json!({"query":"潮流研究","explicitFunction":"ds_newton_raphson_pf"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "prepare".into(),
+                name: "prepare_study".into(),
+                args: json!({"facadeId":"static_power_flow_newton","intent":{"request":"潮流研究"}}),
+            },
+            ScriptTurn::Text {
+                text: "版本已发布，研究配置已准备，请在卡片中最终确认。".into(),
+            },
+        ],
+    });
+
+    assert_eq!(
+        post_and_wait(
+            &app,
+            &session,
+            "发布当前模型版本，然后使用 ds_newton_raphson_pf 准备潮流研究",
+        )
+        .await,
+        StatusCode::ACCEPTED
+    );
+    let events = messages(&app, &session).await;
+    assert_eq!(
+        tool_names(&events),
+        [
+            "load_agent_skill",
+            "inspect_workspace",
+            "publish_model_version",
+            "load_agent_skill",
+            "search_study_facades",
+            "prepare_study"
+        ]
+    );
+    assert_no_script_or_run(&events);
+    assert!(runs(&app, &session).await.is_empty());
+    let workspace = app
+        .state
+        .version_service
+        .workspace(&common::test_user("instance"), session_id)
+        .await
+        .unwrap();
+    assert!(workspace.active.is_some());
+    assert!(workspace.draft.is_none());
+}
+
+#[tokio::test]
+async fn script_or_result_generation_words_do_not_implicitly_publish_a_draft() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let session = create_session(&app).await;
+    let session_id = session.parse().unwrap();
+    let draft = seed_canonical_draft(&app, &common::test_user("instance"), session_id).await;
+    factory.enqueue(ScriptScenario {
+        id: "generation-is-not-publication".into(),
+        expected_prompt: Some("根据当前草稿生成研究脚本和结果".into()),
+        turns: vec![ScriptTurn::Text {
+            text: "需要先明确发布模型版本，并在研究配置卡中确认后才能生成脚本。".into(),
+        }],
+    });
+
+    assert_eq!(
+        post_and_wait(&app, &session, "根据当前草稿生成研究脚本和结果").await,
+        StatusCode::ACCEPTED
+    );
+    let events = messages(&app, &session).await;
+    assert!(tool_names(&events).is_empty());
+    assert_no_script_or_run(&events);
+    let workspace = app
+        .state
+        .version_service
+        .workspace(&common::test_user("instance"), session_id)
+        .await
+        .unwrap();
+    assert!(workspace.active.is_none());
+    assert_eq!(workspace.draft.unwrap().draft.id, draft.id);
 }
 
 #[tokio::test]

@@ -142,7 +142,7 @@ async function sendAndCollect(page: Page, api: APIRequestContext, sessionId: str
   return trace
 }
 
-async function importAndPublish(page: Page, api: APIRequestContext, sessionId: string) {
+async function importAndPublish(page: Page, api: APIRequestContext, sessionId: string, report: AttemptReport) {
   const directory = process.env.RELEASE_DATAFRAME_DIR
   if (!directory) throw new Error('release_dataframe_fixture_missing')
   const required = new Set([
@@ -178,11 +178,15 @@ async function importAndPublish(page: Page, api: APIRequestContext, sessionId: s
     const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
     return workspace.draft?.tables?.length === 20 ? workspace : undefined
   })
-  if (await page.getByRole('button', { name: '展开结果面板' }).isVisible()) {
-    await page.getByRole('button', { name: '展开结果面板' }).click()
-  }
-  await page.getByRole('button', { name: /^展开可变草稿/ }).click()
-  await page.getByRole('button', { name: '生成版本' }).click()
+  const trace = await sendAndCollect(page, api, sessionId,
+    '请发布当前模型草稿并自动激活，版本描述为真实依赖发布验证。',
+    ['publish_model_version'])
+  expectToolTrace(trace, {
+    requiredTools: ['load_agent_skill', 'inspect_workspace', 'publish_model_version'],
+    allowedTools: ['load_agent_skill', 'inspect_workspace', 'publish_model_version'],
+    gatedTools: { publish_model_version: ['model-intake'] },
+  })
+  report.segments.push(summarizeTrace('natural_language_model_publish', trace))
   return waitFor(async () => {
     const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
     return workspace.active && !workspace.draft ? workspace : undefined
@@ -218,7 +222,7 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
       return sessions.find(session => !existingIds.has(String(session.id)))
     })
     const sessionId = String(created.id)
-    const workspace = await importAndPublish(page, api, sessionId)
+    const workspace = await importAndPublish(page, api, sessionId, report)
     const versionId = String(workspace.active.id)
 
     let trace = await sendAndCollect(page, api, sessionId, '求解牛顿法潮流', ['prepare_study'])
