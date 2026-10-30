@@ -1,5 +1,5 @@
 use zjudss::agent::knowledge::AgentKnowledge;
-use zjudss::agent::{DeepSeekAgentFactory, LlmConfig};
+use zjudss::agent::{LlmAgentFactory, LlmConfig};
 use zjudss::application::{AppState, RunScheduler, StorageLimits};
 use zjudss::auth::{AuthService, INIT_USERS_CSV, seed_users};
 use zjudss::catalog::SchemaCatalog;
@@ -115,7 +115,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let state = AppState::new_with_resources_and_agent_factory(
         pool,
         engine,
-        std::sync::Arc::new(DeepSeekAgentFactory::new(llm)),
+        std::sync::Arc::new(LlmAgentFactory::new(llm)),
         runtime.data_dir,
         auth,
         scheduler,

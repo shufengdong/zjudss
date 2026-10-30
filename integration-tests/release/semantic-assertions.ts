@@ -37,10 +37,81 @@ export function expectEngineReleaseEvidence(report: any) {
   invariant(/^[a-f0-9]{64}$/.test(report.binarySha256 ?? ''), 'engine binary hash is invalid')
   invariant(report.bundleExamples > 0, 'release engine has no bundle examples')
   invariant(report.importableExamples > 0, 'release engine has no importable examples')
+  invariant(report.nonImportableExamples === 0, 'release engine has cases without an enabled projection')
   invariant(report.facadeCatalogEntries > 0, 'release engine has no facade catalog entries')
   invariant(report.enabledFacades === report.facadeCatalogEntries, 'release engine did not enable every facade')
   invariant(Array.isArray(report.facadeDiagnostics) && report.facadeDiagnostics.length === 0,
     'release engine has facade diagnostics')
+  invariant(report.projectionCatalogEntries > 0 && report.enabledProjectionProfiles > 0,
+    'release engine has no projection catalog')
+  invariant(
+    report.enabledProjectionProfiles + (report.projectionDiagnostics?.length ?? -1) === report.projectionCatalogEntries,
+    'release engine projection catalog is incomplete',
+  )
+  invariant(
+    report.projectedExamples === report.importableExamples
+      && report.projectedExamples === report.bundleExamples,
+    'release engine did not project every bundle example',
+  )
+  invariant(report.projectionFailures === 0, 'release engine case projection failed')
+  invariant(
+    Array.isArray(report.caseProjections) && report.caseProjections.length === report.projectedExamples,
+    'release engine case projection evidence is incomplete',
+  )
+  const projectedIds = new Set<string>()
+  for (const projection of report.caseProjections) {
+    invariant(
+      typeof projection.exampleId === 'string' && /^ex_[a-f0-9]+$/.test(projection.exampleId),
+      'release engine case projection example ID is invalid',
+    )
+    invariant(!projectedIds.has(projection.exampleId), 'release engine has duplicate case projection evidence')
+    projectedIds.add(projection.exampleId)
+    invariant(
+      typeof projection.projectionProfile === 'string' && projection.projectionProfile.length > 0,
+      'release engine case projection profile is missing',
+    )
+    invariant(projection.success === true, 'release engine case projection did not succeed')
+    for (const field of ['modelOutputs', 'dataOutputs', 'structOutputs', 'diagnosticOutputs']) {
+      invariant(
+        Number.isInteger(projection[field]) && projection[field] >= 0,
+        `release engine case projection ${field} is invalid`,
+      )
+    }
+    invariant(projection.failureCode === undefined, 'successful case projection includes a failure code')
+  }
+  const projectedProfiles = new Set<string>(
+    report.caseProjections.map((projection: any) => projection.projectionProfile),
+  )
+  invariant(
+    projectedProfiles.size === report.referencedProjectionProfiles,
+    'release engine projected profile coverage is inconsistent',
+  )
+  invariant(
+    report.referencedProjectionProfiles > 0
+      && Array.isArray(report.representativeRuns)
+      && report.representativeRuns.length === report.referencedProjectionProfiles,
+    'release engine did not project and run every referenced profile',
+  )
+  const representativeProfiles = new Set<string>()
+  for (const run of report.representativeRuns) {
+    invariant(
+      typeof run.projectionProfile === 'string'
+        && projectedProfiles.has(run.projectionProfile)
+        && !representativeProfiles.has(run.projectionProfile),
+      'release engine representative profiles are incomplete',
+    )
+    representativeProfiles.add(run.projectionProfile)
+    invariant(
+      run.success === true
+        && typeof run.exampleId === 'string'
+        && /^ex_[a-f0-9]+$/.test(run.exampleId)
+        && report.caseProjections.some((projection: any) =>
+          projection.success
+          && projection.exampleId === run.exampleId
+          && projection.projectionProfile === run.projectionProfile),
+      'release engine representative does not match projected evidence',
+    )
+  }
   invariant(report.contractChecks?.staticModelImport && report.contractChecks?.staticImportDataframes === 21,
     'release engine static import contract is incomplete')
   invariant(

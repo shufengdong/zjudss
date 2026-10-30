@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { test, expect } from './fixtures'
 import { createReadySession, send, uploadScriptAndRun } from './helpers/journeys'
-import { confirmLatestUpload } from './helpers/uploads'
+import { confirmLatestUpload, openMutableDraft } from './helpers/uploads'
 
 test('model import stays a draft until publish and a script runs only after its explicit button', async ({ appPage, control }) => {
   const { page, api, context } = await appPage({ subject: 'studies@example.com' })
@@ -214,11 +214,11 @@ test('CSV imports merge by whole table, reruns use the latest active model, and 
   await page.locator('input[type=file]').first().setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/load.csv'))
   await confirmLatestUpload(page, 'model_table', { 'load.csv': 'load' })
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.tables?.length).toBe(2)
-  await expect(page.getByRole('button', { name: /^收起可变草稿/ })).toContainText('修订 1')
+  await expect(await openMutableDraft(page)).toContainText('修订 1')
   await page.locator('input[type=file]').first().setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/multi.xlsx'))
   await confirmLatestUpload(page, 'model_table', { Mixed: 'Mixed', Loads: 'Loads', DuplicateColumns: 'DuplicateColumns' })
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.tables?.some((table: any) => table.tableName === 'loads')).toBe(true)
-  await expect(page.getByRole('button', { name: /^收起可变草稿/ })).toContainText('修订 2')
+  await expect(await openMutableDraft(page)).toContainText('修订 2')
   await page.getByRole('button', { name: '生成版本' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/versions`)).json()).versions.length).toBe(2)
   const versions = (await (await api.get(`/api/sessions/${sessionId}/versions`)).json()).versions
@@ -238,6 +238,7 @@ test('CSV imports merge by whole table, reruns use the latest active model, and 
   await page.locator('input[type=file]').first().setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/load.parquet'))
   await confirmLatestUpload(page, 'model_table', { 'load.parquet': 'load' })
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.revision).toBe(1)
+  await openMutableDraft(page)
   page.once('dialog', dialog => dialog.accept())
   await page.getByText(`版本 ${secondVersion} · ${secondTableCount} 表`, { exact: true }).locator('..').getByRole('button', { name: '激活' }).click()
   await expect.poll(async () => {
@@ -279,6 +280,7 @@ test('active draft and historical model tables are readable without changing lif
     draft = (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft
     return draft?.revision
   }).toBe(1)
+  await openMutableDraft(page)
 
   const firstVersionView = await (await api.get(`/api/versions/${firstVersion}`)).json()
   const activeDataframeId = firstVersionView.tables[0].id

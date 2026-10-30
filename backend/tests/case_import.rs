@@ -36,6 +36,13 @@ async fn applying_a_case_creates_one_recoverable_upload_batch_without_publishing
     let batch = &body["uploadBatch"];
     assert_eq!(batch["sourceKind"], "case");
     assert_eq!(batch["status"], "ready_to_confirm");
+    let materialized_bundle = app
+        .data_dir
+        .join("upload-work")
+        .join(batch["id"].as_str().unwrap())
+        .join("input.rssbundle");
+    assert!(materialized_bundle.join("manifest.json").is_file());
+    assert!(materialized_bundle.join("dss/model.dss").is_file());
     let candidates = batch["candidates"].as_array().unwrap();
     assert_eq!(candidates.len(), 21);
     assert_eq!(
@@ -50,6 +57,19 @@ async fn applying_a_case_creates_one_recoverable_upload_batch_without_publishing
         .find(|value| value["proposedAlias"] == "para")
         .unwrap();
     assert_eq!(para["purpose"], "data_resource");
+    assert!(
+        candidates
+            .iter()
+            .all(|candidate| candidate["proposedAlias"] != "projection_diagnostic")
+    );
+    assert_eq!(
+        batch["diagnostics"]["caseProjection"]["diagnosticOutputs"][0]["name"],
+        "projection_diagnostic"
+    );
+    assert_eq!(
+        batch["diagnostics"]["caseProjection"]["diagnosticOutputs"][0]["rows"][0]["id"],
+        "stub-21"
+    );
     assert!(
         app.state
             .version_service
@@ -192,14 +212,22 @@ async fn case_detail_exposes_normalized_manifest_without_source_paths() {
     assert_eq!(detail["categoryPath"], json!(["E2E", "Demo"]));
     assert_eq!(detail["bundlePath"], "E2E/Demo/E2E demo.rssbundle");
     assert_eq!(detail["entryPath"], "main.rss");
-    assert_eq!(detail["manifest"]["schemaVersion"], 1);
+    assert_eq!(detail["manifest"]["schemaVersion"], 2);
     assert_eq!(detail["manifest"]["artifact"], "mems.dss-rss-bundle");
-    assert_eq!(detail["manifest"]["study"]["kind"], "execution_plan");
+    assert_eq!(detail["manifest"]["study"]["kind"], "static_power_flow");
     assert_eq!(
         detail["manifest"]["study"]["compatibility"],
         "opendss-native"
     );
     assert_eq!(detail["manifest"]["study"]["results"], json!(["voltage"]));
+    assert_eq!(
+        detail["manifest"]["projection"]["profile"],
+        "dss_static_newton_v1"
+    );
+    assert_eq!(
+        detail["manifest"]["projection"]["managedEntry"],
+        "managed.rss"
+    );
     assert_eq!(detail["manifest"]["source"]["entry"], "dss/model.dss");
     assert_eq!(detail["manifest"]["source"]["root"], "dss");
     assert!(detail["manifest"]["source"]["treeSha256"].is_string());
@@ -210,7 +238,10 @@ async fn case_detail_exposes_normalized_manifest_without_source_paths() {
         .iter()
         .map(|file| file["role"].as_str().unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(roles, vec!["manifest", "dss-entry", "main-rss"]);
+    assert_eq!(
+        roles,
+        vec!["manifest", "dss-entry", "main-rss", "managed-rss"]
+    );
     let serialized = serde_json::to_string(&detail).unwrap();
     assert!(!serialized.contains(app.live_engine_root.to_str().unwrap()));
     assert!(!serialized.contains("sourcePath"));
@@ -245,7 +276,7 @@ async fn case_detail_exposes_normalized_manifest_without_source_paths() {
 async fn case_catalog_searches_manifest_metadata_and_keeps_ancestors() {
     let app = TestApp::spawn().await;
     let alice = app.login_cookie("alice@example.com").await;
-    for query in ["voltage", "model.dss", "execution_plan"] {
+    for query in ["voltage", "model.dss", "static_power_flow"] {
         let response = app
             .router
             .clone()
@@ -272,7 +303,7 @@ async fn case_catalog_searches_manifest_metadata_and_keeps_ancestors() {
         .router
         .clone()
         .oneshot(
-            Request::get("/api/examples?studyType=execution_plan")
+            Request::get("/api/examples?studyType=static_power_flow")
                 .header("cookie", &alice)
                 .body(Body::empty())
                 .unwrap(),

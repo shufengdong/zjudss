@@ -174,9 +174,11 @@ async fn prompt_publishes_independent_catalog_versions_and_facade_inventory() {
 
     assert!(prompt.contains("catalogSchemaVersions"));
     assert!(prompt.contains("studyFacades"));
+    assert!(prompt.contains("caseProjections"));
     assert!(prompt.contains("\"functions\":2"));
     assert!(prompt.contains("\"studyFacades\":1"));
-    assert!(prompt.contains("\"dataframes\":3"));
+    assert!(prompt.contains("\"caseProjections\":2"));
+    assert!(prompt.contains("\"dataframes\":4"));
     assert!(prompt.contains("\"dtypeGrammar\":1"));
     assert!(!prompt.contains("\"catalogSchemaVersion\":"));
 }

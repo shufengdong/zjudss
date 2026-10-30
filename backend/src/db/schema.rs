@@ -353,6 +353,7 @@ diesel::table! {
         catalog_hash -> Text,
         functions_schema_version -> Integer,
         study_facades_schema_version -> Integer,
+        case_projections_schema_version -> Integer,
         dataframes_schema_version -> Integer,
         dtype_grammar_version -> Integer,
         is_current -> Bool,

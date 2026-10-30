@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { test, expect } from './fixtures'
 import { createSessionFromPage } from './helpers/journeys'
-import { confirmLatestUpload } from './helpers/uploads'
+import { confirmLatestUpload, openMutableDraft } from './helpers/uploads'
 
 test('warning and hard quota are visible while a rejected model import leaves usage and workspace intact', async ({ appPage, control }) => {
   const identity = { subject: 'quota@example.com', tenant: 'grid-q' }
@@ -11,7 +11,7 @@ test('warning and hard quota are visible while a rejected model import leaves us
   const input = page.locator('input[type=file]').first()
   await input.setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/bus.csv'))
   await confirmLatestUpload(page, 'model_table')
-  await page.getByRole('button', { name: /^展开可变草稿/ }).click()
+  await openMutableDraft(page)
   await page.getByRole('button', { name: '生成版本' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).active?.id).toBeTruthy()
   const committedUsage = await (await api.get('/api/storage-usage')).json()

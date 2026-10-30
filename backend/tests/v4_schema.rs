@@ -82,6 +82,23 @@ fn v4_initial_schema_contains_only_current_tables() {
 }
 
 #[test]
+fn engine_resource_snapshot_persists_case_projection_catalog_version() {
+    let (_root, pool) = database();
+    let mut conn = pool.get().unwrap();
+    let columns = diesel::sql_query("PRAGMA table_info(engine_resource_snapshots)")
+        .load::<NameRow>(&mut conn)
+        .unwrap()
+        .into_iter()
+        .map(|row| row.name)
+        .collect::<Vec<_>>();
+    assert!(
+        columns
+            .iter()
+            .any(|name| name == "case_projections_schema_version")
+    );
+}
+
+#[test]
 fn one_live_data_alias_and_one_nonterminal_workflow_are_database_constraints() {
     let (_root, pool) = database();
     let mut conn = pool.get().unwrap();

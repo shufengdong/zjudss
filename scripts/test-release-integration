@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-# real DeepSeek and tensoreval complete the V4 semantic release journey
+# real LLM provider and tensoreval complete the V4 semantic release journey
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 if [ "${ZJUDSS_SKIP_DOTENV:-0}" != "1" ] && [ -f "$repo_root/backend/.env" ]; then
   set -a
@@ -10,7 +10,22 @@ if [ "${ZJUDSS_SKIP_DOTENV:-0}" != "1" ] && [ -f "$repo_root/backend/.env" ]; th
   set +a
 fi
 
-for required in DEEPSEEK_API_KEY TENSOREVAL_BIN SPARROWZZ_DIR; do
+llm_provider=${LLM_PROVIDER:-deepseek}
+export LLM_PROVIDER="$llm_provider"
+case "$llm_provider" in
+  deepseek)
+    llm_required="DEEPSEEK_API_KEY"
+    ;;
+  bailian)
+    llm_required="BAILIAN_API_KEY BAILIAN_BASE_URL LLM_MODEL"
+    ;;
+  *)
+    echo "release_integration_unsupported_llm_provider:$llm_provider" >&2
+    exit 2
+    ;;
+esac
+
+for required in $llm_required TENSOREVAL_BIN SPARROWZZ_DIR; do
   eval "value=\${$required:-}"
   if [ -z "$value" ]; then
     echo "release_integration_missing:$required" >&2
@@ -37,7 +52,6 @@ export RELEASE_LLM_REPORT="$report_dir/llm-report.json"
 export RELEASE_DATAFRAME_DIR="$run_root/dataframes"
 export DATA_DIR="$run_root/data"
 export DATABASE_URL="sqlite://$run_root/release.db"
-export LLM_PROVIDER=deepseek
 ports=$(node -e '
   const net = require("node:net");
   const servers = [net.createServer(), net.createServer()];
@@ -55,7 +69,13 @@ sanitize_log() {
   node -e '
     const fs = require("node:fs");
     let text = fs.readFileSync(process.argv[1], "utf8");
-    for (const value of [process.env.DEEPSEEK_API_KEY, process.env.TENSOREVAL_BIN, process.env.SPARROWZZ_DIR, process.env.DATA_DIR, process.cwd()]) {
+    const values = [process.env.DEEPSEEK_API_KEY, process.env.BAILIAN_API_KEY, process.env.BAILIAN_BASE_URL, process.env.TENSOREVAL_BIN, process.env.SPARROWZZ_DIR, process.env.DATA_DIR, process.cwd()];
+    const redactions = [...new Set(values.flatMap((value) => {
+      if (!value) return [];
+      const trimmed = value.trim();
+      return trimmed && trimmed !== value ? [value, trimmed] : [value];
+    }))];
+    for (const value of redactions) {
       if (value) text = text.split(value).join("<redacted>");
     }
     text = text.replace(/\/(?:Users|private|tmp)\/[^\s"`]+/g, "<path>");
@@ -66,6 +86,9 @@ sanitize_log() {
 finish() {
   code=$?
   trap - EXIT INT TERM
+  if ! node "$repo_root/scripts/sanitize-release-llm-report.mjs"; then
+    if [ "$code" -eq 0 ]; then code=1; fi
+  fi
   if [ -f "$raw_log" ]; then
     sanitize_log
     tail -n 40 "$public_log"
@@ -101,7 +124,20 @@ fi
 node -e '
   const fs = require("node:fs");
   const report = JSON.parse(fs.readFileSync(process.env.RELEASE_LLM_REPORT, "utf8"));
+  const engineReport = JSON.parse(fs.readFileSync(process.env.RELEASE_ENGINE_REPORT, "utf8"));
+  const text = JSON.stringify(report);
+  const credentials = [...new Set([process.env.DEEPSEEK_API_KEY, process.env.BAILIAN_API_KEY].flatMap((value) => {
+    if (!value) return [];
+    const trimmed = value.trim();
+    return trimmed && trimmed !== value ? [value, trimmed] : [value];
+  }))];
+  for (const value of credentials) {
+    if (value && text.includes(value)) process.exit(1);
+  }
   if (!report.success || !report.attempts?.some((attempt) => attempt.outcome === "passed")) process.exit(1);
+  const expectedProvider = process.env.LLM_PROVIDER?.trim() || "deepseek";
+  if (report.provider !== expectedProvider) process.exit(1);
+  if (process.env.LLM_MODEL?.trim() && report.model !== process.env.LLM_MODEL.trim()) process.exit(1);
   if (report.agentBundleVersion !== "v4.0.0" || !/^[a-f0-9]{64}$/.test(report.agentBundleSha256 ?? "")) process.exit(1);
   if (!/^[a-f0-9]{64}$/.test(report.userSeedSha256 ?? "") || !(report.userCount > 0)) process.exit(1);
   if (!["ENGINE-RELEASE-001", "REAL-RELEASE-001", "AGENT-STUDY-PLANNING-001"].every((id) => report.testIds?.includes(id))) process.exit(1);
@@ -113,10 +149,24 @@ node -e '
   if (!report.engineContractChecks?.staticModelImport || !report.engineContractChecks?.singleSolveModelImport) process.exit(1);
   if (report.engineContractChecks?.staticImportDataframes !== 21) process.exit(1);
   if (!(report.engineFacadeCatalog?.entries > 0) || report.engineFacadeCatalog.enabled !== report.engineFacadeCatalog.entries || report.engineFacadeCatalog.diagnostics !== 0) process.exit(1);
+  const projections = report.engineProjectionCatalog;
+  if (!(projections?.entries > 0) || !(projections.enabled > 0) || projections.enabled + projections.diagnostics !== projections.entries) process.exit(1);
+  if (!(projections.referenced > 0) || projections.representativeRuns !== projections.referenced) process.exit(1);
+  if (engineReport.projectedExamples !== engineReport.importableExamples || engineReport.projectedExamples !== engineReport.bundleExamples) process.exit(1);
+  if (engineReport.projectionFailures !== 0 || engineReport.caseProjections?.length !== engineReport.projectedExamples) process.exit(1);
+  const projectionIds = new Set();
+  for (const projection of engineReport.caseProjections ?? []) {
+    if (projectionIds.has(projection.exampleId)) throw new Error("duplicate_projection_evidence");
+    projectionIds.add(projection.exampleId);
+    if (!/^ex_[a-f0-9]+$/.test(projection.exampleId ?? "") || !projection.projectionProfile || projection.success !== true || projection.failureCode !== undefined) process.exit(1);
+    for (const field of ["modelOutputs", "dataOutputs", "structOutputs", "diagnosticOutputs"]) {
+      if (!Number.isInteger(projection[field]) || projection[field] < 0) process.exit(1);
+    }
+  }
   if (report.finalState?.runCount !== 2 || report.finalState?.datasetCount !== 3 || report.finalState?.analysisRunCount !== 2 || report.finalState?.comparisonCount !== 1) process.exit(1);
   if (report.managedWorkflow?.status !== "succeeded" || !(report.managedWorkflow?.attemptCount > 0)) process.exit(1);
-  const text = JSON.stringify(report);
-  for (const value of [process.env.DEEPSEEK_API_KEY, process.env.TENSOREVAL_BIN, process.env.SPARROWZZ_DIR, process.env.DATA_DIR]) {
+  const privateValues = [process.env.BAILIAN_BASE_URL, process.env.TENSOREVAL_BIN, process.env.SPARROWZZ_DIR, process.env.DATA_DIR];
+  for (const value of [...credentials, ...privateValues]) {
     if (value && text.includes(value)) process.exit(1);
   }
 ' >>"$raw_log" 2>&1

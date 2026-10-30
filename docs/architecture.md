@@ -6,7 +6,7 @@
 ## Scope
 
 V4 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axum 应用、SQLite 元数据与
-内容寻址 artifact 存储、DeepSeek agent，以及只能经 `backend/src/adapters/` 调用的 tensoreval 组成。
+内容寻址 artifact 存储、可选择 DeepSeek 或百炼的 LLM agent，以及只能经 `backend/src/adapters/` 调用的 tensoreval 组成。
 不存在旧模型/任务协议的迁移、双读或兼容路由。
 
 ## Runtime flow
@@ -47,9 +47,11 @@ V4 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axu
 已发布目录损坏或 catalog 不兼容都会失败关闭。更新文档、catalog 或案例资源后必须重启以发布新 snapshot；
 单独替换 `TENSOREVAL_BIN` 无需重启，下一次 adapter 调用直接执行路径上的当前普通文件。
 
-案例扫描显式解析 manifest 的 schema/artifact、入口、study、source、files 和 inputs。单个无效 manifest 仍形成
+案例扫描显式解析 manifest schema v2 的 schema/artifact、入口、study、source、projection、files 和 inputs，并把
+projection 逐字段绑定到同一 snapshot 的 `case_projections.json` schema v2。单个无效 manifest 仍形成
 带脱敏诊断的不可导入叶节点，不阻断其他案例。应用案例时先验证不可变快照中 `manifest.json` 和
-`manifest.files` 全部哈希，再按该清单进入统一上传用途确认；bundle 内未声明文件不会被读取或暂存。HTTP、前端与
+`manifest.files` 全部哈希，再由 adapter 在私有树内执行已发布 projector；有序输出按目录角色成为 Model/Data/Struct
+候选，diagnostic 只进入批次诊断，然后进入统一上传用途确认。bundle 内未声明文件不会被读取或暂存。HTTP、前端与
 Agent 工具共享同一规范目录和 manifest 解释结果，并且都不返回物理路径。
 
 ## Backend code organization

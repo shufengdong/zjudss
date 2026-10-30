@@ -88,8 +88,9 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 `processing|awaiting_parse_settings|awaiting_purpose|ready_to_confirm|partially_confirmed|confirmed|failed|discarded|expired`。
 解析阶段只保存候选，不修改草稿或发布数据资源；`confirm` 才执行真实双发布事务。
 CSV/Parquet 每文件一个候选；Excel 只读取可见非空 worksheet 的缓存值，不执行公式、宏或外部链接。候选用途只有
-`model_table|data_resource|skip`。静态 DSS/案例固定拆成 20 个模型候选和一个普通 `para` 数据候选；其他模型
-schema 从当前 engine snapshot 的有效门面动态取得，并按实际列名推断。暂存默认保留 24 小时，配额以
+`model_table|data_resource|skip`。普通静态 DSS 仍拆成 20 个模型候选和一个普通 `para` 数据候选；案例按当前
+engine snapshot 中 manifest v2 绑定的 projection profile 动态执行，`projectorOutputs.inputKind=model` 形成模型候选，
+`data|struct` 形成普通资源候选，diagnostic 不形成候选。其他表格模型 schema 从有效门面动态取得，并按实际列名推断。暂存默认保留 24 小时，配额以
 `used_bytes + reserved_bytes` 原子检查；失败、放弃和到期幂等释放。
 
 确认请求为 `{decisions,replacementAction?,expectedDraft?,clientOperationId}`，其中 `clientOperationId` 必填且由客户端为本次确认生成。ModelTable 候选在一个草稿事务中
@@ -197,9 +198,10 @@ results、文件计数、验证状态与诊断。搜索匹配名称、bundle 路
 `importable=false`。
 
 `GET /api/examples/{id}` 增加可空 `entryPath`/`manifest`、角色化 `files`、`treeHash` 和 diagnostics。manifest
-保留 schema、artifact、generator、PSA contract、study、source、文件声明与 inputs，不返回物理源路径或文件内容。
+保留 schema、artifact、generator、PSA contract、study、source、规范 projection、文件声明与 inputs，不返回物理源路径或文件内容。
 应用请求提交 `{exampleId, engineResourceSnapshot, clientBatchId}`（过渡期也接受字段别名 `clientImportId`）；后端只从
-已发布快照读取 manifest 声明清单，全部哈希通过后进入统一上传用途确认。它不会直接生成草稿、版本或运行。
+已发布快照读取 manifest 声明清单，全部哈希通过后由 adapter 执行 profile 声明的 projector，并将精确有序输出进入
+统一上传用途确认。它不会直接生成草稿、版本或运行，也不会把源路径或 projector 暴露给客户端。
 
 Agent 的 `search_examples` 使用相同搜索谓词并返回最多 50 个规范摘要；`inspect_example` 只按稳定 ID 返回规范
 manifest、角色化文件哈希和验证诊断。两个工具只读，Agent 无权直接应用案例。

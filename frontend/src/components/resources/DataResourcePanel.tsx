@@ -5,6 +5,7 @@ import {
 import { useDataResources } from '../../hooks/useDataResources'
 import type { DataResourceDeletionPreview, DataResourceView, UploadBatchActions, UploadBatchView } from '../../types'
 import UploadBatchDecisionCard from '../uploads/UploadBatchDecisionCard'
+import { isClosedUploadBatch, uploadBatchWorkbenchTab } from '../uploads/batchPlacement'
 import DataResourceDeleteDialog from './DataResourceDeleteDialog'
 import DataResourceList from './DataResourceList'
 import DataResourceWorkbench from './DataResourceWorkbench'
@@ -20,7 +21,7 @@ export default function DataResourcePanel({sessionId,batches,actions,notify,onCh
   const startDelete=async(resource:DataResourceView)=>{setBusyId(resource.id);try{setPreview(await previewDataResourceDeletion(resource.id))}catch(cause){notify(cause instanceof Error?cause.message:'删除影响读取失败')}finally{setBusyId(null)}}
   const confirmDelete=async()=>{if(!preview)return;setBusyId(preview.resourceId);try{await deleteDataResource(preview.resourceId,preview.impactToken);setPreview(null);await reload();onChanged();notify('数据文件已删除')}catch(cause){notify(cause instanceof Error?cause.message:'删除失败')}finally{setBusyId(null)}}
   const replace=async(resource:DataResourceView,file:File)=>{setBusyId(resource.id);try{const batch=await uploadReplacementFiles(resource.id,operationId(),[{id:operationId(),file}]);actions?.addBatch(batch);actions?.watch(batch.id);notify('替换文件已进入确认')}catch(cause){notify(cause instanceof Error?cause.message:'重新上传失败')}finally{setBusyId(null)}}
-  const visibleBatches=batches.filter(batch=>!['confirmed','discarded','expired'].includes(batch.status))
+  const visibleBatches=batches.filter(batch=>uploadBatchWorkbenchTab(batch)==='resources'&&!isClosedUploadBatch(batch))
   return <div className="space-y-3 p-3">
     {visibleBatches.map(batch=><UploadBatchDecisionCard key={`${batch.id}:${batch.revision}`} batch={batch} actions={actions} notify={notify}/>) }
     <div className="flex items-center"><h2 className="text-sm font-semibold">数据文件</h2><button type="button" disabled={loading} onClick={()=>void reload()} className="ml-auto rounded border bg-white px-2 py-1 text-xs">刷新</button></div>

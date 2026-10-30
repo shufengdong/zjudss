@@ -121,7 +121,10 @@ impl CaseImportService {
 
     pub fn is_modelizable(example: &EngineExample) -> bool {
         example.importable
-            && example.manifest.is_some()
+            && example.manifest.as_ref().is_some_and(|manifest| {
+                manifest.projection.status == "enabled"
+                    && manifest.projection.managed_entry == "managed.rss"
+            })
             && example
                 .files
                 .iter()

@@ -218,8 +218,8 @@ async fn example_tools_return_manifest_metadata_and_never_physical_paths() {
     assert_eq!(summary["title"], "E2E demo");
     assert_eq!(summary["categoryPath"], serde_json::json!(["E2E", "Demo"]));
     assert_eq!(summary["bundlePath"], "E2E/Demo/E2E demo.rssbundle");
-    assert_eq!(summary["studyType"], "execution_plan");
-    assert_eq!(summary["solver"], "radial");
+    assert_eq!(summary["studyType"], "static_power_flow");
+    assert_eq!(summary["solver"], "newton");
     assert_eq!(summary["compatibility"], "opendss-native");
     assert_eq!(summary["results"], serde_json::json!(["voltage"]));
     assert_eq!(summary["sourceEntry"], "dss/model.dss");
@@ -235,7 +235,11 @@ async fn example_tools_return_manifest_metadata_and_never_physical_paths() {
         .await
         .unwrap();
     assert_eq!(detail["snapshotId"], app.state.engine_snapshot.id);
-    assert_eq!(detail["example"]["manifest"]["schemaVersion"], 1);
+    assert_eq!(detail["example"]["manifest"]["schemaVersion"], 2);
+    assert_eq!(
+        detail["example"]["manifest"]["projection"]["profile"],
+        "dss_static_newton_v1"
+    );
     assert_eq!(
         detail["example"]["manifest"]["study"]["compatibility"],
         "opendss-native"
@@ -251,7 +255,7 @@ async fn example_tools_return_manifest_metadata_and_never_physical_paths() {
             .iter()
             .map(|file| file["role"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        vec!["manifest", "dss-entry", "main-rss"]
+        vec!["manifest", "dss-entry", "main-rss", "managed-rss"]
     );
 
     let invalid = tools::search_examples::SearchExamplesTool::new(services)

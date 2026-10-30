@@ -1,6 +1,8 @@
-import{act,fireEvent,render,screen,waitFor}from'@testing-library/react';import{beforeEach,describe,expect,it,vi}from'vitest';import type{ModelVersion,Workspace}from'../../types';import WorkspacePanel from'./WorkspacePanel';import{listVersions,publishDraft}from'../../api/client'
+import{act,fireEvent,render,screen,waitFor}from'@testing-library/react';import{beforeEach,describe,expect,it,vi}from'vitest';import type{ModelVersion,UploadBatchActions,UploadBatchView,Workspace}from'../../types';import WorkspacePanel from'./WorkspacePanel';import{listVersions,publishDraft}from'../../api/client'
 vi.mock('../../api/client',()=>({listVersions:vi.fn().mockResolvedValue([]),publishDraft:vi.fn(),activateVersion:vi.fn(),previewVersionDeletion:vi.fn(),deleteVersion:vi.fn()}))
 const populatedWorkspace=(sessionId='s'):Workspace=>({id:'w',sessionId,active:{id:'v1',workspaceId:'w',contentHash:'vh',description:'默认说明',sourceSummary:{},engineContractVersion:'e',createdAt:'x',tables:[{id:'a1',tableName:'bus',artifactId:'a',schema:[{}],rowCount:3000,contentHash:'h'},{id:'a2',tableName:'line',artifactId:'a',schema:[],rowCount:2,contentHash:'h2'}]},draft:{id:'d1',workspaceId:'w',baseVersionId:'v1',revision:3,diagnostics:{},createdAt:'x',updatedAt:'x',tables:[{id:'d2',tableName:'load',artifactId:'a',schema:[{},{}],rowCount:4,contentHash:'h'}]}})
+const caseBatch=(status:UploadBatchView['status']='ready_to_confirm'):UploadBatchView=>({id:'case-batch',sessionId:'s',clientBatchId:'client-case',sourceKind:'case',status,modelPublishStatus:'ready',resourcePublishStatus:'ready',parseSettings:{},diagnostics:status==='failed'?[{message:'案例解析失败'}]:[],reservedBytes:10,expiresAtMs:10,revision:2,candidates:[{id:'bus',displayName:'bus',proposedAlias:'bus',purpose:'model_table',evidence:{},selected:true}]})
+const batchActions:UploadBatchActions={updateParseSettings:vi.fn(),updateCandidates:vi.fn(),confirm:vi.fn(),discard:vi.fn(),addBatch:vi.fn(),watch:vi.fn()}
 describe('WorkspacePanel',()=>{
   beforeEach(()=>vi.mocked(listVersions).mockResolvedValue([]))
   it('enables explicit version generation only for a non-empty draft',()=>{const base={id:'w',sessionId:'s',active:null};const{rerender}=render(<WorkspacePanel sessionId="s" workspace={{...base,draft:null}} onReload={vi.fn()} notify={vi.fn()}/>);expect(screen.queryByText('生成版本')).not.toBeInTheDocument();rerender(<WorkspacePanel sessionId="s" workspace={{...base,draft:{id:'d',workspaceId:'w',baseVersionId:null,revision:1,diagnostics:{},tables:[{id:'t',tableName:'bus',artifactId:'a',schema:[],rowCount:1,contentHash:'h'}],createdAt:'x',updatedAt:'x'}}} onReload={vi.fn()} notify={vi.fn()}/>);fireEvent.click(screen.getByRole('button',{name:/^展开可变草稿/}));expect(screen.getByText('生成版本')).toBeEnabled()})
@@ -80,5 +82,12 @@ describe('WorkspacePanel',()=>{
     fireEvent.click(view)
     expect(open).toHaveBeenCalledWith({kind:'model-version',dataframeId:'h1',versionId:'v9',tableName:'line'})
     expect(screen.queryByText('版本 v9 · 1 表')).not.toBeNull()
+  })
+  it('shows only non-terminal case import cards with their diagnostics',()=>{
+    const{rerender}=render(<WorkspacePanel sessionId="s" workspace={populatedWorkspace()} batches={[caseBatch('failed')]} batchActions={batchActions} onReload={vi.fn()} notify={vi.fn()}/>)
+    expect(screen.getByRole('region',{name:'上传批次 case-batch'})).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('案例解析失败')
+    rerender(<WorkspacePanel sessionId="s" workspace={populatedWorkspace()} batches={[caseBatch('confirmed')]} batchActions={batchActions} onReload={vi.fn()} notify={vi.fn()}/>)
+    expect(screen.queryByRole('region',{name:'上传批次 case-batch'})).not.toBeInTheDocument()
   })
 })

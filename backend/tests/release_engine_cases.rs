@@ -12,11 +12,14 @@ use parquet::file::properties::WriterProperties;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use zjudss::adapters::{
-    ENGINE_CONTRACT_VERSION, EngineConfig, ImportInspectSpec, ImportProfile, ImportSpec,
-    NamedInput, ProcessEngine, RunMode, RunSpec, SimEngine,
+    AdapterError, CaseProjectionSpec, ENGINE_CONTRACT_VERSION, EngineConfig, ErrorCategory,
+    ImportInspectSpec, ImportProfile, ImportSpec, NamedInput, ProcessEngine, ProjectionOutputSpec,
+    RunMode, RunSpec, SimEngine,
 };
 use zjudss::application::CaseImportService;
-use zjudss::engine_resources::{EngineExample, EngineResourceRegistry};
+use zjudss::engine_resources::{
+    EngineExample, EngineResourceRegistry, FacadeInputKind, ProjectorOutputDisposition,
+};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,9 +35,37 @@ struct ReleaseReport {
     facade_catalog_entries: usize,
     enabled_facades: usize,
     facade_diagnostics: Vec<String>,
+    projection_catalog_entries: usize,
+    enabled_projection_profiles: usize,
+    referenced_projection_profiles: usize,
+    projection_diagnostics: Vec<String>,
+    projected_examples: usize,
+    projection_failures: usize,
+    case_projections: Vec<CaseProjectionReport>,
     discovered_study_types: Vec<String>,
     contract_checks: ContractChecks,
     representative_runs: Vec<RunReport>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CaseProjectionReport {
+    example_id: String,
+    projection_profile: String,
+    success: bool,
+    model_outputs: usize,
+    data_outputs: usize,
+    struct_outputs: usize,
+    diagnostic_outputs: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure_code: Option<String>,
+    #[serde(skip)]
+    failure_message: Option<String>,
+}
+
+struct PreparedCaseProjection {
+    tree: PathBuf,
+    named_inputs: Vec<NamedInput>,
 }
 
 #[derive(Serialize)]
@@ -64,11 +95,14 @@ struct ContractChecks {
 struct RunReport {
     example_id: String,
     study_type: String,
+    projection_profile: String,
     source_kind: String,
     success: bool,
     datasets: Vec<DatasetReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     failure_code: Option<String>,
+    #[serde(skip)]
+    failure_message: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -294,7 +328,7 @@ fn representative_examples(
             example
                 .manifest
                 .as_ref()
-                .map(|manifest| manifest.study.kind.as_str())
+                .map(|manifest| manifest.projection.profile.as_str())
         })
         .collect::<std::collections::BTreeSet<_>>();
     let mut selected = std::collections::BTreeMap::<_, Vec<_>>::new();
@@ -303,18 +337,18 @@ fn representative_examples(
             continue;
         };
         selected
-            .entry(manifest.study.kind.as_str())
+            .entry(manifest.projection.profile.as_str())
             .or_default()
             .push(example);
     }
     let missing = discovered
         .iter()
-        .filter(|study_type| !selected.contains_key(**study_type))
+        .filter(|profile| !selected.contains_key(**profile))
         .copied()
         .collect::<Vec<_>>();
     assert!(
         missing.is_empty(),
-        "release_engine_study_family_without_importable_example:{}",
+        "release_engine_projection_profile_without_importable_example:{}",
         missing.join(",")
     );
     for candidates in selected.values_mut() {
@@ -323,48 +357,278 @@ fn representative_examples(
     selected
 }
 
+#[test]
+fn selects_only_the_first_successfully_projected_representative_candidate() {
+    let candidates = ["missing", "first", "second"];
+    let available = std::collections::BTreeSet::from(["first", "second"]);
+
+    assert_eq!(
+        first_available_candidate(&candidates, |candidate| available.contains(candidate)),
+        Some("first")
+    );
+}
+
+fn first_available_candidate<'a>(
+    candidates: &'a [&'a str],
+    mut is_available: impl FnMut(&str) -> bool,
+) -> Option<&'a str> {
+    for candidate in candidates {
+        if is_available(candidate) {
+            return Some(*candidate);
+        }
+    }
+    None
+}
+
 fn prepare_run_tree(
     snapshot: &zjudss::engine_resources::EngineResourceSnapshot,
     example: &EngineExample,
     root: &Path,
-) -> (PathBuf, PathBuf, RunMode) {
-    let tree = root.join(format!("run-{}", example.id));
+) -> PathBuf {
+    let tree = root.join(format!("run-{}.rssbundle", example.id));
     std::fs::create_dir_all(&tree).unwrap();
-    let bundle = tree.join("case.rssbundle");
     for file in &example.files {
         copy_file(
             &snapshot.engine_root.join(&file.source_path),
-            &bundle.join(&file.virtual_path),
+            &tree.join(&file.virtual_path),
             &file.sha256,
         );
     }
-    (tree, "case.rssbundle".into(), RunMode::Bundle)
+    tree
+}
+
+fn failed_projection(
+    example: &EngineExample,
+    projection_profile: &str,
+    code: impl Into<String>,
+    message: impl Into<String>,
+) -> (CaseProjectionReport, Option<PreparedCaseProjection>) {
+    (
+        CaseProjectionReport {
+            example_id: example.id.clone(),
+            projection_profile: projection_profile.to_string(),
+            success: false,
+            model_outputs: 0,
+            data_outputs: 0,
+            struct_outputs: 0,
+            diagnostic_outputs: 0,
+            failure_code: Some(code.into()),
+            failure_message: Some(message.into().replace(['\n', '\r'], " ")),
+        },
+        None,
+    )
+}
+
+async fn project_example(
+    engine: &ProcessEngine,
+    snapshot: &zjudss::engine_resources::EngineResourceSnapshot,
+    example: &EngineExample,
+    root: &Path,
+) -> (CaseProjectionReport, Option<PreparedCaseProjection>) {
+    let manifest = example.manifest.as_ref().expect("importable manifest");
+    let projection_profile = manifest.projection.profile.as_str();
+    let profile = snapshot
+        .case_projections
+        .get_enabled(projection_profile)
+        .expect("importable projection profile");
+    let tree = prepare_run_tree(snapshot, example, root);
+    let projected = match engine
+        .project_case(CaseProjectionSpec {
+            input_tree: tree.clone(),
+            source_entry: manifest.source.entry.clone().into(),
+            projector: profile.projector.clone(),
+            outputs: profile
+                .projector_outputs
+                .iter()
+                .map(|output| ProjectionOutputSpec {
+                    alias: output.alias.clone(),
+                    diagnostic: output.disposition == ProjectorOutputDisposition::Diagnostic,
+                })
+                .collect(),
+            result_dir: root.join(format!("projection-results-{}", example.id)),
+            timeout: Duration::from_secs(120),
+        })
+        .await
+    {
+        Ok(projected) => projected,
+        Err(error) => {
+            return failed_projection(example, projection_profile, error.code, error.message);
+        }
+    };
+
+    let inputs = tree.join("inputs");
+    if let Err(error) = std::fs::create_dir_all(&inputs) {
+        return failed_projection(
+            example,
+            projection_profile,
+            "case_projection_input_copy_failed",
+            error.to_string(),
+        );
+    }
+    let mut model_outputs = 0;
+    let mut data_outputs = 0;
+    let mut struct_outputs = 0;
+    let mut named_inputs = Vec::with_capacity(projected.dataframes.len());
+    for dataset in projected.dataframes {
+        let contract = profile
+            .projector_outputs
+            .iter()
+            .find(|output| {
+                output.alias == dataset.name
+                    && output.disposition == ProjectorOutputDisposition::FacadeInput
+            })
+            .expect("adapter returned a validated facade input");
+        match contract.input_kind {
+            FacadeInputKind::Model => model_outputs += 1,
+            FacadeInputKind::Data => data_outputs += 1,
+            FacadeInputKind::Struct => struct_outputs += 1,
+        }
+        let relative = PathBuf::from("inputs").join(format!("{}.parquet", dataset.name));
+        if let Err(error) = std::fs::copy(&dataset.path, tree.join(&relative)) {
+            return failed_projection(
+                example,
+                projection_profile,
+                "case_projection_input_copy_failed",
+                error.to_string(),
+            );
+        }
+        named_inputs.push(NamedInput {
+            alias: dataset.name,
+            relative_path: relative,
+        });
+    }
+    let diagnostic_outputs = projected.diagnostics.len();
+    (
+        CaseProjectionReport {
+            example_id: example.id.clone(),
+            projection_profile: projection_profile.to_string(),
+            success: true,
+            model_outputs,
+            data_outputs,
+            struct_outputs,
+            diagnostic_outputs,
+            failure_code: None,
+            failure_message: None,
+        },
+        Some(PreparedCaseProjection { tree, named_inputs }),
+    )
+}
+
+async fn inject_manifest_result_selector(
+    engine: &ProcessEngine,
+    tree: &Path,
+    root: &Path,
+    example: &EngineExample,
+    profile: &zjudss::engine_resources::CaseProjectionProfile,
+) -> Result<(), AdapterError> {
+    let manifest = example.manifest.as_ref().expect("importable manifest");
+    let selector = &profile.result_selector;
+    let selector_input = profile
+        .inputs
+        .iter()
+        .find(|input| input.id == selector.input)
+        .expect("validated result selector input");
+    let selected = manifest
+        .projection
+        .results
+        .iter()
+        .map(|result| result.target.clone())
+        .collect::<Vec<_>>()
+        .join(",");
+    let selected_literal = serde_json::to_string(&selected).map_err(|error| {
+        AdapterError::new(
+            "case_projection_output_mismatch",
+            ErrorCategory::Internal,
+            error.to_string(),
+        )
+    })?;
+    let script_name = "release-result-selector.rss";
+    std::fs::write(
+        tree.join(script_name),
+        format!(
+            "selected_input = with_columns(alias({selected_literal}, {}), {});\n",
+            selector.field, selector_input.alias
+        ),
+    )
+    .map_err(|error| {
+        AdapterError::new(
+            "case_projection_selector_write_failed",
+            ErrorCategory::Io,
+            error.to_string(),
+        )
+    })?;
+    let relative_input = PathBuf::from("inputs").join(format!("{}.parquet", selector_input.alias));
+    let output = engine
+        .run_dataframe(RunSpec {
+            mode: RunMode::Dataframe,
+            input_tree: tree.to_path_buf(),
+            script_path: script_name.into(),
+            named_inputs: vec![NamedInput {
+                alias: selector_input.alias.clone(),
+                relative_path: relative_input.clone(),
+            }],
+            result_dir: root.join(format!("selector-results-{}", example.id)),
+            timeout: Duration::from_secs(30),
+        })
+        .await?;
+    let selected_input = output
+        .datasets
+        .into_iter()
+        .find(|dataset| dataset.name == "selected_input")
+        .ok_or_else(|| {
+            AdapterError::new(
+                "case_projection_output_mismatch",
+                ErrorCategory::Model,
+                "结果选择器没有生成 Struct 输入",
+            )
+        })?;
+    std::fs::copy(selected_input.path, tree.join(relative_input)).map_err(|error| {
+        AdapterError::new(
+            "case_projection_selector_write_failed",
+            ErrorCategory::Io,
+            error.to_string(),
+        )
+    })?;
+    Ok(())
 }
 
 async fn run_representative(
     engine: &ProcessEngine,
-    snapshot: &zjudss::engine_resources::EngineResourceSnapshot,
     example: &EngineExample,
-    study_type: &str,
+    projection_profile: &str,
+    profile: &zjudss::engine_resources::CaseProjectionProfile,
+    prepared: &PreparedCaseProjection,
     root: &Path,
 ) -> RunReport {
-    let (tree, script_path, mode) = prepare_run_tree(snapshot, example, root);
+    let tree = prepared.tree.clone();
+    let manifest = example.manifest.as_ref().expect("importable manifest");
+    if let Err(error) = inject_manifest_result_selector(engine, &tree, root, example, profile).await
+    {
+        return RunReport {
+            example_id: example.id.clone(),
+            study_type: manifest.study.kind.clone(),
+            projection_profile: projection_profile.to_string(),
+            source_kind: example.source_kind.clone(),
+            success: false,
+            datasets: vec![],
+            failure_code: Some(error.code),
+            failure_message: Some(error.message.replace(['\n', '\r'], " ")),
+        };
+    }
     let spec = RunSpec {
-        mode,
+        mode: RunMode::Dataframe,
         input_tree: tree,
-        script_path,
-        named_inputs: vec![],
+        script_path: manifest.projection.managed_entry.clone().into(),
+        named_inputs: prepared.named_inputs.clone(),
         result_dir: root.join(format!("results-{}", example.id)),
         timeout: Duration::from_secs(120),
     };
-    let result = match mode {
-        RunMode::Bundle => engine.run_bundle(spec).await,
-        _ => engine.run_dataframe(spec).await,
-    };
+    let result = engine.run_dataframe(spec).await;
     match result {
         Ok(output) => RunReport {
             example_id: example.id.clone(),
-            study_type: study_type.to_string(),
+            study_type: manifest.study.kind.clone(),
+            projection_profile: projection_profile.to_string(),
             source_kind: example.source_kind.clone(),
             success: true,
             datasets: output
@@ -388,23 +652,23 @@ async fn run_representative(
                 })
                 .collect(),
             failure_code: None,
+            failure_message: None,
         },
-        Err(error) => {
-            eprintln!("release_engine_run_failed:{study_type}:{}", error.code);
-            RunReport {
-                example_id: example.id.clone(),
-                study_type: study_type.to_string(),
-                source_kind: example.source_kind.clone(),
-                success: false,
-                datasets: vec![],
-                failure_code: Some(error.code),
-            }
-        }
+        Err(error) => RunReport {
+            example_id: example.id.clone(),
+            study_type: manifest.study.kind.clone(),
+            projection_profile: projection_profile.to_string(),
+            source_kind: example.source_kind.clone(),
+            success: false,
+            datasets: vec![],
+            failure_code: Some(error.code),
+            failure_message: Some(error.message.replace(['\n', '\r'], " ")),
+        },
     }
 }
 
 #[tokio::test]
-async fn real_engine_imports_all_examples_and_runs_representative_studies() {
+async fn real_engine_projects_all_examples_and_runs_representative_studies() {
     let binary = required_path("TENSOREVAL_BIN");
     let sparrowzz_dir = required_path("SPARROWZZ_DIR");
     let config = EngineConfig::probe(binary.clone(), Duration::from_secs(120))
@@ -456,7 +720,28 @@ async fn real_engine_imports_all_examples_and_runs_representative_studies() {
         facade_diagnostics.is_empty(),
         "release_engine_facade_diagnostics"
     );
+    let projection_catalog_entries = snapshot.case_projections.catalog_entry_count();
+    let enabled_projection_profiles = snapshot.case_projections.enabled_count();
+    let projection_diagnostics = snapshot
+        .case_projections
+        .diagnostics()
+        .into_iter()
+        .map(|diagnostic| diagnostic.code.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        projection_catalog_entries > 0,
+        "release_engine_projection_catalog_empty"
+    );
+    assert_eq!(
+        enabled_projection_profiles + projection_diagnostics.len(),
+        projection_catalog_entries,
+        "release_engine_projection_catalog_incomplete"
+    );
     assert!(importable_examples > 0, "release_engine_importable_empty");
+    assert_eq!(
+        non_importable_examples, 0,
+        "release_engine_manifest_projection_gap"
+    );
     let importable = import_all_examples(&snapshot, &temp.path().join("imports"));
     assert_eq!(
         importable, importable_examples,
@@ -472,7 +757,30 @@ async fn real_engine_imports_all_examples_and_runs_representative_studies() {
     )
     .await;
 
+    let mut projection_candidates = snapshot
+        .examples
+        .iter()
+        .filter(|example| example.importable)
+        .collect::<Vec<_>>();
+    projection_candidates.sort_by_key(|example| &example.id);
+    let mut case_projections = Vec::with_capacity(projection_candidates.len());
+    let mut prepared_projections = std::collections::BTreeMap::new();
+    for example in projection_candidates {
+        let (projection, prepared) =
+            project_example(&engine, &snapshot, example, temp.path()).await;
+        if let Some(prepared) = prepared {
+            prepared_projections.insert(example.id.clone(), prepared);
+        }
+        case_projections.push(projection);
+    }
+    let projected_examples = case_projections
+        .iter()
+        .filter(|projection| projection.success)
+        .count();
+    let projection_failures = case_projections.len() - projected_examples;
+
     let cases = representative_examples(&snapshot.examples);
+    let referenced_projection_profiles = cases.len();
     let discovered_study_types = snapshot
         .examples
         .iter()
@@ -486,18 +794,59 @@ async fn real_engine_imports_all_examples_and_runs_representative_studies() {
         .into_iter()
         .collect::<Vec<_>>();
     let mut representative_runs = Vec::new();
-    for (study_type, candidates) in cases {
-        let mut representative = None;
-        for example in candidates {
-            let run =
-                run_representative(&engine, &snapshot, example, study_type, temp.path()).await;
-            let success = run.success;
-            representative = Some(run);
-            if success {
-                break;
+    for (projection_profile, candidates) in cases {
+        let profile = snapshot
+            .case_projections
+            .get_enabled(projection_profile)
+            .expect("importable profile");
+        let candidate_ids = candidates
+            .iter()
+            .map(|example| example.id.as_str())
+            .collect::<Vec<_>>();
+        let representative = if let Some(example_id) =
+            first_available_candidate(&candidate_ids, |candidate| {
+                prepared_projections.contains_key(candidate)
+            }) {
+            let example = candidates
+                .iter()
+                .copied()
+                .find(|example| example.id == example_id)
+                .expect("selected representative candidate exists");
+            let prepared = prepared_projections
+                .get(example_id)
+                .expect("selected representative projection exists");
+            Some(
+                run_representative(
+                    &engine,
+                    example,
+                    projection_profile,
+                    profile,
+                    prepared,
+                    temp.path(),
+                )
+                .await,
+            )
+        } else {
+            None
+        };
+        representative_runs.push(representative.unwrap_or_else(|| {
+            let example = candidates
+                .first()
+                .expect("study family has importable candidates");
+            let manifest = example.manifest.as_ref().expect("importable manifest");
+            RunReport {
+                example_id: example.id.clone(),
+                study_type: manifest.study.kind.clone(),
+                projection_profile: projection_profile.to_string(),
+                source_kind: example.source_kind.clone(),
+                success: false,
+                datasets: vec![],
+                failure_code: Some("case_projection_failed".to_string()),
+                failure_message: Some(
+                    "该 profile 没有投影成功的代表案例，未执行 managed.rss".to_string(),
+                ),
             }
-        }
-        representative_runs.push(representative.expect("study family has importable candidates"));
+        }));
     }
 
     let report = ReleaseReport {
@@ -520,6 +869,13 @@ async fn real_engine_imports_all_examples_and_runs_representative_studies() {
         facade_catalog_entries,
         enabled_facades,
         facade_diagnostics,
+        projection_catalog_entries,
+        enabled_projection_profiles,
+        referenced_projection_profiles,
+        projection_diagnostics,
+        projected_examples,
+        projection_failures,
+        case_projections,
         discovered_study_types,
         contract_checks,
         representative_runs,
@@ -535,15 +891,52 @@ async fn real_engine_imports_all_examples_and_runs_representative_studies() {
     std::fs::create_dir_all(report_path.parent().unwrap()).unwrap();
     std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
 
+    let projection_ids = report
+        .case_projections
+        .iter()
+        .map(|projection| projection.example_id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        report.projected_examples, importable_examples,
+        "release_engine_projected_inventory_incomplete"
+    );
+    assert_eq!(
+        projection_ids.len(),
+        importable_examples,
+        "release_engine_projection_evidence_incomplete"
+    );
+    let failed_projections = report
+        .case_projections
+        .iter()
+        .filter(|projection| !projection.success)
+        .map(|projection| {
+            format!(
+                "{}:{}:{}",
+                projection.example_id,
+                projection.failure_code.as_deref().unwrap_or("unknown"),
+                projection
+                    .failure_message
+                    .as_deref()
+                    .unwrap_or("no message")
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        failed_projections.is_empty() && report.projection_failures == 0,
+        "release_engine_projection_failed:{}",
+        failed_projections.join(",")
+    );
+
     let failed: Vec<_> = report
         .representative_runs
         .iter()
         .filter(|run| !run.success)
         .map(|run| {
             format!(
-                "{}:{}",
+                "{}:{}:{}",
                 run.study_type,
-                run.failure_code.as_deref().unwrap_or("unknown")
+                run.failure_code.as_deref().unwrap_or("unknown"),
+                run.failure_message.as_deref().unwrap_or("no message")
             )
         })
         .collect();

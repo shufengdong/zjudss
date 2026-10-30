@@ -43,7 +43,7 @@ export default function MessageItem({ message, handlers }: MessageItemProps) {
     case 'script':
       return <ScriptCard script={message.script} onRun={handlers.onRunScript} notify={handlers.notify}/>
     case 'upload-batch':
-      return <UploadBatchCard message={message} batch={handlers.uploadBatches?.find((batch) => batch.id === message.card.batchId)} actions={handlers.uploadBatchActions} onOpen={handlers.onOpenUploadBatch} notify={handlers.notify}/>
+      return <UploadBatchCard message={message} batch={handlers.uploadBatches?.find((batch) => batch.id === message.card.batchId)} onOpen={handlers.onOpenUploadBatch}/>
     case 'study-config':
       return <StudyConfigurationCard message={message} onWorkflowStarted={handlers.onWorkflowChanged} notify={handlers.notify}/>
     case 'workflow-progress':

@@ -64,4 +64,23 @@ describe('DataResourcePanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: '另存为新资源' }))
     await waitFor(() => expect(actions.confirm).toHaveBeenCalledWith('batch', expect.any(Array), 'save_as_new'))
   })
+
+  it('keeps case imports out while retaining ordinary upload decisions', async () => {
+    const actions = {
+      updateParseSettings: vi.fn(), updateCandidates: vi.fn().mockResolvedValue(undefined),
+      confirm: vi.fn().mockResolvedValue(undefined), discard: vi.fn(), addBatch: vi.fn(), watch: vi.fn(),
+    }
+    const shared = {
+      sessionId: 's', status: 'ready_to_confirm' as const, modelPublishStatus: 'ready' as const,
+      resourcePublishStatus: 'ready' as const, parseSettings: {}, diagnostics: [], reservedBytes: 10,
+      expiresAtMs: 10, revision: 1,
+      candidates: [{ id: 'candidate', displayName: 'load.csv', proposedAlias: 'load', purpose: 'data_resource' as const, evidence: {}, selected: true }],
+    }
+    render(<DataResourcePanel sessionId="s" batches={[
+      { ...shared, id: 'case-batch', clientBatchId: 'case-client', sourceKind: 'case' },
+      { ...shared, id: 'upload-batch', clientBatchId: 'upload-client', sourceKind: 'upload' },
+    ]} actions={actions} notify={vi.fn()} onChanged={vi.fn()} />)
+    expect(screen.queryByRole('region', { name: '上传批次 case-batch' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '上传批次 upload-batch' })).toBeInTheDocument()
+  })
 })

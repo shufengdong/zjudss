@@ -14,9 +14,10 @@ use sha2::Digest;
 
 pub use contract::{ENGINE_CONTRACT_VERSION, EngineCapabilities};
 pub use import::{
-    EXECUTION_IMPORT_TABLES, ImportEntryCandidate, ImportInspectSpec, ImportInspection,
-    ImportProfile, ImportSpec, ImportedModel, MODEL_TABLE_OUTPUTS, PARA_RESOURCE_OUTPUT,
-    STATIC_IMPORT_OUTPUTS, STATIC_MODEL_TABLES,
+    CaseProjectionSpec, EXECUTION_IMPORT_TABLES, ImportEntryCandidate, ImportInspectSpec,
+    ImportInspection, ImportProfile, ImportSpec, ImportedModel, MODEL_TABLE_OUTPUTS,
+    PARA_RESOURCE_OUTPUT, ProjectedCase, ProjectionOutputSpec, STATIC_IMPORT_OUTPUTS,
+    STATIC_MODEL_TABLES,
 };
 pub use process::{
     EngineCommand, EngineConfig, OutputLimits, ProcessEngine, build_command, validate_outputs,
@@ -287,6 +288,13 @@ pub trait SimEngine: Send + Sync {
             "model_import_unavailable",
             ErrorCategory::Internal,
             "当前引擎未实现模型导入",
+        ))
+    }
+    async fn project_case(&self, _spec: CaseProjectionSpec) -> Result<ProjectedCase, AdapterError> {
+        Err(AdapterError::new(
+            "case_projection_unavailable",
+            ErrorCategory::Internal,
+            "当前引擎未实现案例投影",
         ))
     }
 }

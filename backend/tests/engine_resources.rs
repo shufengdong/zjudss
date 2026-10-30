@@ -6,14 +6,17 @@ use sha2::{Digest, Sha256};
 use zjudss::db;
 use zjudss::db::repositories::EngineResourceSnapshotRepo;
 use zjudss::engine_resources::{
-    EngineResourceRegistry, ResourceLimits, SUPPORTED_DATAFRAMES_SCHEMA_VERSION,
-    SUPPORTED_DTYPE_GRAMMAR_VERSION, SUPPORTED_FUNCTIONS_SCHEMA_VERSION,
-    SUPPORTED_STUDY_FACADES_SCHEMA_VERSION,
+    EngineResourceRegistry, ResourceLimits, SUPPORTED_CASE_PROJECTIONS_SCHEMA_VERSION,
+    SUPPORTED_DATAFRAMES_SCHEMA_VERSION, SUPPORTED_DTYPE_GRAMMAR_VERSION,
+    SUPPORTED_FUNCTIONS_SCHEMA_VERSION, SUPPORTED_STUDY_FACADES_SCHEMA_VERSION,
 };
 
 const DATAFRAMES: &[u8] = include_bytes!("fixtures/engine_resources/catalog/dataframes.json");
 const FUNCTIONS: &[u8] = include_bytes!("fixtures/engine_resources/catalog/functions.json");
 const STUDY_FACADES: &[u8] = include_bytes!("fixtures/engine_resources/catalog/study_facades.json");
+const CASE_PROJECTIONS: &[u8] =
+    include_bytes!("fixtures/engine_resources/catalog/case_projections.json");
+const MANAGED_RSS: &[u8] = b"[bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para] = project_dss_static_model(\"dss/model.dss\");\n[voltage] = ds_newton_raphson_pf(bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para);\n";
 
 fn hash(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -37,14 +40,25 @@ impl Fixture {
 
 fn valid_manifest(main: &[u8], model: &[u8]) -> Value {
     json!({
-        "schema_version": 1, "artifact": "mems.dss-rss-bundle",
+        "schema_version": 2, "artifact": "mems.dss-rss-bundle",
         "generator": "engine-resource-test/1.0", "psa_contract_version": "0.1.0",
         "entry": "main.rss",
-        "study": {"kind":"execution_plan","compatibility":"opendss-native","solver":"radial","results":["voltage"]},
+        "study": {"kind":"static_power_flow","compatibility":"opendss-native","solver":"newton","results":["voltage"]},
         "source": {"entry":"dss/model.dss","root":"dss","tree_sha256":hash(model)},
+        "projection": {
+            "source_function": "ds_newton_raphson_pf",
+            "profile": "dss_static_newton_v1",
+            "projector": "project_dss_static_model",
+            "target_function": "ds_newton_raphson_pf",
+            "managed_entry": "managed.rss",
+            "status": "enabled",
+            "stable_diagnostic": "PSA.DSS.PROJECTION.INVALID",
+            "results": [{"source":"voltage","target":"bus_phase","binding":"result_voltage"}]
+        },
         "files": [
             {"path":"dss/model.dss","role":"dss-entry","sha256":hash(model)},
-            {"path":"main.rss","role":"main-rss","sha256":hash(main)}
+            {"path":"main.rss","role":"main-rss","sha256":hash(main)},
+            {"path":"managed.rss","role":"managed-rss","sha256":hash(MANAGED_RSS)}
         ],
         "inputs": []
     })
@@ -62,6 +76,7 @@ fn write_case(bundle: &Path, manifest: &Value) {
         b"new circuit.demo basekv=12.47\n",
     )
     .unwrap();
+    std::fs::write(bundle.join("managed.rss"), MANAGED_RSS).unwrap();
     std::fs::write(
         bundle.join("manifest.json"),
         serde_json::to_vec_pretty(manifest).unwrap(),
@@ -78,6 +93,11 @@ fn fixture() -> Fixture {
     std::fs::write(dss.join("docs/catalog/dataframes.json"), DATAFRAMES).unwrap();
     std::fs::write(dss.join("docs/catalog/functions.json"), FUNCTIONS).unwrap();
     std::fs::write(dss.join("docs/catalog/study_facades.json"), STUDY_FACADES).unwrap();
+    std::fs::write(
+        dss.join("docs/catalog/case_projections.json"),
+        CASE_PROJECTIONS,
+    )
+    .unwrap();
     std::fs::write(
         dss.join("docs/nested/guide.md"),
         b"# Guide\nintro\n## Power flow\nUse the validated solver.\n",
@@ -108,7 +128,8 @@ fn accepts_independent_supported_catalog_versions() {
     let snapshot = fixture().load();
     assert_eq!(snapshot.catalog_schema_versions.functions, 2);
     assert_eq!(snapshot.catalog_schema_versions.study_facades, 1);
-    assert_eq!(snapshot.catalog_schema_versions.dataframes, 3);
+    assert_eq!(snapshot.catalog_schema_versions.case_projections, 2);
+    assert_eq!(snapshot.catalog_schema_versions.dataframes, 4);
     assert_eq!(snapshot.catalog_schema_versions.dtype_grammar, 1);
 }
 
@@ -141,6 +162,7 @@ fn rejects_each_unsupported_catalog_or_dtype_grammar_version() {
     let cases = [
         ("functions.json", vec!["schema_version"]),
         ("study_facades.json", vec!["schema_version"]),
+        ("case_projections.json", vec!["schema_version"]),
         ("dataframes.json", vec!["schema_version"]),
         ("dataframes.json", vec!["dtype_grammar", "version"]),
     ];
@@ -163,6 +185,71 @@ fn rejects_each_unsupported_catalog_or_dtype_grammar_version() {
 }
 
 #[test]
+fn publishes_enabled_case_projection_with_ordered_outputs() {
+    let snapshot = fixture().load();
+    assert_eq!(SUPPORTED_CASE_PROJECTIONS_SCHEMA_VERSION, 2);
+    assert_eq!(snapshot.case_projections.catalog_entry_count(), 2);
+    assert_eq!(
+        snapshot.case_projections.enabled_count(),
+        1,
+        "{:?}",
+        snapshot.case_projections.diagnostics()
+    );
+    assert_eq!(snapshot.case_projections.diagnostics().len(), 1);
+    let profile = snapshot
+        .case_projections
+        .get_enabled("dss_static_newton_v1")
+        .unwrap();
+    assert_eq!(profile.projector, "project_dss_static_model");
+    assert_eq!(profile.target_function, "ds_newton_raphson_pf");
+    assert_eq!(profile.projector_outputs.len(), 22);
+    assert_eq!(profile.projector_outputs[0].position, 1);
+    assert_eq!(profile.projector_outputs[20].alias, "para");
+}
+
+#[test]
+fn disables_case_projection_with_a_result_selector_that_does_not_match_the_target_facade() {
+    let fixture = fixture();
+    rewrite_catalog(&fixture, "case_projections.json", |root| {
+        root["profiles"][0]["resultSelector"]["field"] = json!("wrong_result_field");
+    });
+    let snapshot = fixture.load();
+    assert!(
+        snapshot
+            .case_projections
+            .get_enabled("dss_static_newton_v1")
+            .is_none()
+    );
+    assert_eq!(
+        snapshot
+            .case_projections
+            .diagnostic("dss_static_newton_v1")
+            .unwrap()
+            .code,
+        "case_projection_invalid"
+    );
+}
+
+#[test]
+fn accepts_contiguous_zero_based_as_an_executable_dataframe_rule() {
+    let fixture = fixture();
+    rewrite_catalog(&fixture, "dataframes.json", |root| {
+        root["frames"]["bus"]["contract"]["columns"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "name":"snapshot_index", "dtype":"u32", "required":true,
+                "nullable":false, "unit":"not_applicable"
+            }));
+        root["frames"]["bus"]["contract"]["rules"] = json!([
+            {"type":"contiguous_zero_based", "field":"snapshot_index"}
+        ]);
+    });
+    let snapshot = fixture.load();
+    assert!(snapshot.facades.diagnostics().is_empty());
+}
+
+#[test]
 fn snapshot_hash_includes_study_facades_and_all_version_numbers() {
     let fixture = fixture();
     let first = fixture.load();
@@ -175,6 +262,21 @@ fn snapshot_hash_includes_study_facades_and_all_version_numbers() {
     assert_eq!(
         first.catalog_schema_versions,
         second.catalog_schema_versions
+    );
+}
+
+#[test]
+fn snapshot_hash_includes_case_projection_catalog() {
+    let fixture = fixture();
+    let first = fixture.load();
+    rewrite_catalog(&fixture, "case_projections.json", |root| {
+        root["source_of_truth"] = json!(["changed projection source"]);
+    });
+    let second = fixture.load();
+    assert_ne!(first.id, second.id);
+    assert_ne!(
+        first.case_projections_sha256,
+        second.case_projections_sha256
     );
 }
 
@@ -237,7 +339,8 @@ async fn publishing_snapshot_metadata_atomically_marks_one_current_snapshot() {
     assert!(current.is_current);
     assert_eq!(current.functions_schema_version, 2);
     assert_eq!(current.study_facades_schema_version, 1);
-    assert_eq!(current.dataframes_schema_version, 3);
+    assert_eq!(current.case_projections_schema_version, 2);
+    assert_eq!(current.dataframes_schema_version, 4);
     assert_eq!(current.dtype_grammar_version, 1);
     assert_eq!(repo.count().await.unwrap(), 2);
 }
@@ -421,7 +524,7 @@ fn facade_hash_ignores_presentation_only_text() {
 fn discovers_current_tree_deterministically_and_snapshot_changes_with_loaded_bytes() {
     assert_eq!(SUPPORTED_FUNCTIONS_SCHEMA_VERSION, 2);
     assert_eq!(SUPPORTED_STUDY_FACADES_SCHEMA_VERSION, 1);
-    assert_eq!(SUPPORTED_DATAFRAMES_SCHEMA_VERSION, 3);
+    assert_eq!(SUPPORTED_DATAFRAMES_SCHEMA_VERSION, 4);
     assert_eq!(SUPPORTED_DTYPE_GRAMMAR_VERSION, 1);
     let fixture = fixture();
     let first = fixture.load();
@@ -432,14 +535,16 @@ fn discovers_current_tree_deterministically_and_snapshot_changes_with_loaded_byt
     assert_eq!(example.bundle_path, "Grid/123Bus/demo.rssbundle");
     assert_eq!(example.entry_path.as_deref(), Some("main.rss"));
     let manifest = example.manifest.as_ref().unwrap();
-    assert_eq!(manifest.schema_version, 1);
+    assert_eq!(manifest.schema_version, 2);
     assert_eq!(manifest.artifact, "mems.dss-rss-bundle");
     assert_eq!(manifest.generator, "engine-resource-test/1.0");
     assert_eq!(manifest.psa_contract_version, "0.1.0");
-    assert_eq!(manifest.study.kind, "execution_plan");
+    assert_eq!(manifest.study.kind, "static_power_flow");
     assert_eq!(manifest.study.compatibility, "opendss-native");
-    assert_eq!(manifest.study.solver.as_deref(), Some("radial"));
+    assert_eq!(manifest.study.solver.as_deref(), Some("newton"));
     assert_eq!(manifest.study.results, ["voltage"]);
+    assert_eq!(manifest.projection.profile, "dss_static_newton_v1");
+    assert_eq!(manifest.projection.managed_entry, "managed.rss");
     assert_eq!(manifest.source.entry, "dss/model.dss");
     assert_eq!(manifest.source.root, "dss");
     assert_eq!(manifest.inputs, json!([]));
@@ -482,11 +587,17 @@ fn supported_manifest_unknown_fields_are_ignored_but_contract_mismatches_are_inv
     future["future_extension"] = json!({"accepted":true});
     write_case(&root.join("future.rssbundle"), &future);
     let mut schema = valid_manifest(main, model);
-    schema["schema_version"] = json!(2);
+    schema["schema_version"] = json!(3);
     write_case(&root.join("schema.rssbundle"), &schema);
     let mut artifact = valid_manifest(main, model);
     artifact["artifact"] = json!("other.bundle");
     write_case(&root.join("artifact.rssbundle"), &artifact);
+    let mut projection = valid_manifest(main, model);
+    projection["projection"]["projector"] = json!("wrong_projector");
+    write_case(&root.join("projection.rssbundle"), &projection);
+    let mut disabled = valid_manifest(main, model);
+    disabled["projection"]["profile"] = json!("disabled_projection_v1");
+    write_case(&root.join("disabled.rssbundle"), &disabled);
     let snapshot = fixture.load();
     assert!(
         snapshot
@@ -506,6 +617,24 @@ fn supported_manifest_unknown_fields_are_ignored_but_contract_mismatches_are_inv
         assert!(item.manifest.is_none());
         assert!(item.entry_path.is_none());
     }
+    let projection = snapshot
+        .examples
+        .iter()
+        .find(|item| item.title == "projection")
+        .unwrap();
+    assert!(!projection.importable);
+    assert_eq!(
+        projection.diagnostics,
+        ["PSA.DSS.PROJECTION.INVALID: projection_contract_mismatch"]
+    );
+    assert!(projection.manifest.is_some());
+    let disabled = snapshot
+        .examples
+        .iter()
+        .find(|item| item.title == "disabled")
+        .unwrap();
+    assert!(!disabled.importable);
+    assert_eq!(disabled.diagnostics, ["PSA.DSS.PROJECTION.DISABLED"]);
 }
 
 #[test]
@@ -554,7 +683,8 @@ fn bundle_manifest_without_a_dss_source_is_not_importable() {
     let model = b"new circuit.demo basekv=12.47\n";
     let mut manifest = valid_manifest(main, model);
     manifest["files"] = json!([
-        {"path":"main.rss","role":"main-rss","sha256":hash(main)}
+        {"path":"main.rss","role":"main-rss","sha256":hash(main)},
+        {"path":"managed.rss","role":"managed-rss","sha256":hash(MANAGED_RSS)}
     ]);
     let bundle = fixture.dss().join("rssbundle/Invalid/no-dss.rssbundle");
     write_case(&bundle, &manifest);
@@ -798,18 +928,37 @@ fn current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count() 
     if path.join("dss/docs/catalog/dataframes.json").is_file() {
         let snapshot = EngineResourceRegistry::load(&path, &HashSet::new())
             .expect("current configured eig-rs resources must be dynamically valid");
-        assert_eq!(snapshot.catalog_schema_versions.dataframes, 3);
-        assert_eq!(snapshot.facades.enabled_count(), 15);
+        assert_eq!(snapshot.catalog_schema_versions.dataframes, 4);
+        assert_eq!(snapshot.catalog_schema_versions.case_projections, 2);
+        assert_eq!(snapshot.facades.enabled_count(), 18);
         assert_eq!(
             snapshot.facades.enabled_count(),
             snapshot.facades.catalog_entry_count()
         );
         assert!(snapshot.facades.diagnostics().is_empty());
+        assert!(snapshot.case_projections.enabled_count() > 0);
+        assert_eq!(
+            snapshot.case_projections.enabled_count()
+                + snapshot.case_projections.diagnostics().len(),
+            snapshot.case_projections.catalog_entry_count()
+        );
         assert!(
             snapshot
                 .examples
                 .iter()
                 .all(|item| item.source_kind == "rssbundle")
+        );
+        assert!(!snapshot.examples.is_empty());
+        assert!(
+            snapshot.examples.iter().all(|item| item.importable),
+            "current eig-rs cases must all have enabled projection contracts: {:?}",
+            snapshot
+                .examples
+                .iter()
+                .filter(|item| !item.importable)
+                .map(|item| (&item.bundle_path, &item.diagnostics))
+                .take(10)
+                .collect::<Vec<_>>()
         );
     }
 }

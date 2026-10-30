@@ -63,7 +63,11 @@ describe('candidate release workflows', () => {
     expect(release.jobs['pr-gate'].uses).toBe('./.github/workflows/ci.yml')
     expect(job.needs).toBe('pr-gate')
     expect(job.environment).toBe('candidate-release')
+    expect(job.env.LLM_PROVIDER).toContain('vars.LLM_PROVIDER')
+    expect(job.env.LLM_MODEL).toContain('vars.LLM_MODEL')
     expect(job.env.DEEPSEEK_API_KEY).toContain('secrets.DEEPSEEK_API_KEY')
+    expect(job.env.BAILIAN_API_KEY).toContain('secrets.BAILIAN_API_KEY')
+    expect(job.env.BAILIAN_BASE_URL).toContain('vars.BAILIAN_BASE_URL')
     expect(release.on.workflow_dispatch?.inputs).toBeUndefined()
     expect(job.env.EXPECTED_TENSOREVAL_SHA256).toBeUndefined()
     expect(JSON.stringify(job.steps)).not.toContain('actions/download-artifact@v4')
@@ -72,11 +76,51 @@ describe('candidate release workflows', () => {
     expect(engineCheckout.with.repository).toBe('shufengdong/eig-rs')
     expect(engineCheckout.with.submodules).toBe('recursive')
     expect(engineCheckout.with.ref).toBeUndefined()
-    expect(run).toContain('cargo build --manifest-path target/eig-rs/Cargo.toml --release -p mems --bin tensoreval')
+    expect(run).toContain('cargo build --manifest-path target/eig-rs/Cargo.toml --release -p mems --bin tensoreval --no-default-features --features tensoreval-cli,with_dsa_mumps')
     expect(run).not.toContain('EXPECTED_TENSOREVAL_SHA256')
     expect(run).toContain('./scripts/test-release-integration')
     expect(run).toContain('./scripts/check-functional-coverage --require-release')
     expect(JSON.stringify(job.steps)).not.toContain('continue-on-error')
+  })
+
+  it('requires successful projection evidence for every published bundle case', () => {
+    const gate = fs.readFileSync(path.join(repoRoot, 'scripts/test-release-integration'), 'utf8')
+
+    expect(gate).toContain('projectedExamples')
+    expect(gate).toContain('projectionFailures')
+    expect(gate).toContain('caseProjections')
+    expect(gate).toContain('duplicate_projection_evidence')
+  })
+
+  it('validates release credentials for the selected LLM provider', () => {
+    const sparrowzz = fs.mkdtempSync(path.join(os.tmpdir(), 'zjudss-sparrowzz-'))
+    try {
+      try {
+        execFileSync('sh', [path.join(repoRoot, 'scripts/test-release-integration')], {
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            ZJUDSS_SKIP_DOTENV: '1',
+            LLM_PROVIDER: 'bailian',
+            LLM_MODEL: 'qwen3.6-flash',
+            BAILIAN_API_KEY: 'bailian-test-secret',
+            BAILIAN_BASE_URL: '',
+            DEEPSEEK_API_KEY: '',
+            TENSOREVAL_BIN: '/bin/true',
+            SPARROWZZ_DIR: sparrowzz,
+          },
+          stdio: 'pipe',
+        })
+        throw new Error('release validation unexpectedly passed')
+      } catch (error: any) {
+        const stderr = error.stderr?.toString() ?? ''
+        expect(stderr).toContain('release_integration_missing:BAILIAN_BASE_URL')
+        expect(stderr).not.toContain('release_integration_missing:DEEPSEEK_API_KEY')
+        expect(stderr).not.toContain('bailian-test-secret')
+      }
+    } finally {
+      fs.rmSync(sparrowzz, { recursive: true, force: true })
+    }
   })
 })
 

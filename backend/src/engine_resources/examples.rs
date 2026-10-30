@@ -5,10 +5,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use super::projections::{CaseProjectionProfile, CaseProjectionRegistry};
 use super::snapshot::{ResourceLimits, SourceFileSpec};
 use super::{EngineResourceError, hash_bounded_file_with_size, read_bounded_file, safe_file};
 
-const SUPPORTED_BUNDLE_SCHEMA_VERSION: u32 = 1;
+const SUPPORTED_BUNDLE_SCHEMA_VERSION: u32 = 2;
 const SUPPORTED_BUNDLE_ARTIFACT: &str = "mems.dss-rss-bundle";
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,8 +68,30 @@ pub struct ExampleManifest {
     pub entry: String,
     pub study: ExampleStudy,
     pub source: ExampleSource,
+    pub projection: ExampleProjection,
     pub files: Vec<ExampleManifestFile>,
     pub inputs: Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExampleProjection {
+    pub source_function: String,
+    pub profile: String,
+    pub projector: String,
+    pub target_function: String,
+    pub managed_entry: String,
+    pub status: String,
+    pub stable_diagnostic: String,
+    pub results: Vec<ExampleProjectionResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExampleProjectionResult {
+    pub source: String,
+    pub target: String,
+    pub binding: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,9 +136,29 @@ struct RawManifest {
     entry: String,
     study: RawStudy,
     source: RawSource,
+    projection: RawProjection,
     files: Vec<RawFile>,
     #[serde(default = "empty_inputs")]
     inputs: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawProjection {
+    source_function: String,
+    profile: String,
+    projector: String,
+    target_function: String,
+    managed_entry: String,
+    status: String,
+    stable_diagnostic: String,
+    results: Vec<RawProjectionResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawProjectionResult {
+    source: String,
+    target: String,
+    binding: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,6 +208,25 @@ impl From<RawManifest> for ExampleManifest {
                 root: raw.source.root,
                 tree_sha256: raw.source.tree_sha256,
             },
+            projection: ExampleProjection {
+                source_function: raw.projection.source_function,
+                profile: raw.projection.profile,
+                projector: raw.projection.projector,
+                target_function: raw.projection.target_function,
+                managed_entry: raw.projection.managed_entry,
+                status: raw.projection.status,
+                stable_diagnostic: raw.projection.stable_diagnostic,
+                results: raw
+                    .projection
+                    .results
+                    .into_iter()
+                    .map(|result| ExampleProjectionResult {
+                        source: result.source,
+                        target: result.target,
+                        binding: result.binding,
+                    })
+                    .collect(),
+            },
             files: raw
                 .files
                 .into_iter()
@@ -183,6 +245,7 @@ pub(crate) fn load_examples(
     engine_root: &Path,
     dss_root: &Path,
     bundle_specs: &[SourceFileSpec],
+    projections: &CaseProjectionRegistry,
     limits: ResourceLimits,
 ) -> Result<Vec<EngineExample>, EngineResourceError> {
     let mut examples = Vec::with_capacity(bundle_specs.len());
@@ -248,6 +311,7 @@ pub(crate) fn load_examples(
         if !safe_relative(&raw.entry)
             || !safe_relative(&raw.source.entry)
             || !safe_relative(&raw.source.root)
+            || !safe_relative(&raw.projection.managed_entry)
             || raw.files.iter().any(|file| !safe_relative(&file.path))
         {
             examples.push(invalid_example(
@@ -280,13 +344,26 @@ pub(crate) fn load_examples(
             role: "manifest".to_string(),
         }];
         let mut entry_found = false;
+        let mut source_entry_found = false;
+        let mut managed_entry_found = false;
         for declared_file in &manifest.files {
             if !declared.insert(declared_file.path.clone()) {
                 diagnostics.push(format!("file_path_duplicate: {}", declared_file.path));
                 continue;
             }
-            if entry_safe && declared_file.path == manifest.entry {
+            if entry_safe
+                && declared_file.path == manifest.entry
+                && declared_file.role == "main-rss"
+            {
                 entry_found = true;
+            }
+            if declared_file.path == manifest.source.entry && declared_file.role == "dss-entry" {
+                source_entry_found = true;
+            }
+            if declared_file.path == manifest.projection.managed_entry
+                && declared_file.role == "managed-rss"
+            {
+                managed_entry_found = true;
             }
             let path = match safe_file(bundle_root, &declared_file.path) {
                 Ok(path) => path,
@@ -329,13 +406,15 @@ pub(crate) fn load_examples(
         if !entry_found {
             diagnostics.push("entry_not_declared".to_string());
         }
-        if !manifest
-            .files
-            .iter()
-            .any(|file| file.path.to_ascii_lowercase().ends_with(".dss"))
+        if !managed_entry_found {
+            diagnostics.push("managed_entry_not_declared".to_string());
+        }
+        if !source_entry_found
+            || !Path::new(&manifest.source.entry).starts_with(&manifest.source.root)
         {
             diagnostics.push("model_import_source_missing".to_string());
         }
+        validate_projection(&manifest, projections, &mut diagnostics);
         let category_path = category_path(&bundle_path)?;
         examples.push(EngineExample {
             id,
@@ -355,6 +434,53 @@ pub(crate) fn load_examples(
     }
     examples.sort_by(|left, right| left.bundle_path.cmp(&right.bundle_path));
     Ok(examples)
+}
+
+fn validate_projection(
+    manifest: &ExampleManifest,
+    projections: &CaseProjectionRegistry,
+    diagnostics: &mut Vec<String>,
+) {
+    let profile = match projections.get_enabled(&manifest.projection.profile) {
+        Some(profile) => profile,
+        None => {
+            let code = projections
+                .diagnostic(&manifest.projection.profile)
+                .map(|diagnostic| diagnostic.code.as_str())
+                .unwrap_or("case_projection_unknown");
+            diagnostics.push(code.to_string());
+            return;
+        }
+    };
+    if !projection_matches(manifest, profile) {
+        diagnostics.push(format!(
+            "{}: projection_contract_mismatch",
+            profile.stable_diagnostic
+        ));
+    }
+}
+
+fn projection_matches(manifest: &ExampleManifest, profile: &CaseProjectionProfile) -> bool {
+    let projection = &manifest.projection;
+    if projection.source_function != profile.source_function
+        || projection.projector != profile.projector
+        || projection.target_function != profile.target_function
+        || projection.managed_entry != profile.managed_entry
+        || projection.status != "enabled"
+        || projection.stable_diagnostic != profile.stable_diagnostic
+        || projection.results.len() != manifest.study.results.len()
+    {
+        return false;
+    }
+    projection
+        .results
+        .iter()
+        .zip(&manifest.study.results)
+        .all(|(result, source)| {
+            result.source == *source
+                && profile.bundle_result_map.get(source) == Some(&result.target)
+                && result.binding == format!("result_{source}")
+        })
 }
 
 fn invalid_example(

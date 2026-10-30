@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use zjudss::adapters::{
-    ImportInspectSpec, ImportProfile, ImportSpec, STATIC_MODEL_TABLES, SimEngine, StubEngine,
+    CaseProjectionSpec, ImportInspectSpec, ImportProfile, ImportSpec, ProjectionOutputSpec,
+    STATIC_MODEL_TABLES, SimEngine, StubEngine,
 };
 
 #[tokio::test]
@@ -243,4 +244,91 @@ fn import_specs_reject_paths_outside_the_source_tree() {
         timeout: Duration::from_secs(1),
     };
     assert_eq!(spec.validate().unwrap_err().code, "entry_candidate_invalid");
+}
+
+#[tokio::test]
+async fn stub_case_projection_preserves_contract_order_and_splits_diagnostics() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("dss")).unwrap();
+    std::fs::write(root.path().join("dss/model.dss"), "New Circuit.Demo\n").unwrap();
+    let projected = StubEngine
+        .project_case(CaseProjectionSpec {
+            input_tree: root.path().to_path_buf(),
+            source_entry: "dss/model.dss".into(),
+            projector: "project_dss_harmonic_plan".into(),
+            outputs: vec![
+                ProjectionOutputSpec {
+                    alias: "z_model".into(),
+                    diagnostic: false,
+                },
+                ProjectionOutputSpec {
+                    alias: "a_data".into(),
+                    diagnostic: false,
+                },
+                ProjectionOutputSpec {
+                    alias: "para".into(),
+                    diagnostic: false,
+                },
+                ProjectionOutputSpec {
+                    alias: "diagnostic".into(),
+                    diagnostic: true,
+                },
+            ],
+            result_dir: root.path().join("out"),
+            timeout: Duration::from_secs(1),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        projected
+            .dataframes
+            .iter()
+            .map(|dataset| dataset.name.as_str())
+            .collect::<Vec<_>>(),
+        ["z_model", "a_data", "para"]
+    );
+    assert_eq!(
+        projected.dataframes[2]
+            .metadata
+            .columns
+            .iter()
+            .map(|column| column.name.as_str())
+            .collect::<Vec<_>>(),
+        ["base_frequency_hz", "max_iter", "result"]
+    );
+    assert_eq!(projected.diagnostics[0].name, "diagnostic");
+}
+
+#[test]
+fn case_projection_specs_reject_unpublished_symbols_paths_and_outputs() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("model.dss"), "New Circuit.Demo\n").unwrap();
+    let valid = CaseProjectionSpec {
+        input_tree: root.path().to_path_buf(),
+        source_entry: "model.dss".into(),
+        projector: "project_dss_static_model".into(),
+        outputs: vec![ProjectionOutputSpec {
+            alias: "bus".into(),
+            diagnostic: false,
+        }],
+        result_dir: root.path().join("out"),
+        timeout: Duration::from_secs(1),
+    };
+    valid.validate().unwrap();
+
+    let mut unsafe_projector = valid.clone();
+    unsafe_projector.projector = "project();".into();
+    assert_eq!(
+        unsafe_projector.validate().unwrap_err().code,
+        "case_projector_invalid"
+    );
+    let mut duplicate = valid.clone();
+    duplicate.outputs.push(duplicate.outputs[0].clone());
+    assert_eq!(
+        duplicate.validate().unwrap_err().code,
+        "case_projection_outputs_invalid"
+    );
+    let mut escaped = valid;
+    escaped.source_entry = "../model.dss".into();
+    assert_eq!(escaped.validate().unwrap_err().code, "input_path_invalid");
 }

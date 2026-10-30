@@ -136,7 +136,7 @@
 
 - [ ] **Step 5: Run deterministic release-focused tests GREEN.** Repeat Step 2; expected all tests pass.
 
-- [ ] **Step 6: Run current local real-engine gate.** Load `backend/.env` through the existing release command and run `./scripts/test-release-engine`; expected pass when current eig-rs is compatible, otherwise preserve the exact current-engine error as the task failure to fix or report.
+- [ ] **Step 6: Run current local real-engine gate.** Load `../../../backend/.env.dk.local` through the existing release command and run `./scripts/test-release-engine`; expected pass when current eig-rs is compatible, otherwise preserve the exact current-engine error as the task failure to fix or report.
 
 - [ ] **Step 7: Commit.** Commit Task 4 files with message `ci: test the current eig-rs release`.
 

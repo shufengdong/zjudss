@@ -9,6 +9,7 @@ import {
   expectToolTrace,
   type ToolTraceEntry,
 } from './semantic-assertions'
+import { resolveLlmEvidence } from './llm-evidence'
 
 test.setTimeout(15 * 60_000)
 
@@ -363,11 +364,12 @@ test('real DeepSeek and tensoreval complete the V4 semantic release journey', as
     expectEngineReleaseEvidence(engineReport)
     const agentBundle = await agentBundleEvidence()
     const seed = await fixedUserSeed()
+    const llm = resolveLlmEvidence(process.env)
     await writeFile(reportPath, JSON.stringify({
       schemaVersion: 1,
       testIds: ['ENGINE-RELEASE-001', 'REAL-RELEASE-001', 'AGENT-STUDY-PLANNING-001'],
-      provider: 'deepseek',
-      model: process.env.LLM_MODEL ?? 'deepseek-chat',
+      provider: llm.provider,
+      model: llm.model,
       agentBundleVersion: agentBundle.version,
       agentBundleSha256: agentBundle.sha256,
       userSeedSha256: seed.sha256,
@@ -386,6 +388,13 @@ test('real DeepSeek and tensoreval complete the V4 semantic release journey', as
         entries: engineReport.facadeCatalogEntries,
         enabled: engineReport.enabledFacades,
         diagnostics: engineReport.facadeDiagnostics?.length ?? -1,
+      } : null,
+      engineProjectionCatalog: engineReport ? {
+        entries: engineReport.projectionCatalogEntries,
+        enabled: engineReport.enabledProjectionProfiles,
+        referenced: engineReport.referencedProjectionProfiles,
+        diagnostics: engineReport.projectionDiagnostics?.length ?? -1,
+        representativeRuns: engineReport.representativeRuns?.length ?? -1,
       } : null,
       attempts,
       finalState,

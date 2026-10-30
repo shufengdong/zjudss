@@ -381,6 +381,27 @@ async fn session_deletion_requires_a_current_impact_preview_and_hides_the_tombst
     assert_eq!(stale.status(), StatusCode::CONFLICT);
     assert_eq!(json_body(stale).await["code"], "deletion_impact_changed");
 
+    {
+        let mut conn = app.pool.get().unwrap();
+        diesel::sql_query(
+            "INSERT INTO managed_workflows(session_id,status,intent_json,created_at_ms,updated_at_ms) VALUES(?1,'succeeded','{}',1,1)",
+        )
+        .bind::<diesel::sql_types::Integer, _>(session_id.parse::<i32>().unwrap())
+        .execute(&mut conn)
+        .unwrap();
+        let workflow_id: i32 =
+            diesel::dsl::sql::<diesel::sql_types::Integer>("SELECT last_insert_rowid()")
+                .get_result(&mut conn)
+                .unwrap();
+        diesel::sql_query(
+            "INSERT INTO simulation_runs(session_id,client_run_id,status,stage,engine_contract_version,agent_skill_refs_json,managed_workflow_id,run_kind,created_at_ms) VALUES(?1,'managed-delete','succeeded','completed','test','[]',?2,'managed',1)",
+        )
+        .bind::<diesel::sql_types::Integer, _>(session_id.parse::<i32>().unwrap())
+        .bind::<diesel::sql_types::Integer, _>(workflow_id)
+        .execute(&mut conn)
+        .unwrap();
+    }
+
     let current = app
         .router
         .clone()

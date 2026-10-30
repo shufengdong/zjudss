@@ -37,9 +37,9 @@ impl EngineResourceSnapshotRepo {
                         "INSERT INTO engine_resource_snapshots(
                        id,engine_contract_version,catalog_hash,
                        functions_schema_version,study_facades_schema_version,
-                       dataframes_schema_version,dtype_grammar_version,is_current,
+                       case_projections_schema_version,dataframes_schema_version,dtype_grammar_version,is_current,
                        snapshot_json,created_at_ms
-                     ) VALUES (?1,?2,?3,?4,?5,?6,?7,1,?8,?9)
+                     ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,1,?9,?10)
                      ON CONFLICT(id) DO UPDATE SET is_current=1",
                     )
                     .bind::<Text, _>(&record.id)
@@ -47,6 +47,7 @@ impl EngineResourceSnapshotRepo {
                     .bind::<Text, _>(&record.catalog_hash)
                     .bind::<Integer, _>(record.functions_schema_version)
                     .bind::<Integer, _>(record.study_facades_schema_version)
+                    .bind::<Integer, _>(record.case_projections_schema_version)
                     .bind::<Integer, _>(record.dataframes_schema_version)
                     .bind::<Integer, _>(record.dtype_grammar_version)
                     .bind::<Text, _>(&record.snapshot_json)
@@ -97,12 +98,14 @@ fn snapshot_record(
 ) -> RepoResult<EngineResourceSnapshotRecord> {
     let versions = snapshot.catalog_schema_versions;
     let hash_input = format!(
-        "{}:{}:{}:{}:{}:{}:{}",
+        "{}:{}:{}:{}:{}:{}:{}:{}:{}",
         snapshot.dataframes_sha256,
         snapshot.functions_sha256,
         snapshot.study_facades_sha256,
+        snapshot.case_projections_sha256,
         versions.functions,
         versions.study_facades,
+        versions.case_projections,
         versions.dataframes,
         versions.dtype_grammar,
     );
@@ -114,7 +117,13 @@ fn snapshot_record(
         "catalogHashes": {
             "functions": snapshot.functions_sha256,
             "studyFacades": snapshot.study_facades_sha256,
+            "caseProjections": snapshot.case_projections_sha256,
             "dataframes": snapshot.dataframes_sha256,
+        },
+        "caseProjections": {
+            "catalogEntries": snapshot.case_projections.catalog_entry_count(),
+            "enabled": snapshot.case_projections.enabled_count(),
+            "diagnostics": snapshot.case_projections.diagnostics(),
         },
         "facades": {
             "catalogEntries": snapshot.facades.catalog_entry_count(),
@@ -130,6 +139,8 @@ fn snapshot_record(
         functions_schema_version: i32::try_from(versions.functions)
             .map_err(|error| RepoError::InvalidState(error.to_string()))?,
         study_facades_schema_version: i32::try_from(versions.study_facades)
+            .map_err(|error| RepoError::InvalidState(error.to_string()))?,
+        case_projections_schema_version: i32::try_from(versions.case_projections)
             .map_err(|error| RepoError::InvalidState(error.to_string()))?,
         dataframes_schema_version: i32::try_from(versions.dataframes)
             .map_err(|error| RepoError::InvalidState(error.to_string()))?,

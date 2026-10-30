@@ -301,14 +301,26 @@ impl SessionRepo {
         tokio::task::spawn_blocking(move || -> RepoResult<Vec<i32>> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.immediate_transaction::<Vec<i32>, RepoError, _>(|conn| {
-                let owns = schema::sessions::table
+                let status = schema::sessions::table
                     .filter(schema::sessions::id.eq(session_id))
                     .filter(schema::sessions::user_id.eq(&user_id.0))
-                    .select(schema::sessions::id)
-                    .first::<i32>(conn)
-                    .optional()?;
-                if owns.is_none() {
-                    return Err(RepoError::NotFound);
+                    .select(schema::sessions::deletion_status)
+                    .first::<String>(conn)
+                    .optional()?
+                    .ok_or(RepoError::NotFound)?;
+                if status == "deleted" {
+                    return Ok(Vec::new());
+                }
+                if status != "live" && status != "deleting" {
+                    return Err(RepoError::InvalidState("session_deleting".into()));
+                }
+                if status == "deleting" {
+                    // The immediate transaction keeps the session hidden as `deleting` from other
+                    // connections. Locally restoring `live` lets FK cleanup perform its required
+                    // SET NULL updates without tripping the write-blocking live-session triggers.
+                    diesel::update(schema::sessions::table.find(session_id))
+                        .set(schema::sessions::deletion_status.eq("live"))
+                        .execute(conn)?;
                 }
 
                 #[derive(QueryableByName)]

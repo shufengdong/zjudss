@@ -37,9 +37,7 @@ use tokio::sync::Semaphore;
 
 use crate::adapters::{SimEngine, resolve_data_dir};
 use crate::agent::knowledge::AgentKnowledge;
-use crate::agent::{
-    AgentFactory, DeepSeekAgentFactory, DeepSeekScriptAuthor, LlmConfig, ScriptAuthor,
-};
+use crate::agent::{AgentFactory, LlmAgentFactory, LlmConfig, LlmScriptAuthor, ScriptAuthor};
 use crate::auth::AuthService;
 use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
@@ -206,21 +204,24 @@ impl AppState {
         let bundle = engine_root.join(&bundle_relative);
         std::fs::create_dir_all(bundle.join("dss")).expect("create e2e example directory");
         let main_bytes = b"model = import_dss(\"dss/model.dss\");\n";
+        let managed_bytes = b"[result_voltage] = ds_newton_raphson_pf(bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para);\n";
         let source_bytes = b"new circuit.e2e basekv=10\n";
         std::fs::write(bundle.join("main.rss"), main_bytes).expect("write e2e main");
+        std::fs::write(bundle.join("managed.rss"), managed_bytes).expect("write e2e managed");
         std::fs::write(bundle.join("dss/model.dss"), source_bytes).expect("write e2e model");
         let main_hash = hex::encode(Sha256::digest(main_bytes));
+        let managed_hash = hex::encode(Sha256::digest(managed_bytes));
         let source_hash = hex::encode(Sha256::digest(source_bytes));
         let manifest = serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "artifact": "mems.dss-rss-bundle",
             "generator": "zjudss-e2e/1",
             "psa_contract_version": "0.1.0",
             "entry": "main.rss",
             "study": {
-                "kind": "execution_plan",
+                "kind": "static_power_flow",
                 "compatibility": "opendss-native",
-                "solver": "radial",
+                "solver": "newton",
                 "results": ["voltage"]
             },
             "source": {
@@ -228,9 +229,20 @@ impl AppState {
                 "root": "dss",
                 "tree_sha256": source_hash
             },
+            "projection": {
+                "source_function": "ds_newton_raphson_pf",
+                "profile": "dss_static_newton_v1",
+                "projector": "project_dss_static_model",
+                "target_function": "ds_newton_raphson_pf",
+                "managed_entry": "managed.rss",
+                "status": "enabled",
+                "stable_diagnostic": "PSA.DSS.PROJECTION.INVALID",
+                "results": [{"source":"voltage","target":"bus_phase","binding":"result_voltage"}]
+            },
             "files": [
                 {"path": "dss/model.dss", "role": "dss-entry", "sha256": source_hash},
-                {"path": "main.rss", "role": "main-rss", "sha256": main_hash}
+                {"path": "main.rss", "role": "main-rss", "sha256": main_hash},
+                {"path": "managed.rss", "role": "managed-rss", "sha256": managed_hash}
             ],
             "inputs": []
         });
@@ -253,12 +265,16 @@ impl AppState {
             include_bytes!("../../tests/fixtures/engine_resources/catalog/functions.json");
         let study_facades =
             include_bytes!("../../tests/fixtures/engine_resources/catalog/study_facades.json");
+        let case_projections =
+            include_bytes!("../../tests/fixtures/engine_resources/catalog/case_projections.json");
         std::fs::write(catalog_dir.join("dataframes.json"), dataframes)
             .expect("write e2e dataframes catalog");
         std::fs::write(catalog_dir.join("functions.json"), functions)
             .expect("write e2e functions catalog");
         std::fs::write(catalog_dir.join("study_facades.json"), study_facades)
             .expect("write e2e study facades catalog");
+        std::fs::write(catalog_dir.join("case_projections.json"), case_projections)
+            .expect("write e2e case projections catalog");
         std::fs::write(
             engine_root.join("dss/docs/e2e-guide.md"),
             b"# E2E guide\nUse deterministic scenarios.",
@@ -422,7 +438,7 @@ impl AppState {
         Self::new_with_resources_and_agent_factory(
             pool,
             engine,
-            Arc::new(DeepSeekAgentFactory::new(llm)),
+            Arc::new(LlmAgentFactory::new(llm)),
             data_dir,
             auth,
             scheduler,
@@ -466,7 +482,7 @@ impl AppState {
     ) -> Self {
         let session_repo = SessionRepo::new(pool.clone());
         let script_author: Arc<dyn ScriptAuthor> = script_author_override.unwrap_or_else(|| {
-            Arc::new(DeepSeekScriptAuthor::from_factory(
+            Arc::new(LlmScriptAuthor::from_factory(
                 agent_factory.clone(),
                 agent_model_retry_max,
             ))

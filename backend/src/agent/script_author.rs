@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::application::{LockedStudyContract, WorkflowInputSnapshot};
 
-use super::{AgentBuildRequest, AgentFactory, DeepSeekAgentFactory, LlmConfig};
+use super::{AgentBuildRequest, AgentFactory, LlmAgentFactory, LlmConfig};
 
 const SCRIPT_AUTHOR_RULES: &str = r#"你是受控 RSS 脚本作者。请求 JSON 中 locked/lockedContract 是不可改变的冻结合同。
 运行环境已经按 locked.inputAliases 注入全部 DataFrame，包括 Struct DataFrame；不得读取、导入、构造、重新赋值或重命名这些变量。
@@ -88,15 +88,15 @@ pub trait ScriptAuthor: Send + Sync {
 }
 
 #[derive(Clone)]
-pub struct DeepSeekScriptAuthor {
+pub struct LlmScriptAuthor {
     factory: Arc<dyn AgentFactory>,
     model_retry_max: usize,
 }
 
-impl DeepSeekScriptAuthor {
+impl LlmScriptAuthor {
     pub fn new(config: LlmConfig, model_retry_max: usize) -> Self {
         Self {
-            factory: Arc::new(DeepSeekAgentFactory::new(config)),
+            factory: Arc::new(LlmAgentFactory::new(config)),
             model_retry_max,
         }
     }
@@ -150,7 +150,7 @@ impl DeepSeekScriptAuthor {
 }
 
 #[async_trait]
-impl ScriptAuthor for DeepSeekScriptAuthor {
+impl ScriptAuthor for LlmScriptAuthor {
     async fn generate(
         &self,
         request: ScriptGenerationRequest,

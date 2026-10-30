@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use super::examples::EngineExample;
 use super::facades::FacadeRegistry;
 use super::knowledge::EngineKnowledge;
+use super::projections::CaseProjectionRegistry;
 use crate::catalog::SchemaRegistry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -11,6 +12,7 @@ use crate::catalog::SchemaRegistry;
 pub struct CatalogSchemaVersions {
     pub functions: u32,
     pub study_facades: u32,
+    pub case_projections: u32,
     pub dataframes: u32,
     pub dtype_grammar: u32,
 }
@@ -54,13 +56,16 @@ pub struct EngineResourceSnapshot {
     pub dataframes_sha256: String,
     pub functions_sha256: String,
     pub study_facades_sha256: String,
+    pub case_projections_sha256: String,
     pub source_root: PathBuf,
     pub engine_root: PathBuf,
     pub catalog_json: serde_json::Value,
     pub functions_json: serde_json::Value,
     pub study_facades_json: serde_json::Value,
+    pub case_projections_json: serde_json::Value,
     pub schemas: SchemaRegistry,
     pub facades: FacadeRegistry,
+    pub case_projections: CaseProjectionRegistry,
     pub catalog_bytes: BTreeMap<String, Vec<u8>>,
     pub documents: BTreeMap<String, Vec<u8>>,
     pub knowledge: EngineKnowledge,
@@ -124,29 +129,55 @@ impl EngineResourceSnapshot {
             }]
         });
         let functions_json = serde_json::json!({"schema_version":2,"frame_functions":[]});
+        let case_projections_json = serde_json::json!({
+            "schema_version":2,
+            "source_of_truth":["zjudss://test"],
+            "rules":{},
+            "profiles":[{
+                "id":"test_projection", "sourceFunction":"test", "projector":"project_test",
+                "targetFunction":"test", "managedEntry":"managed.rss",
+                "compatibility":{"status":"enabled","failClosed":true,"stableDiagnostic":"TEST.PROJECTION.INVALID"},
+                "inputs":study_facades_json["facades"][0]["inputs"],
+                "projectorOutputs":[
+                    {"id":"table","alias":"table","inputKind":"model","schemaRef":"frames.table","required":true,"position":1,"disposition":"facade_input","targetInput":"table"},
+                    {"id":"para","alias":"para","inputKind":"struct","schemaRef":"frames.para","required":false,"position":2,"disposition":"facade_input","targetInput":"para"}
+                ],
+                "results":study_facades_json["facades"][0]["results"],
+                "sourceResults":["result"], "resultMap":{"result":"result"},
+                "bundleResultMap":{"result":"result"},
+                "resultSelector":{"input":"para","field":"result","valueSource":"profile.resultMap(manifest.study.results)"}
+            }]
+        });
         let mut schemas = SchemaRegistry::from_catalog(&catalog_json)
             .expect("embedded minimal schema catalog must be valid");
         let facades = FacadeRegistry::from_catalogs(&study_facades_json, &mut schemas)
             .expect("embedded minimal facade catalog must be valid");
+        let case_projections =
+            CaseProjectionRegistry::from_catalogs(&case_projections_json, &facades, &mut schemas)
+                .expect("embedded minimal case projection catalog must be valid");
         Self {
             id: id.into(),
             contract_version: contract_version.into(),
             catalog_schema_versions: CatalogSchemaVersions {
                 functions: 2,
                 study_facades: 1,
-                dataframes: 3,
+                case_projections: 2,
+                dataframes: 4,
                 dtype_grammar: 1,
             },
             dataframes_sha256: String::new(),
             functions_sha256: String::new(),
             study_facades_sha256: String::new(),
+            case_projections_sha256: String::new(),
             source_root: source_root.clone(),
             engine_root: source_root,
             catalog_json,
             functions_json,
             study_facades_json,
+            case_projections_json,
             schemas,
             facades,
+            case_projections,
             catalog_bytes: BTreeMap::new(),
             documents: BTreeMap::new(),
             knowledge: EngineKnowledge::from_documents(&[]),

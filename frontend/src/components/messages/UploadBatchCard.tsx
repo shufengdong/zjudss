@@ -1,19 +1,33 @@
-import type { UploadBatchActions, UploadBatchMessage, UploadBatchView } from '../../types'
-import UploadBatchDecisionCard from '../uploads/UploadBatchDecisionCard'
+import type { UploadBatchMessage, UploadBatchView } from '../../types'
+import { isClosedUploadBatch, uploadBatchWorkbenchTab } from '../uploads/batchPlacement'
 
-export default function UploadBatchCard({ message, batch, actions, onOpen, notify = () => undefined }: {
+const diagnosticMessages = (value: unknown): string[] => {
+  const items = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object' && Array.isArray((value as { errors?: unknown }).errors)
+      ? (value as { errors: unknown[] }).errors
+      : []
+  return items.flatMap((item) => item && typeof item === 'object' && typeof (item as { message?: unknown }).message === 'string'
+    ? [(item as { message: string }).message]
+    : [])
+}
+
+export default function UploadBatchCard({ message, batch, onOpen }: {
   message: UploadBatchMessage
   batch?: UploadBatchView
-  actions?: UploadBatchActions
-  onOpen?: () => void
-  notify?: (text: string) => void
+  onOpen?: (batchId: string) => void
 }) {
-  if (batch) return <div className="mx-auto my-3 max-w-3xl"><UploadBatchDecisionCard batch={batch} actions={actions} notify={notify} /></div>
+  const state=batch?.status??message.card.state
+  const modelState=batch?.modelPublishStatus??message.card.modelTransactionState
+  const resourceState=batch?.resourcePublishStatus??message.card.resourceTransactionState
+  const candidateCount=batch?.candidates.length??message.card.candidates.length
+  const diagnostics=batch?diagnosticMessages(batch.diagnostics):message.card.diagnostic?[message.card.diagnostic.message]:[]
+  const actionLabel=!batch?'查看并确认':uploadBatchWorkbenchTab(batch)==='workspace'?'前往模型工作区':'前往数据文件'
+  const actionable=Boolean(onOpen)&&(!batch||!isClosedUploadBatch(batch))
   return <article className="mx-auto my-3 max-w-3xl rounded-xl border bg-white p-3 text-sm">
-    <div className="flex items-center"><b>上传批次 #{message.card.batchId}</b><span className="ml-auto text-xs text-slate-500">{message.card.state}</span></div>
-    <p className="mt-1 text-xs text-slate-500">模型：{message.card.modelTransactionState} · 数据：{message.card.resourceTransactionState}</p>
-    {message.card.candidates.length > 0 && <ul className="mt-2 space-y-1 text-xs">{message.card.candidates.map((candidate) => <li key={candidate.id}>{candidate.name} · {candidate.state}</li>)}</ul>}
-    {message.card.diagnostic && <p role="alert" className="mt-2 text-xs text-red-600">{message.card.diagnostic.message}</p>}
-    {onOpen && <button type="button" onClick={onOpen} className="mt-3 rounded border px-3 py-1.5 text-xs">查看并确认</button>}
+    <div className="flex items-center"><b>上传批次 #{message.card.batchId}</b><span className="ml-auto text-xs text-slate-500">{state}</span></div>
+    <p className="mt-1 text-xs text-slate-500">{candidateCount} 个候选 · 模型：{modelState} · 数据：{resourceState}</p>
+    {diagnostics.length>0&&<div role="alert" className="mt-2 text-xs text-red-600">{diagnostics.map(value=><p key={value}>{value}</p>)}</div>}
+    {actionable&&<button type="button" onClick={()=>onOpen?.(message.card.batchId)} className="mt-3 rounded border px-3 py-1.5 text-xs">{actionLabel}</button>}
   </article>
 }

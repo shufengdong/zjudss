@@ -9,7 +9,7 @@ use rig::AgentBuilder;
 use rig::test_utils::MockCompletionModel;
 use rig::tool::server::ToolServer;
 use tower::ServiceExt;
-use zjudss::agent::{AgentBuildRequest, AgentFactory, DeepSeekAgentFactory, LlmConfig, LlmError};
+use zjudss::agent::{AgentBuildRequest, AgentFactory, LlmAgentFactory, LlmConfig, LlmError};
 
 use common::TestApp;
 
@@ -127,8 +127,8 @@ async fn chat_builds_one_agent_per_user_message() {
 }
 
 #[test]
-fn deepseek_factory_rejects_unknown_provider() {
-    let factory = DeepSeekAgentFactory::new(LlmConfig {
+fn llm_factory_rejects_unknown_provider() {
+    let factory = LlmAgentFactory::new(LlmConfig {
         provider: "unknown".into(),
         model: "irrelevant".into(),
     });
@@ -141,4 +141,114 @@ fn deepseek_factory_rejects_unknown_provider() {
     };
     assert!(matches!(error, LlmError::UnsupportedProvider(ref provider) if provider == "unknown"));
     assert_eq!(error.to_string(), "不支持的 provider: unknown");
+}
+
+struct EnvGuard {
+    name: &'static str,
+    previous: Option<String>,
+}
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+impl EnvGuard {
+    fn set(name: &'static str, value: Option<&str>) -> Self {
+        let previous = std::env::var(name).ok();
+        // SAFETY: every test that changes these variables holds ENV_LOCK for
+        // the complete set/build/restore cycle.
+        unsafe {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+        Self { name, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: see EnvGuard::set; the owner still holds ENV_LOCK on drop.
+        unsafe {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.name, value),
+                None => std::env::remove_var(self.name),
+            }
+        }
+    }
+}
+
+fn bailian_factory() -> LlmAgentFactory {
+    LlmAgentFactory::new(LlmConfig {
+        provider: "bailian".into(),
+        model: "qwen3.6-flash".into(),
+    })
+}
+
+fn build_without_tools(factory: &LlmAgentFactory) -> Result<rig::Agent, LlmError> {
+    factory.build(AgentBuildRequest {
+        tools: vec![],
+        system_prompt: "test".into(),
+    })
+}
+
+fn expect_build_error(factory: &LlmAgentFactory) -> LlmError {
+    match build_without_tools(factory) {
+        Ok(_) => panic!("factory build must fail"),
+        Err(error) => error,
+    }
+}
+
+#[test]
+fn bailian_factory_accepts_openai_compatible_configuration() {
+    let _env_lock = ENV_LOCK.lock().expect("lock Bailian test environment");
+    let _key = EnvGuard::set("BAILIAN_API_KEY", Some("bailian-test-secret"));
+    let _base_url = EnvGuard::set(
+        "BAILIAN_BASE_URL",
+        Some("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    );
+
+    let result = build_without_tools(&bailian_factory());
+    assert!(result.is_ok());
+}
+
+#[test]
+fn bailian_factory_rejects_missing_or_blank_api_key_without_leaking_it() {
+    let _env_lock = ENV_LOCK.lock().expect("lock Bailian test environment");
+    let _base_url = EnvGuard::set(
+        "BAILIAN_BASE_URL",
+        Some("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+    );
+    for value in [None, Some("   ")] {
+        let _key = EnvGuard::set("BAILIAN_API_KEY", value);
+        let error = expect_build_error(&bailian_factory());
+        assert_eq!(error.to_string(), "缺少或为空的 LLM 配置: BAILIAN_API_KEY");
+        assert!(!error.to_string().contains("bailian-test-secret"));
+    }
+}
+
+#[test]
+fn bailian_factory_rejects_missing_or_blank_base_url() {
+    let _env_lock = ENV_LOCK.lock().expect("lock Bailian test environment");
+    let _key = EnvGuard::set("BAILIAN_API_KEY", Some("bailian-test-secret"));
+    for value in [None, Some("   ")] {
+        let _base_url = EnvGuard::set("BAILIAN_BASE_URL", value);
+        let error = expect_build_error(&bailian_factory());
+        assert_eq!(error.to_string(), "缺少或为空的 LLM 配置: BAILIAN_BASE_URL");
+        assert!(!error.to_string().contains("bailian-test-secret"));
+    }
+}
+
+#[test]
+fn llm_config_uses_provider_specific_defaults_for_blank_models() {
+    let _env_lock = ENV_LOCK.lock().expect("lock LLM test environment");
+    for (provider, expected_model) in [
+        ("deepseek", rig::providers::deepseek::DEEPSEEK_V4_PRO),
+        ("bailian", "qwen3.6-flash"),
+    ] {
+        let _provider = EnvGuard::set("LLM_PROVIDER", Some(provider));
+        let _model = EnvGuard::set("LLM_MODEL", Some("   "));
+        let config = LlmConfig::from_env();
+        assert_eq!(config.provider, provider);
+        assert_eq!(config.model, expected_model);
+    }
 }

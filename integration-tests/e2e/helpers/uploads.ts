@@ -5,7 +5,24 @@ export async function uploadFiles(page: Page, files: Parameters<ReturnType<Page[
   await page.getByLabel('上传文件').locator('..').locator('input[type=file]').first().setInputFiles(files)
 }
 
+export async function openLatestUploadBatch(page: Page) {
+  const open = page.getByRole('button', { name: /前往(?:模型工作区|数据文件)/ }).last()
+  await expect(open).toBeVisible()
+  await open.click()
+}
+
+export async function openMutableDraft(page: Page) {
+  const expandPanel = page.getByRole('button', { name: '展开结果面板' })
+  if (await expandPanel.isVisible()) await expandPanel.click()
+  await page.getByRole('button', { name: '模型工作区' }).click()
+  const draft = page.getByRole('button', { name: /^(?:展开|收起)可变草稿/ })
+  await expect(draft).toBeVisible()
+  if (await draft.getAttribute('aria-expanded') === 'false') await draft.click()
+  return draft
+}
+
 export async function confirmLatestUpload(page: Page, purpose: 'model_table' | 'data_resource', aliases: Record<string, string> = {}) {
+  await openLatestUploadBatch(page)
   const confirm = page.getByRole('button', { name: '确认用途并发布' }).last()
   await expect(confirm).toBeVisible()
   const card = confirm.locator('xpath=ancestor::section[1]')
@@ -23,6 +40,7 @@ export async function confirmLatestUpload(page: Page, purpose: 'model_table' | '
 }
 
 export async function confirmLatestModelUpload(page: Page) {
+  await openLatestUploadBatch(page)
   const confirm = page.getByRole('button', { name: '确认用途并发布' }).last()
   await expect(confirm).toBeVisible()
   const card = confirm.locator('xpath=ancestor::section[1]')

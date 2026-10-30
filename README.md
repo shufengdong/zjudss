@@ -23,7 +23,7 @@ TypeScript、Vite 和 ECharts。仿真及派生分析结果统一保存为 Snapp
 - 研究配置卡、Struct 参数卡、Data 列映射、结果选择、确认后自动执行和最多 3 次脚本修正。
 - 原生 Parquet 仿真结果、自然语言结果分析、分页表格、六类受控 ECharts 视图和任务比较。
 - 固定用户登录、侧栏用户菜单、会话历史、全文搜索、可恢复 SSE、身份隔离、存储配额和并发调度。
-- 功能目录驱动的 Rust、Vitest、Playwright 和真实 DeepSeek/tensoreval 发布验收。
+- 功能目录驱动的 Rust、Vitest、Playwright 和真实 LLM provider/tensoreval 发布验收。
 
 ## 目录结构
 
@@ -35,7 +35,7 @@ zjudss/
 │   └── src/
 │       ├── api/           # REST/SSE handler 与 DTO
 │       ├── application/   # 会话、调度、工作区、分析等业务编排
-│       ├── agent/         # DeepSeek agent 与按需知识加载
+│       ├── agent/         # 可选 LLM provider、Agent 与按需知识加载
 │       ├── tools/         # 22 个受控 Agent 工具
 │       ├── adapters/      # tensoreval 唯一调用边界
 │       └── db/            # SQLite repository
@@ -65,7 +65,9 @@ zjudss/
 ```bash
 cd backend
 cp .env.example .env
-# 必填：DEEPSEEK_API_KEY、TENSOREVAL_BIN、SPARROWZZ_DIR
+# 必填：TENSOREVAL_BIN、SPARROWZZ_DIR，以及所选 provider 的 LLM 配置
+# DeepSeek：LLM_PROVIDER=deepseek、DEEPSEEK_API_KEY
+# 百炼：LLM_PROVIDER=bailian、LLM_MODEL、BAILIAN_API_KEY、BAILIAN_BASE_URL
 # 可选：AGENT_BUNDLE_VERSION（缺省 v4.0.0）、DATABASE_URL、DATA_DIR 等
 cargo run --release
 ```
@@ -111,7 +113,7 @@ cd ..
 git diff --check
 ```
 
-普通 PR 使用 Scripted LLM 和 ScenarioEngine 走生产前后端代码路径；候选发布另以真实 DeepSeek 和运行时构建的
+普通 PR 使用 Scripted LLM 和 ScenarioEngine 走生产前后端代码路径；候选发布另以 `LLM_PROVIDER` 选择的真实模型和运行时构建的
 eig-rs 当前默认分支验证外部依赖。测试分层、覆盖率定义和当前数量见
 [自动化集成测试设计](docs/integration-testing-design.md)。
 

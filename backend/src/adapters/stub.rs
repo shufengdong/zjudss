@@ -8,8 +8,9 @@ use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 
 use super::{
-    AdapterError, EngineRunOutput, ImportSpec, ImportedModel, InspectOutcome, InspectSpec,
-    OutputLimits, RunMode, RunSpec, STATIC_IMPORT_OUTPUTS, SimEngine, validate_outputs,
+    AdapterError, CaseProjectionSpec, EngineRunOutput, ImportSpec, ImportedModel, InspectOutcome,
+    InspectSpec, OutputLimits, ProjectedCase, RunMode, RunSpec, STATIC_IMPORT_OUTPUTS, SimEngine,
+    validate_outputs,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -27,26 +28,7 @@ impl StubEngine {
         })?;
         for (index, table) in STATIC_IMPORT_OUTPUTS.into_iter().enumerate() {
             if table == "para" {
-                let schema = Arc::new(Schema::new(vec![
-                    Field::new("base_frequency_hz", DataType::Float64, false),
-                    Field::new("max_iter", DataType::Int64, true),
-                    Field::new("result", DataType::Utf8, true),
-                ]));
-                let batch = RecordBatch::try_new(
-                    schema.clone(),
-                    vec![
-                        Arc::new(Float64Array::from(vec![50.0])),
-                        Arc::new(Int64Array::from(vec![Some(100)])),
-                        Arc::new(StringArray::from(vec![None::<&str>])),
-                    ],
-                )
-                .map_err(|error| {
-                    AdapterError::new(
-                        "stub_parquet_failed",
-                        super::ErrorCategory::Internal,
-                        error.to_string(),
-                    )
-                })?;
+                let (schema, batch) = para_fixture()?;
                 write_import_fixture(&spec, table, schema, &batch)?;
                 continue;
             }
@@ -273,4 +255,96 @@ impl SimEngine for StubEngine {
     async fn import_model(&self, spec: ImportSpec) -> Result<ImportedModel, AdapterError> {
         self.import_fixture(spec)
     }
+    async fn project_case(&self, spec: CaseProjectionSpec) -> Result<ProjectedCase, AdapterError> {
+        spec.validate()?;
+        std::fs::create_dir_all(&spec.result_dir).map_err(|error| {
+            AdapterError::new(
+                "result_dir_create_failed",
+                super::ErrorCategory::Io,
+                error.to_string(),
+            )
+        })?;
+        for (index, output) in spec.outputs.iter().enumerate() {
+            if output.alias == "para" {
+                let (schema, batch) = para_fixture()?;
+                write_parquet_fixture(&spec.result_dir, &output.alias, schema, &batch)?;
+                continue;
+            }
+            let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Utf8, false)]));
+            let batch = RecordBatch::try_new(
+                schema.clone(),
+                vec![Arc::new(StringArray::from(vec![format!("stub-{index}")]))],
+            )
+            .map_err(|error| {
+                AdapterError::new(
+                    "stub_parquet_failed",
+                    super::ErrorCategory::Internal,
+                    error.to_string(),
+                )
+            })?;
+            write_parquet_fixture(&spec.result_dir, &output.alias, schema, &batch)?;
+        }
+        let datasets = validate_outputs(&spec.result_dir, OutputLimits::default())?.datasets;
+        super::import::order_projection_outputs(datasets, &spec.outputs)
+    }
+}
+
+fn para_fixture() -> Result<(Arc<Schema>, RecordBatch), AdapterError> {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("base_frequency_hz", DataType::Float64, false),
+        Field::new("max_iter", DataType::Int64, true),
+        Field::new("result", DataType::Utf8, true),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Float64Array::from(vec![50.0])),
+            Arc::new(Int64Array::from(vec![Some(100)])),
+            Arc::new(StringArray::from(vec![None::<&str>])),
+        ],
+    )
+    .map_err(|error| {
+        AdapterError::new(
+            "stub_parquet_failed",
+            super::ErrorCategory::Internal,
+            error.to_string(),
+        )
+    })?;
+    Ok((schema, batch))
+}
+
+fn write_parquet_fixture(
+    result_dir: &std::path::Path,
+    name: &str,
+    schema: Arc<Schema>,
+    batch: &RecordBatch,
+) -> Result<(), AdapterError> {
+    let file =
+        std::fs::File::create(result_dir.join(format!("{name}.parquet"))).map_err(|error| {
+            AdapterError::new(
+                "stub_parquet_failed",
+                super::ErrorCategory::Io,
+                error.to_string(),
+            )
+        })?;
+    let properties = WriterProperties::builder()
+        .set_compression(Compression::SNAPPY)
+        .build();
+    let mut writer = ArrowWriter::try_new(file, schema, Some(properties)).map_err(|error| {
+        AdapterError::new(
+            "stub_parquet_failed",
+            super::ErrorCategory::Internal,
+            error.to_string(),
+        )
+    })?;
+    writer
+        .write(batch)
+        .and_then(|_| writer.close().map(|_| ()))
+        .map_err(|error| {
+            AdapterError::new(
+                "stub_parquet_failed",
+                super::ErrorCategory::Internal,
+                error.to_string(),
+            )
+        })
 }

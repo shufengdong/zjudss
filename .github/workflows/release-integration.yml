@@ -17,7 +17,11 @@ jobs:
     timeout-minutes: 60
     environment: candidate-release
     env:
+      LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'deepseek' }}
+      LLM_MODEL: ${{ vars.LLM_MODEL }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      BAILIAN_API_KEY: ${{ secrets.BAILIAN_API_KEY }}
+      BAILIAN_BASE_URL: ${{ vars.BAILIAN_BASE_URL }}
       TENSOREVAL_BIN: ${{ github.workspace }}/target/eig-rs/target/release/tensoreval
       SPARROWZZ_DIR: ${{ github.workspace }}/target/eig-rs/sparrowzz
     steps:
@@ -49,13 +53,13 @@ jobs:
           npm ci --prefix frontend
           npx --prefix frontend playwright install --with-deps chromium
       - name: Build current tensoreval
-        run: cargo build --manifest-path target/eig-rs/Cargo.toml --release -p mems --bin tensoreval
+        run: cargo build --manifest-path target/eig-rs/Cargo.toml --release -p mems --bin tensoreval --no-default-features --features tensoreval-cli,with_dsa_mumps
       - name: Validate current engine layout
         run: |
           test -x "$TENSOREVAL_BIN"
           test -d "$SPARROWZZ_DIR/dss/docs"
           test -f "$SPARROWZZ_DIR/dss/docs/catalog/dataframes.json"
-      - name: Run real DeepSeek and tensoreval journey
+      - name: Run real LLM and tensoreval journey
         run: ./scripts/test-release-integration
       - name: Require complete release functional coverage
         run: >-

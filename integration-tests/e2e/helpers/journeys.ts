@@ -1,8 +1,15 @@
 import { resolve } from 'node:path'
-import type { APIRequestContext, Page } from '@playwright/test'
+import type { APIRequestContext, Locator, Page } from '@playwright/test'
 import { expect } from '../fixtures'
 import type { ControlClient } from './control'
-import { confirmLatestUpload } from './uploads'
+import { confirmLatestUpload, openMutableDraft } from './uploads'
+
+async function ensureHistorySidebarContent(page: Page, content: Locator) {
+  const expand = page.getByRole('button', { name: '展开历史侧栏' })
+  await expect.poll(async () => await content.isVisible() || await expand.isVisible()).toBe(true)
+  if (!await content.isVisible() && await expand.isVisible()) await expand.click()
+  await expect(content).toBeVisible()
+}
 
 export async function createSessionFromPage(page: Page, title: string) {
   await page.goto('/')
@@ -11,10 +18,7 @@ export async function createSessionFromPage(page: Page, title: string) {
     return ((await response.json()) as { sessions: unknown[] }).sessions.length
   }).toBeGreaterThan(0)
   const newSession = page.getByRole('button', { name: '新建仿真' })
-  if (!await newSession.isVisible()) {
-    await page.getByRole('button', { name: '展开历史侧栏' }).click()
-    await expect(newSession).toBeVisible()
-  }
+  await ensureHistorySidebarContent(page, newSession)
   const responsePromise = page.waitForResponse((response) =>
     response.url().endsWith('/api/sessions') && response.request().method() === 'POST')
   await newSession.click()
@@ -22,10 +26,7 @@ export async function createSessionFromPage(page: Page, title: string) {
   expect(response.status()).toBe(201)
   const sessionId = (await response.json()).id as string
   const sessionMenu = page.getByRole('button', { name: '打开“新会话”的会话操作' }).first()
-  if (!await sessionMenu.isVisible()) {
-    await page.getByRole('button', { name: '展开历史侧栏' }).click()
-    await expect(sessionMenu).toBeVisible()
-  }
+  await ensureHistorySidebarContent(page, sessionMenu)
   await sessionMenu.click()
   await page.getByRole('button', { name: '重命名“新会话”' }).click()
   const renameResponse = page.waitForResponse((candidate) =>
@@ -45,10 +46,7 @@ export async function createReadySession(page: Page, api: APIRequestContext, tit
   await page.locator('input[type=file]').first().setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/dataframes/bus.csv'))
   await confirmLatestUpload(page, 'model_table', { 'bus.csv': 'bus' })
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).draft?.revision).toBe(1)
-  if (await page.getByRole('button', { name: '展开结果面板' }).isVisible()) {
-    await page.getByRole('button', { name: '展开结果面板' }).click()
-  }
-  await page.getByRole('button', { name: /^展开可变草稿/ }).click()
+  await openMutableDraft(page)
   await page.getByRole('button', { name: '生成版本' }).click()
   await expect.poll(async () => (await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()).active?.id).toBeTruthy()
   const workspace = await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()

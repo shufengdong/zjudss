@@ -13,24 +13,86 @@ const call = (toolName: string, status: ToolTraceEntry['status'], args: Record<s
 
 describe('release semantic assertions', () => {
   test('accepts the bundle-only engine report and rejects inconsistent counts', () => {
+    const caseProjections = Array.from({ length: 103 }, (_, index) => ({
+      exampleId: `ex_${index.toString(16).padStart(8, '0')}`,
+      projectionProfile: `profile_${index % 6}`,
+      success: true,
+      modelOutputs: index === 0 ? 0 : 20,
+      dataOutputs: 1,
+      structOutputs: index === 0 ? 1 : 0,
+      diagnosticOutputs: 0,
+    }))
     const report = {
       engineContract: 'tensoreval-parquet-v3',
       engineResourceSnapshot: `ers_${'a'.repeat(32)}`,
       binarySha256: 'b'.repeat(64),
       bundleExamples: 103,
-      importableExamples: 99,
-      nonImportableExamples: 4,
-      nonImportableDetails: Array.from({ length: 4 }, (_, index) => ({ exampleId: `ex_${index}` })),
+      importableExamples: 103,
+      nonImportableExamples: 0,
+      nonImportableDetails: [],
       facadeCatalogEntries: 15,
       enabledFacades: 15,
       facadeDiagnostics: [],
+      projectionCatalogEntries: 9,
+      enabledProjectionProfiles: 7,
+      referencedProjectionProfiles: 6,
+      projectionDiagnostics: ["PSA.DSS.AUTOADD.UNSUPPORTED", "PSA.DSS.RELCALC.UNSUPPORTED"],
+      projectedExamples: 103,
+      projectionFailures: 0,
+      caseProjections,
+      representativeRuns: Array.from({ length: 6 }, (_, index) => ({
+        exampleId: caseProjections[index].exampleId,
+        success: true,
+        projectionProfile: `profile_${index}`,
+      })),
       contractChecks: { staticModelImport: true, staticImportDataframes: 21 },
     }
     expect(() => expectEngineReleaseEvidence(report)).not.toThrow()
     expect(() => expectEngineReleaseEvidence({
       ...report,
       nonImportableExamples: 3,
-    })).toThrow(/counts are inconsistent/)
+    })).toThrow(/enabled projection/)
+    expect(() => expectEngineReleaseEvidence({
+      ...report,
+      projectedExamples: 102,
+    })).toThrow(/project every bundle example/)
+    expect(() => expectEngineReleaseEvidence({
+      ...report,
+      projectionFailures: 1,
+    })).toThrow(/case projection failed/)
+    expect(() => expectEngineReleaseEvidence({
+      ...report,
+      caseProjections: caseProjections.slice(1),
+    })).toThrow(/case projection evidence is incomplete/)
+    expect(() => expectEngineReleaseEvidence({
+      ...report,
+      caseProjections: [caseProjections[0], ...caseProjections.slice(0, -1)],
+    })).toThrow(/duplicate case projection evidence/)
+    expect(() => expectEngineReleaseEvidence({
+      ...report,
+      caseProjections: [
+        { ...caseProjections[0], success: false, failureCode: 'model_import_failed' },
+        ...caseProjections.slice(1),
+      ],
+    })).toThrow(/case projection did not succeed/)
+    expect(() => expectEngineReleaseEvidence({
+      ...report,
+      representativeRuns: Array.from({ length: 6 }, () => report.representativeRuns[0]),
+    })).toThrow(/representative profiles are incomplete/)
+    expect(() => expectEngineReleaseEvidence({
+      ...report,
+      caseProjections: caseProjections.map((projection) => ({
+        ...projection,
+        projectionProfile: 'unknown_profile',
+      })),
+    })).toThrow(/projected profile coverage is inconsistent/)
+    expect(() => expectEngineReleaseEvidence({
+      ...report,
+      representativeRuns: [
+        { ...report.representativeRuns[0], exampleId: 'ex_ffffffff' },
+        ...report.representativeRuns.slice(1),
+      ],
+    })).toThrow(/representative does not match projected evidence/)
   })
 
   test('waits for an assistant response after the final tool result', () => {

@@ -30,6 +30,10 @@ impl PromptAssembler {
                 "enabled": resources.facades.enabled_count(),
                 "disabled": resources.facades.diagnostics().len(),
             },
+            "caseProjections": {
+                "enabled": resources.case_projections.enabled_count(),
+                "disabled": resources.case_projections.diagnostics().len(),
+            },
             "documentSections": resources.knowledge.sections.len(),
             "examples": resources.examples.len(),
         });

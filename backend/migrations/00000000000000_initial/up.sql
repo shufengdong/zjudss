@@ -84,6 +84,7 @@ CREATE TABLE engine_resource_snapshots (
  catalog_hash TEXT NOT NULL CHECK(length(catalog_hash)=64),
  functions_schema_version INTEGER NOT NULL CHECK(functions_schema_version>0),
  study_facades_schema_version INTEGER NOT NULL CHECK(study_facades_schema_version>0),
+ case_projections_schema_version INTEGER NOT NULL CHECK(case_projections_schema_version>0),
  dataframes_schema_version INTEGER NOT NULL CHECK(dataframes_schema_version>0),
  dtype_grammar_version INTEGER NOT NULL CHECK(dtype_grammar_version>0),
  is_current INTEGER NOT NULL DEFAULT 0 CHECK(is_current IN (0,1)),

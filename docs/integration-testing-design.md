@@ -6,8 +6,8 @@
 - Vitest：公共 DTO、reducer/hook、workspace、脚本卡、运行记录、数据表与图表。
 - Playwright：浏览器 → Vite proxy → Axum → SQLite/CAS 的确定性全链路，使用 Scripted LLM 与
   ScenarioEngine，但不绕过 HTTP 或 UI。
-- Release：检出并构建 eig-rs 当前默认分支的真实 tensoreval + DeepSeek secret；无 secret/资源或当前接口不兼容时
-  失败，不跳过，也不回退到旧 artifact。
+- Release：检出并构建 eig-rs 当前默认分支的真实 tensoreval，并按 `LLM_PROVIDER` 使用 DeepSeek 或百炼的真实
+  secret/endpoint；缺少所选 provider 的配置、资源或当前接口不兼容时失败，不跳过，也不回退到旧 artifact。
 
 ## Coverage matrix
 
@@ -85,10 +85,16 @@ cd ..
 ./scripts/check-functional-coverage --require-pr
 ```
 
-候选发布执行 `scripts/test-release-integration`。报告记录测试 ID、Agent bundle hash、用户 seed hash/数量、engine
+候选发布执行 `scripts/test-release-integration`。脚本缺省使用 DeepSeek，也可通过 `LLM_PROVIDER=bailian`、
+`LLM_MODEL`、`BAILIAN_API_KEY` 和 `BAILIAN_BASE_URL` 切换到百炼；endpoint 与 API Key 必须同地域。报告记录测试 ID、Agent bundle hash、用户 seed hash/数量、engine
 contract、当前 binary hash、动态资源 snapshot 与案例分类数量；hash 是证据而非固定接收值，日志必须脱敏。
-真实门禁必须覆盖模型导入/发布、目录驱动的研究门面检索、配置卡准备与最终确认、Agent 创建受管研究脚本、自动执行、结果分析/比较和只使用稳定 ID，并动态导入所有
-可导入案例、报告个别不可导入案例、执行按来源类型与 study 选择的代表案例。
+真实门禁必须覆盖模型导入/发布、目录驱动的研究门面检索、配置卡准备与最终确认、Agent 创建受管研究脚本、自动执行、结果分析/比较和只使用稳定 ID。门禁扫描全部
+manifest schema v2 案例，要求不可导入案例为零，并对每个案例真实执行其 projector，逐项验证有序 Snappy Parquet
+输出及 Model/Data/Struct/diagnostic 分类。当前 snapshot 的证据为 144/144 成功；报告以 `projectedExamples`、
+`projectionFailures` 和逐案例 `caseProjections` 固化该门禁，任一案例失败都使候选发布失败。
+随后对每个被案例引用的 profile 选择一个投影成功的代表，以其命名 Parquet 输入执行 `managed.rss`；当前为 6 个代表，
+同时覆盖全部 study family。projector 输出缺失、重复、多余、顺序合同不一致或 manifest/profile 不一致均原子失败。
+没有案例引用的 disabled profile 可以保留稳定诊断，但不能被 manifest 使用。当前分布见 `docs/v4-deployment.md`。
 
 ## Failure policy
 

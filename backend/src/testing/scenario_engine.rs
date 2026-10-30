@@ -16,8 +16,9 @@ use tokio::sync::Notify;
 
 use crate::adapters::StubEngine;
 use crate::adapters::{
-    AdapterError, EngineRunOutput, ErrorCategory, ImportSpec, ImportedModel, InspectOutcome,
-    InspectSpec, OutputLimits, RunMode, RunSpec, SimEngine, validate_outputs,
+    AdapterError, CaseProjectionSpec, EngineRunOutput, ErrorCategory, ImportSpec, ImportedModel,
+    InspectOutcome, InspectSpec, OutputLimits, ProjectedCase, RunMode, RunSpec, SimEngine,
+    validate_outputs,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -383,6 +384,10 @@ impl SimEngine for ScenarioEngine {
 
     async fn import_model(&self, spec: ImportSpec) -> Result<ImportedModel, AdapterError> {
         StubEngine.import_model(spec).await
+    }
+
+    async fn project_case(&self, spec: CaseProjectionSpec) -> Result<ProjectedCase, AdapterError> {
+        StubEngine.project_case(spec).await
     }
 }
 

@@ -517,6 +517,7 @@ pub struct EngineResourceSnapshotRecord {
     pub catalog_hash: String,
     pub functions_schema_version: i32,
     pub study_facades_schema_version: i32,
+    pub case_projections_schema_version: i32,
     pub dataframes_schema_version: i32,
     pub dtype_grammar_version: i32,
     pub is_current: bool,

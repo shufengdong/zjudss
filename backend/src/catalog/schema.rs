@@ -189,6 +189,7 @@ pub enum SchemaRule {
     Enum(Value),
     StrictlyIncreasing(Value),
     PositiveContiguous(Value),
+    ContiguousZeroBased(Value),
     ExactlyOneVariant(Value),
     CrossTableDenseMatrix(Value),
 }
@@ -529,6 +530,7 @@ impl SchemaRegistry {
             schema_hash: String::new(),
         };
         validate_contract(schema_ref, &output, contract.get("source"))?;
+        validate_rule_references(schema_ref, &output)?;
         let field_names = output
             .fields
             .iter()
@@ -1067,6 +1069,7 @@ fn parse_rule(value: &Value, schema_ref: &str) -> Result<SchemaRule, CatalogErro
         "enum" => Ok(SchemaRule::Enum(value)),
         "strictly_increasing" => Ok(SchemaRule::StrictlyIncreasing(value)),
         "positive_contiguous" => Ok(SchemaRule::PositiveContiguous(value)),
+        "contiguous_zero_based" => Ok(SchemaRule::ContiguousZeroBased(value)),
         "exactly_one_variant" => Ok(SchemaRule::ExactlyOneVariant(value)),
         "cross_table_dense_matrix" => Ok(SchemaRule::CrossTableDenseMatrix(value)),
         _ => Err(CatalogError::new(
@@ -1074,6 +1077,64 @@ fn parse_rule(value: &Value, schema_ref: &str) -> Result<SchemaRule, CatalogErro
             format!("{schema_ref} 使用未知 rule: {kind}"),
         )),
     }
+}
+
+fn validate_rule_references(
+    schema_ref: &str,
+    contract: &DataFrameSchemaContract,
+) -> Result<(), CatalogError> {
+    for rule in &contract.rules {
+        let SchemaRule::ContiguousZeroBased(value) = rule else {
+            continue;
+        };
+        let object = value.as_object().ok_or_else(|| {
+            CatalogError::new(
+                "catalog_schema_invalid",
+                format!("{schema_ref} contiguous_zero_based 不是对象"),
+            )
+        })?;
+        if object.len() != 2
+            || object.get("type").and_then(Value::as_str) != Some("contiguous_zero_based")
+        {
+            return Err(CatalogError::new(
+                "catalog_schema_invalid",
+                format!("{schema_ref} contiguous_zero_based 结构无效"),
+            ));
+        }
+        let field_name = object
+            .get("field")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                CatalogError::new(
+                    "catalog_schema_invalid",
+                    format!("{schema_ref} contiguous_zero_based 缺少 field"),
+                )
+            })?;
+        let field = contract
+            .fields
+            .iter()
+            .find(|field| field.name == field_name)
+            .ok_or_else(|| {
+                CatalogError::new(
+                    "catalog_schema_invalid",
+                    format!("{schema_ref} contiguous_zero_based 引用未知字段 {field_name}"),
+                )
+            })?;
+        let unsigned = match &field.dtype {
+            DataTypeContract::Primitive { name } | DataTypeContract::Semantic { name } => {
+                name.starts_with("u32") || name.starts_with("u64")
+            }
+            DataTypeContract::Constructor { .. } => false,
+        };
+        if !unsigned {
+            return Err(CatalogError::new(
+                "catalog_schema_invalid",
+                format!("{schema_ref}.{field_name} 必须是无符号整数"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn parse_discriminator(value: &Value, schema_ref: &str) -> Result<Discriminator, CatalogError> {

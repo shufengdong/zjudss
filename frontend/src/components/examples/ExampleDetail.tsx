@@ -10,6 +10,9 @@ export default function ExampleDetail({example}:{example:Detail}){
       <div><dt className="text-xs text-slate-400">来源入口</dt><dd className="break-all">{example.sourceEntry??'不可用'}</dd></div>
       <div><dt className="text-xs text-slate-400">脚本入口</dt><dd className="break-all">{example.entryPath??'不可用'}</dd></div>
       <div><dt className="text-xs text-slate-400">生成器</dt><dd>{example.manifest?.generator??'不可用'}</dd></div>
+      <div><dt className="text-xs text-slate-400">案例来源函数</dt><dd className="break-all">{example.manifest?.projection.sourceFunction??'不可用'}</dd></div>
+      <div><dt className="text-xs text-slate-400">仿真门面函数</dt><dd className="break-all">{example.manifest?.projection.targetFunction??'不可用'}</dd></div>
+      <div><dt className="text-xs text-slate-400">投影配置</dt><dd className="break-all">{example.manifest?.projection.profile??'不可用'}</dd></div>
     </dl>
     <div><h4 className="text-xs font-medium text-slate-500">结果类型</h4><p className="mt-1 text-sm">{example.results.length?example.results.join('、'):'未声明'}</p></div>
     <div><h4 className="text-xs font-medium text-slate-500">文件角色</h4><div className="mt-2 flex flex-wrap gap-2">{Object.entries(roles).map(([role,count])=><span key={role} className="rounded bg-slate-100 px-2 py-1 text-xs">{role}：{count}</span>)}</div></div>

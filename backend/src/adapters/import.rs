@@ -163,6 +163,131 @@ pub struct ImportedModel {
     pub diagnostics: serde_json::Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionOutputSpec {
+    pub alias: String,
+    pub diagnostic: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CaseProjectionSpec {
+    pub input_tree: PathBuf,
+    pub source_entry: PathBuf,
+    pub projector: String,
+    pub outputs: Vec<ProjectionOutputSpec>,
+    pub result_dir: PathBuf,
+    pub timeout: Duration,
+}
+
+impl CaseProjectionSpec {
+    pub fn validate(&self) -> Result<(), AdapterError> {
+        validate_tree(&self.input_tree)?;
+        super::validate_tree_file(&self.input_tree, &self.source_entry)?;
+        let source = self.source_entry.to_str().ok_or_else(|| {
+            AdapterError::new(
+                "input_path_invalid",
+                ErrorCategory::Model,
+                "案例源入口不是 UTF-8",
+            )
+        })?;
+        if source
+            .chars()
+            .any(|character| character == '"' || character.is_control())
+        {
+            return Err(AdapterError::new(
+                "input_path_invalid",
+                ErrorCategory::Model,
+                "案例源入口包含不安全字符",
+            ));
+        }
+        if !safe_symbol(&self.projector) {
+            return Err(AdapterError::new(
+                "case_projector_invalid",
+                ErrorCategory::Model,
+                "案例 projector 标识无效",
+            ));
+        }
+        if self.outputs.is_empty() {
+            return Err(AdapterError::new(
+                "case_projection_outputs_invalid",
+                ErrorCategory::Model,
+                "案例 projector 输出不能为空",
+            ));
+        }
+        let mut aliases = HashSet::new();
+        for output in &self.outputs {
+            if !safe_symbol(&output.alias) || !aliases.insert(output.alias.clone()) {
+                return Err(AdapterError::new(
+                    "case_projection_outputs_invalid",
+                    ErrorCategory::Model,
+                    "案例 projector 输出标识无效或重复",
+                ));
+            }
+        }
+        if !self.result_dir.is_absolute() {
+            return Err(AdapterError::new(
+                "result_dir_invalid",
+                ErrorCategory::Io,
+                "case projection result-dir 必须是独立的绝对 staging 目录",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectedCase {
+    pub dataframes: Vec<EngineDatasetOutput>,
+    pub diagnostics: Vec<EngineDatasetOutput>,
+}
+
+pub(crate) fn order_projection_outputs(
+    datasets: Vec<EngineDatasetOutput>,
+    expected: &[ProjectionOutputSpec],
+) -> Result<ProjectedCase, AdapterError> {
+    let mut by_name = datasets
+        .into_iter()
+        .map(|dataset| (dataset.name.clone(), dataset))
+        .collect::<BTreeMap<_, _>>();
+    if by_name.len() != expected.len()
+        || expected
+            .iter()
+            .any(|output| !by_name.contains_key(&output.alias))
+    {
+        return Err(AdapterError::new(
+            "case_projection_output_mismatch",
+            ErrorCategory::Model,
+            "projector 结果集与已发布合同不一致",
+        )
+        .with_diagnostics(serde_json::json!({
+            "expected": expected.iter().map(|output| &output.alias).collect::<Vec<_>>(),
+            "actual": by_name.keys().collect::<Vec<_>>()
+        })));
+    }
+    let mut dataframes = Vec::new();
+    let mut diagnostics = Vec::new();
+    for output in expected {
+        let dataset = by_name.remove(&output.alias).expect("set checked above");
+        if output.diagnostic {
+            diagnostics.push(dataset);
+        } else {
+            dataframes.push(dataset);
+        }
+    }
+    Ok(ProjectedCase {
+        dataframes,
+        diagnostics,
+    })
+}
+
+fn safe_symbol(value: &str) -> bool {
+    let mut bytes = value.bytes();
+    bytes
+        .next()
+        .is_some_and(|byte| byte == b'_' || byte.is_ascii_alphabetic())
+        && bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
+}
+
 pub(crate) fn inspect_tree(spec: &ImportInspectSpec) -> Result<ImportInspection, AdapterError> {
     validate_tree(&spec.input_tree)?;
     let files = dss_files(&spec.input_tree)?;

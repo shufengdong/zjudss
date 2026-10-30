@@ -1,0 +1,568 @@
+{
+  "schema_version": 2,
+  "source_of_truth": [
+    "mems/src/bin/dss2rss",
+    "mems/src/ml/expr_df/frame_ops.rs",
+    "psa/src/dsa/parse"
+  ],
+  "rules": {
+    "sourcePaths": "import-only",
+    "managedScripts": "DataFrame aliases only",
+    "classification": "copied from study_facades.json and validated for equality"
+  },
+  "profiles": [
+    {
+      "id": "dss_static_newton_v1",
+      "sourceFunction": "ds_newton_raphson_pf",
+      "projector": "project_dss_static_model",
+      "targetFunction": "ds_newton_raphson_pf",
+      "managedEntry": "managed.rss",
+      "compatibility": {
+        "status": "enabled",
+        "failClosed": true,
+        "stableDiagnostic": "PSA.DSS.PROJECTION.INVALID"
+      },
+      "inputs": [
+        {
+          "id": "bus",
+          "alias": "bus",
+          "inputKind": "model",
+          "schemaRef": "frames.bus",
+          "required": true,
+          "position": 1,
+          "description": "母线、相别和电压约束模型。"
+        },
+        {
+          "id": "line",
+          "alias": "line",
+          "inputKind": "model",
+          "schemaRef": "frames.line",
+          "required": true,
+          "position": 2,
+          "description": "线路端点、导体映射和线路引用模型。"
+        },
+        {
+          "id": "linecode",
+          "alias": "linecode",
+          "inputKind": "model",
+          "schemaRef": "frames.linecode",
+          "required": true,
+          "position": 3,
+          "description": "线路阻抗与并联导纳参数模型。"
+        },
+        {
+          "id": "load",
+          "alias": "load",
+          "inputKind": "model",
+          "schemaRef": "frames.load",
+          "required": true,
+          "position": 4,
+          "description": "负荷设备及其稳态电气模型。"
+        },
+        {
+          "id": "transformer",
+          "alias": "transformer",
+          "inputKind": "model",
+          "schemaRef": "frames.transformer",
+          "required": true,
+          "position": 5,
+          "description": "变压器设备与基本额定参数模型。"
+        },
+        {
+          "id": "voltage_source",
+          "alias": "voltage_source",
+          "inputKind": "model",
+          "schemaRef": "frames.voltage_source",
+          "required": true,
+          "position": 6,
+          "description": "电压源设备及源阻抗模型。"
+        },
+        {
+          "id": "motor",
+          "alias": "motor",
+          "inputKind": "model",
+          "schemaRef": "frames.motor",
+          "required": true,
+          "position": 7,
+          "description": "电动机设备及静态、动态基础参数模型。"
+        },
+        {
+          "id": "transformer_winding",
+          "alias": "transformer_winding",
+          "inputKind": "model",
+          "schemaRef": "frames.transformer_winding",
+          "required": true,
+          "position": 8,
+          "description": "多绕组变压器绕组身份、连接和分接模型。"
+        },
+        {
+          "id": "transformer_impedance",
+          "alias": "transformer_impedance",
+          "inputKind": "model",
+          "schemaRef": "frames.transformer_impedance",
+          "required": true,
+          "position": 9,
+          "description": "多绕组变压器绕组对短路阻抗关系模型。"
+        },
+        {
+          "id": "current_source",
+          "alias": "current_source",
+          "inputKind": "model",
+          "schemaRef": "frames.current_source",
+          "required": true,
+          "position": 10,
+          "description": "电流源设备模型。"
+        },
+        {
+          "id": "generator",
+          "alias": "generator",
+          "inputKind": "model",
+          "schemaRef": "frames.generator",
+          "required": true,
+          "position": 11,
+          "description": "同步发电机设备、限值和控制模型。"
+        },
+        {
+          "id": "ibr",
+          "alias": "ibr",
+          "inputKind": "model",
+          "schemaRef": "frames.ibr",
+          "required": true,
+          "position": 12,
+          "description": "逆变器资源设备及控制引用模型。"
+        },
+        {
+          "id": "switch",
+          "alias": "switch",
+          "inputKind": "model",
+          "schemaRef": "frames.switch",
+          "required": true,
+          "position": 13,
+          "description": "开关设备、端点和初始状态模型。"
+        },
+        {
+          "id": "shunt",
+          "alias": "shunt",
+          "inputKind": "model",
+          "schemaRef": "frames.shunt",
+          "required": true,
+          "position": 14,
+          "description": "并联导纳设备模型。"
+        },
+        {
+          "id": "capacitor",
+          "alias": "capacitor",
+          "inputKind": "model",
+          "schemaRef": "frames.capacitor",
+          "required": true,
+          "position": 15,
+          "description": "电容器设备、级数和状态模型。"
+        },
+        {
+          "id": "reactor",
+          "alias": "reactor",
+          "inputKind": "model",
+          "schemaRef": "frames.reactor",
+          "required": true,
+          "position": 16,
+          "description": "电抗器设备及连接模型。"
+        },
+        {
+          "id": "spectrum",
+          "alias": "spectrum",
+          "inputKind": "model",
+          "schemaRef": "frames.spectrum",
+          "required": true,
+          "position": 17,
+          "description": "网络设备按名称引用的持久谐波频谱模型。"
+        },
+        {
+          "id": "control_profile",
+          "alias": "control_profile",
+          "inputKind": "model",
+          "schemaRef": "frames.control_profile",
+          "required": true,
+          "position": 18,
+          "description": "IBR 按名称引用的持久控制配置模型。"
+        },
+        {
+          "id": "xy_curve",
+          "alias": "xy_curve",
+          "inputKind": "model",
+          "schemaRef": "frames.xy_curve",
+          "required": true,
+          "position": 19,
+          "description": "网络设备按名称引用的持久 XY 曲线模型。"
+        },
+        {
+          "id": "storage",
+          "alias": "storage",
+          "inputKind": "model",
+          "schemaRef": "frames.storage",
+          "required": true,
+          "position": 20,
+          "description": "储能设备、电气限值和初始能量状态模型。"
+        },
+        {
+          "id": "para",
+          "alias": "para",
+          "inputKind": "struct",
+          "schemaRef": "frames.para",
+          "required": true,
+          "position": 21,
+          "description": "零行或单行潮流求解参数与结果选择配置。"
+        }
+      ],
+      "results": [
+        {
+          "id": "bus_voltage",
+          "name": "bus_voltage",
+          "schemaRef": "result_frames.bus_voltage",
+          "description": "母线复电压列表。",
+          "recommended": true
+        },
+        {
+          "id": "bus_phase",
+          "name": "bus_phase",
+          "schemaRef": "result_frames.bus_phase",
+          "description": "逐母线逐相复电压长表。",
+          "recommended": false
+        },
+        {
+          "id": "load_state",
+          "name": "load_state",
+          "schemaRef": "result_frames.load_state",
+          "description": "负荷请求功率与实际供电状态。",
+          "recommended": false
+        },
+        {
+          "id": "generator_state",
+          "name": "generator_state",
+          "schemaRef": "result_frames.generator_state",
+          "description": "发电机逐相功率、电压、电流和限幅状态。",
+          "recommended": false
+        },
+        {
+          "id": "branch_flow",
+          "name": "branch_flow",
+          "schemaRef": "result_frames.branch_flow",
+          "description": "支路两端复电压、电流、功率和损耗。",
+          "recommended": false
+        },
+        {
+          "id": "source_flow",
+          "name": "source_flow",
+          "schemaRef": "result_frames.source_flow",
+          "description": "电源端口逐相功率流。",
+          "recommended": false
+        },
+        {
+          "id": "transformer_winding_flow",
+          "name": "transformer_winding_flow",
+          "schemaRef": "result_frames.transformer_winding_flow",
+          "description": "变压器各绕组逐相电气量和分接位置。",
+          "recommended": false
+        },
+        {
+          "id": "conductor_flow",
+          "name": "conductor_flow",
+          "schemaRef": "result_frames.conductor_flow",
+          "description": "按物理导体展开的端口电压与电流。",
+          "recommended": false
+        },
+        {
+          "id": "regulator_state",
+          "name": "regulator_state",
+          "schemaRef": "result_frames.regulator_state",
+          "description": "调压器量测、方向和分接终态。",
+          "recommended": false
+        },
+        {
+          "id": "capacitor_state",
+          "name": "capacitor_state",
+          "schemaRef": "result_frames.capacitor_state",
+          "description": "电容器投切、容量和负载状态。",
+          "recommended": false
+        },
+        {
+          "id": "reactor_state",
+          "name": "reactor_state",
+          "schemaRef": "result_frames.reactor_state",
+          "description": "电抗器投运和负载状态。",
+          "recommended": false
+        },
+        {
+          "id": "ibr_state",
+          "name": "ibr_state",
+          "schemaRef": "result_frames.ibr_state",
+          "description": "跟网型 IBR 命令、输出和限幅状态。",
+          "recommended": false
+        },
+        {
+          "id": "gfm_state",
+          "name": "gfm_state",
+          "schemaRef": "result_frames.gfm_state",
+          "description": "构网型 IBR 内电势、功率和限幅状态。",
+          "recommended": false
+        },
+        {
+          "id": "violations",
+          "name": "violations",
+          "schemaRef": "result_frames.violations",
+          "description": "电压、电流或容量越限明细。",
+          "recommended": false
+        },
+        {
+          "id": "summary",
+          "name": "summary",
+          "schemaRef": "result_frames.summary",
+          "description": "收敛、迭代、损耗和越限摘要。",
+          "recommended": false
+        }
+      ],
+      "sourceResults": [
+        "voltage"
+      ],
+      "resultMap": {
+        "voltage": "bus_phase"
+      },
+      "resultSelector": {
+        "input": "para",
+        "field": "result",
+        "valueSource": "profile.resultMap(manifest.study.results)"
+      },
+      "bundleResultMap": {
+        "voltage": "bus_phase"
+      },
+      "projectorOutputs": [
+        {
+          "id": "bus",
+          "alias": "bus",
+          "inputKind": "model",
+          "schemaRef": "frames.bus",
+          "required": true,
+          "position": 1,
+          "disposition": "facade_input",
+          "targetInput": "bus"
+        },
+        {
+          "id": "line",
+          "alias": "line",
+          "inputKind": "model",
+          "schemaRef": "frames.line",
+          "required": true,
+          "position": 2,
+          "disposition": "facade_input",
+          "targetInput": "line"
+        },
+        {
+          "id": "linecode",
+          "alias": "linecode",
+          "inputKind": "model",
+          "schemaRef": "frames.linecode",
+          "required": true,
+          "position": 3,
+          "disposition": "facade_input",
+          "targetInput": "linecode"
+        },
+        {
+          "id": "load",
+          "alias": "load",
+          "inputKind": "model",
+          "schemaRef": "frames.load",
+          "required": true,
+          "position": 4,
+          "disposition": "facade_input",
+          "targetInput": "load"
+        },
+        {
+          "id": "transformer",
+          "alias": "transformer",
+          "inputKind": "model",
+          "schemaRef": "frames.transformer",
+          "required": true,
+          "position": 5,
+          "disposition": "facade_input",
+          "targetInput": "transformer"
+        },
+        {
+          "id": "voltage_source",
+          "alias": "voltage_source",
+          "inputKind": "model",
+          "schemaRef": "frames.voltage_source",
+          "required": true,
+          "position": 6,
+          "disposition": "facade_input",
+          "targetInput": "voltage_source"
+        },
+        {
+          "id": "motor",
+          "alias": "motor",
+          "inputKind": "model",
+          "schemaRef": "frames.motor",
+          "required": true,
+          "position": 7,
+          "disposition": "facade_input",
+          "targetInput": "motor"
+        },
+        {
+          "id": "transformer_winding",
+          "alias": "transformer_winding",
+          "inputKind": "model",
+          "schemaRef": "frames.transformer_winding",
+          "required": true,
+          "position": 8,
+          "disposition": "facade_input",
+          "targetInput": "transformer_winding"
+        },
+        {
+          "id": "transformer_impedance",
+          "alias": "transformer_impedance",
+          "inputKind": "model",
+          "schemaRef": "frames.transformer_impedance",
+          "required": true,
+          "position": 9,
+          "disposition": "facade_input",
+          "targetInput": "transformer_impedance"
+        },
+        {
+          "id": "current_source",
+          "alias": "current_source",
+          "inputKind": "model",
+          "schemaRef": "frames.current_source",
+          "required": true,
+          "position": 10,
+          "disposition": "facade_input",
+          "targetInput": "current_source"
+        },
+        {
+          "id": "generator",
+          "alias": "generator",
+          "inputKind": "model",
+          "schemaRef": "frames.generator",
+          "required": true,
+          "position": 11,
+          "disposition": "facade_input",
+          "targetInput": "generator"
+        },
+        {
+          "id": "ibr",
+          "alias": "ibr",
+          "inputKind": "model",
+          "schemaRef": "frames.ibr",
+          "required": true,
+          "position": 12,
+          "disposition": "facade_input",
+          "targetInput": "ibr"
+        },
+        {
+          "id": "switch",
+          "alias": "switch",
+          "inputKind": "model",
+          "schemaRef": "frames.switch",
+          "required": true,
+          "position": 13,
+          "disposition": "facade_input",
+          "targetInput": "switch"
+        },
+        {
+          "id": "shunt",
+          "alias": "shunt",
+          "inputKind": "model",
+          "schemaRef": "frames.shunt",
+          "required": true,
+          "position": 14,
+          "disposition": "facade_input",
+          "targetInput": "shunt"
+        },
+        {
+          "id": "capacitor",
+          "alias": "capacitor",
+          "inputKind": "model",
+          "schemaRef": "frames.capacitor",
+          "required": true,
+          "position": 15,
+          "disposition": "facade_input",
+          "targetInput": "capacitor"
+        },
+        {
+          "id": "reactor",
+          "alias": "reactor",
+          "inputKind": "model",
+          "schemaRef": "frames.reactor",
+          "required": true,
+          "position": 16,
+          "disposition": "facade_input",
+          "targetInput": "reactor"
+        },
+        {
+          "id": "spectrum",
+          "alias": "spectrum",
+          "inputKind": "model",
+          "schemaRef": "frames.spectrum",
+          "required": true,
+          "position": 17,
+          "disposition": "facade_input",
+          "targetInput": "spectrum"
+        },
+        {
+          "id": "control_profile",
+          "alias": "control_profile",
+          "inputKind": "model",
+          "schemaRef": "frames.control_profile",
+          "required": true,
+          "position": 18,
+          "disposition": "facade_input",
+          "targetInput": "control_profile"
+        },
+        {
+          "id": "xy_curve",
+          "alias": "xy_curve",
+          "inputKind": "model",
+          "schemaRef": "frames.xy_curve",
+          "required": true,
+          "position": 19,
+          "disposition": "facade_input",
+          "targetInput": "xy_curve"
+        },
+        {
+          "id": "storage",
+          "alias": "storage",
+          "inputKind": "model",
+          "schemaRef": "frames.storage",
+          "required": true,
+          "position": 20,
+          "disposition": "facade_input",
+          "targetInput": "storage"
+        },
+        {
+          "id": "para",
+          "alias": "para",
+          "inputKind": "struct",
+          "schemaRef": "frames.para",
+          "required": true,
+          "position": 21,
+          "disposition": "facade_input",
+          "targetInput": "para"
+        },
+        {
+          "id": "projection_diagnostic",
+          "alias": "projection_diagnostic",
+          "inputKind": "struct",
+          "schemaRef": "frames.para",
+          "required": true,
+          "position": 22,
+          "disposition": "diagnostic"
+        }
+      ]
+    },
+    {
+      "id": "disabled_projection_v1",
+      "compatibility": {
+        "status": "disabled",
+        "failClosed": true,
+        "stableDiagnostic": "PSA.DSS.PROJECTION.DISABLED"
+      }
+    }
+  ]
+}

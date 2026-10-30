@@ -23,13 +23,20 @@ const invalid: ExampleSummary = {
   diagnostics: ['manifest_invalid'],
 }
 const manifest = {
-  schemaVersion: 1, artifact: 'mems.dss-rss-bundle', generator: 'eig-rs/1',
+  schemaVersion: 2, artifact: 'mems.dss-rss-bundle', generator: 'eig-rs/1',
   psaContractVersion: '0.1.0', entry: 'main.rss',
   study: { kind: 'execution_plan', compatibility: 'opendss-native', solver: 'radial', results: ['voltage'] },
   source: { entry: 'dss/IEEE123Master.dss', root: 'dss', treeSha256: 'source-hash' },
+  projection: {
+    sourceFunction: 'ds_radial_dss_plan', profile: 'dss_execution_radial_v1',
+    projector: 'project_dss_execution_plan', targetFunction: 'ds_radial_execution_plan',
+    managedEntry: 'managed.rss', status: 'enabled', stableDiagnostic: 'PSA.DSS.PROJECTION.INVALID',
+    results: [{ source: 'voltage', target: 'bus_phase', binding: 'result_voltage' }],
+  },
   files: [
     { path: 'dss/IEEE123Master.dss', role: 'dss-entry', sha256: 'dss-hash' },
     { path: 'main.rss', role: 'main-rss', sha256: 'rss-hash' },
+    { path: 'managed.rss', role: 'managed-rss', sha256: 'managed-hash' },
   ],
   inputs: [],
 }
@@ -72,6 +79,8 @@ describe('ExampleLibrary', () => {
     expect(getExample).toHaveBeenCalledWith(valid.id)
     expect(screen.getByText(valid.bundlePath)).toBeInTheDocument()
     expect(screen.getByText('dss-entry：1')).toBeInTheDocument()
+    expect(screen.getByText('ds_radial_dss_plan')).toBeInTheDocument()
+    expect(screen.getByText('ds_radial_execution_plan')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: `使用案例“${valid.title}”` }))
     expect(onUse).toHaveBeenCalledWith(valid.id, valid.title, 'ers-test')
 

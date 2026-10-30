@@ -12,9 +12,10 @@ use async_trait::async_trait;
 use tokio::process::Command;
 
 use super::{
-    AdapterError, EXECUTION_IMPORT_TABLES, EngineCapabilities, EngineFailureDiagnostic,
-    EngineRunOutput, ErrorCategory, ImportProfile, ImportSpec, ImportedModel, InspectOutcome,
-    InspectSpec, RunMode, RunSpec, STATIC_IMPORT_OUTPUTS, SimEngine,
+    AdapterError, CaseProjectionSpec, EXECUTION_IMPORT_TABLES, EngineCapabilities,
+    EngineFailureDiagnostic, EngineRunOutput, ErrorCategory, ImportProfile, ImportSpec,
+    ImportedModel, InspectOutcome, InspectSpec, ProjectedCase, RunMode, RunSpec,
+    STATIC_IMPORT_OUTPUTS, SimEngine,
 };
 pub use command::{EngineCommand, build_command};
 pub use output::{OutputLimits, validate_outputs};
@@ -378,6 +379,102 @@ impl SimEngine for ProcessEngine {
                 "tableCount": STATIC_IMPORT_OUTPUTS.len()
             }),
         })
+    }
+
+    async fn project_case(&self, spec: CaseProjectionSpec) -> Result<ProjectedCase, AdapterError> {
+        spec.validate()?;
+        let source = spec
+            .source_entry
+            .to_str()
+            .expect("validated UTF-8 case source")
+            .replace('\\', "/");
+        let source_literal = serde_json::to_string(&source).map_err(|error| {
+            AdapterError::new(
+                "case_projection_script_failed",
+                ErrorCategory::Internal,
+                error.to_string(),
+            )
+        })?;
+        let outputs = spec
+            .outputs
+            .iter()
+            .map(|output| output.alias.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut nonce = [0_u8; 16];
+        getrandom::fill(&mut nonce).map_err(|error| {
+            AdapterError::new(
+                "case_projection_script_failed",
+                ErrorCategory::Internal,
+                error.to_string(),
+            )
+        })?;
+        let script_name = format!(".zjudss-case-projection-{}.rss", hex::encode(nonce));
+        let script_path = spec.input_tree.join(&script_name);
+        let mut script = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&script_path)
+            .map_err(|error| {
+                AdapterError::new(
+                    "case_projection_script_failed",
+                    ErrorCategory::Io,
+                    error.to_string(),
+                )
+            })?;
+        let script_guard = RemoveFileGuard::new(script_path);
+        script
+            .write_all(format!("[{outputs}] = {}({source_literal});\n", spec.projector).as_bytes())
+            .map_err(|error| {
+                AdapterError::new(
+                    "case_projection_script_failed",
+                    ErrorCategory::Io,
+                    error.to_string(),
+                )
+            })?;
+        drop(script);
+        let expected = spec.outputs;
+        let result_dir = spec.result_dir.clone();
+        let executed = self
+            .execute(
+                RunSpec {
+                    mode: RunMode::Dataframe,
+                    input_tree: spec.input_tree,
+                    script_path: PathBuf::from(&script_name),
+                    named_inputs: Vec::new(),
+                    result_dir: spec.result_dir,
+                    timeout: spec.timeout,
+                },
+                &[RunMode::Dataframe],
+            )
+            .await;
+        let cleanup = script_guard.cleanup();
+        let output = match (executed, cleanup) {
+            (Ok(output), Ok(())) => output,
+            (Ok(_), Err(error)) => {
+                cleanup_result_dir(&result_dir);
+                return Err(AdapterError::new(
+                    "case_projection_script_failed",
+                    ErrorCategory::Io,
+                    error.to_string(),
+                ));
+            }
+            (Err(error), Ok(())) => return Err(error),
+            (Err(mut error), Err(cleanup_error)) => {
+                error.message = format!(
+                    "{}; 案例投影临时脚本清理失败: {cleanup_error}",
+                    error.message
+                );
+                return Err(error);
+            }
+        };
+        match super::import::order_projection_outputs(output.datasets, &expected) {
+            Ok(projected) => Ok(projected),
+            Err(error) => {
+                cleanup_result_dir(&result_dir);
+                Err(error)
+            }
+        }
     }
 }
 

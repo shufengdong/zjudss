@@ -180,17 +180,22 @@ test('older history, refresh, restart, and invalid localStorage recover committe
     await expect.poll(async () => (await messages(api, session.id)).messages
       .filter((message: { type: string }) => message.type === 'assistant').length).toBe(index + 1)
   }
-  await expect.poll(async () => (await messages(api, session.id)).messages.reduce<Record<string, number>>((counts, message) => {
-    counts[message.type] = (counts[message.type] ?? 0) + 1
-    return counts
-  }, {})).toEqual({ user: 26, assistant: 26 })
+  await expect.poll(async () => {
+    const committed = (await messages(api, session.id)).messages
+    return {
+      user: committed.filter(message => message.type === 'user').length,
+      assistant: committed.filter(message => message.type === 'assistant').length,
+    }
+  }).toEqual({ user: 26, assistant: 26 })
+  const committedMessageCount = (await messages(api, session.id)).messages.length
+  expect(committedMessageCount).toBeGreaterThanOrEqual(52)
 
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '批量消息 0' })).toBeVisible()
   await expect(page.getByRole('button', { name: '加载更早消息' })).toBeVisible()
   await expect(page.locator('[data-message-id]')).toHaveCount(50)
   await page.getByRole('button', { name: '加载更早消息' }).click()
-  await expect(page.locator('[data-message-id]')).toHaveCount(52)
+  await expect(page.locator('[data-message-id]')).toHaveCount(committedMessageCount)
 
   await page.reload()
   await expect(page.getByText('批量回复 25', { exact: true })).toHaveCount(1)

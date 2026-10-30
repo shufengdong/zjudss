@@ -9,8 +9,9 @@ use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use zjudss::adapters::{
-    ENGINE_CONTRACT_VERSION, EngineCapabilities, EngineConfig, ImportInspectSpec, ImportProfile,
-    ImportSpec, NamedInput, OutputLimits, RunMode, RunSpec, build_command, validate_outputs,
+    CaseProjectionSpec, ENGINE_CONTRACT_VERSION, EngineCapabilities, EngineConfig,
+    ImportInspectSpec, ImportProfile, ImportSpec, NamedInput, OutputLimits, ProjectionOutputSpec,
+    RunMode, RunSpec, build_command, validate_outputs,
 };
 use zjudss::adapters::{ProcessEngine, SimEngine};
 use zjudss::storage::ParquetInspector;
@@ -123,6 +124,19 @@ fn model_entry_wrappers(root: &Path) -> Vec<PathBuf> {
                 .is_some_and(|name| {
                     name.starts_with(".zjudss-model-entry-") && name.ends_with(".dss")
                 })
+        })
+        .collect()
+}
+
+fn case_projection_scripts(root: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(root)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(".zjudss-case-projection-"))
         })
         .collect()
 }
@@ -1239,4 +1253,96 @@ async fn scenario_engine_queues_stderr_contract_monitor_and_cancellation_with_or
             .collect::<Vec<_>>(),
         ["failure", "contract_error", "monitor_error", "cancelled"]
     );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn process_case_projection_builds_a_controlled_script_and_enforces_exact_outputs() {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("input");
+    std::fs::create_dir_all(input.join("dss")).unwrap();
+    std::fs::write(input.join("dss/model.dss"), "New Circuit.Demo\n").unwrap();
+    write_parquet(&input.join("probe.parquet"), 1, Compression::SNAPPY);
+    let binary = root.path().join("engine.sh");
+    write_executable(
+        &binary,
+        r#"#!/bin/sh
+result_dir=''
+script=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --result-dir) shift; result_dir="$1" ;;
+    --output-format) shift ;;
+    --df) ;;
+    *) script="$1" ;;
+  esac
+  shift
+done
+grep -Fqx '[bus, diagnostic] = project_dss_static_model("dss/model.dss");' "$script" || exit 31
+mkdir -p "$result_dir"
+cp probe.parquet "$result_dir/bus.parquet"
+cp probe.parquet "$result_dir/diagnostic.parquet"
+"#,
+    );
+    let engine = process_test_engine(
+        binary.clone(),
+        Duration::from_secs(15),
+        4096,
+        OutputLimits::default(),
+    );
+    let make_spec = |result_dir: PathBuf| CaseProjectionSpec {
+        input_tree: input.clone(),
+        source_entry: "dss/model.dss".into(),
+        projector: "project_dss_static_model".into(),
+        outputs: vec![
+            ProjectionOutputSpec {
+                alias: "bus".into(),
+                diagnostic: false,
+            },
+            ProjectionOutputSpec {
+                alias: "diagnostic".into(),
+                diagnostic: true,
+            },
+        ],
+        result_dir,
+        timeout: Duration::from_secs(15),
+    };
+    let projected = engine
+        .project_case(make_spec(root.path().join("ok")))
+        .await
+        .unwrap();
+    assert_eq!(projected.dataframes[0].name, "bus");
+    assert_eq!(projected.diagnostics[0].name, "diagnostic");
+    assert!(case_projection_scripts(&input).is_empty());
+
+    write_executable(
+        &binary,
+        r#"#!/bin/sh
+result_dir=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in --result-dir) shift; result_dir="$1" ;; --output-format) shift ;; esac
+  shift
+done
+mkdir -p "$result_dir"
+cp probe.parquet "$result_dir/bus.parquet"
+"#,
+    );
+    let mismatch_dir = root.path().join("mismatch");
+    let error = engine
+        .project_case(make_spec(mismatch_dir.clone()))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "case_projection_output_mismatch");
+    assert!(!mismatch_dir.exists());
+    assert!(case_projection_scripts(&input).is_empty());
+
+    write_executable(&binary, "#!/bin/sh\necho projector-failed >&2\nexit 9\n");
+    let error = engine
+        .project_case(make_spec(root.path().join("failed")))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "engine_error");
+    let stderr = &error.diagnostics.as_deref().unwrap()["stderr"]["retained"];
+    assert!(stderr.as_array().is_some_and(|bytes| !bytes.is_empty()));
+    assert!(case_projection_scripts(&input).is_empty());
 }

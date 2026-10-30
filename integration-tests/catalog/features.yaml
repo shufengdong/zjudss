@@ -62,6 +62,11 @@
     - "error:invalid_run"
     - "error:engine_resource_snapshot_mismatch"
     - "error:case_not_modelizable"
+    - "error:case_projection_unavailable"
+    - "error:case_projection_source_missing"
+    - "error:case_projection_diagnostic_limit"
+    - "error:case_projection_diagnostic_invalid"
+    - "error:case_snapshot_contract_mismatch"
     - "error:invalid_model_version"
     - "error:draft_discard_confirmation_required"
     - "error:active_version_cannot_be_deleted"
@@ -278,7 +283,22 @@
       name: sends only the unified multipart fields accepted by the backend
     - runner: vitest
       file: frontend/src/components/messages/UploadBatchCard.test.tsx
-      name: uses the complete batch confirmation controls in the conversation
+      name: summarizes a live ordinary upload without duplicating its confirmation controls
+    - runner: vitest
+      file: frontend/src/components/messages/UploadBatchCard.test.tsx
+      name: routes a live case summary to the model workspace
+    - runner: vitest
+      file: frontend/src/components/messages/UploadBatchCard.test.tsx
+      name: keeps a generic locator while the live batch is being restored
+    - runner: vitest
+      file: frontend/src/components/messages/UploadBatchCard.test.tsx
+      name: keeps closed history without offering a stale action
+    - runner: vitest
+      file: frontend/src/components/workspace/WorkspacePanel.test.tsx
+      name: shows only non-terminal case import cards with their diagnostics
+    - runner: vitest
+      file: frontend/src/components/resources/DataResourcePanel.test.tsx
+      name: keeps case imports out while retaining ordinary upload decisions
     - runner: playwright
       file: integration-tests/e2e/v4-data-resources.spec.ts
       name: unified upload publishes and manages independent data resources through public routes
@@ -333,7 +353,7 @@
     - runner: rust
       file: backend/tests/model_imports.rs
       name: replacement_batch_uses_the_owned_resource_session
-  assertions: [uploads persist recoverable candidates without publishing, static imports split twenty model tables from para Data, model inference follows the current catalog and actual headers, ambiguous parsing and purpose require user decisions, active confirmation freezes candidates and returns a discard conflict while expiry waits, restart finalizes committed confirmation children before expiry, discard expiry and failure release reservations idempotently]
+  assertions: [uploads persist recoverable candidates without publishing, case imports have one full card in the model workspace while durable chat keeps a locator summary and ordinary uploads stay in data files, static imports split twenty model tables from para Data, model inference follows the current catalog and actual headers, ambiguous parsing and purpose require user decisions, active confirmation freezes candidates and returns a discard conflict while expiry waits, restart finalizes committed confirmation children before expiry, discard expiry and failure release reservations idempotently]
   fixtures: [DSS source, case bundle, CSV, Excel, Parquet, malicious archives]
   contracts:
     - "route:POST /api/sessions/{id}/upload-batches"
@@ -677,10 +697,16 @@
       file: backend/tests/case_import.rs
       name: applying_a_case_creates_one_recoverable_upload_batch_without_publishing
     - runner: rust
+      file: backend/tests/engine_resources.rs
+      name: supported_manifest_unknown_fields_are_ignored_but_contract_mismatches_are_invalid
+    - runner: rust
+      file: backend/tests/model_import_adapter.rs
+      name: stub_case_projection_preserves_contract_order_and_splits_diagnostics
+    - runner: rust
       file: backend/tests/workspace_tools.rs
       name: example_tools_return_manifest_metadata_and_never_physical_paths
-  assertions: [rssbundle directories and invalid leaves remain visible, manifest metadata and relative paths are readable without physical paths, only declared files enter upload confirmation, apply creates a recoverable 20 plus para candidate batch without publishing or running]
-  fixtures: [nested rssbundle categories, valid manifest-backed example, invalid manifest sibling, undeclared bundle file]
+  assertions: [rssbundle directories and invalid leaves remain visible, schema v2 manifest projection metadata and relative paths are readable without physical paths, manifests must exactly match an enabled snapshot projection profile, apply executes only the controlled projector, projector outputs become catalog-driven Model Data or Struct candidates in declared order, diagnostic outputs stay out of candidates, no model or resource is published before confirmation]
+  fixtures: [nested rssbundle categories, valid schema v2 manifest-backed example, disabled and mismatched projection examples, diagnostic projector output, invalid manifest sibling, undeclared bundle file]
   contracts:
     - "route:GET /api/examples"
     - "route:GET /api/examples/{id}"
@@ -705,7 +731,7 @@
       name: conversational_agent_cannot_create_a_generic_script
     - runner: release
       file: scripts/test-release-integration
-      name: real DeepSeek and tensoreval complete the V4 semantic release journey
+      name: real LLM provider and tensoreval complete the V4 semantic release journey
   assertions: [tool calls are controlled and persisted, skills are loaded on demand, prepare_study is a durable success even if provider finalization fails, conversational tools cannot create or run scripts]
   fixtures: [embedded V4 agent bundle]
   contracts:
@@ -724,7 +750,7 @@
   tests:
     - runner: release
       file: scripts/test-release-integration
-      name: real DeepSeek and tensoreval complete the V4 semantic release journey
+      name: real LLM provider and tensoreval complete the V4 semantic release journey
     - runner: playwright
       file: integration-tests/e2e/v4-managed-studies.spec.ts
       name: managed Newton study confirms, repairs one engine failure, and publishes only the successful datasets
@@ -801,7 +827,7 @@
   tests:
     - runner: release
       file: scripts/test-release-integration
-      name: real DeepSeek and tensoreval complete the V4 semantic release journey
+      name: real LLM provider and tensoreval complete the V4 semantic release journey
     - runner: playwright
       file: integration-tests/e2e/v4-managed-studies.spec.ts
       name: managed Newton study confirms, repairs one engine failure, and publishes only the successful datasets
@@ -864,7 +890,7 @@
   tests:
     - runner: release
       file: scripts/test-release-integration
-      name: real DeepSeek and tensoreval complete the V4 semantic release journey
+      name: real LLM provider and tensoreval complete the V4 semantic release journey
     - runner: playwright
       file: integration-tests/e2e/v4-managed-studies.spec.ts
       name: managed Newton study confirms, repairs one engine failure, and publishes only the successful datasets
@@ -909,7 +935,7 @@
   tests:
     - runner: release
       file: scripts/test-release-engine
-      name: real_engine_imports_all_examples_and_runs_representative_studies
+      name: real_engine_projects_all_examples_and_runs_representative_studies
     - runner: playwright
       file: integration-tests/e2e/v4-managed-studies.spec.ts
       name: managed Newton study confirms, repairs one engine failure, and publishes only the successful datasets
@@ -922,6 +948,12 @@
     - runner: rust
       file: backend/tests/engine_resources.rs
       name: publishes_every_valid_dataframe_facade
+    - runner: rust
+      file: backend/tests/engine_resources.rs
+      name: publishes_enabled_case_projection_with_ordered_outputs
+    - runner: rust
+      file: backend/tests/engine_resources.rs
+      name: snapshot_hash_includes_case_projection_catalog
     - runner: rust
       file: backend/tests/engine_resources.rs
       name: invalid_facade_is_disabled_without_disabling_neighbors
@@ -943,13 +975,14 @@
     - runner: rust
       file: backend/tests/engine_resources.rs
       name: current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count
-  assertions: [catalog versions are validated independently, every valid DataFrame facade is published, invalid entries are isolated with stable diagnostics, transitive executable schemas determine contract hashes, presentation text does not, one persisted snapshot is current while referenced history remains]
+  assertions: [catalog versions are validated independently, every valid DataFrame facade is published, case projection schema v2 preserves ordered projector outputs and enabled or disabled diagnostics, invalid entries are isolated with stable diagnostics, transitive executable schemas and projection bytes determine snapshot identity, presentation text does not, one persisted snapshot is current while referenced history remains]
   fixtures: [frozen eig-rs catalog, current SPARROWZZ_DIR catalog, temporary V4 database]
   contracts:
     - "error:study_facades_missing"
     - "error:facade_contract_invalid"
     - "error:facade_schema_invalid"
     - "error:facade_unsupported_input_kind"
+    - "error:case_projection_invalid"
     - "error:study_catalog_invalid"
     - "error:study_model_read_failed"
 
@@ -1254,10 +1287,13 @@
     - runner: rust
       file: backend/tests/process_engine_v4.rs
       name: scenario_engine_queues_stderr_contract_monitor_and_cancellation_with_ordered_trace
+    - runner: rust
+      file: backend/tests/process_engine_v4.rs
+      name: process_case_projection_builds_a_controlled_script_and_enforces_exact_outputs
     - runner: release
       file: scripts/test-release-engine
-      name: real_engine_imports_all_examples_and_runs_representative_studies
-  assertions: [process commands are controlled, stdout and stderr are drained with bounded retained bytes and full hashes, timeout cancellation and monitor failures terminate the process group, result limits and path safety are enforced during execution and after exit without partial datasets, current resources are published immutably, binary replacement takes effect on the next call, release gate discovers only rssbundle cases and runs one representative for every present supported study kind]
+      name: real_engine_projects_all_examples_and_runs_representative_studies
+  assertions: [process commands are controlled, stdout and stderr are drained with bounded retained bytes and full hashes, timeout cancellation and monitor failures terminate the process group, result limits and path safety are enforced during execution and after exit without partial datasets, case projectors use one-shot internal scripts and exact ordered Parquet output contracts, current resources are published immutably, binary replacement takes effect on the next call, release gate executes the real projector for every published manifest case and validates its Model Data Struct and diagnostic outputs, then runs managed.rss for one successful representative of every referenced profile]
   fixtures: [fake process engine, dynamic rssbundle resource tree, current real eig-rs rssbundle catalog]
   contracts:
     - "tool:search_engine_docs"
@@ -1269,3 +1305,4 @@
     - "error:result_total_too_large"
     - "error:result_symlink_rejected"
     - "error:result_path_escape"
+    - "error:case_projection_output_mismatch"

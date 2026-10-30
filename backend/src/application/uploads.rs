@@ -5,14 +5,19 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::adapters::{ImportSpec, MODEL_TABLE_OUTPUTS, PARA_RESOURCE_OUTPUT, SimEngine};
+use crate::adapters::{
+    CaseProjectionSpec, ImportSpec, MODEL_TABLE_OUTPUTS, PARA_RESOURCE_OUTPUT,
+    ProjectionOutputSpec, SimEngine,
+};
 use crate::auth::CurrentUser;
 use crate::catalog::DataFrameContractKind;
 use crate::db::repositories::{
     DataResourceRepo, NewUploadCandidate, NewUploadFile, RepoError, UploadBatchRecordSet,
     UploadRepo,
 };
-use crate::engine_resources::{EngineResourceSnapshot, FacadeInputKind};
+use crate::engine_resources::{
+    EngineExample, EngineResourceSnapshot, FacadeInputKind, ProjectorOutputDisposition,
+};
 use crate::ingestion::{
     ArchiveExtractor, ArchiveLimits, normalize_csv_with_settings, normalize_excel_to_parquet,
 };
@@ -874,9 +879,11 @@ impl UploadBatchService {
                 })
             })
         });
-        let result = if record.files.len() == 1 && extension(&record.files[0].file_name) == "zip" {
+        let result = if record.batch.source_kind == "case" {
+            self.process_case(user, &record, &settings).await
+        } else if record.files.len() == 1 && extension(&record.files[0].file_name) == "zip" {
             self.process_archive(user, &record, &settings).await
-        } else if all_dss || directory_bundle || record.batch.source_kind == "case" {
+        } else if all_dss || directory_bundle {
             self.process_dss(user, &record, &settings).await
         } else {
             self.process_tabular(user, &record, &settings).await
@@ -920,6 +927,166 @@ impl UploadBatchService {
             .unwrap_or(&record.files[0].id);
         self.process_dss_tree(user, record, file_id, input, settings)
             .await
+    }
+
+    async fn process_case(
+        &self,
+        user: &CurrentUser,
+        record: &UploadBatchRecordSet,
+        settings: &ParseSettings,
+    ) -> Result<(), UploadBatchError> {
+        let example = self.case_example(record)?.clone();
+        let manifest = example.manifest.as_ref().ok_or_else(|| {
+            UploadBatchError::Invalid(
+                "case_projection_invalid".into(),
+                "案例缺少已验证的 projection manifest".into(),
+            )
+        })?;
+        let profile = self
+            .snapshot
+            .case_projections
+            .get_enabled(&manifest.projection.profile)
+            .ok_or_else(|| {
+                UploadBatchError::Invalid(
+                    "case_projection_unavailable".into(),
+                    "案例引用的投影配置在当前快照中不可用".into(),
+                )
+            })?
+            .clone();
+        let input = self.materialize_case_tree(record)?;
+        let source_file = record
+            .files
+            .iter()
+            .find(|file| file.relative_path.as_deref() == Some(manifest.source.entry.as_str()))
+            .ok_or_else(|| {
+                UploadBatchError::Invalid(
+                    "case_projection_source_missing".into(),
+                    "案例投影源入口未进入批次".into(),
+                )
+            })?;
+        let results = self
+            .data_dir
+            .join("upload-work")
+            .join(record.batch.id.to_string())
+            .join("results");
+        let projected = self
+            .engine
+            .project_case(CaseProjectionSpec {
+                input_tree: input,
+                source_entry: PathBuf::from(&manifest.source.entry),
+                projector: profile.projector.clone(),
+                outputs: profile
+                    .projector_outputs
+                    .iter()
+                    .map(|output| ProjectionOutputSpec {
+                        alias: output.alias.clone(),
+                        diagnostic: output.disposition == ProjectorOutputDisposition::Diagnostic,
+                    })
+                    .collect(),
+                result_dir: results,
+                timeout: std::time::Duration::ZERO,
+            })
+            .await
+            .map_err(|error| UploadBatchError::Invalid(error.code.clone(), error.to_string()))?;
+        let projection_diagnostics = read_projection_diagnostics(&projected.diagnostics)?;
+        let mut candidates = Vec::new();
+        let mut committed = Vec::new();
+        for dataset in projected.dataframes {
+            let output = profile
+                .projector_outputs
+                .iter()
+                .find(|output| output.alias == dataset.name)
+                .ok_or_else(|| {
+                    UploadBatchError::Invalid(
+                        "case_projection_output_mismatch".into(),
+                        "案例投影输出未出现在已发布合同中".into(),
+                    )
+                })?;
+            let purpose = match output.input_kind {
+                FacadeInputKind::Model => CandidatePurpose::ModelTable,
+                FacadeInputKind::Data | FacadeInputKind::Struct => CandidatePurpose::DataResource,
+            };
+            let artifact = match self.commit_path(user.storage_scope_id, &dataset.path).await {
+                Ok(value) => value,
+                Err(error) => {
+                    self.release_ids(user.storage_scope_id, &committed).await;
+                    return Err(error);
+                }
+            };
+            committed.push(artifact.id);
+            candidates.push(candidate(
+                record.batch.id,
+                &source_file.id,
+                None,
+                &dataset.name,
+                Some(&output.alias),
+                Some(purpose),
+                Some(output.schema_ref.clone()),
+                artifact.id,
+                &dataset.metadata,
+                serde_json::json!({
+                    "source": "case_projection",
+                    "exampleId": example.id,
+                    "profile": profile.id,
+                    "projector": profile.projector,
+                    "targetFunction": profile.target_function,
+                    "position": output.position,
+                    "inputKind": output.input_kind,
+                    "disposition": output.disposition,
+                    "engineResourceSnapshot": self.snapshot.id
+                }),
+            ));
+        }
+        let mut diagnostics = batch_diagnostics(record, settings, None);
+        diagnostics["caseProjection"] = serde_json::json!({
+            "exampleId": example.id,
+            "profile": profile.id,
+            "projector": profile.projector,
+            "targetFunction": profile.target_function,
+            "diagnosticOutputs": projection_diagnostics
+        });
+        if let Err(error) = self
+            .repo
+            .replace_candidates(
+                record.batch.id,
+                candidates,
+                "ready_to_confirm",
+                serde_json::to_string(settings).unwrap(),
+                diagnostics.to_string(),
+                now_ms(),
+            )
+            .await
+        {
+            self.release_ids(user.storage_scope_id, &committed).await;
+            return Err(error.into());
+        }
+        self.release_previous(user.storage_scope_id, record).await;
+        Ok(())
+    }
+
+    fn case_example<'a>(
+        &'a self,
+        record: &UploadBatchRecordSet,
+    ) -> Result<&'a EngineExample, UploadBatchError> {
+        self.snapshot
+            .examples
+            .iter()
+            .find(|example| {
+                example.importable
+                    && example.files.len() == record.files.len()
+                    && example.files.iter().all(|source| {
+                        record.files.iter().any(|file| {
+                            file.relative_path.as_deref() == Some(source.virtual_path.as_str())
+                                && file.sha256 == source.sha256
+                        })
+                    })
+            })
+            .ok_or_else(|| {
+                UploadBatchError::Invalid(
+                    "case_snapshot_contract_mismatch".into(),
+                    "案例批次与已发布引擎资源快照不一致".into(),
+                )
+            })
     }
 
     async fn process_archive(
@@ -1229,11 +1396,26 @@ impl UploadBatchService {
     }
 
     fn materialize_tree(&self, record: &UploadBatchRecordSet) -> Result<PathBuf, UploadBatchError> {
+        self.materialize_tree_at(record, "input")
+    }
+
+    fn materialize_case_tree(
+        &self,
+        record: &UploadBatchRecordSet,
+    ) -> Result<PathBuf, UploadBatchError> {
+        self.materialize_tree_at(record, "input.rssbundle")
+    }
+
+    fn materialize_tree_at(
+        &self,
+        record: &UploadBatchRecordSet,
+        directory: &str,
+    ) -> Result<PathBuf, UploadBatchError> {
         let root = self
             .data_dir
             .join("upload-work")
             .join(record.batch.id.to_string())
-            .join("input");
+            .join(directory);
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root)?;
         for file in &record.files {
@@ -1408,4 +1590,57 @@ fn ambiguous_delimiter(bytes: &[u8]) -> bool {
         .filter(|c| first.contains(*c))
         .count()
         > 1
+}
+
+fn read_projection_diagnostics(
+    datasets: &[crate::adapters::EngineDatasetOutput],
+) -> Result<Vec<serde_json::Value>, UploadBatchError> {
+    const MAX_ROWS: u64 = 100;
+    const MAX_BYTES: u64 = 1024 * 1024;
+    let mut output = Vec::with_capacity(datasets.len());
+    for dataset in datasets {
+        if dataset.metadata.row_count > MAX_ROWS || dataset.metadata.size_bytes > MAX_BYTES {
+            return Err(UploadBatchError::Invalid(
+                "case_projection_diagnostic_limit".into(),
+                "案例投影诊断超过 100 行或 1 MiB 限制".into(),
+            ));
+        }
+        let batches = if dataset.metadata.row_count == 0 {
+            Vec::new()
+        } else {
+            ParquetInspector::page(&dataset.path, 0, MAX_ROWS as usize).map_err(|error| {
+                UploadBatchError::Invalid(error.code().into(), error.to_string())
+            })?
+        };
+        let mut conversion_diagnostics = BTreeMap::new();
+        let mut rows = Vec::new();
+        for batch in batches {
+            for row_index in 0..batch.num_rows() {
+                let mut row = serde_json::Map::new();
+                for (column_index, field) in batch.schema().fields().iter().enumerate() {
+                    let value = super::dataframe_reader::value(
+                        batch.column(column_index).as_ref(),
+                        row_index,
+                        &mut conversion_diagnostics,
+                    )
+                    .map_err(|error| {
+                        UploadBatchError::Invalid(
+                            "case_projection_diagnostic_invalid".into(),
+                            error.to_string(),
+                        )
+                    })?;
+                    row.insert(field.name().clone(), value);
+                }
+                rows.push(serde_json::Value::Object(row));
+            }
+        }
+        output.push(serde_json::json!({
+            "name": dataset.name,
+            "rowCount": dataset.metadata.row_count,
+            "schema": dataset.metadata.columns,
+            "rows": rows,
+            "conversionDiagnostics": conversion_diagnostics
+        }));
+    }
+    Ok(output)
 }

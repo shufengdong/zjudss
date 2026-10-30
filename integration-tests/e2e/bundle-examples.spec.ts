@@ -2,7 +2,7 @@ import { resolve } from 'node:path'
 import type { APIRequestContext, Page } from '@playwright/test'
 import { test, expect } from './fixtures'
 import { createSessionFromPage } from './helpers/journeys'
-import { confirmLatestModelUpload } from './helpers/uploads'
+import { confirmLatestModelUpload, openLatestUploadBatch, openMutableDraft } from './helpers/uploads'
 
 const fixtures = resolve(process.cwd(), '../integration-tests/fixtures/uploads')
 async function workspace(api:APIRequestContext,id:string){return (await (await api.get(`/api/sessions/${id}/workspace`)).json()) as any}
@@ -22,13 +22,13 @@ test('directory and ZIP bundles publish equivalent immutable model content',asyn
   await upload(page,resolve(fixtures,'bundle/demo.rssbundle'),true)
   await expect.poll(async()=>(await workspace(api,direct)).draft?.tables?.length).toBe(20)
   expect((await (await api.get(`/api/sessions/${direct}/data-resources`)).json()).resources.map((item:any)=>item.alias)).toContain('para')
-  await page.getByRole('button',{name:/^展开可变草稿/}).click()
+  await openMutableDraft(page)
   await page.getByRole('button',{name:'生成版本'}).click()
   const directHash=(await workspace(api,direct)).active.contentHash
   const zipped=await createSessionFromPage(page,'ZIP bundle')
   await upload(page,resolve(fixtures,'bundle/demo.zip'))
   await expect.poll(async()=>(await workspace(api,zipped)).draft?.tables?.length).toBe(20)
-  await page.getByRole('button',{name:/^展开可变草稿/}).click()
+  await openMutableDraft(page)
   await page.getByRole('button',{name:'生成版本'}).click()
   const zippedVersion=(await workspace(api,zipped)).active
   expect(zippedVersion.contentHash).toBe(directHash)
@@ -41,7 +41,7 @@ test('single-Solve bundles become drafts while repeated Solve and specialist lif
   const accepted=await workspace(api,session)
   expect(accepted.draft.tables).toHaveLength(20)
   const identity={id:accepted.draft.id,revision:accepted.draft.revision,tables:accepted.draft.tables.map((table:any)=>table.contentHash)}
-  await expect(page.getByRole('button',{name:/^展开可变草稿/})).toContainText(`修订 ${accepted.draft.revision}`)
+  await expect(await openMutableDraft(page)).toContainText(`修订 ${accepted.draft.revision}`)
 
   for(const name of ['unsupported-multi-solve.rssbundle','unsupported-specialist.rssbundle']){
     const responsePromise=page.waitForResponse(isCreateUpload)
@@ -54,8 +54,9 @@ test('single-Solve bundles become drafts while repeated Solve and specialist lif
     expect(failed.diagnostics.errors[0].code).toBe('model_import_unsupported')
     const current=await workspace(api,session)
     expect({id:current.draft.id,revision:current.draft.revision,tables:current.draft.tables.map((table:any)=>table.contentHash)}).toEqual(identity)
+    await openLatestUploadBatch(page)
     const discardResponse=page.waitForResponse(candidate=>candidate.request().method()==='DELETE'&&new URL(candidate.url()).pathname===`/api/upload-batches/${batchId}`)
-    await page.getByRole('button',{name:'抛弃'}).last().click()
+    await page.getByRole('region',{name:`上传批次 ${batchId}`}).getByRole('button',{name:'抛弃'}).click()
     expect((await discardResponse).status()).toBe(204)
     expect((await (await api.get(`/api/upload-batches/${batchId}`)).json()).uploadBatch.status).toBe('failed')
   }
@@ -72,7 +73,7 @@ test('case application uses the fixed action and creates only a mutable draft',a
   const detail=page.getByLabel('案例详情“E2E demo”')
   await expect(detail).toContainText('E2E/Demo/E2E demo.rssbundle')
   await expect(detail).toContainText('dss/model.dss')
-  await expect(detail).toContainText('execution_plan')
+  await expect(detail).toContainText('static_power_flow')
   await expect(detail).toContainText('dss-entry：1')
   await page.getByRole('button',{name:'使用案例“E2E demo”'}).click()
   await expect(page.getByRole('button',{name:'确认用途并发布'}).last()).toBeVisible()

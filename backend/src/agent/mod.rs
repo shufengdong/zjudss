@@ -12,9 +12,9 @@ pub mod knowledge;
 pub mod prompt;
 pub mod script_author;
 
-pub use factory::{AgentBuildRequest, AgentFactory, DeepSeekAgentFactory};
+pub use factory::{AgentBuildRequest, AgentFactory, LlmAgentFactory};
 pub use script_author::{
-    DeepSeekScriptAuthor, EngineDocRef, ScriptAuthor, ScriptAuthorError, ScriptGenerationRequest,
+    EngineDocRef, LlmScriptAuthor, ScriptAuthor, ScriptAuthorError, ScriptGenerationRequest,
     ScriptRepairRequest,
 };
 
@@ -28,12 +28,24 @@ pub struct LlmConfig {
 }
 
 impl LlmConfig {
-    /// 从环境变量读取，缺省时回落到 DeepSeek 默认值。
+    /// 从环境变量读取，空值按 provider 回落到受支持的默认模型。
     pub fn from_env() -> Self {
+        let provider = std::env::var("LLM_PROVIDER")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "deepseek".to_string());
+        let default_model = match provider.as_str() {
+            "bailian" => "qwen3.6-flash",
+            _ => rig::providers::deepseek::DEEPSEEK_V4_PRO,
+        };
         Self {
-            provider: std::env::var("LLM_PROVIDER").unwrap_or_else(|_| "deepseek".to_string()),
+            provider,
             model: std::env::var("LLM_MODEL")
-                .unwrap_or_else(|_| rig::providers::deepseek::DEEPSEEK_V4_PRO.to_string()),
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| default_model.to_string()),
         }
     }
 }
@@ -42,6 +54,7 @@ impl LlmConfig {
 pub enum LlmError {
     UnsupportedProvider(String),
     OpenAiNotImplemented,
+    MissingConfiguration(&'static str),
     Provider(String),
 }
 
@@ -54,6 +67,9 @@ impl std::fmt::Display for LlmError {
                     f,
                     "OpenAI provider 尚未接入，请设置 LLM_PROVIDER=deepseek 或实现此分支"
                 )
+            }
+            LlmError::MissingConfiguration(name) => {
+                write!(f, "缺少或为空的 LLM 配置: {name}")
             }
             LlmError::Provider(e) => write!(f, "provider 初始化失败: {e}"),
         }
@@ -68,7 +84,7 @@ pub fn build_agent_with_prompt(
     tools: Vec<RegisteredTool>,
     prompt: String,
 ) -> Result<Agent, LlmError> {
-    DeepSeekAgentFactory::new(config.clone()).build(AgentBuildRequest {
+    LlmAgentFactory::new(config.clone()).build(AgentBuildRequest {
         tools,
         system_prompt: prompt,
     })

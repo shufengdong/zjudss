@@ -11,7 +11,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 use zjudss::adapters::{SimEngine, StubEngine};
 use zjudss::agent::knowledge::AgentKnowledge;
-use zjudss::agent::{AgentFactory, DeepSeekAgentFactory, LlmConfig, ScriptAuthor};
+use zjudss::agent::{AgentFactory, LlmAgentFactory, LlmConfig, ScriptAuthor};
 use zjudss::application::{AppState, RunScheduler};
 use zjudss::application::{CandidateDecision, CandidatePurpose, UploadFile, UploadSourceKind};
 use zjudss::auth::{AuthService, CurrentUser, UserId};
@@ -26,6 +26,7 @@ pub struct TestApp {
     pub pool: DbPool,
     pub state: AppState,
     pub live_engine_root: std::path::PathBuf,
+    pub data_dir: std::path::PathBuf,
     _root: TempDir,
 }
 
@@ -225,7 +226,7 @@ impl TestApp {
         );
         let state = AppState::new_for_e2e(
             pool.clone(),
-            data_dir,
+            data_dir.clone(),
             agent_factory,
             engine,
             auth,
@@ -245,6 +246,7 @@ impl TestApp {
             pool,
             state,
             live_engine_root: root.path().join("engine-fixture"),
+            data_dir,
             _root: root,
         }
     }
@@ -263,7 +265,7 @@ impl TestApp {
             secure,
             scheduler,
             std::sync::Arc::new(StubEngine),
-            std::sync::Arc::new(DeepSeekAgentFactory::new(LlmConfig {
+            std::sync::Arc::new(LlmAgentFactory::new(LlmConfig {
                 provider: "deepseek".to_string(),
                 model: "test-model".to_string(),
             })),
@@ -288,7 +290,7 @@ impl TestApp {
             false,
             RunScheduler::new(8, 2, 32),
             engine,
-            std::sync::Arc::new(DeepSeekAgentFactory::new(LlmConfig {
+            std::sync::Arc::new(LlmAgentFactory::new(LlmConfig {
                 provider: "deepseek".to_string(),
                 model: "test-model".to_string(),
             })),
@@ -326,12 +328,19 @@ impl TestApp {
         let functions = include_bytes!("../fixtures/engine_resources/catalog/functions.json");
         let study_facades =
             include_bytes!("../fixtures/engine_resources/catalog/study_facades.json");
+        let case_projections =
+            include_bytes!("../fixtures/engine_resources/catalog/case_projections.json");
         let guide = b"# Test engine guide\nfixture content\n";
         std::fs::write(dss_root.join("docs/catalog/dataframes.json"), dataframes).unwrap();
         std::fs::write(dss_root.join("docs/catalog/functions.json"), functions).unwrap();
         std::fs::write(
             dss_root.join("docs/catalog/study_facades.json"),
             study_facades,
+        )
+        .unwrap();
+        std::fs::write(
+            dss_root.join("docs/catalog/case_projections.json"),
+            case_projections,
         )
         .unwrap();
         std::fs::write(dss_root.join("docs/guide.md"), guide).unwrap();
@@ -352,21 +361,24 @@ impl TestApp {
         let bundle = dss_root.join("rssbundle/E2E/Demo/E2E demo.rssbundle");
         std::fs::create_dir_all(bundle.join("dss")).unwrap();
         let bundle_main = b"model = import_dss(\"dss/model.dss\");\n";
+        let bundle_managed = b"[bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para] = project_dss_static_model(\"dss/model.dss\");\n[voltage] = ds_newton_raphson_pf(bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para);\n";
         let bundle_source = b"new circuit.e2e basekv=10\n";
         std::fs::write(bundle.join("main.rss"), bundle_main).unwrap();
+        std::fs::write(bundle.join("managed.rss"), bundle_managed).unwrap();
         std::fs::write(bundle.join("dss/model.dss"), bundle_source).unwrap();
         let main_hash = hex::encode(Sha256::digest(bundle_main));
+        let managed_hash = hex::encode(Sha256::digest(bundle_managed));
         let source_hash = hex::encode(Sha256::digest(bundle_source));
         let manifest = serde_json::json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "artifact": "mems.dss-rss-bundle",
             "generator": "zjudss-test/1",
             "psa_contract_version": "0.1.0",
             "entry": "main.rss",
             "study": {
-                "kind": "execution_plan",
+                "kind": "static_power_flow",
                 "compatibility": "opendss-native",
-                "solver": "radial",
+                "solver": "newton",
                 "results": ["voltage"]
             },
             "source": {
@@ -374,9 +386,22 @@ impl TestApp {
                 "root": "dss",
                 "tree_sha256": source_hash
             },
+            "projection": {
+                "source_function": "ds_newton_raphson_pf",
+                "profile": "dss_static_newton_v1",
+                "projector": "project_dss_static_model",
+                "target_function": "ds_newton_raphson_pf",
+                "managed_entry": "managed.rss",
+                "status": "enabled",
+                "stable_diagnostic": "PSA.DSS.PROJECTION.INVALID",
+                "results": [
+                    {"source": "voltage", "target": "bus_phase", "binding": "result_voltage"}
+                ]
+            },
             "files": [
                 {"path": "dss/model.dss", "role": "dss-entry", "sha256": source_hash},
-                {"path": "main.rss", "role": "main-rss", "sha256": main_hash}
+                {"path": "main.rss", "role": "main-rss", "sha256": main_hash},
+                {"path": "managed.rss", "role": "managed-rss", "sha256": managed_hash}
             ],
             "inputs": []
         });
@@ -459,6 +484,7 @@ impl TestApp {
             pool,
             state,
             live_engine_root,
+            data_dir: config.data_dir,
             _root: root,
         }
     }

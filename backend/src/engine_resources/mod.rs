@@ -1,6 +1,7 @@
 mod examples;
 mod facades;
 mod knowledge;
+mod projections;
 mod snapshot;
 
 use std::collections::{BTreeMap, HashSet};
@@ -13,20 +14,25 @@ use crate::adapters::ENGINE_CONTRACT_VERSION;
 use crate::catalog::SchemaRegistry;
 
 pub use examples::{
-    EngineExample, ExampleManifest, ExampleManifestFile, ExampleSource, ExampleSourceFile,
-    ExampleStudy,
+    EngineExample, ExampleManifest, ExampleManifestFile, ExampleProjection,
+    ExampleProjectionResult, ExampleSource, ExampleSourceFile, ExampleStudy,
 };
 pub use facades::{
     DisabledFacadeDiagnostic, FacadeContract, FacadeInputContract, FacadeInputKind, FacadeRegistry,
     FacadeResultContract, FacadeSearchResult, ResultCondition, ResultSelectionRule,
 };
 pub use knowledge::{DocSearchHit, DocSection, EngineKnowledge};
+pub use projections::{
+    CaseProjectionProfile, CaseProjectionRegistry, ProjectorOutputContract,
+    ProjectorOutputDisposition,
+};
 use snapshot::SourceFileSpec;
 pub use snapshot::{CatalogSchemaVersions, EngineResourceSnapshot, ResourceLimits};
 
 pub const SUPPORTED_FUNCTIONS_SCHEMA_VERSION: u32 = 2;
 pub const SUPPORTED_STUDY_FACADES_SCHEMA_VERSION: u32 = 1;
-pub const SUPPORTED_DATAFRAMES_SCHEMA_VERSION: u32 = 3;
+pub const SUPPORTED_CASE_PROJECTIONS_SCHEMA_VERSION: u32 = 2;
+pub const SUPPORTED_DATAFRAMES_SCHEMA_VERSION: u32 = 4;
 pub const SUPPORTED_DTYPE_GRAMMAR_VERSION: u32 = 1;
 
 #[derive(Debug)]
@@ -103,11 +109,18 @@ impl EngineResourceRegistry {
                 limits.max_document_bytes,
             )?
         };
+        let case_projections = read_safe_bounded(
+            &dss_root,
+            "docs/catalog/case_projections.json",
+            limits.max_document_bytes,
+        )?;
         let catalog_json: serde_json::Value = serde_json::from_slice(&dataframes)
             .map_err(|error| EngineResourceError::new("catalog_invalid", error.to_string()))?;
         let functions_json: serde_json::Value = serde_json::from_slice(&functions)
             .map_err(|error| EngineResourceError::new("catalog_invalid", error.to_string()))?;
         let study_facades_json: serde_json::Value = serde_json::from_slice(&study_facades)
+            .map_err(|error| EngineResourceError::new("catalog_invalid", error.to_string()))?;
+        let case_projections_json: serde_json::Value = serde_json::from_slice(&case_projections)
             .map_err(|error| EngineResourceError::new("catalog_invalid", error.to_string()))?;
         let catalog_schema_versions = CatalogSchemaVersions {
             functions: supported_schema_version(
@@ -119,6 +132,11 @@ impl EngineResourceRegistry {
                 &study_facades_json,
                 "study_facades",
                 SUPPORTED_STUDY_FACADES_SCHEMA_VERSION,
+            )?,
+            case_projections: supported_schema_version(
+                &case_projections_json,
+                "case_projections",
+                SUPPORTED_CASE_PROJECTIONS_SCHEMA_VERSION,
             )?,
             dataframes: supported_schema_version(
                 &catalog_json,
@@ -144,6 +162,8 @@ impl EngineResourceRegistry {
             FacadeRegistry::from_catalogs(&study_facades_json, &mut schemas)
                 .map_err(|error| EngineResourceError::new("catalog_invalid", error.to_string()))?
         };
+        let case_projection_registry =
+            CaseProjectionRegistry::from_catalogs(&case_projections_json, &facades, &mut schemas)?;
 
         let mut docs = Vec::new();
         let mut documents = BTreeMap::new();
@@ -171,7 +191,13 @@ impl EngineResourceRegistry {
         }
         let bundles =
             discover_bundle_manifests(&dss_root, limits.max_examples, limits.max_example_bytes)?;
-        let examples = examples::load_examples(&engine_root, &dss_root, &bundles, limits)?;
+        let examples = examples::load_examples(
+            &engine_root,
+            &dss_root,
+            &bundles,
+            &case_projection_registry,
+            limits,
+        )?;
         let knowledge = EngineKnowledge::from_documents(&docs);
         let mut source_hashes = BTreeMap::new();
         insert_source_hash(
@@ -191,6 +217,11 @@ impl EngineResourceRegistry {
                 hash_bytes(&study_facades),
             )?;
         }
+        insert_source_hash(
+            &mut source_hashes,
+            "dss/docs/catalog/case_projections.json".to_string(),
+            hash_bytes(&case_projections),
+        )?;
         for (path, bytes) in &documents {
             insert_source_hash(&mut source_hashes, format!("dss/{path}"), hash_bytes(bytes))?;
         }
@@ -222,6 +253,7 @@ impl EngineResourceRegistry {
         for (name, version) in [
             ("functions", catalog_schema_versions.functions),
             ("study_facades", catalog_schema_versions.study_facades),
+            ("case_projections", catalog_schema_versions.case_projections),
             ("dataframes", catalog_schema_versions.dataframes),
             ("dtype_grammar", catalog_schema_versions.dtype_grammar),
         ] {
@@ -279,17 +311,21 @@ impl EngineResourceRegistry {
             dataframes_sha256: hash_bytes(&dataframes),
             functions_sha256: hash_bytes(&functions),
             study_facades_sha256: hash_bytes(&study_facades),
+            case_projections_sha256: hash_bytes(&case_projections),
             source_root: dss_root,
             engine_root,
             catalog_json,
             functions_json,
             study_facades_json,
+            case_projections_json,
             schemas,
             facades,
+            case_projections: case_projection_registry,
             catalog_bytes: BTreeMap::from([
                 ("dataframes.json".to_string(), dataframes),
                 ("functions.json".to_string(), functions),
                 ("study_facades.json".to_string(), study_facades),
+                ("case_projections.json".to_string(), case_projections),
             ]),
             documents,
             knowledge,
@@ -356,6 +392,11 @@ impl EngineResourceRegistry {
                         "catalogEntries": snapshot.facades.catalog_entry_count(),
                         "enabled": snapshot.facades.enabled_count(),
                         "diagnostics": snapshot.facades.diagnostics(),
+                    },
+                    "caseProjections": {
+                        "catalogEntries": snapshot.case_projections.catalog_entry_count(),
+                        "enabled": snapshot.case_projections.enabled_count(),
+                        "diagnostics": snapshot.case_projections.diagnostics(),
                     },
                     "files": inventory,
                 }))

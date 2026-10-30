@@ -3,7 +3,7 @@ import type { APIRequestContext, Locator, Page } from '@playwright/test'
 import { expect } from '../fixtures'
 import type { ControlClient } from './control'
 import { send } from './journeys'
-import { confirmLatestModelUpload } from './uploads'
+import { confirmLatestModelUpload, openMutableDraft } from './uploads'
 
 const fixtures = resolve(process.cwd(), '../integration-tests/fixtures/uploads')
 
@@ -33,10 +33,7 @@ export async function publishExampleModel(page: Page, api: APIRequestContext, se
   await page.locator('input[type=file]').nth(1).setInputFiles(resolve(fixtures, 'bundle/demo.rssbundle'))
   await confirmLatestModelUpload(page)
   await expect.poll(async () => ((await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()) as any).draft?.tables?.length).toBe(20)
-  if (await page.getByRole('button', { name: '展开结果面板' }).isVisible()) {
-    await page.getByRole('button', { name: '展开结果面板' }).click()
-  }
-  await page.getByRole('button', { name: /^展开可变草稿/ }).click()
+  await openMutableDraft(page)
   await page.getByRole('button', { name: '生成版本' }).click()
   await expect.poll(async () => ((await (await api.get(`/api/sessions/${sessionId}/workspace`)).json()) as any).active?.id).toBeTruthy()
 }
