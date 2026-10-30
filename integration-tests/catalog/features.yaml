@@ -647,7 +647,7 @@
 - id: VERSION-001
   source: docs/integration-testing-design.md#coverage-matrix
   title: Version publication activation and impact-checked deletion are explicit
-  layers: [api, application, browser]
+  layers: [api, application, agent, browser]
   lanes: [pr]
   tests:
     - runner: vitest
@@ -665,10 +665,22 @@
     - runner: rust
       file: backend/tests/model_versions.rs
       name: duplicate_model_content_keeps_original_description
+    - runner: rust
+      file: backend/tests/workspace_tools.rs
+      name: publish_model_version_requires_model_intake_and_publishes_only_the_exact_draft
+    - runner: rust
+      file: backend/tests/workspace_tools.rs
+      name: publish_model_version_replays_by_message_and_rejects_stale_or_foreign_drafts
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: explicit_publish_request_uses_exact_draft_and_activates_the_version
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: script_or_result_generation_words_do_not_implicitly_publish_a_draft
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
       name: CSV imports merge by whole table, reruns use the latest active model, and history activation/deletion is explicit
-  assertions: [publish accepts an optional bounded description and displays the persisted response, duplicate content preserves the original description, activation is explicit, deletion uses fresh impact token]
+  assertions: [publish accepts an optional bounded description and displays the persisted response, explicit natural-language publication uses the exact inspected draft revision and auto-activates while import modification and study intent never publish implicitly, duplicate content preserves the original description, historical activation is explicit, deletion uses fresh impact token]
   fixtures: [two model versions]
   contracts:
     - "route:GET /api/sessions/{id}/versions"
@@ -677,6 +689,7 @@
     - "route:DELETE /api/versions/{id}"
     - "route:POST /api/versions/{id}/activate"
     - "route:POST /api/versions/{id}/deletion-preview"
+    - "tool:publish_model_version"
 
 - id: EXAMPLE-001
   source: docs/integration-testing-design.md#coverage-matrix

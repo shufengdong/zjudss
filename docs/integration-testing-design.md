@@ -8,6 +8,8 @@
   ScenarioEngine，但不绕过 HTTP 或 UI。
 - Release：检出并构建 eig-rs 当前默认分支的真实 tensoreval，并按 `LLM_PROVIDER` 使用 DeepSeek 或百炼的真实
   secret/endpoint；缺少所选 provider 的配置、资源或当前接口不兼容时失败，不跳过，也不回退到旧 artifact。
+- Manual case journey：仅由用户显式执行的真实 LLM/tensoreval 长测，逐个覆盖当前 snapshot 的可导入案例；不属于
+  PR、普通 E2E 或 Release lane，也不作为自动功能追溯的替代证据。
 
 ## Coverage matrix
 
@@ -64,6 +66,8 @@ RUN-001 在 Rust 层验证创建、重放、列表和详情都返回绑定脚本
 应用层 scripted-agent 测试额外覆盖配置卡已创建后的 provider 收尾失败不覆盖成功、对话 Agent 无脚本创建权限；
 并用“求解牛顿法潮流”等原始短指令验证显式函数选择不被拓扑改写，缺 Data/Struct、资源歧义和禁用门面都只返回
 选择或配置卡，不提前生成或运行脚本。
+模型发布行为还覆盖明确发布请求使用精确 draft/revision 并自动激活、消息级幂等、内容去重、stale/跨用户拒绝，以及
+普通修改、研究和“生成脚本/结果”文字不触发隐式发布。
 
 ScenarioEngine 场景由控制端按调用顺序排队，不使用 sleep；timeout/cancel 使用 barrier，并能排队提供二进制 stderr、
 结果合同错误和监控错误。进程 adapter 的 Rust 测试使用独立 helper process 验证双流超过 1 MiB 仍持续排空、完整 hash、
@@ -85,6 +89,12 @@ npm run test:e2e
 cd ..
 ./scripts/check-functional-coverage --require-pr
 ```
+
+需要人工选择全案例语义长测时，从仓库根显式运行 `./scripts/test-manual-case-journeys`。可设置
+`CASE_JOURNEY_EXAMPLE_ID` 或 `CASE_JOURNEY_FACADE` 聚焦，或用 `CASE_JOURNEY_RESUME_REPORT` 从先前报告只选择失败和未运行
+案例。套件使用独立临时 SQLite/`DATA_DIR`、单 worker 和多小时 timeout，逐案例原子写入脱敏的
+`target/manual-case-journeys/report.json`，结束后清理隔离数据。失败提示词由人审阅修改映射与测试手册，再筛选重跑；
+测试不会让 LLM 自动改写提示词。完整执行前不得根据 `--list`、聚焦案例或 144/144 projector 报告声称全案例语义链路通过。
 
 候选发布执行 `scripts/test-release-integration`。脚本缺省使用 DeepSeek，也可通过 `LLM_PROVIDER=bailian`、
 `LLM_MODEL`、`BAILIAN_API_KEY` 和 `BAILIAN_BASE_URL` 切换到百炼；endpoint 与 API Key 必须同地域。报告记录测试 ID、Agent bundle hash、用户 seed hash/数量、engine

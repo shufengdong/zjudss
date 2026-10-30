@@ -18,7 +18,7 @@ TypeScript、Vite 和 ECharts。仿真及派生分析结果统一保存为 Snapp
 - 单 RSS、rssbundle、CSV、Excel、Parquet 和分批追加上传；DataFrame 类型按列名推断。
 - active/draft 模型工作区、不可变版本、错误文件重传、替换、移除、激活和回退。
 - 内置案例搜索与导入；案例导入后可继续用自然语言修改参数并重跑。
-- 22 个 Agent 工具、5 个按需领域技能、动态研究门面目录和独立无工具 ScriptAuthor。
+- 23 个 Agent 工具、5 个按需领域技能、明确自然语言发布当前精确草稿、动态研究门面目录和独立无工具 ScriptAuthor。
 - 统一上传用途确认；静态 DSS 的 21 个输出拆为 20 张模型表和普通 `para` 数据资源。
 - 研究配置卡、Struct 参数卡、Data 列映射、结果选择、确认后自动执行和最多 3 次脚本修正。
 - 原生 Parquet 仿真结果、自然语言结果分析、分页表格、六类受控 ECharts 视图和任务比较。
@@ -36,7 +36,7 @@ zjudss/
 │       ├── api/           # REST/SSE handler 与 DTO
 │       ├── application/   # 会话、调度、工作区、分析等业务编排
 │       ├── agent/         # 可选 LLM provider、Agent 与按需知识加载
-│       ├── tools/         # 22 个受控 Agent 工具
+│       ├── tools/         # 23 个受控 Agent 工具
 │       ├── adapters/      # tensoreval 唯一调用边界
 │       └── db/            # SQLite repository
 ├── frontend/              # React 工作台、历史、上传、表格和图表
@@ -68,7 +68,7 @@ cp .env.example .env
 # 必填：TENSOREVAL_BIN、SPARROWZZ_DIR，以及所选 provider 的 LLM 配置
 # DeepSeek：LLM_PROVIDER=deepseek、DEEPSEEK_API_KEY
 # 百炼：LLM_PROVIDER=bailian、LLM_MODEL、BAILIAN_API_KEY、BAILIAN_BASE_URL
-# 可选：AGENT_BUNDLE_VERSION（缺省 v4.0.0）、DATABASE_URL、DATA_DIR 等
+# 可选：AGENT_BUNDLE_VERSION（缺省 v4.1.0）、DATABASE_URL、DATA_DIR 等
 cargo run --release
 ```
 
@@ -112,6 +112,15 @@ cd ..
 ./scripts/check-functional-coverage --require-pr
 git diff --check
 ```
+
+全部案例的真实 LLM/引擎语义长测只在测试人员明确选择时运行，不属于上述自动回归：
+
+```bash
+./scripts/test-manual-case-journeys
+# 可选：CASE_JOURNEY_EXAMPLE_ID、CASE_JOURNEY_FACADE、CASE_JOURNEY_RESUME_REPORT
+```
+
+逐案例脱敏报告写入 `target/manual-case-journeys/report.json`；失败后由人审阅手册提示词并筛选重跑，不自动让 LLM 改写。
 
 普通 PR 使用 Scripted LLM 和 ScenarioEngine 走生产前后端代码路径；候选发布另以 `LLM_PROVIDER` 选择的真实模型和运行时构建的
 eig-rs 当前默认分支验证外部依赖。测试分层、覆盖率定义和当前数量见

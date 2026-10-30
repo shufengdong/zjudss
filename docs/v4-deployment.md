@@ -27,7 +27,7 @@ checkout、pull、reset、clean、构建或改写配置的 eig-rs 工作树。
 | `DATABASE_URL` | `sqlite://backend.db` |
 | `DATA_DIR` | `data` |
 | `LLM_PROVIDER` / `LLM_MODEL` | `deepseek` / `deepseek-v4-pro` |
-| `AGENT_BUNDLE_VERSION` | `v4.0.0` |
+| `AGENT_BUNDLE_VERSION` | `v4.1.0` |
 | `SESSION_TTL_DAYS` / `SESSION_COOKIE_SECURE` | `30` / `false` |
 | `AGENT_MAX_CONCURRENT_RUNS` / `AGENT_MAX_USER_RUNS` / `AGENT_QUEUE_CAPACITY` | `8` / `2` / `32` |
 | `TENSOREVAL_TIMEOUT_MS` / `AGENT_MODEL_RETRY_MAX` | `120000` / `2` |
@@ -184,7 +184,7 @@ cargo build --manifest-path target/eig-rs/Cargo.toml --release -p mems --bin ten
 eig-rs 默认 features 代替这组显式合同。Cargo 参数的正式拼写是 `--no-default-features`。
 
 真实旅程从固定用户登录开始，上传 21 个静态导入 DataFrame 并确认拆分为 20 张模型表和一个 `para` 普通资源，
-显式生成版本，让对话 Agent 通过动态目录建立研究配置，用户确认后由 ScriptAuthor 生成、执行并在需要时修正脚本；
+通过明确自然语言让 Agent 发布精确草稿并自动激活，让对话 Agent 通过动态目录建立研究配置，用户确认后由 ScriptAuthor 生成、执行并在需要时修正脚本；
 成功后再次点击脚本“运行”，对 list 型 `bus_voltage` 做真实 `select` 结果分析，并用带稳定键和标量数值列的
 `load_state` 验证运行比较，再删除一个来源结果并验证运行及物化派生仍可读取。引擎门禁
 另外真实执行两种 import profile、命名 input、多个 Snappy Parquet 输出和失败诊断。报告保存测试 ID、Agent
@@ -202,6 +202,24 @@ bundle hash、用户 seed hash/数量、engine contract/checks 和 binary hash�
 `managed.rss`，当前共 6 个代表。执行前按 profile 的 `resultSelector` 合同，将 manifest `study.results` 经 `resultMap` 映射后的 target
 集合写入指定 Struct 字段；因此真实门禁同时覆盖每个当前 study family、案例结果选择和实际输出数量，而不写死
 门面数、profile 数或案例数。
+
+## Opt-in all-case semantic journey
+
+候选发布门禁的 144/144 证明每个案例 projector 与目录合同可用，不证明后续对话发布、提示词、研究配置、脚本和结果链路。
+需要该证据时，由已知会把案例/工作区上下文发送给所选真实 LLM provider 的测试人员显式运行：
+
+```bash
+./scripts/test-manual-case-journeys
+# 聚焦或失败续跑：
+CASE_JOURNEY_EXAMPLE_ID=ex_... ./scripts/test-manual-case-journeys
+CASE_JOURNEY_FACADE=ds_fault_study ./scripts/test-manual-case-journeys
+CASE_JOURNEY_RESUME_REPORT=target/manual-case-journeys/report.json ./scripts/test-manual-case-journeys
+```
+
+入口校验所选 provider、`TENSOREVAL_BIN` 和 `SPARROWZZ_DIR`，建立隔离 SQLite/`DATA_DIR`，使用单 worker，并把逐案例
+checkpoint 和按门面汇总写入 `target/manual-case-journeys/report.json`。报告只保留 stable ID、bundle/snapshot/prompt hash、
+阶段耗时和稳定错误码，不保存 Cookie、secret、物理路径、原始 stderr 或脚本正文。该命令不会被普通 E2E、PR 或候选发布脚本
+调用。只有默认选择下本次发现的全部可导入案例均通过，才能声明全案例语义链路通过；聚焦/续跑仅用于人工诊断和复验。
 
 结果验收按逻辑 Arrow 类型族处理字符串和 list/matrix，非空合同通过实际值扫描证明；缺失 unit 元数据允许通过，但
 存在且冲突的 unit 必须拒绝。该规则用于适配真实 tensoreval 的 `Utf8View`、`LargeList` 和物理 nullable 表示，不会

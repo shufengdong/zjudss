@@ -177,7 +177,11 @@ script 消息时一次性绑定，之后不可更换。正常完成、取消或�
 run、所有 result dataset 和 workflow 终态在同一数据库事务发布，任一失败不留下部分结果。取消可中断正在等待的
 ScriptAuthor 或引擎 future，并由既有终态事务收敛。
 
-发布请求携带 `expectedDraftId`、`expectedDraftRevision`、`clientPublishId`。成功冻结版本、清空草稿并自动激活。
+固定按钮的发布请求携带 `expectedDraftId`、`expectedDraftRevision`、`clientPublishId`。对话中的
+`publish_model_version` 工具只在用户当前消息明确要求发布时可用，参数只含刚由 `inspect_workspace` 读取的
+`expectedDraft: {id, revision}` 与可选描述；内部幂等键由 request message ID 和 draft ref 生成，LLM 不能提供。
+两条路径都复用同一版本服务：成功冻结版本、清空草稿并自动激活，内容重复时复用既有版本。研究、修改、案例导入或
+“生成脚本/结果”意图不会隐式发布；revision 已变化时返回 `draft_revision_conflict`。
 激活历史版本只移动 active 指针；存在草稿时必须提交 `discardDraft=true` 以及准确 expected draft。
 
 模型版本表路由只依赖不可变的 `modelDataframeId`。草稿表的三个路由都必须提交 `draftId` 与
@@ -215,7 +219,7 @@ manifest、角色化文件哈希和验证诊断。两个工具只读，Agent 无
 修正循环由受管工作流执行。普通运行请求为 `{clientRunId}`，前端不提交模型版本。后端在创建 run 的事务中按脚本类型
 解析并冻结当前输入：成功 Agent 脚本只读取冻结门面实际需要的当前 active 表和同 alias 的 live Data resource；
 manual/upload 脚本读取存在时的全部 active 表和全部 live Data resource，没有 active 仍可执行。Agent 没有普通运行、
-激活或删除工具。
+历史版本激活或删除工具；当前草稿发布只通过上述受控工具。
 
 运行创建响应、session 运行列表和单运行详情中的 `SimulationRun` 都包含 `scriptName`；首份受管脚本生成前显示“脚本尚未
 生成”，其 `scriptResourceId/scriptArtifactId/scriptContentHash/scriptMessageId` 可空，其他运行必须绑定不可变脚本资源。

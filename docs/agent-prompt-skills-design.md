@@ -2,7 +2,7 @@
 
 ## Bundle
 
-生产 bundle 位于 `backend/resources/agent/v4/`，版本 `v4.0.0`。manifest 固定 system prompt、skill index、
+生产 bundle 位于 `backend/resources/agent/v4/`，版本 `v4.1.0`。manifest 固定 system prompt、skill index、
 engine contract、允许工具和文件 SHA-256；启动时完整验证。Agent prompt 只常驻策略，不常驻整套引擎文档。
 
 ## Skills
@@ -17,13 +17,13 @@ schema 再执行分析时，Agent 必须在读取后继续调用 `run_result_ana
 
 ## Tool authority
 
-当前运行时允许工具共 22 个：
+当前运行时允许工具共 23 个：
 
 ```text
 inspect_workspace       read_model_dataframe     search_study_facades
 prepare_study            search_examples
 inspect_example
-modify_model            list_result_datasets
+modify_model            publish_model_version    list_result_datasets
 run_result_analysis     create_dataset_view      compare_simulations
 list_simulation_history search_chat_history      read_chat_context
 get_storage_usage       load_agent_skill         search_engine_docs
@@ -34,8 +34,11 @@ promote_result_dataset
 
 Agent 可以检查工作区、查询普通数据资源、按用户明确要求修改 alias、把用户明确选定的结果提升为普通资源、修改
 draft、读取运行/结果并创建派生分析或比较。规划或分析普通 Data/Struct 输入前必须先列出资源，再按稳定
-`resourceId` 读取，不能从历史名称猜测。提升候选不唯一时必须让用户选择 `datasetId`。Agent 不能确认导入、应用案例、
-发布/激活/删除版本、删除结果、创建脚本或创建运行。`prepare_study` 成功即表示本轮配置准备完成；后续 provider
+`resourceId` 读取，不能从历史名称猜测。提升候选不唯一时必须让用户选择 `datasetId`。只有用户当前消息明确要求发布或
+生成当前模型版本时，Agent 才能在加载 `model-intake` 并调用 `inspect_workspace` 后，以精确 `expectedDraft` 调用
+`publish_model_version`；成功会沿用版本服务的去重、描述规则并自动激活。导入完成、模型修改、准备研究以及“生成脚本/结果”
+均不构成发布授权，草稿并发变化时必须重新检查，不能猜测新 revision。Agent 仍不能确认导入、应用案例、激活历史版本、
+删除版本/结果、创建脚本或创建运行。`prepare_study` 成功即表示本轮配置准备完成；后续 provider
 收尾失败不会用通用错误覆盖已持久化的配置卡。
 
 研究请求遵循 `load study-planning -> inspect_workspace -> search_study_facades -> prepare_study`。只有用户原文包含完整
@@ -54,6 +57,7 @@ draft、读取运行/结果并创建派生分析或比较。规划或分析普�
 工具只接收 session 上下文内的稳定资源 ID、expected draft、受控 patch/spec 和文本。禁止路径、URL、SQL、
 shell 命令和任意图表 option。`modify_model` 使用 `tableName + rowKey + changes + expectedDraft`；
 `read_model_dataframe` 使用 `scope + tableName + columns + equals + limit + expectedDraft?`；
+`publish_model_version` 使用 `expectedDraft + description?`，服务端从当前消息 ID 生成幂等键，不接受 session/version/path；
 `search_study_facades` 只接收查询词和可选显式函数名；`prepare_study` 只接收目录 facade ID、结构化原始意图和可选来源 workflow ID；比较使用两个 run ID。模型范围不存在、查询无效、输出过大、草稿 revision
 冲突和表不存在分别使用稳定错误码，工具响应不包含 artifact 路径。
 
