@@ -146,7 +146,7 @@ git commit -m "feat: authorize explicit natural language model publication"
 **Files:**
 - Create: `integration-tests/manual-case-journeys/prompts.ts`
 - Create: `integration-tests/manual-case-journeys/report.ts`
-- Create: `frontend/src/release/manual-case-journeys.test.ts`
+- Create: `frontend/tests/release/manual-case-journeys.test.ts`
 - Modify: `docs/v4-tester-guide.md`
 
 **Interfaces:**
@@ -159,7 +159,7 @@ Create tests that require exactly six facade prompts, exact equality with the si
 
 - [ ] **Step 2: Run tests and verify failure**
 
-Run: `cd frontend && npm test -- --run src/release/manual-case-journeys.test.ts`
+Run: `cd frontend && npm test -- --run tests/release/manual-case-journeys.test.ts`
 
 Expected: FAIL because the prompt/report modules do not exist.
 
@@ -173,14 +173,14 @@ Use stable example IDs and target facade names for filters. Write checkpoints to
 
 - [ ] **Step 5: Run the focused Vitest tests**
 
-Run: `cd frontend && npm test -- --run src/release/manual-case-journeys.test.ts`
+Run: `cd frontend && npm test -- --run tests/release/manual-case-journeys.test.ts`
 
 Expected: PASS.
 
 - [ ] **Step 6: Commit prompt and report primitives**
 
 ```bash
-git add integration-tests/manual-case-journeys/prompts.ts integration-tests/manual-case-journeys/report.ts frontend/src/release/manual-case-journeys.test.ts docs/v4-tester-guide.md
+git add integration-tests/manual-case-journeys/prompts.ts integration-tests/manual-case-journeys/report.ts frontend/tests/release/manual-case-journeys.test.ts docs/v4-tester-guide.md
 git commit -m "test: define manual case journey prompt contract"
 ```
 
@@ -227,7 +227,7 @@ Expected: one manually named all-case test is listed; no server or case journey 
 
 - [ ] **Step 7: Run fast configuration and helper tests**
 
-Run: `cd frontend && npm test -- --run tests/release/release-config.test.ts src/release/manual-case-journeys.test.ts`
+Run: `cd frontend && npm test -- --run tests/release/release-config.test.ts tests/release/manual-case-journeys.test.ts`
 
 Expected: PASS.
 

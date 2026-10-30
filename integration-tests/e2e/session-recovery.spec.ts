@@ -3,6 +3,8 @@ import { resolve } from 'node:path'
 import { test, expect } from './fixtures'
 import { readEvent } from './helpers/events'
 import { restartBackend } from './helpers/server'
+import { mergeMessage } from '../../frontend/src/state/messageReducer'
+import type { Message } from '../../frontend/src/types'
 
 async function createSession(api: APIRequestContext, title: string) {
   const response = await api.post('/api/sessions', { data: { title } })
@@ -13,7 +15,7 @@ async function createSession(api: APIRequestContext, title: string) {
 async function messages(api: APIRequestContext, sessionId: string) {
   const response = await api.get(`/api/sessions/${sessionId}/messages?limit=100`)
   expect(response.ok()).toBeTruthy()
-  return response.json() as Promise<{ messages: Array<{ id: string; type: string; content?: string }> }>
+  return response.json() as Promise<{ messages: Message[] }>
 }
 
 test('an empty account bootstraps a session before message, upload, and example actions', async ({ appPage, control }) => {
@@ -187,15 +189,18 @@ test('older history, refresh, restart, and invalid localStorage recover committe
       assistant: committed.filter(message => message.type === 'assistant').length,
     }
   }).toEqual({ user: 26, assistant: 26 })
-  const committedMessageCount = (await messages(api, session.id)).messages.length
-  expect(committedMessageCount).toBeGreaterThanOrEqual(52)
+  const committedMessages = (await messages(api, session.id)).messages
+  expect(committedMessages.length).toBeGreaterThanOrEqual(52)
+  const mergedCount = (values: Message[]) => values.reduce<Message[]>(mergeMessage, []).length
+  const latestVisibleCount = mergedCount(committedMessages.slice(-50))
+  const committedVisibleCount = mergedCount(committedMessages)
 
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '批量消息 0' })).toBeVisible()
   await expect(page.getByRole('button', { name: '加载更早消息' })).toBeVisible()
-  await expect(page.locator('[data-message-id]')).toHaveCount(50)
+  await expect(page.locator('[data-message-id]')).toHaveCount(latestVisibleCount)
   await page.getByRole('button', { name: '加载更早消息' }).click()
-  await expect(page.locator('[data-message-id]')).toHaveCount(committedMessageCount)
+  await expect(page.locator('[data-message-id]')).toHaveCount(committedVisibleCount)
 
   await page.reload()
   await expect(page.getByText('批量回复 25', { exact: true })).toHaveCount(1)

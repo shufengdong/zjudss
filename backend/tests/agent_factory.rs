@@ -116,7 +116,7 @@ async fn chat_builds_one_agent_per_user_message() {
     assert_eq!(builds.len(), 2);
     for (tool_count, prompt) in builds.iter() {
         assert_eq!(*tool_count, zjudss::tools::registered_tool_names().len());
-        assert_eq!(*tool_count, 22);
+        assert_eq!(*tool_count, 23);
         assert!(prompt.contains("# Skill index"));
         assert!(prompt.contains("model-intake"));
         assert!(prompt.contains("# Engine resources"));
