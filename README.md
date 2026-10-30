@@ -128,6 +128,7 @@ eig-rs 当前默认分支验证外部依赖。测试分层、覆盖率定义和�
 - [Agent Prompt 与领域技能](docs/agent-prompt-skills-design.md)：知识快照、技能门控和资源版本。
 - [部署与发布验收](docs/v4-deployment.md)：空库切换、必需配置、固定用户 seed、动态引擎资源和发布门禁。
 - [自动化集成测试设计](docs/integration-testing-design.md)：功能目录和各测试层职责。
+- [V4 测试人员须知](docs/v4-tester-guide.md)：已部署环境的人工冒烟、完整业务验收、案例提示词和错误归类。
 
 `docs/superpowers/plans/` 保存已经执行的历史实施计划，不作为当前运行契约；发生差异时以上述当前文档
 和代码为准。
