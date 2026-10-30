@@ -85,6 +85,180 @@ async fn apply_csv(
 }
 
 #[tokio::test]
+async fn publish_model_version_requires_model_intake_and_publishes_only_the_exact_draft() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "agent publish", 1)
+        .await
+        .unwrap();
+    let draft = apply_csv(
+        &app,
+        session.id,
+        "agent-publish-source",
+        "bus.csv",
+        b"id\nb1\n",
+        None,
+    )
+    .await;
+    let services = tool_services_for_session(&app, user.clone(), session.id);
+    services.loaded_skills.lock().await.clear();
+    let args = || tools::publish_model_version::Args {
+        expected_draft: draft,
+        description: Some("案例导入版本".into()),
+    };
+    let tool = tools::publish_model_version::PublishModelVersionTool::new(services.clone());
+
+    let missing_skill = tool
+        .call(&mut ToolContext::new(), args())
+        .await
+        .unwrap_err();
+    assert_eq!(missing_skill.code, "skill_required");
+    services
+        .loaded_skills
+        .lock()
+        .await
+        .insert("model-intake".into());
+
+    let published = tool.call(&mut ToolContext::new(), args()).await.unwrap();
+    assert_eq!(published["description"], "案例导入版本");
+    assert_eq!(published["active"], true);
+    assert_eq!(published["deduplicated"], false);
+    assert_eq!(published["replayed"], false);
+    assert!(published["versionId"].as_str().is_some());
+    assert!(published["contentHash"].as_str().is_some());
+
+    let workspace = app
+        .state
+        .version_service
+        .workspace(&user, session.id)
+        .await
+        .unwrap();
+    assert_eq!(
+        published["versionId"],
+        workspace.active.as_ref().unwrap().version.id.to_string()
+    );
+    assert!(workspace.draft.is_none());
+    let serialized = serde_json::to_string(&published).unwrap();
+    assert!(!serialized.contains("artifact"));
+    assert!(!serialized.contains("path"));
+}
+
+#[tokio::test]
+async fn publish_model_version_replays_by_message_and_rejects_stale_or_foreign_drafts() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "agent publish replay", 1)
+        .await
+        .unwrap();
+    let foreign_session = app
+        .state
+        .session_repo
+        .create(&user.id, "foreign draft", 2)
+        .await
+        .unwrap();
+    let first_draft = apply_csv(
+        &app,
+        session.id,
+        "agent-publish-first",
+        "bus.csv",
+        b"id\nb1\n",
+        None,
+    )
+    .await;
+    let mut first_services = (*tool_services_for_session(&app, user.clone(), session.id)).clone();
+    first_services.request_message_id = 77;
+    let first_tool =
+        tools::publish_model_version::PublishModelVersionTool::new(Arc::new(first_services));
+    let first_args = || tools::publish_model_version::Args {
+        expected_draft: first_draft,
+        description: None,
+    };
+
+    let first = first_tool
+        .call(&mut ToolContext::new(), first_args())
+        .await
+        .unwrap();
+    let replay = first_tool
+        .call(&mut ToolContext::new(), first_args())
+        .await
+        .unwrap();
+    assert_eq!(replay["versionId"], first["versionId"]);
+    assert_eq!(replay["replayed"], true);
+
+    let current_draft = apply_csv(
+        &app,
+        session.id,
+        "agent-publish-current",
+        "bus.csv",
+        b"id\nb2\n",
+        None,
+    )
+    .await;
+    let foreign_draft = apply_csv(
+        &app,
+        foreign_session.id,
+        "agent-publish-foreign",
+        "bus.csv",
+        b"id\nforeign\n",
+        None,
+    )
+    .await;
+    let mut next_services = (*tool_services_for_session(&app, user.clone(), session.id)).clone();
+    next_services.request_message_id = 78;
+    let next_tool =
+        tools::publish_model_version::PublishModelVersionTool::new(Arc::new(next_services));
+
+    let stale = next_tool
+        .call(
+            &mut ToolContext::new(),
+            tools::publish_model_version::Args {
+                expected_draft: first_draft,
+                description: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(stale.code, "draft_revision_conflict");
+    let foreign = next_tool
+        .call(
+            &mut ToolContext::new(),
+            tools::publish_model_version::Args {
+                expected_draft: foreign_draft,
+                description: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(foreign.code, "draft_revision_conflict");
+    let unchanged = app
+        .state
+        .version_service
+        .workspace(&user, session.id)
+        .await
+        .unwrap();
+    assert_eq!(unchanged.draft.unwrap().draft.id, current_draft.id);
+
+    let second = next_tool
+        .call(
+            &mut ToolContext::new(),
+            tools::publish_model_version::Args {
+                expected_draft: current_draft,
+                description: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_ne!(second["versionId"], first["versionId"]);
+    assert_eq!(second["active"], true);
+}
+
+#[tokio::test]
 async fn a_new_draft_copies_the_active_version_and_replaces_only_selected_tables() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");

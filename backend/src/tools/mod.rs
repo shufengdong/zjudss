@@ -19,6 +19,7 @@ pub mod load_agent_skill;
 pub mod modify_model;
 pub mod prepare_study;
 pub mod promote_result_dataset;
+pub mod publish_model_version;
 pub mod read_chat_context;
 pub mod read_data_resource;
 pub mod read_engine_doc_section;
@@ -115,6 +116,7 @@ define_tool_registry!(
     search_examples::SearchExamplesTool,
     inspect_example::InspectExampleTool,
     modify_model::ModifyModelTool,
+    publish_model_version::PublishModelVersionTool,
     list_result_datasets::ListResultDatasetsTool,
     run_result_analysis::RunResultAnalysisTool,
     create_dataset_view::CreateDatasetViewTool,
