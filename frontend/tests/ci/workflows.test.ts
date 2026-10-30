@@ -145,21 +145,24 @@ describe('local SSH deployment', () => {
           ssh: 'printf "ssh\\n" >> "$DEPLOY_TEST_TRACE"\nif [[ $DEPLOY_TEST_SCENARIO == "upload failure" && ${!#} == *"tar -xzf"* ]]; then exit 1; fi\nexec bash -c "${!#}"',
           sudo: 'if [[ ${1:-} == -v ]]; then exit 0; fi\nexec "$@"',
           systemctl: 'printf "%s\\n" "$*" >> "$DEPLOY_TEST_TRACE"\ncase $1 in stop) rm -f "$DEPLOY_TEST_ACTIVE"; if [[ ( $DEPLOY_TEST_SCENARIO == "interrupt stop" || $DEPLOY_TEST_SCENARIO == disconnect ) && ! -e $DEPLOY_TEST_TRACE.signal ]]; then touch "$DEPLOY_TEST_TRACE.signal"; if [[ $DEPLOY_TEST_SCENARIO == disconnect ]]; then kill -HUP "$PPID"; else kill -TERM "$PPID"; fi; fi;; start) touch "$DEPLOY_TEST_ACTIVE";; is-active) test -f "$DEPLOY_TEST_ACTIVE";; esac',
-          curl: 'if [[ $DEPLOY_TEST_SCENARIO == "health failure" && $(cat "$DEPLOY_DIR/zjudss") == new ]]; then exit 1; fi\nprintf ok',
+          curl: 'output=""\nwhile (($#)); do if [[ $1 == --output ]]; then output=$2; shift 2; else shift; fi; done\nif [[ -n $output ]]; then case $output in *tensoreval) printf new-engine;; *) printf archive;; esac > "$output"; exit 0; fi\nif [[ $DEPLOY_TEST_SCENARIO == "health failure" && $(cat "$DEPLOY_DIR/zjudss") == new ]]; then exit 1; fi\nprintf ok',
+          tar: 'if [[ $* == *sparrowzz.tar.gz* ]]; then while (($#)); do if [[ $1 == -C ]]; then destination=$2; shift 2; else shift; fi; done; mkdir -p "$destination/dss/docs/catalog"; printf new-resources > "$destination/dss/docs/catalog/dataframes.json"; exit 0; fi\nexec /usr/bin/tar "$@"',
         })) {
           fs.writeFileSync(path.join(tools, name), `#!/bin/bash\nset -eu\n${body}\n`, { mode: 0o755 })
         }
         fs.writeFileSync(path.join(target, 'zjudss'), 'old')
         fs.writeFileSync(path.join(target, 'www/index.html'), 'old-html')
         fs.writeFileSync(path.join(target, 'www/obsolete.js'), 'obsolete')
-        const preserved = { '.env': 'runtime-secret', 'app.db': 'database', tensoreval: 'engine', 'data/result.parquet': 'result', 'sparrowzz/catalog': 'resources' }
-        for (const [name, value] of Object.entries(preserved)) {
+        const preserved = { '.env': 'runtime-secret', 'app.db': 'database', 'data/result.parquet': 'result' }
+        const oldDependencies = { tensoreval: 'engine', 'sparrowzz/catalog': 'resources' }
+        for (const [name, value] of Object.entries({ ...preserved, ...oldDependencies })) {
           fs.mkdirSync(path.dirname(path.join(target, name)), { recursive: true })
           fs.writeFileSync(path.join(target, name), value)
         }
         const trace = path.join(directory, 'trace')
         const env = { ...process.env, PATH: `${tools}:${process.env.PATH}`, DEPLOY_DIR: target, HEALTH_TIMEOUT: '1',
-          DEPLOY_TEST_SCENARIO: scenario, DEPLOY_TEST_TRACE: trace, DEPLOY_TEST_ACTIVE: path.join(directory, 'active') }
+          WEBDAV_PASSWORD: 'test-password', DEPLOY_TEST_SCENARIO: scenario,
+          DEPLOY_TEST_TRACE: trace, DEPLOY_TEST_ACTIVE: path.join(directory, 'active') }
         fs.writeFileSync(env.DEPLOY_TEST_ACTIVE, '')
         const run = () => execFileSync('bash', [path.join(directory, 'scripts/deploy'), 'fixture-host'], { cwd: '/', env, stdio: 'pipe' })
         if (scenario === 'success') run()
@@ -173,6 +176,13 @@ describe('local SSH deployment', () => {
           expect(fs.statSync(path.join(target, 'www/index.html')).mode & 0o777).toBe(0o644)
         }
         for (const [name, value] of Object.entries(preserved)) expect(fs.readFileSync(path.join(target, name), 'utf8')).toBe(value)
+        expect(fs.readFileSync(path.join(target, 'tensoreval'), 'utf8')).toBe(scenario === 'success' ? 'new-engine' : 'engine')
+        if (scenario === 'success') {
+          expect(fs.readFileSync(path.join(target, 'sparrowzz/dss/docs/catalog/dataframes.json'), 'utf8')).toBe('new-resources')
+          expect(fs.existsSync(path.join(target, 'sparrowzz/catalog'))).toBe(false)
+        } else {
+          expect(fs.readFileSync(path.join(target, 'sparrowzz/catalog'), 'utf8')).toBe('resources')
+        }
         expect(fs.readdirSync(target).some(name => name.startsWith('.upload.'))).toBe(false)
         expect(fs.existsSync(path.join(target, 'init_users.csv'))).toBe(false)
         expect(fs.existsSync(env.DEPLOY_TEST_ACTIVE)).toBe(true)

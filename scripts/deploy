@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Build on this Linux x86_64 machine, then update the existing SSH deployment.
+# Build and download dependencies here, then update the existing SSH deployment.
 set -euo pipefail
 if [[ ${1:-} == --help ]]; then
   echo 'Usage: scripts/deploy [SSH_HOST] (default: DellServer)'
   echo 'Optional environment: DEPLOY_DIR, SERVICE, HEALTH_URL, HEALTH_TIMEOUT, VITE_BASE_PATH, VITE_API_BASE_PATH'
+  echo 'Downloads: TENSOREVAL_URL, SPARROWZZ_URL, WEBDAV_USER, WEBDAV_PASSWORD (also read local deploy/update.conf)'
   exit 0
 fi
 (($# <= 1)) || { echo 'Usage: scripts/deploy [SSH_HOST]' >&2; exit 1; }
 project=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+[[ ! -f $project/deploy/update.conf ]] || source "$project/deploy/update.conf"
 deploy_host=${1:-DellServer}
 deploy_dir=${DEPLOY_DIR:-/home/sgoolweb/zjudss}
 service=${SERVICE:-zjudss.service}
@@ -16,6 +18,7 @@ timeout=${HEALTH_TIMEOUT:-60}
 [[ $deploy_host != -* && $deploy_dir == /* && $deploy_dir != / && $timeout =~ ^[1-9][0-9]*$ ]]
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { echo 'Build on Linux x86_64.' >&2; exit 1; }
 [[ -s $project/backend/resources/init_users.csv ]] || { echo 'Missing backend/resources/init_users.csv' >&2; exit 1; }
+: "${WEBDAV_PASSWORD:?Set WEBDAV_PASSWORD locally or in deploy/update.conf}"
 umask 077
 work=$(mktemp -d)
 remote_stage='' activating=0
@@ -33,6 +36,22 @@ trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
+tensoreval_url=${TENSOREVAL_URL:-https://sgool.zju.edu.cn/clouds/remote.php/dav/files/sgooluser/Plcc_And_Mems/Software/tensoreval/x86_64-unknown-linux-musl/tensoreval-DailyBuild/tensoreval}
+sparrowzz_url=${SPARROWZZ_URL:-https://codeload.github.com/shufengdong/sparrowzz/tar.gz/refs/heads/master}
+# Pass quoted credentials through stdin rather than curl's process arguments.
+credentials=${WEBDAV_USER:-sgooluser}:$WEBDAV_PASSWORD
+credentials=${credentials//\\/\\\\}
+credentials=${credentials//\"/\\\"}
+credentials=${credentials//$'\n'/\\n}
+credentials=${credentials//$'\r'/\\r}
+printf 'user = "%s"\n' "$credentials" | curl --config - --fail --silent --show-error --location --retry 2 --url "$tensoreval_url" --output "$work/tensoreval"
+unset credentials WEBDAV_PASSWORD
+curl --fail --silent --show-error --location --retry 2 --url "$sparrowzz_url" --output "$work/sparrowzz.tar.gz"
+mkdir "$work/sparrowzz"
+tar -xzf "$work/sparrowzz.tar.gz" -C "$work/sparrowzz" --strip-components=1 --no-same-owner
+[[ -s $work/tensoreval && -f $work/sparrowzz/dss/docs/catalog/dataframes.json ]] || { echo 'Empty tensoreval or invalid Sparrowzz archive.' >&2; exit 1; }
+chmod 755 "$work/tensoreval"
+chmod -R a+rX "$work/sparrowzz"
 # This device has the SQLite runtime library but may lack its development symlink.
 if [[ ! -e /usr/lib/x86_64-linux-gnu/libsqlite3.so && -e /usr/lib/x86_64-linux-gnu/libsqlite3.so.0 ]]; then
   ln -s /usr/lib/x86_64-linux-gnu/libsqlite3.so.0 "$work/libsqlite3.so"
@@ -47,13 +66,14 @@ printf -v command 'set -e; test -f %q/zjudss; test -d %q/www; umask 077; mktemp 
 remote_stage=$(ssh "$deploy_host" "$command")
 [[ $remote_stage == "$deploy_dir"/.upload.* ]] || { remote_stage=''; echo 'Unexpected SSH upload directory.' >&2; exit 1; }
 printf -v command 'tar -xzf - -C %q --no-same-owner --same-permissions' "$remote_stage"
-tar -czf - -C "$work" zjudss www | ssh "$deploy_host" "$command"
+tar -czf - -C "$work" zjudss www tensoreval sparrowzz | ssh "$deploy_host" "$command"
 activation=$(cat <<'REMOTE'
 set -euo pipefail
 root=$(realpath -e -- "$1"); stage=$2; service=$3; health=$4; timeout=$5
 control=(sudo systemctl)
 if ((EUID == 0)); then control=(systemctl); fi
 stopped=0
+items=(zjudss www tensoreval sparrowzz)
 healthy() {
   local deadline=$((SECONDS + timeout))
   while ((SECONDS < deadline)); do
@@ -67,13 +87,14 @@ cleanup() {
   trap - EXIT
   if ((status && stopped)); then
     "${control[@]}" stop "$service" || true
-    if [[ -f $stage/old-zjudss ]]; then mv -f -- "$stage/old-zjudss" "$root/zjudss"; fi
-    if [[ -d $stage/old-www ]]; then rm -rf -- "$root/www"; mv -- "$stage/old-www" "$root/www"; fi
+    for item in "${items[@]}"; do
+      if [[ -e $stage/old-$item ]]; then rm -rf -- "$root/$item"; mv -- "$stage/old-$item" "$root/$item"; fi
+    done
     if ! "${control[@]}" start "$service" || ! healthy; then
       echo "Recovery failed; inspect service logs and $stage" >&2
       exit "$status"
     fi
-    echo 'Previous program and frontend restored; persistent data retained.' >&2
+    echo 'Previous application, engine and resources restored; persistent data retained.' >&2
   fi
   rm -rf -- "$stage"
   exit "$status"
@@ -82,16 +103,17 @@ trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-[[ $root != / && -f $root/zjudss && ! -L $root/zjudss && -d $root/www && ! -L $root/www ]]
+[[ $root != / && -f $root/zjudss && -f $root/tensoreval && -d $root/www && -d $root/sparrowzz ]]
+for item in "${items[@]}"; do [[ ! -L $root/$item ]]; done
 exec 9< "$root"
 flock -n 9 || { echo 'Another deployment is running.' >&2; exit 1; }
 if ((EUID != 0)); then sudo -v; fi
 stopped=1
 "${control[@]}" stop "$service"
-mv -- "$root/zjudss" "$stage/old-zjudss"
-mv -- "$stage/zjudss" "$root/zjudss"
-mv -- "$root/www" "$stage/old-www"
-mv -- "$stage/www" "$root/www"
+for item in "${items[@]}"; do
+  mv -- "$root/$item" "$stage/old-$item"
+  mv -- "$stage/$item" "$root/$item"
+done
 "${control[@]}" start "$service"
 healthy || { echo 'New service failed its health check.' >&2; exit 1; }
 stopped=0
