@@ -17,7 +17,7 @@ export const CASE_PROMPTS: Readonly<Record<SupportedCaseFacade, string>> = {
   ds_network_dynamics: '请严格使用 ds_network_dynamics 对当前 active 模型执行完整网络动态研究，使用已上传且 schema 兼容的 timeline、event、tcc_curve 和 fault 数据资源，spec 与 para 通过参数卡确认，结果选择推荐的 bus_voltage；不要改用电机专用旧版门面。',
   ds_radial_execution_plan: '请严格使用 ds_radial_execution_plan 重放当前案例的径向执行计划。使用案例导入产生且 schema 兼容的 solution、load_shape、tcc_curve、fault、execution_epoch、execution_setting、execution_mutation、post_solve_action、execution_reference、execution_event 和 projection_diagnostic 资源，para 通过参数卡确认，结果选择推荐的 bus_voltage；不要改用 Newton 执行计划。',
   ds_newton_raphson_execution_plan: '请严格使用 ds_newton_raphson_execution_plan 重放当前案例的 Newton-Raphson 执行计划。使用案例导入产生且 schema 兼容的 solution、load_shape、tcc_curve、fault、execution_epoch、execution_setting、execution_mutation、post_solve_action、execution_reference、execution_event 和 projection_diagnostic 资源，para 通过参数卡确认，结果选择推荐的 bus_voltage；不要改用径向执行计划。',
-  ds_harmonic_execution_plan: '请严格使用 ds_harmonic_execution_plan 执行当前 Run_Scan 类案例的整数或非整数频率扫描。使用案例导入产生且 schema 兼容的 load_shape、tcc_curve、fault、frequency_axis、frequency_spectrum 和 harmonic_snapshot 数据资源，solution、harmonic_plan 与 para 通过参数卡确认，并使用门面要求的当前模型和谐波快照模型表，结果选择推荐的 bus_voltage；不要退回路径型 import 或 ds_harmonic_study。',
+  ds_harmonic_execution_plan: '请先检查当前工作区，再严格使用 ds_harmonic_execution_plan 执行当前 Run_Scan 类案例的整数或非整数频率扫描。使用案例导入产生且 schema 兼容的 load_shape、tcc_curve、fault、frequency_axis、frequency_spectrum 和 harmonic_snapshot 数据资源，solution、harmonic_plan 与 para 通过参数卡确认，并使用门面要求的当前模型和谐波快照模型表，结果选择推荐的 bus_voltage；不要退回路径型 import 或 ds_harmonic_study。',
 }
 
 export function promptForFacade(functionName: string): string {

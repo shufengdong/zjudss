@@ -2,6 +2,7 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use diesel::prelude::*;
 use serde_json::json;
 use std::io::Cursor;
 use tower::ServiceExt;
@@ -478,6 +479,127 @@ async fn multiple_compatible_struct_resources_are_never_guessed() {
         configuration.status,
         StudyConfigurationState::CollectingInputs
     );
+}
+
+#[tokio::test]
+async fn invalid_unique_struct_resource_is_left_for_parameter_card_completion() {
+    let app = TestApp::spawn().await;
+    let (user, session_id) = session(&app, "incomplete-para").await;
+    import_case(&app, &user, session_id, "incomplete-para-case").await;
+
+    let imported_para = app
+        .state
+        .data_resource_service
+        .list(&user, session_id, None, 100)
+        .await
+        .unwrap()
+        .resources
+        .into_iter()
+        .find(|resource| resource.declared_schema_ref.as_deref() == Some("frames.para"))
+        .unwrap();
+    let deletion = app
+        .state
+        .data_resource_service
+        .preview_deletion(&user, &imported_para.id)
+        .await
+        .unwrap();
+    app.state
+        .data_resource_service
+        .delete(&user, &imported_para.id, &deletion.impact_token)
+        .await
+        .unwrap();
+
+    let incomplete_para = publish_data_resource(
+        &app,
+        &user,
+        session_id,
+        "incomplete-para-resource",
+        b"max_iter,max_control_iter,tol,line_model\n100,30,0.000001,exact\n",
+    )
+    .await;
+    diesel::update(
+        zjudss::db::schema::data_resources::table
+            .filter(zjudss::db::schema::data_resources::id.eq(&incomplete_para)),
+    )
+    .set(zjudss::db::schema::data_resources::declared_schema_ref.eq(Some("frames.para")))
+    .execute(&mut app.pool.get().unwrap())
+    .unwrap();
+
+    let configuration = app
+        .state
+        .study_configuration_service
+        .prepare(
+            &user,
+            session_id,
+            PrepareStudyRequest {
+                facade_id: "static_power_flow_radial".into(),
+                intent: json!({"request":"计算潮流"}),
+                derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let para = configuration
+        .inputs
+        .iter()
+        .find(|input| input.input_id == "para")
+        .unwrap();
+    assert_eq!(para.resource_options.len(), 1);
+    assert!(para.binding.resource_id.is_none());
+    assert_eq!(
+        configuration.status,
+        StudyConfigurationState::CollectingInputs
+    );
+}
+
+#[tokio::test]
+async fn unique_struct_resource_read_failures_are_not_silently_ignored() {
+    let app = TestApp::spawn().await;
+    let (user, session_id) = session(&app, "unreadable-para").await;
+    let para = publish_data_resource(
+        &app,
+        &user,
+        session_id,
+        "unreadable-para-resource",
+        b"base_frequency_hz,max_iter,max_control_iter,tol,line_model\n50,100,30,0.000001,exact\n",
+    )
+    .await;
+    diesel::update(
+        zjudss::db::schema::data_resources::table
+            .filter(zjudss::db::schema::data_resources::id.eq(&para)),
+    )
+    .set(zjudss::db::schema::data_resources::declared_schema_ref.eq(Some("frames.para")))
+    .execute(&mut app.pool.get().unwrap())
+    .unwrap();
+    let artifact_id = zjudss::db::schema::data_resources::table
+        .filter(zjudss::db::schema::data_resources::id.eq(&para))
+        .select(zjudss::db::schema::data_resources::normalized_artifact_id)
+        .first::<Option<i32>>(&mut app.pool.get().unwrap())
+        .unwrap()
+        .unwrap();
+    diesel::update(
+        zjudss::db::schema::artifacts::table
+            .filter(zjudss::db::schema::artifacts::id.eq(artifact_id)),
+    )
+    .set(zjudss::db::schema::artifacts::storage_path.eq("missing/unreadable-para.parquet"))
+    .execute(&mut app.pool.get().unwrap())
+    .unwrap();
+
+    let error = app
+        .state
+        .study_configuration_service
+        .prepare(
+            &user,
+            session_id,
+            PrepareStudyRequest {
+                facade_id: "static_power_flow_radial".into(),
+                intent: json!({"request":"计算潮流"}),
+                derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "dataframe_read_failed");
 }
 
 #[tokio::test]

@@ -295,7 +295,7 @@ Data/Struct 输入、结果和可用函数均以本次启动加载的 eig-rs 动
 
     <!-- CASE_JOURNEY_PROMPT:ds_harmonic_execution_plan:start -->
     ```text
-    请严格使用 ds_harmonic_execution_plan 执行当前 Run_Scan 类案例的整数或非整数频率扫描。使用案例导入产生且 schema 兼容的 load_shape、tcc_curve、fault、frequency_axis、frequency_spectrum 和 harmonic_snapshot 数据资源，solution、harmonic_plan 与 para 通过参数卡确认，并使用门面要求的当前模型和谐波快照模型表，结果选择推荐的 bus_voltage；不要退回路径型 import 或 ds_harmonic_study。
+    请先检查当前工作区，再严格使用 ds_harmonic_execution_plan 执行当前 Run_Scan 类案例的整数或非整数频率扫描。使用案例导入产生且 schema 兼容的 load_shape、tcc_curve、fault、frequency_axis、frequency_spectrum 和 harmonic_snapshot 数据资源，solution、harmonic_plan 与 para 通过参数卡确认，并使用门面要求的当前模型和谐波快照模型表，结果选择推荐的 bus_voltage；不要退回路径型 import 或 ds_harmonic_study。
     ```
     <!-- CASE_JOURNEY_PROMPT:ds_harmonic_execution_plan:end -->
 

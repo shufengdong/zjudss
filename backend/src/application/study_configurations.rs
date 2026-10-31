@@ -20,7 +20,7 @@ use crate::engine_resources::{
 
 use super::now_ms;
 use super::{ColumnMapping, CreateMappedResourceRequest, DataMappingService};
-use super::{DataResourceService, ReplacementAction};
+use super::{DataResourceError, DataResourceService, ReplacementAction};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -859,6 +859,7 @@ impl StudyConfigurationService {
             let mut model_table_name = None;
             let mut resource_id = None;
             let mut mapping_json = None;
+            let mut selected_struct_values = None;
             match input.kind {
                 FacadeInputKind::Model => {
                     model_table_name = workspace.active.as_ref().and_then(|active| {
@@ -885,7 +886,22 @@ impl StudyConfigurationService {
                         .as_deref()
                         .is_some_and(|id| compatible.iter().any(|resource| resource.id == id));
                     if compatible.len() == 1 && !has_live_prior {
-                        resource_id = Some(compatible[0].id.clone());
+                        let candidate_id = &compatible[0].id;
+                        if input.kind == FacadeInputKind::Struct {
+                            match self.struct_resource_values(user, candidate_id, input).await {
+                                Ok(values) => {
+                                    selected_struct_values = Some(values);
+                                    resource_id = Some(candidate_id.clone());
+                                }
+                                Err(StudyConfigurationError::Invalid(
+                                    "struct_values_invalid" | "study_binding_incompatible",
+                                    _,
+                                )) => {}
+                                Err(error) => return Err(error),
+                            }
+                        } else {
+                            resource_id = Some(candidate_id.clone());
+                        }
                     } else if compatible.len() > 1 || has_live_prior {
                         mapping_json =
                             Some(serde_json::json!({"selectionRequired":true}).to_string());
@@ -905,7 +921,11 @@ impl StudyConfigurationService {
                 let schema = self.schema(&input.schema_ref)?;
                 let mut values = struct_defaults(schema);
                 if let Some(selected) = resource_id.as_deref() {
-                    values = self.struct_resource_values(user, selected, input).await?;
+                    values = if let Some(values) = selected_struct_values.take() {
+                        values
+                    } else {
+                        self.struct_resource_values(user, selected, input).await?
+                    };
                     if let Some(binding) = bindings.last_mut() {
                         binding.mapping_json = Some(struct_metadata(&values, None).to_string());
                     }
@@ -1075,7 +1095,7 @@ impl StudyConfigurationService {
             .data_resources
             .rows(user, resource_id, Some(2), None, Vec::new())
             .await
-            .map_err(|error| Self::invalid("study_binding_incompatible", &error.to_string()))?;
+            .map_err(map_struct_resource_error)?;
         if page.rows.is_empty() {
             return Ok(struct_defaults(self.schema(&input.schema_ref)?));
         }
@@ -1183,6 +1203,19 @@ impl StudyConfigurationService {
             )
             .await?;
         self.view(user, updated).await
+    }
+}
+
+fn map_struct_resource_error(error: DataResourceError) -> StudyConfigurationError {
+    match error {
+        DataResourceError::NotFound | DataResourceError::Repository(RepoError::NotFound) => {
+            StudyConfigurationError::NotFound
+        }
+        DataResourceError::Repository(error) => StudyConfigurationError::Repository(error),
+        error => {
+            let code = error.code();
+            StudyConfigurationError::Invalid(code, format!("Struct 资源读取失败: {error}"))
+        }
     }
 }
 

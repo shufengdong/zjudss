@@ -377,7 +377,9 @@ async function openExample(page: Page, example: DiscoveredExample) {
   await page.getByRole('button', { name: '案例库' }).click()
   const dialog = page.getByRole('dialog', { name: '内置案例库' })
   await dialog.getByRole('textbox', { name: '搜索内置案例' }).fill(example.bundlePath)
-  const leaf = dialog.getByRole('button', { name: example.title, exact: true })
+  const leaf = dialog
+    .locator('li[role="treeitem"]:not([aria-expanded])')
+    .getByRole('button', { name: example.title, exact: true })
   await expect(leaf).toHaveCount(1, { timeout: 120_000 })
   await leaf.click()
   await expect(dialog.getByLabel(`案例详情“${example.title}”`)).toContainText(example.bundlePath)
