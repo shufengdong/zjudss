@@ -140,7 +140,9 @@ Task 10 执行时，generation candidate 不占修正预算，每个 repair cand
 普通运行的 `input_snapshot_json` 保存实际使用的可空 active 模型版本/hash/表 artifact 以及 Data resource
 ID/alias/schema/hash；创建事务为脚本和全部输入 artifact 增加独立引用，因此资源覆盖或删除不会改写既有 run。普通运行
 结果也使用 publication 独占锁，在一个事务内提交全部 artifact 引用、`result_datasets` 和 run 成功终态；失败时在锁内
-回滚本次新增 CAS 文件。`run_deletion_previews` 保存短期 token hash 和完整影响 hash；确认删除复核终态、直接结果集合与
+回滚本次新增 CAS 文件。adapter 失败先在 `simulation_runs.error_json` 中不可变保存失败码/阶段、脱敏日志和
+`analysisStatus=pending`，再发布终态进度。后台 enrichment 只能对当前用户、未删除、已失败且仍为 pending 的 run
+单向写入 `complete|unavailable`，不能改写日志或终态；启动恢复把遗留 pending 收敛为 unavailable。`run_deletion_previews` 保存短期 token hash 和完整影响 hash；确认删除复核终态、直接结果集合与
 busy consumer，释放脚本、输入和直接结果引用后写 run/result 墓碑，派生和提升资源保留冻结生产者/schema/hash 血缘。
 
 `retry_previews` 以来源 workflow 保存当前 active/资源差异的影响 hash。输入未变化时直接创建

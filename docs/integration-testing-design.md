@@ -38,7 +38,9 @@ Task 10 另以 `backend/tests/script_repair.rs` 覆盖首次生成后立即执�
 Task 11 由 `simulation_runs.rs`、`workflow_retries.rs` 和 `result_deletion.rs` 覆盖资源型手写脚本无 active 执行、
 规范 script message 锚点、按门面读取最新所需输入、开放/冻结结果合同、失败脚本在输入不变时直接派生以及输入变化时
 差异确认、完整新修正预算、派生脚本血缘、终态删除 preview/token、`run_busy`/`result_busy`、全部直接结果原子 tombstone、
-artifact 配额释放、重复删除和派生/提升血缘保留。
+artifact 配额释放、重复删除和派生/提升血缘保留；同时覆盖普通失败 run 先落脱敏日志/终态进度、后完成结构化分析，以及分析器错误、
+30 秒超时和启动恢复的 unavailable 降级。Vitest 覆盖共享面板、旧 `engineOutput`、pending-only 轮询、请求代次隔离与读取重试；Playwright 在不打开运行记录时验证
+运行进度卡的多行脱敏 tensoreval 日志，并验证刷新后恢复。
 schema 资源的 SaveAsNew alias 分配、过期/跨路径失效 preview 回收、同用户跨会话去重原文件的引用隔离、普通资源
 分析输入/冻结血缘、并发 confirm 原文件幂等提交、同一确认声明只能取得一次执行锁、精确重放跨暂存 TTL 仍只读返回、显式 alias 冲突重放保持冻结失败语义、活动确认期间候选冻结与 DELETE 冲突、到期避让以及重启先汇总
 已提交子事务、confirm/discard 与 parse/discard 竞争不复活终态、模型替换

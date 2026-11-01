@@ -232,9 +232,12 @@ manual/upload 脚本读取存在时的全部 active 表和全部 live Data resou
 生成”，其 `scriptResourceId/scriptArtifactId/scriptContentHash/scriptMessageId` 可空，其他运行必须绑定不可变脚本资源。
 运行快照继续冻结模型、脚本 artifact/hash、engine contract、Agent bundle
 和 skill refs；`GET /api/runs/{id}/datasets` 只列出该运行当前仍存活的全部结果数据集。失败时保留实际执行阶段；API 将内部
-adapter/IO/校验错误映射为受控 `error.code`/`error.message`。adapter 对 stdout/stderr 分别持续排空、保留有界首尾并
-记录完整 hash；tensoreval 以非零状态退出时保留实际退出码。原始有界 stderr 只供后续受限审计，普通 API 继续只返回脱敏摘要；没有该标记的
-旧记录仍丢弃原始 message，因此不会返回历史调用栈或服务器路径。manual/upload 使用开放结果合同，至少产生一个
+adapter/IO/校验错误映射为受控 `error.code`/`error.message`。对普通 adapter 失败，`error` 还可选返回 `stage`、
+`durationMs`、`engineLogs` 和 `analysisStatus`；`engineLogs` 每项只有 `stream|text|totalBytes|sentBytes|truncated`，
+`analysisStatus=complete` 时可选包含有界 `analysis`。出网层会再次脱敏和校验日志引用，不返回 hash、adapter diagnostic、
+provider 错误、命令或服务器路径；非法的可选分析降级为 `unavailable` 而不隐藏日志。旧记录的受控
+`engineOutput` 仍兼容返回，不进行历史分析回填。adapter 对 stdout/stderr 分别持续排空、保留有界首尾并记录完整 hash；
+tensoreval 以非零状态退出时保留实际退出码。原始有界 stderr 只供受限审计，不进入普通 API。manual/upload 使用开放结果合同，至少产生一个
 名称合法且唯一的 Snappy Parquet；成功 Agent 脚本再次运行沿用冻结的结果名称和 schema 合同，合同漂移以
 `result_contract_invalid` 失败且不修正。`POST /api/scripts/{id}/retry-previews` 只面向失败的受管 Agent 脚本：当前输入
 未变化时直接创建带完整新修正预算的派生 workflow，变化时返回持久差异；用户通过

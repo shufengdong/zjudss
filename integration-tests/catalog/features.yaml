@@ -1088,10 +1088,22 @@
       name: one result can be deleted without deleting its run or sibling result
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
-      name: failed run history shows sanitized tensoreval output without requesting datasets
+      name: failed run progress shows persistent sanitized tensoreval output without requesting datasets
     - runner: rust
       file: backend/tests/simulation_runs.rs
       name: failed_run_publishes_a_terminal_failed_progress_event
+    - runner: rust
+      file: backend/tests/simulation_runs.rs
+      name: failed_run_persists_structured_analysis_after_logs_and_terminal_progress
+    - runner: rust
+      file: backend/tests/simulation_runs.rs
+      name: failed_run_keeps_logs_when_failure_analysis_is_unavailable
+    - runner: rust
+      file: backend/tests/simulation_runs.rs
+      name: failed_run_times_out_analysis_without_reopening_the_terminal_run
+    - runner: rust
+      file: backend/tests/simulation_runs.rs
+      name: restart_recovery_resolves_pending_run_analysis_without_changing_logs
     - runner: rust
       file: backend/tests/simulation_runs.rs
       name: successful_run_publishes_a_terminal_done_progress_event
@@ -1134,7 +1146,34 @@
     - runner: vitest
       file: frontend/src/components/runs/RunHistory.test.tsx
       name: refreshes expanded results after deletion and ignores the obsolete response
-  assertions: [run binds an immutable script and canonical message anchor while freezing the latest required active model and live resources, resource-only manual scripts run without an active model, successful Agent scripts execute once without repair, failed Agent scripts retry through a derived workflow with a fresh correction budget and explicit confirmation when inputs changed, run and result lists remain readable, successful run progress has no running stage, failed runs show bounded sanitized tensoreval output and exit code, terminal run deletion requires a fresh impact token and atomically tombstones all direct results, scripts never auto-run]
+    - runner: vitest
+      file: frontend/src/components/messages/FailureDiagnosisPanel.test.tsx
+      name: shows logs, metadata, truncation and all structured analysis sections
+    - runner: vitest
+      file: frontend/src/components/messages/FailureDiagnosisPanel.test.tsx
+      name: downloads exactly the displayed sanitized text with a safe filename
+    - runner: vitest
+      file: frontend/src/components/messages/FailureDiagnosisPanel.test.tsx
+      name: distinguishes pending, unavailable and missing engine output
+    - runner: vitest
+      file: frontend/src/components/messages/ProgressCard.test.tsx
+      name: loads_and_shows_failed_run_logs_and_analysis_inline
+    - runner: vitest
+      file: frontend/src/components/messages/ProgressCard.test.tsx
+      name: renders_legacy_engine_output_without_polling
+    - runner: vitest
+      file: frontend/src/components/messages/ProgressCard.test.tsx
+      name: keeps_stage_list_when_run_detail_loading_fails_and_retries
+    - runner: vitest
+      file: frontend/src/components/messages/ProgressCard.test.tsx
+      name: never_loads_run_detail_for_non_run_or_nonfailed_progress
+    - runner: vitest
+      file: frontend/src/hooks/useRunFailureDiagnosis.test.tsx
+      name: polls_only_while_analysis_is_pending
+    - runner: vitest
+      file: frontend/src/hooks/useRunFailureDiagnosis.test.tsx
+      name: ignores_stale_detail_responses_and_clears_polling_on_unmount
+  assertions: [run binds an immutable script and canonical message anchor while freezing the latest required active model and live resources, resource-only manual scripts run without an active model, successful Agent scripts execute once without repair, failed Agent scripts retry through a derived workflow with a fresh correction budget and explicit confirmation when inputs changed, run and result lists remain readable, successful run progress has no running stage, failed run progress shows bounded sanitized multiline tensoreval logs and analysis inline and survives refresh, analyzer failure timeout and restart never hide stored logs, workflow and run progress share one diagnosis panel while polling only pending analysis, terminal run deletion requires a fresh impact token and atomically tombstones all direct results, scripts never auto-run]
   fixtures: [published model, valid RSS script, successful and failed runs, multi-result run]
   contracts:
     - "route:POST /api/scripts/{id}/runs"

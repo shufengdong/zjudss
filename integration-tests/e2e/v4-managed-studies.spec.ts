@@ -52,7 +52,7 @@ test('managed Newton study confirms, repairs one engine failure, and publishes o
   await expect(workflow).toContainText('结果数据集 #')
   await expect(workflow).not.toContainText('scenario_run_failed')
   const trace = await control.trace() as { author: string[]; authorRepairCount: number; engine: Array<{ scenario: string }> }
-  expect(trace.author.slice(baseline.author.length)).toEqual(['generate', 'repair'])
+  expect(trace.author.slice(baseline.author.length)).toEqual(['generate', 'analyze_failure', 'repair'])
   expect(trace.authorRepairCount - baseline.authorRepairCount).toBe(1)
   expect(trace.engine.slice(baseline.engine.length).map(call => call.scenario)).toEqual(['run_failure', 'bus_voltage_success'])
 

@@ -87,7 +87,7 @@ test('one result can be deleted without deleting its run or sibling result', asy
   expect(after.map((dataset: any) => dataset.name)).toEqual(['keep'])
 })
 
-test('failed run history shows sanitized tensoreval output without requesting datasets', async ({ appPage, control }) => {
+test('failed run progress shows persistent sanitized tensoreval output without requesting datasets', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'studies@example.com' })
   const { sessionId } = await createReadySession(page, api, '失败运行详情')
   const datasetRequests: string[] = []
@@ -98,6 +98,18 @@ test('failed run history shows sanitized tensoreval output without requesting da
     page, api, control, sessionId, engine: { kind: 'run_failure' },
   })
   expect(run.status).toBe('failed')
+  let progressCard = page.getByText('运行进度', { exact: true }).locator('xpath=ancestor::div[contains(@class,"rounded-xl")][1]')
+  await expect(progressCard.getByRole('heading', { name: '失败诊断' })).toBeVisible()
+  const progressLog = progressCard.locator('pre')
+  await expect(progressLog).toHaveText('RSS parse error: unexpected token\nat [服务器路径已隐藏]')
+  await expect(progressCard).not.toContainText('/srv/private')
+
+  await page.reload()
+  progressCard = page.getByText('运行进度', { exact: true }).locator('xpath=ancestor::div[contains(@class,"rounded-xl")][1]')
+  await expect(progressCard.getByRole('heading', { name: '失败诊断' })).toBeVisible()
+  await expect(progressCard.locator('pre')).toHaveText('RSS parse error: unexpected token\nat [服务器路径已隐藏]')
+  await expect(progressCard).not.toContainText('/srv/private')
+
   await page.getByRole('button', { name: '运行记录' }).click()
   const runHeader = page.getByRole('button', { name: /replacement\.rss.*失败/ })
   const failedRunCard = runHeader.locator('xpath=ancestor::article[1]')
