@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import WorkflowResultsCard from './WorkflowResultsCard'
 import { useManagedWorkflow } from '../../hooks/useManagedWorkflow'
 import type { WorkflowProgressMessage } from '../../types'
 
@@ -12,11 +13,12 @@ function failureText(value: unknown): string {
   return typeof value === 'string' ? value : '研究执行失败'
 }
 
-export default function WorkflowProgressCard({ message, onRetry, onChanged, notify }: {
+export default function WorkflowProgressCard({ message, onRetry, onChanged, notify, onOpenDataset }: {
   message: WorkflowProgressMessage
   onRetry?: (scriptId: string) => Promise<void>
   onChanged?: () => void
   notify: (text: string) => void
+  onOpenDataset?: (datasetId: string) => void
 }) {
   const { workflow, loading, error, cancel } = useManagedWorkflow(message.card.workflowId, message.revision ?? 0)
   const [now, setNow] = useState(Date.now())
@@ -66,7 +68,7 @@ export default function WorkflowProgressCard({ message, onRetry, onChanged, noti
     try { await onRetry(scriptId) } finally { setRetrying(false) }
   }
 
-  return <article className="mx-auto my-3 max-w-3xl rounded-xl border bg-white p-3 text-sm" aria-label="研究工作流进度">
+  return <><article className="mx-auto my-3 max-w-3xl rounded-xl border bg-white p-3 text-sm" aria-label="研究工作流进度">
     <div className="flex items-center"><b>研究工作流 #{message.card.workflowId}</b><span className="ml-auto text-xs">{state}</span></div>
     <p className="mt-2 text-xs text-slate-600">执行 {message.card.executionIndex}/{message.card.executionMax} · 修正 {message.card.repairIndex}/{message.card.repairMax} · {(elapsed / 1000).toFixed(1)} 秒</p>
     {loading && <p className="mt-2 text-xs text-slate-400">读取详细进度…</p>}
@@ -93,4 +95,6 @@ export default function WorkflowProgressCard({ message, onRetry, onChanged, noti
     </div>}
     {!terminal.has(state) && <button type="button" disabled={cancelling} onClick={() => void stop()} className="mt-3 rounded border px-3 py-1.5 text-xs">{cancelling ? '取消中…' : '取消'}</button>}
   </article>
+    {state === 'succeeded' && workflow?.runId && onOpenDataset && <WorkflowResultsCard key={workflow.runId} runId={String(workflow.runId)} onOpenDataset={onOpenDataset} />}
+  </>
 }

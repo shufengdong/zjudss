@@ -6,7 +6,7 @@ export default function ResultCard({
   handlers,
 }: {
   message: ResultMessage
-  handlers: MessageHandlers
+  handlers: Pick<MessageHandlers, 'onOpenDataset'>
 }) {
   const producerId = message.runId ?? message.analysisRunId ?? ''
   return (

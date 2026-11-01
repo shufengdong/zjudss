@@ -1002,6 +1002,24 @@
     - "error:study_catalog_invalid"
     - "error:study_model_read_failed"
 
+- id: WORKFLOW-RESULT-CARD-001
+  source: docs/frontend-design.md#results
+  title: Successful workflows expose all live results directly in conversation
+  layers: [browser]
+  lanes: [pr]
+  tests:
+    - runner: vitest
+      file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
+      name: shows all live run results after success and opens the selected dataset
+    - runner: vitest
+      file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
+      name: retries failed result loading without rerunning the workflow
+    - runner: vitest
+      file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
+      name: does not load results before success
+  assertions: [successful workflows show all live result names and dimensions, each result opens by stable dataset ID, restored workflows reload results, failed reads can retry without rerunning, non-successful workflows do not request results]
+  fixtures: [managed workflow, live run datasets]
+
 - id: SCRIPT-001
   source: docs/integration-testing-design.md#coverage-matrix
   title: Immutable scripts are lazy-readable copyable and never auto-run

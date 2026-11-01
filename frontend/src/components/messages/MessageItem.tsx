@@ -47,7 +47,7 @@ export default function MessageItem({ message, handlers }: MessageItemProps) {
     case 'study-config':
       return <StudyConfigurationCard message={message} onWorkflowStarted={handlers.onWorkflowChanged} notify={handlers.notify}/>
     case 'workflow-progress':
-      return <WorkflowProgressCard message={message} onRetry={handlers.onRetryScript} onChanged={handlers.onWorkflowChanged} notify={handlers.notify}/>
+      return <WorkflowProgressCard onOpenDataset={handlers.onOpenDataset} message={message} onRetry={handlers.onRetryScript} onChanged={handlers.onWorkflowChanged} notify={handlers.notify}/>
     default:
       return null
   }
