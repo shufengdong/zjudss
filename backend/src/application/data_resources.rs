@@ -891,7 +891,20 @@ impl DataResourceService {
                         }
                         _ => "resource_publish_failed",
                     };
-                    let diagnostic = serde_json::json!({"code":code,"message":error.to_string()});
+                    let message = if code == "resource_alias_conflict" {
+                        let existing = self.repo.list_current_for_user(&user.id).await?;
+                        let conflicts = refreshed.candidates.iter()
+                            .filter(|candidate| candidate.selected && candidate.purpose.as_deref() == Some("data_resource"))
+                            .filter_map(|candidate| {
+                                let alias = candidate.normalized_alias.clone()
+                                    .or_else(|| candidate.proposed_alias.as_deref().map(normalize_alias))
+                                    .unwrap_or_else(|| default_alias(&candidate.display_name));
+                                existing.iter().find(|resource| resource.session_id == refreshed.batch.session_id && resource.normalized_alias == alias)
+                                    .map(|_| format!("{}（别名：{}）", candidate.display_name, alias))
+                            }).collect::<Vec<_>>();
+                        format!("以下数据资源与当前会话已有资源重名：{}。请修改别名后重试数据发布；已发布的模型无需重复发布。", conflicts.join("、"))
+                    } else { error.to_string() };
+                    let diagnostic = serde_json::json!({"code":code,"message":message});
                     self.repo
                         .mark_child_failed(
                             &user.id,

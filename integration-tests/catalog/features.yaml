@@ -419,6 +419,9 @@
     - runner: rust
       file: backend/tests/data_resources.rs
       name: explicit_alias_conflict_replay_keeps_the_frozen_failure
+    - runner: vitest
+      file: frontend/src/components/messages/UploadBatchCard.test.tsx
+      name: shows the conflicting resource aliases and retry guidance
     - runner: rust
       file: backend/tests/data_resources.rs
       name: confirm_and_discard_race_never_revives_a_terminal_batch

@@ -145,3 +145,5 @@ SSE resync 触发有界重载。
 交互元素使用原生 button/input、可辨别名称和 focus 顺序；modal/drawer 有遮罩关闭控件。桌面和 390px
 viewport 都由 Playwright + axe 检查 serious/critical violations。模型版本历史展开按钮以可见版本名称作为
 accessible name，并通过 `aria-expanded` 暴露状态；窄屏模型表工作台不得造成页面横向溢出。
+
+上传批次摘要和完整确认卡显示模型/数据子事务的失败诊断。数据资源别名冲突时，提示列出所有与当前会话已有资源重名的候选名称和别名，并引导修改别名后重试；已发布模型无需重复发布。

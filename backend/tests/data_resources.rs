@@ -2047,6 +2047,19 @@ async fn explicit_alias_conflict_replay_keeps_the_frozen_failure() {
         .unwrap();
     assert_eq!(first.resource_status, "failed");
     assert_eq!(first.diagnostics[0]["code"], "resource_alias_conflict");
+    assert!(
+        first.diagnostics[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("reserved_alias")
+    );
+    let detail = app
+        .state
+        .upload_batch_service
+        .get(&user, batch_id)
+        .await
+        .unwrap();
+    assert!(detail.diagnostics.to_string().contains("reserved_alias"));
     let upload_repo = zjudss::db::repositories::UploadRepo::new(app.pool.clone());
     let revision_after_first = upload_repo
         .find(&user.id, batch_id)

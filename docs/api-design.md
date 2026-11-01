@@ -275,3 +275,5 @@ DELETE 携带 opaque `impactToken` 并在事务中重新计算影响。影响变
 运行队列、版本删除影响变化、结果 busy、分析/比较/视图校验、历史索引不可用、engine snapshot/contract 不匹配，
 以及引擎超时、结果监控/容量/路径失败。权威枚举由
 `cargo run --bin contract-manifest` 产生，并由功能目录逐项覆盖。
+
+上传批次详情的 `diagnostics` 包含模型和数据发布子事务的失败信息；对象形态合并至 `errors`，数组形态追加。`resource_alias_conflict` 的 `message` 列出当前会话内冲突资源名称和别名，提示修改别名后重试，不改变稳定错误码。

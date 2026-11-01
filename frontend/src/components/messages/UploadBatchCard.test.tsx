@@ -30,6 +30,16 @@ describe('UploadBatchCard', () => {
     expect(onOpen).toHaveBeenCalledWith('12')
   })
 
+  it('shows the conflicting resource aliases and retry guidance', () => {
+    const failed = { ...batch('case'), status: 'partially_confirmed' as const,
+      resourcePublishStatus: 'failed' as const,
+      diagnostics: { errors: [{ code: 'resource_alias_conflict', message: '以下数据资源与当前会话已有资源重名：solution（别名：solution）、para（别名：para）。请修改别名后重试数据发布。' }] } }
+    render(<UploadBatchCard message={message} batch={failed} onOpen={vi.fn()} />)
+    expect(screen.getByRole('alert')).toHaveTextContent('solution（别名：solution）')
+    expect(screen.getByRole('alert')).toHaveTextContent('para（别名：para）')
+    expect(screen.getByRole('alert')).toHaveTextContent('请修改别名后重试数据发布')
+  })
+
   it('routes a live case summary to the model workspace', () => {
     const onOpen = vi.fn()
     render(<UploadBatchCard message={message} batch={batch('case')} onOpen={onOpen} />)

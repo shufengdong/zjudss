@@ -534,7 +534,60 @@ impl UploadBatchService {
             self.settle(user, id, "expired").await?;
             return Ok(view(self.repo.find(&user.id, id).await?));
         }
-        Ok(view(record))
+        let mut result = view(record.clone());
+        // Older batches retained only the stable code. Enrich their read view without
+        // changing the frozen confirmation receipt or publishing any resources.
+        if record.batch.resource_publish_status == "failed"
+            && record
+                .batch
+                .resource_diagnostics_json
+                .contains("resource_alias_conflict")
+            && !record.batch.resource_diagnostics_json.contains("别名：")
+        {
+            let existing = self
+                .confirmation_repo
+                .list_current_for_user(&user.id)
+                .await?;
+            let conflicts = record
+                .candidates
+                .iter()
+                .filter(|candidate| {
+                    candidate.selected && candidate.purpose.as_deref() == Some("data_resource")
+                })
+                .filter_map(|candidate| {
+                    let alias = candidate.normalized_alias.as_deref()?;
+                    existing
+                        .iter()
+                        .find(|resource| {
+                            resource.session_id == record.batch.session_id
+                                && resource.normalized_alias == alias
+                        })
+                        .map(|_| format!("{}（别名：{}）", candidate.display_name, alias))
+                })
+                .collect::<Vec<_>>();
+            if !conflicts.is_empty() {
+                let message = format!(
+                    "当前仍重名的数据资源：{}。请修改别名后重试数据发布。",
+                    conflicts.join("、")
+                );
+                let errors = if result.diagnostics.is_array() {
+                    result.diagnostics.as_array_mut()
+                } else {
+                    result
+                        .diagnostics
+                        .get_mut("errors")
+                        .and_then(serde_json::Value::as_array_mut)
+                };
+                if let Some(errors) = errors {
+                    for error in errors {
+                        if error["code"] == "resource_alias_conflict" {
+                            error["message"] = serde_json::json!(message);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(result)
     }
     pub async fn count_by_client_id(
         &self,
@@ -1498,6 +1551,32 @@ fn candidate(
     }
 }
 fn view(record: UploadBatchRecordSet) -> UploadBatchView {
+    let mut diagnostics: serde_json::Value =
+        serde_json::from_str(&record.batch.diagnostics_json).unwrap_or_default();
+    let child_errors = [
+        &record.batch.model_diagnostics_json,
+        &record.batch.resource_diagnostics_json,
+    ]
+    .into_iter()
+    .flat_map(|raw| serde_json::from_str::<Vec<serde_json::Value>>(raw).unwrap_or_default())
+    .collect::<Vec<_>>();
+    if !child_errors.is_empty() {
+        if diagnostics.is_array() {
+            diagnostics.as_array_mut().unwrap().extend(child_errors);
+        } else {
+            if !diagnostics.is_object() {
+                diagnostics = serde_json::json!({});
+            }
+            let errors = diagnostics
+                .as_object_mut()
+                .unwrap()
+                .entry("errors")
+                .or_insert_with(|| serde_json::json!([]));
+            if let Some(errors) = errors.as_array_mut() {
+                errors.extend(child_errors);
+            }
+        }
+    }
     UploadBatchView {
         id: record.batch.id.to_string(),
         session_id: record.batch.session_id.to_string(),
@@ -1508,7 +1587,7 @@ fn view(record: UploadBatchRecordSet) -> UploadBatchView {
         model_publish_status: parse_child(&record.batch.model_publish_status),
         resource_publish_status: parse_child(&record.batch.resource_publish_status),
         parse_settings: serde_json::from_str(&record.batch.parse_settings_json).unwrap_or_default(),
-        diagnostics: serde_json::from_str(&record.batch.diagnostics_json).unwrap_or_default(),
+        diagnostics,
         reserved_bytes: record.batch.reserved_bytes,
         expires_at_ms: record.batch.expires_at_ms,
         revision: record.batch.revision,
