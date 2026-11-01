@@ -154,7 +154,10 @@ Data 输入的 mapping 只接受源列到目标列的受控映射。服务端按
 SaveAsNew；随后确认配置、冻结逐项输入 artifact、创建 managed workflow、持久进度消息和 provisional run。相同操作
 ID 幂等返回同一 workflow/run；同一操作 ID 配合不同请求返回 `idempotency_conflict`。按钮固定为“确认并生成脚本”。
 
-`GET /api/workflows/{id}` 返回工作流、修正预算、run、可空脚本消息锚点和脱敏 attempt 摘要；
+`GET /api/workflows/{id}` 返回工作流、修正预算、run、可空脚本消息锚点和脱敏 attempt 摘要。每个 attempt 还返回
+`durationMs`、按 `stdout|stderr` 区分的 `engineLogs`、可空 `failureAnalysis` 和
+`scriptChangedFromParent`；日志只含服务端已脱敏的保留文本、总/发送字节数与截断标志，不返回审计 artifact ID。分析固定区分
+已确认事实、可能原因、未知信息和建议动作，事实与推断都携带 `stderr:` 日志引用。旧记录缺少这些字段时返回空值或空数组；
 `POST /api/workflows/{id}/cancel` 幂等收敛到 `cancelled_by_user`。同一会话只允许一个
 `queued|generating|executing|repairing` 工作流，冲突返回 `409 workflow_in_progress` 及当前 workflow ID。跨用户和不存在
 统一 404。首份候选脚本产生前 managed run 的脚本资源/artifact/hash 和 `scriptMessageId` 均为空；终态发布脚本资源与
@@ -166,7 +169,8 @@ script 消息时一次性绑定，之后不可更换。正常完成、取消或�
 输入 alias/顺序、Struct 资源引用和结果绑定未变化；一般 RSS 语义与运行可行性以 tensoreval 为准。候选通过结构检查后
 立即使用确认时冻结的 model/Data/Struct artifact 构造私有命名输入树并执行。非零退出、结果数量/大小限制和
 `result_contract_invalid` 可进入修正；`engine_timeout`、`result_monitor_failed`、路径安全、配额和基础设施错误直接失败。
-默认最多 3 个 repair candidate，因此最多 4 次引擎调用。每个 repair prompt 固定包含当前完整脚本、脱敏 stderr、结构或
+默认最多 3 个 repair candidate，因此最多 4 次引擎调用。每次引擎失败先持久化公开脱敏日志，再 best-effort 调用独立的
+失败分析模型；模型不可用、超时或返回非法 JSON 不得隐藏日志、阻断修正或改变终态。每个 repair prompt 固定包含当前完整脚本、脱敏 stderr、结构或
 结果诊断、冻结合同和“只输出修改后的完整脚本，不要解释”。发送内容按 UTF-8 边界保留 64 KiB 首尾；完整有界 stderr
 仅保存为审计 artifact，不进入普通 API、消息、搜索或模型请求。
 

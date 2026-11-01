@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::adapters::AdapterError;
@@ -6,7 +6,7 @@ use crate::adapters::AdapterError;
 const MAX_SENT_BYTES: usize = 64 * 1024;
 const TRUNCATION_MARKER: &str = "\n…[诊断已截断]…\n";
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SanitizedDiagnostic {
     pub text: String,
@@ -19,11 +19,32 @@ pub struct SanitizedDiagnostic {
 }
 
 pub fn sanitize_adapter_stderr(error: &AdapterError) -> SanitizedDiagnostic {
-    let stream = error
-        .diagnostics
-        .as_deref()
-        .and_then(|value| value.get("stderr"));
-    let retained = raw_adapter_stderr(error);
+    sanitize_adapter_stream(error, "stderr").unwrap_or_else(|| {
+        let retained = error.message.as_bytes().to_vec();
+        sanitize_captured_stream(None, retained)
+    })
+}
+
+pub fn sanitize_adapter_stdout(error: &AdapterError) -> Option<SanitizedDiagnostic> {
+    sanitize_adapter_stream(error, "stdout")
+}
+
+fn sanitize_adapter_stream(error: &AdapterError, stream_name: &str) -> Option<SanitizedDiagnostic> {
+    let stream = error.diagnostics.as_deref().and_then(|value| {
+        value.get(stream_name).or_else(|| {
+            value
+                .get("details")
+                .and_then(|details| details.get(stream_name))
+        })
+    });
+    let retained = raw_adapter_stream(error, stream_name)?;
+    Some(sanitize_captured_stream(stream, retained))
+}
+
+fn sanitize_captured_stream(
+    stream: Option<&serde_json::Value>,
+    retained: Vec<u8>,
+) -> SanitizedDiagnostic {
     let full_hash = stream
         .and_then(|value| value.get("fullSha256"))
         .and_then(serde_json::Value::as_str)
@@ -57,10 +78,20 @@ pub fn sanitize_adapter_stderr(error: &AdapterError) -> SanitizedDiagnostic {
 }
 
 pub fn raw_adapter_stderr(error: &AdapterError) -> Vec<u8> {
+    raw_adapter_stream(error, "stderr").unwrap_or_else(|| error.message.as_bytes().to_vec())
+}
+
+fn raw_adapter_stream(error: &AdapterError, stream_name: &str) -> Option<Vec<u8>> {
     error
         .diagnostics
         .as_deref()
-        .and_then(|value| value.get("stderr"))
+        .and_then(|value| {
+            value.get(stream_name).or_else(|| {
+                value
+                    .get("details")
+                    .and_then(|details| details.get(stream_name))
+            })
+        })
         .and_then(|value| value.get("retained"))
         .and_then(serde_json::Value::as_array)
         .map(|bytes| {
@@ -70,7 +101,6 @@ pub fn raw_adapter_stderr(error: &AdapterError) -> Vec<u8> {
                 .filter_map(|value| u8::try_from(value).ok())
                 .collect::<Vec<_>>()
         })
-        .unwrap_or_else(|| error.message.as_bytes().to_vec())
 }
 
 pub fn sanitize_text(value: &str) -> String {
@@ -232,6 +262,27 @@ mod tests {
         assert!(!sanitized.text.contains("hidden"));
         assert!(sanitized.sent_bytes <= MAX_SENT_BYTES as u64);
         assert!(sanitized.truncated);
+    }
+
+    #[test]
+    fn finds_and_sanitizes_stdout_in_engine_failure_details() {
+        let bytes = b"loaded /srv/private/input.parquet token=secret".to_vec();
+        let stream = CapturedStream {
+            retained: bytes.clone(),
+            full_sha256: hash(&bytes),
+            retained_sha256: hash(&bytes),
+            total_bytes: bytes.len() as u64,
+            truncated: false,
+        };
+        let error = AdapterError::new("engine_failed", ErrorCategory::Solver, "failed")
+            .with_diagnostics(serde_json::json!({"details":{"stdout":stream}}));
+
+        let sanitized = sanitize_adapter_stdout(&error).expect("stdout details");
+
+        assert_eq!(
+            sanitized.text,
+            "loaded [服务器路径已隐藏] token=[敏感信息已隐藏]"
+        );
     }
 
     #[test]

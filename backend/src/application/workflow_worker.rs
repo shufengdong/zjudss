@@ -7,7 +7,10 @@ use serde_json::{Value, json};
 use tokio::sync::watch;
 
 use crate::adapters::{AdapterError, NamedInput, RunMode, RunSpec, SimEngine};
-use crate::agent::{EngineDocRef, ScriptAuthor, ScriptGenerationRequest, ScriptRepairRequest};
+use crate::agent::{
+    EngineDocRef, FailureAnalysisRequest, ScriptAuthor, ScriptGenerationRequest,
+    ScriptRepairRequest,
+};
 use crate::auth::CurrentUser;
 use crate::catalog::{DataTypeContract, SchemaFieldContract};
 use crate::db::repositories::{
@@ -17,7 +20,9 @@ use crate::db::repositories::{
 use crate::engine_resources::EngineResourceSnapshot;
 use crate::storage::{ArtifactStore, ParquetMetadata, StageLimits};
 
-use super::diagnostics::{SanitizedDiagnostic, raw_adapter_stderr, sanitize_adapter_stderr};
+use super::diagnostics::{
+    SanitizedDiagnostic, raw_adapter_stderr, sanitize_adapter_stderr, sanitize_adapter_stdout,
+};
 use super::script_contract::ScriptContractInspector;
 use super::{
     ArtifactError, ArtifactMetadata, ArtifactService, LockedStudyContract, RunScheduler,
@@ -369,7 +374,7 @@ impl WorkflowWorker {
                         }
                     };
                     let exit_code = exit_code(&error);
-                    let diagnostic = public_engine_diagnostic(&error, &sanitized);
+                    let mut diagnostic = public_engine_diagnostic(&error, &sanitized);
                     let repairable = repairable_engine_error(&error.code, exit_code);
                     let updated = self
                         .update_attempt(
@@ -394,6 +399,42 @@ impl WorkflowWorker {
                             return Err(message);
                         }
                     };
+                    let analysis_request = FailureAnalysisRequest {
+                        current_script: current_script.clone(),
+                        sanitized_stderr: sanitized.text.clone(),
+                        diagnostic: Some(diagnostic.clone()),
+                        locked_contract: locked.clone(),
+                        inputs: inputs.clone(),
+                    };
+                    let analysis = tokio::select! {
+                        result = self.author.analyze_failure(analysis_request) => result.ok(),
+                        changed = cancel.changed() => {
+                            let _ = changed;
+                            return Ok(());
+                        }
+                    };
+                    if let Some(analysis) = analysis {
+                        if let Some(object) = diagnostic.as_object_mut() {
+                            object.insert(
+                                "analysis".into(),
+                                serde_json::to_value(analysis)
+                                    .expect("bounded failure analysis serializes"),
+                            );
+                        }
+                        aggregate = self
+                            .update_attempt(
+                                user,
+                                workflow_id,
+                                attempt.id,
+                                "engine_failed",
+                                if repairable { "repairing" } else { "executing" },
+                                exit_code,
+                                Some(sanitized.clone()),
+                                Some(audit_artifact_id),
+                                Some(diagnostic.clone()),
+                            )
+                            .await?;
+                    }
                     if !repairable {
                         self.finish_failure(
                             user,
@@ -922,12 +963,14 @@ fn repairable_engine_error(code: &str, exit_code: Option<i32>) -> bool {
 }
 
 fn public_engine_diagnostic(error: &AdapterError, sanitized: &SanitizedDiagnostic) -> Value {
+    let stdout = sanitize_adapter_stdout(error);
     json!({
         "code":error.code,
         "category":error.category.as_str(),
         "message":"仿真引擎执行失败，请查看已脱敏诊断",
         "exitCode":exit_code(error),
         "stderr":sanitized,
+        "stdout":stdout,
     })
 }
 

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::adapters::SimEngine;
+use crate::agent::FailureAnalysis;
 use crate::agent::ScriptAuthor;
 use crate::agent::knowledge::AgentKnowledge;
 use crate::auth::CurrentUser;
@@ -61,9 +62,23 @@ pub struct WorkflowAttemptSummary {
     pub exit_code: Option<i32>,
     pub sanitized_stderr: Option<String>,
     pub diagnostic: Option<Value>,
+    pub failure_analysis: Option<FailureAnalysis>,
+    pub engine_logs: Vec<WorkflowEngineLog>,
+    pub script_changed_from_parent: Option<bool>,
+    pub duration_ms: Option<i64>,
     pub created_at: String,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowEngineLog {
+    pub stream: String,
+    pub text: String,
+    pub total_bytes: u64,
+    pub sent_bytes: u64,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -601,6 +616,11 @@ fn map_repo_error(error: ManagedWorkflowRepoError) -> WorkflowError {
 }
 
 fn view(aggregate: ManagedWorkflowAggregate) -> ManagedWorkflowView {
+    let script_hashes = aggregate
+        .attempts
+        .iter()
+        .map(|attempt| (attempt.id, attempt.script_content_hash.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>();
     ManagedWorkflowView {
         id: aggregate.workflow.id,
         session_id: aggregate.workflow.session_id,
@@ -628,22 +648,58 @@ fn view(aggregate: ManagedWorkflowAggregate) -> ManagedWorkflowView {
         attempts: aggregate
             .attempts
             .into_iter()
-            .map(|attempt| WorkflowAttemptSummary {
-                id: attempt.id,
-                attempt_number: attempt.attempt_number,
-                parent_attempt_id: attempt.parent_attempt_id,
-                phase: attempt.phase,
-                status: attempt.status,
-                script_content_hash: attempt.script_content_hash,
-                exit_code: attempt.exit_code,
-                sanitized_stderr: attempt.sanitized_stderr,
-                diagnostic: attempt
+            .map(|attempt| {
+                let diagnostic = attempt
                     .result_diagnostics_json
                     .as_deref()
-                    .and_then(|value| serde_json::from_str(value).ok()),
-                created_at: ms_to_iso(attempt.created_at_ms),
-                started_at: attempt.started_at_ms.map(ms_to_iso),
-                finished_at: attempt.finished_at_ms.map(ms_to_iso),
+                    .and_then(|value| serde_json::from_str::<Value>(value).ok());
+                let failure_analysis = diagnostic
+                    .as_ref()
+                    .and_then(|value| value.get("analysis"))
+                    .and_then(|value| serde_json::from_value(value.clone()).ok());
+                let engine_logs = ["stdout", "stderr"]
+                    .into_iter()
+                    .filter_map(|stream| {
+                        let value = diagnostic.as_ref()?.get(stream)?;
+                        if value.is_null() {
+                            return None;
+                        }
+                        Some(WorkflowEngineLog {
+                            stream: stream.into(),
+                            text: value.get("text")?.as_str()?.to_string(),
+                            total_bytes: value.get("totalBytes")?.as_u64()?,
+                            sent_bytes: value.get("sentBytes")?.as_u64()?,
+                            truncated: value.get("truncated")?.as_bool()?,
+                        })
+                    })
+                    .collect();
+                let script_changed_from_parent = attempt.parent_attempt_id.and_then(|parent_id| {
+                    let parent_hash = script_hashes.get(&parent_id)?.as_ref()?;
+                    let current_hash = attempt.script_content_hash.as_ref()?;
+                    Some(parent_hash != current_hash)
+                });
+                let duration_ms = attempt
+                    .started_at_ms
+                    .zip(attempt.finished_at_ms)
+                    .map(|(started, finished)| finished.saturating_sub(started));
+                WorkflowAttemptSummary {
+                    id: attempt.id,
+                    attempt_number: attempt.attempt_number,
+                    parent_attempt_id: attempt.parent_attempt_id,
+                    phase: attempt.phase,
+                    status: attempt.status,
+                    script_content_hash: attempt.script_content_hash,
+                    exit_code: attempt.exit_code,
+                    sanitized_stderr: attempt.sanitized_stderr,
+                    diagnostic,
+                    failure_analysis,
+                    engine_logs,
+                    script_changed_from_parent,
+                    duration_ms,
+                    created_at: ms_to_iso(attempt.created_at_ms),
+                    started_at: attempt.started_at_ms.map(ms_to_iso),
+                    finished_at: attempt.finished_at_ms.map(ms_to_iso),
+                }
             })
             .collect(),
         created_at: ms_to_iso(aggregate.workflow.created_at_ms),

@@ -88,6 +88,10 @@ V4 动态目录基础已经实现：`functions.json=2`、`study_facades.json=1`�
 冻结输入、允许的引擎文档和明确指令；外部模型传输失败按 `AGENT_MODEL_RETRY_MAX` 独立重试，不创建 attempt。每份成功
 返回的完整脚本先作为不可变 candidate artifact 持久化并记录父 attempt，执行与修正循环由后续 worker 使用。
 
+引擎失败分析使用同一受控 author 边界但独立 prompt，只接收当前脚本、冻结合同/输入、公开 diagnostic 和已脱敏 stderr。
+响应必须是有界 JSON，分别包含 summary、带 `stderr:` 引用的 facts/possibleCauses、unknowns 和 recommendations；禁止输出
+思维链、恢复脱敏内容或把推断写成事实。解析或 provider 失败是 best-effort 失败，不覆盖已持久化日志，也不阻断 repair。
+
 ## Persistence and audit
 
 每次 tool call 都先写 durable `tool-call` 消息再通过 SSE 发布。脚本消息仅含摘要与有界 preview；全文不进入

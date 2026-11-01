@@ -115,4 +115,58 @@ describe('WorkflowProgressCard', () => {
     await waitFor(() => expect(retry).toHaveBeenCalledWith('7'))
     expect(screen.queryByRole('button', { name: '运行' })).not.toBeInTheDocument()
   })
+
+  it('shows sanitized engine logs and structured AI analysis directly on failure', async () => {
+    const failed = workflow('failed')
+    failed.attempts = [{
+      ...failed.attempts[0],
+      durationMs: 1234,
+      engineLogs: [{ stream: 'stderr', text: 'line one\nline two', totalBytes: 17, sentBytes: 17, truncated: false }],
+      failureAnalysis: {
+        summary: '所选潮流算法拒绝了当前网络拓扑',
+        facts: [{ statement: '引擎明确报告拓扑不受支持', evidence: 'stderr: network topology is unsupported' }],
+        possibleCauses: [{ statement: '算法与拓扑约束可能不兼容', evidence: 'stderr: selected power-flow method' }],
+        unknowns: ['当前网络是否包含算法不支持的结构'],
+        recommendations: ['核对算法的拓扑适用条件'],
+      },
+      scriptChangedFromParent: null,
+    }, {
+      ...failed.attempts[0], id: 2, attemptNumber: 2, parentAttemptId: 1, phase: 'repair',
+      scriptChangedFromParent: false,
+    }] as unknown as ManagedWorkflowView['attempts']
+    vi.mocked(getManagedWorkflow).mockResolvedValue(failed)
+
+    render(<WorkflowProgressCard message={message('failed')} notify={vi.fn()} />)
+
+    expect(await screen.findByRole('heading', { name: '失败诊断' })).toBeInTheDocument()
+    expect(screen.getByText((_, element) => element?.tagName === 'PRE' && element.textContent === 'line one\nline two')).toBeInTheDocument()
+    expect(screen.getByText('所选潮流算法拒绝了当前网络拓扑')).toBeInTheDocument()
+    expect(screen.getByText('引擎明确报告拓扑不受支持')).toBeInTheDocument()
+    expect(screen.getByText('算法与拓扑约束可能不兼容')).toBeInTheDocument()
+    expect(screen.getByText('当前网络是否包含算法不支持的结构')).toBeInTheDocument()
+    expect(screen.getByText('核对算法的拓扑适用条件')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '下载 stderr 脱敏日志' })).toBeInTheDocument()
+    const history = screen.getByRole('button', { name: '自动修正记录（2）' })
+    expect(history).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('未产生实质修改')).not.toBeInTheDocument()
+    fireEvent.click(history)
+    expect(screen.getByText('未产生实质修改')).toBeInTheDocument()
+    expect(screen.getAllByText('依据：所选潮流算法拒绝了当前网络拓扑')).toHaveLength(2)
+  })
+
+  it('keeps logs visible when AI analysis is unavailable', async () => {
+    const failed = workflow('failed')
+    failed.attempts = [{
+      ...failed.attempts[0],
+      engineLogs: [{ stream: 'stderr', text: 'solver failed', totalBytes: 13, sentBytes: 13, truncated: false }],
+      failureAnalysis: null,
+      scriptChangedFromParent: null,
+    }] as unknown as ManagedWorkflowView['attempts']
+    vi.mocked(getManagedWorkflow).mockResolvedValue(failed)
+
+    render(<WorkflowProgressCard message={message('failed')} notify={vi.fn()} />)
+
+    expect(await screen.findByText('solver failed')).toBeInTheDocument()
+    expect(screen.getByText('智能分析暂不可用')).toBeInTheDocument()
+  })
 })

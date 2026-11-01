@@ -4,7 +4,10 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use tokio::sync::Notify;
 
-use crate::agent::{ScriptAuthor, ScriptAuthorError, ScriptGenerationRequest, ScriptRepairRequest};
+use crate::agent::{
+    FailureAnalysis, FailureAnalysisRequest, ScriptAuthor, ScriptAuthorError,
+    ScriptGenerationRequest, ScriptRepairRequest,
+};
 
 #[derive(Debug, Clone)]
 pub enum AuthorTurn {
@@ -27,6 +30,7 @@ struct Inner {
     barriers: Mutex<HashMap<String, Arc<AuthorBarrier>>>,
     trace: Mutex<Vec<String>>,
     repair_requests: Mutex<Vec<ScriptRepairRequest>>,
+    analysis_results: Mutex<VecDeque<Result<FailureAnalysis, String>>>,
 }
 
 #[derive(Clone, Default)]
@@ -49,6 +53,14 @@ impl ScriptedAuthor {
             .lock()
             .expect("author turn queue")
             .push_back(turn);
+    }
+
+    pub fn enqueue_analysis(&self, result: Result<FailureAnalysis, String>) {
+        self.inner
+            .analysis_results
+            .lock()
+            .expect("analysis result queue")
+            .push_back(result);
     }
 
     pub fn release(&self, id: &str) -> bool {
@@ -154,5 +166,23 @@ impl ScriptAuthor for ScriptedAuthor {
             .expect("author repair requests")
             .push(request);
         self.next("repair").await
+    }
+
+    async fn analyze_failure(
+        &self,
+        _request: FailureAnalysisRequest,
+    ) -> Result<FailureAnalysis, ScriptAuthorError> {
+        self.inner
+            .trace
+            .lock()
+            .expect("author trace")
+            .push("analyze_failure".into());
+        self.inner
+            .analysis_results
+            .lock()
+            .expect("analysis result queue")
+            .pop_front()
+            .unwrap_or_else(|| Err("没有可用的失败分析场景".into()))
+            .map_err(ScriptAuthorError::provider)
     }
 }

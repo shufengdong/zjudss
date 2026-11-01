@@ -14,8 +14,8 @@ pub mod script_author;
 
 pub use factory::{AgentBuildRequest, AgentFactory, LlmAgentFactory};
 pub use script_author::{
-    EngineDocRef, LlmScriptAuthor, ScriptAuthor, ScriptAuthorError, ScriptGenerationRequest,
-    ScriptRepairRequest,
+    EngineDocRef, FailureAnalysis, FailureAnalysisEvidence, FailureAnalysisRequest,
+    LlmScriptAuthor, ScriptAuthor, ScriptAuthorError, ScriptGenerationRequest, ScriptRepairRequest,
 };
 
 const SYSTEM_PROMPT: &str = include_str!("../../resources/agent/v4/system.md");

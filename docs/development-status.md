@@ -21,7 +21,7 @@
 | Task 5：独立数据资源发布与管理 | complete | model/resource 双子事务、普通 Data/Struct 资源、替换/删除/提升、资源分析与物化视图、4 个 Agent 工具 |
 | Task 6：目录驱动研究配置 | complete | revision 状态机、动态 model/Data/Struct/结果卡、复用建议、多资源消歧、受控列映射、最终确认准备合同、2 个 Agent 工具 |
 | Task 9：受管工作流状态机 | complete | 原子确认、Struct 资源发布、冻结输入、provisional run、专用 ScriptAuthor、candidate/父 attempt、查询/取消 API、启动恢复 |
-| Task 10：脚本生成、执行与自动修正 | complete | 结构合同检查、冻结输入树、共享调度与会话取消、tensoreval 立即执行、3 次修正/4 次执行上限、64 KiB 脱敏诊断、精确结果合同、独占原子结果发布与崩溃孤儿回收 |
+| Task 10：脚本生成、执行与自动修正 | complete | 结构合同检查、冻结输入树、共享调度与会话取消、tensoreval 立即执行、3 次修正/4 次执行上限、64 KiB 脱敏 stdout/stderr、带日志引用的结构化失败分析、无实质修改识别、精确结果合同、独占原子结果发布与崩溃孤儿回收 |
 | Task 11：脚本重跑、失败重试与运行删除 | complete | 最新所需输入冻结、开放/精确结果合同、派生 retry workflow、输入差异确认、run/result 原子 tombstone、artifact 引用释放 |
 | Task 7：durable 消息、历史锚定与会话删除 | complete | 3 种 revisioned 操作卡、`messageId:revision` SSE、连续 around window、影响 token 删除与统一取消 |
 | Task 8：V4 Agent bundle 与受控工具 | complete | `v4.1.0`、5 个按需 skills、23 个对话工具；明确自然语言可发布精确草稿并自动激活，无聊天脚本创建或旧规划权限 |

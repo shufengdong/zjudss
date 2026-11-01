@@ -124,14 +124,16 @@ artifact 并建立持久进度消息。`client_operation_id` 在会话内唯一�
 
 首次受管 run 在脚本尚未产生时允许脚本资源/artifact/hash 三列同时为空；该例外只适用于 `run_kind=managed`。一旦候选
 脚本成为用户可见终态，三列、同会话 script 消息锚点和 workflow 最终引用原子写入，数据库触发器禁止清空或改换锚点。
-`workflow_attempts` 保存不可变候选 artifact、父 attempt 和脱敏诊断。workflow 输入、candidate、最终 script 与 run 分别
+`workflow_attempts` 保存不可变候选 artifact、父 attempt 和脱敏诊断。公开引擎 stdout/stderr 元数据和受控大模型分析作为
+`result_diagnostics_json` 的可选字段随 attempt 持久化；相邻脚本是否实质变化由父子 attempt 的不可变内容 hash 派生，不新增可变列。
+workflow 输入、candidate、最终 script 与 run 分别
 持有 artifact 引用；会话删除逐引用释放。正常完成、用户取消和启动恢复共用终态事务：存在候选时均发布最后一个候选为
 不可变 script/message/run 锚点，确实尚无候选时才允许终态 managed run 保持空脚本三元组。启动恢复把非终态 workflow、candidate/executing attempt 和 provisional run
 收敛到明确失败态。
 
 Task 10 执行时，generation candidate 不占修正预算，每个 repair candidate 在持久化时递增
 `managed_workflows.corrections_used`。attempt 依次记录 `candidate/contract_rejected/executing/engine_failed/result_rejected/succeeded`
-状态、实际退出码、脱敏 stderr、完整/保留/发送 hash 与字节数；原始有界 stderr 只由
+状态、实际退出码、脱敏 stderr、完整/保留/发送 hash 与字节数；分析失败不清除先落库的公开诊断。原始有界 stderr 只由
 `stderr_audit_artifact_id` 引用，不进入公共 payload。成功终态事务同时插入全部 `result_datasets` 并绑定最终 script/message/run；
 失败、取消或事务回滚不插入部分结果，私有 result-dir 被清理。
 

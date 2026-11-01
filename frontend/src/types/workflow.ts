@@ -1,3 +1,29 @@
-export interface WorkflowAttemptSummary {id:number;attemptNumber:number;parentAttemptId?:number|null;phase:string;status:string;scriptContentHash?:string|null;exitCode?:number|null;sanitizedStderr?:string|null;diagnostic?:unknown|null;createdAt:string;startedAt?:string|null;finishedAt?:string|null}
+export interface FailureAnalysisEvidence { statement:string; evidence:string }
+export interface FailureAnalysis {
+  summary:string
+  facts:FailureAnalysisEvidence[]
+  possibleCauses:FailureAnalysisEvidence[]
+  unknowns:string[]
+  recommendations:string[]
+}
+export interface WorkflowEngineLog { stream:string; text:string; totalBytes:number; sentBytes:number; truncated:boolean }
+export interface WorkflowAttemptSummary {
+  id:number
+  attemptNumber:number
+  parentAttemptId?:number|null
+  phase:string
+  status:string
+  scriptContentHash?:string|null
+  exitCode?:number|null
+  sanitizedStderr?:string|null
+  diagnostic?:unknown|null
+  failureAnalysis?:FailureAnalysis|null
+  engineLogs?:WorkflowEngineLog[]
+  scriptChangedFromParent?:boolean|null
+  durationMs?:number|null
+  createdAt:string
+  startedAt?:string|null
+  finishedAt?:string|null
+}
 export interface ManagedWorkflowView {id:number;sessionId:number;configurationId?:number|null;configurationRevision?:number|null;sourceWorkflowId?:number|null;status:string;correctionBudget:number;correctionsUsed:number;progressMessageId?:number|null;finalScriptResourceId?:number|null;runId:number;scriptMessageId?:number|null;outputDatasetIds:string[];error?:unknown|null;attempts:WorkflowAttemptSummary[];createdAt:string;updatedAt:string;finishedAt?:string|null}
 export interface RetryPreviewView {retryPreviewId?:string|null;changes:unknown;expiresAt?:string|null;workflow?:ManagedWorkflowView|null}

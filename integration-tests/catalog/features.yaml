@@ -877,6 +877,12 @@
     - runner: vitest
       file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
       name: uses 重新尝试 for terminal failure and never labels it 运行
+    - runner: vitest
+      file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
+      name: shows sanitized engine logs and structured AI analysis directly on failure
+    - runner: vitest
+      file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
+      name: keeps logs visible when AI analysis is unavailable
     - runner: rust
       file: backend/tests/managed_workflows.rs
       name: confirmation_is_idempotent_and_creates_one_provisional_run
@@ -898,7 +904,7 @@
     - runner: rust
       file: backend/tests/managed_workflows.rs
       name: scripted_author_sequences_generation_and_repair
-  assertions: [confirmation and frozen inputs commit atomically, one session has at most one nonterminal workflow, operation IDs are idempotent, a managed run may remain scriptless until the first candidate exists, candidate artifacts and parent attempts are immutable, script messages anchor terminal runs once, cancellation and restart converge deterministically, resources and workflows are user scoped]
+  assertions: [confirmation and frozen inputs commit atomically, one session has at most one nonterminal workflow, operation IDs are idempotent, a managed run may remain scriptless until the first candidate exists, candidate artifacts and parent attempts are immutable, script messages anchor terminal runs once, failure cards show sanitized logs and bounded evidence-citing analysis while repair history stays collapsed, cancellation and restart converge deterministically, resources and workflows are user scoped]
   fixtures: [ready study configuration, imported active model and para resource, temporary V4 database]
   contracts:
     - "route:POST /api/study-configurations/{id}/confirm"
@@ -943,7 +949,7 @@
     - runner: rust
       file: backend/tests/script_repair.rs
       name: cancellation_interrupts_the_author_without_creating_a_candidate
-  assertions: [initial generation runs immediately, each candidate and parent attempt is durable, structural contract violations never reach tensoreval, repair candidates consume the configured budget, three repairs permit at most four engine calls, nonzero exits and result contract violations are repairable, timeout monitor path quota and infrastructure failures stop immediately, stderr sent to the model is sanitized and bounded while raw retained bytes remain audit only, cancellation interrupts author or engine work, exact result names and schemas publish atomically without partial datasets]
+  assertions: [initial generation runs immediately, each candidate and parent attempt is durable, structural contract violations never reach tensoreval, repair candidates consume the configured budget, three repairs permit at most four engine calls, nonzero exits and result contract violations are repairable, timeout monitor path quota and infrastructure failures stop immediately, stderr sent to the model is sanitized and bounded while raw retained bytes remain audit only, failure analysis is bounded and cannot hide logs when unavailable, identical parent and repair hashes are reported as no substantive change, cancellation interrupts author or engine work, exact result names and schemas publish atomically without partial datasets]
   fixtures: [minimal dynamic facade, frozen model and Struct resource, scripted author, scenario engine]
   contracts:
     - "error:repair_contract_violated"

@@ -29,9 +29,11 @@ DATA-RESOURCE-001 的 Rust 行为测试覆盖：无 schemaRef 的通用资源、
 artifact 并使未确认研究配置失效、Struct preview/confirm 与被取代 artifact 回收、影响 token 删除和配额释放、跨用户 404、
 受管研究覆盖确认幂等、同会话单非终态 workflow、Struct 替换与冻结同事务、provisional run 空脚本合同、candidate 父链、
 终态脚本消息锚点、带候选和无候选两类取消/启动恢复、active 模型切换竞争、并发重放 material 引用结算；
-Task 10 另以 `backend/tests/script_repair.rs` 覆盖首次生成后立即执行、一次成功、非零退出修正成功、初始/repair 结构合同违规的
+Task 10 另以 `backend/tests/script_repair.rs` 覆盖首次生成后立即执行、一次成功、非零退出修正成功及结构化失败分析、分析模型
+不可用时仍保留日志、相同脚本 hash 标记无实质修改、初始/repair 结构合同违规的
 引擎调用和预算差异、3 次修正对应最多 4 次执行、候选配额失败终态化、结果合同拒绝后无部分发布、超时不修正、
-64 KiB 脱敏 prompt、审计 stderr 隔离，以及生成阶段取消；`artifact_store.rs` 还验证没有数据库记录的崩溃遗留 CAS
+64 KiB 脱敏 prompt、审计 stderr 隔离，以及生成阶段取消；前端组件测试覆盖失败诊断直接展示、四段分析、日志下载入口和
+默认折叠的自动修正记录。`artifact_store.rs` 还验证没有数据库记录的崩溃遗留 CAS
 对象可由 GC 回收。这些是行为测试，不能由状态枚举注册测试替代。
 Task 11 由 `simulation_runs.rs`、`workflow_retries.rs` 和 `result_deletion.rs` 覆盖资源型手写脚本无 active 执行、
 规范 script message 锚点、按门面读取最新所需输入、开放/冻结结果合同、失败脚本在输入不变时直接派生以及输入变化时

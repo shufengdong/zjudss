@@ -3,6 +3,7 @@ mod common;
 use std::sync::Arc;
 
 use serde_json::json;
+use zjudss::agent::{FailureAnalysis, FailureAnalysisEvidence};
 use zjudss::application::{
     ActivateVersionRequest, ConfirmStudyRequest, PrepareStudyRequest, PublishDraftRequest,
     StorageLimits,
@@ -161,6 +162,19 @@ async fn nonzero_exit_is_sanitized_repaired_and_then_succeeds() {
     let engine = Arc::new(ScenarioEngine::default());
     author.enqueue(script_turn("result = test(table, para);"));
     author.enqueue(script_turn("result = test(table, para);"));
+    author.enqueue_analysis(Ok(FailureAnalysis {
+        summary: "引擎拒绝了当前脚本对应的求解条件".into(),
+        facts: vec![FailureAnalysisEvidence {
+            statement: "引擎返回解析失败".into(),
+            evidence: "stderr: parse failed".into(),
+        }],
+        possible_causes: vec![FailureAnalysisEvidence {
+            statement: "脚本调用可能不符合引擎合同".into(),
+            evidence: "stderr: parse failed".into(),
+        }],
+        unknowns: vec!["引擎解析器拒绝的具体位置".into()],
+        recommendations: vec!["核对冻结函数签名".into()],
+    }));
     engine.enqueue(EngineScenario::Failure {
         code: "engine_exit_nonzero".into(),
         stderr: b"/srv/private/run/script.rss token=secret parse failed".to_vec(),
@@ -191,6 +205,17 @@ async fn nonzero_exit_is_sanitized_repaired_and_then_succeeds() {
     assert_eq!(terminal.status, "succeeded", "{terminal:?}");
     assert_eq!(terminal.corrections_used, 1);
     assert_eq!(terminal.attempts.len(), 2);
+    assert_eq!(
+        terminal.attempts[0]
+            .failure_analysis
+            .as_ref()
+            .unwrap()
+            .summary,
+        "引擎拒绝了当前脚本对应的求解条件"
+    );
+    assert_eq!(terminal.attempts[0].engine_logs[0].stream, "stderr");
+    assert_eq!(terminal.attempts[0].script_changed_from_parent, None);
+    assert_eq!(terminal.attempts[1].script_changed_from_parent, Some(false));
     assert_eq!(engine.calls().len(), 2);
     let prompt = serde_json::to_string(&author.repair_requests()[0]).unwrap();
     assert!(prompt.contains("只输出修改后的完整脚本，不要解释"));
@@ -269,7 +294,9 @@ async fn timeout_is_not_repaired() {
         .unwrap();
     assert_eq!(terminal.status, "failed");
     assert_eq!(terminal.corrections_used, 0);
-    assert_eq!(author.trace().len(), 1);
+    assert_eq!(author.trace(), vec!["generate", "analyze_failure"]);
+    assert_eq!(terminal.attempts[0].engine_logs[0].text, "timeout");
+    assert!(terminal.attempts[0].failure_analysis.is_none());
     assert_eq!(engine.calls().len(), 1);
 }
 
