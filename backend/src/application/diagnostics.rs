@@ -194,7 +194,14 @@ pub fn sanitize_text(value: &str) -> String {
         let trimmed = token.trim_end_matches(char::is_whitespace);
         let suffix = &token[trimmed.len()..];
         let lower = trimmed.to_ascii_lowercase();
-        if secret_value_pending
+        let redacted_path = redact_absolute_paths(trimmed);
+        if redacted_path != trimmed {
+            output.push(redacted_path);
+            output.push(suffix.to_string());
+            redact_bearer_value = false;
+            secret_value_pending = false;
+            secret_separator_pending = false;
+        } else if secret_value_pending
             && lower.trim_matches(|c: char| !c.is_ascii_alphanumeric()) == "bearer"
         {
             output.push(token.to_string());
@@ -207,7 +214,7 @@ pub fn sanitize_text(value: &str) -> String {
                 output.push(token.to_string());
                 secret_value_pending = true;
             } else {
-                output.push(format!("[敏感信息已隐藏]{suffix}"));
+                output.push(token.to_string());
             }
             secret_separator_pending = false;
         } else if lower.trim_matches(|c: char| !c.is_ascii_alphanumeric()) == "bearer" {
@@ -360,7 +367,7 @@ mod tests {
     #[test]
     fn redacts_env_json_bearer_and_punctuated_paths() {
         let sanitized = sanitize_text(
-            "DEEPSEEK_API_KEY=abc Bearer xyz Authorization: Bearer auth-secret {\"token\":\"json-secret\"} {\"token\": \"spaced-json\"} TOKEN = spaced-env at (/srv/a.rss),",
+            "DEEPSEEK_API_KEY=abc Bearer xyz Authorization: Bearer auth-secret {\"token\":\"json-secret\"} {\"token\": \"spaced-json\"} TOKEN = spaced-env at (/srv/a.rss),\nRSS parse error: unexpected token\nat /srv/private/runs/secret/input/script.rss:12:4",
         );
         for secret in [
             "abc",
@@ -370,6 +377,7 @@ mod tests {
             "spaced-json",
             "spaced-env",
             "/srv/a.rss",
+            "/srv/private/runs/secret/input/script.rss",
         ] {
             assert!(!sanitized.contains(secret), "leaked {secret}: {sanitized}");
         }
