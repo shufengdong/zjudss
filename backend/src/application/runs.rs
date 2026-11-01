@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use crate::adapters::{
     ENGINE_CONTRACT_VERSION, ErrorCategory, NamedInput, RunMode, RunSpec, SimEngine,
 };
+use crate::agent::{FailureAnalysisRequest, FailureAnalyzer};
 use crate::auth::CurrentUser;
 use crate::db::models::SimulationRun;
 use crate::db::repositories::{
@@ -15,6 +16,10 @@ use crate::db::repositories::{
 use crate::engine_resources::EngineResourceSnapshot;
 use crate::storage::{ArtifactStore, ParquetInspector, StageLimits};
 
+use super::diagnostics::{
+    FailureAnalysisStatus, RunFailureDiagnosis, adapter_engine_logs, sanitize_adapter_stderr,
+    sanitize_adapter_stdout,
+};
 use super::{
     ArtifactError, ArtifactService, EventBus, EventWriter, MessageRepo, OperationKind,
     OperationRef, ResultOutputRef, RunScheduler, Stage, StageStatus, ms_to_iso, now_ms,
@@ -135,6 +140,7 @@ pub struct RunService {
     snapshot: Arc<EngineResourceSnapshot>,
     engine_timeout: std::time::Duration,
     result_max_file_bytes: u64,
+    failure_analyzer: Arc<dyn FailureAnalyzer>,
 }
 
 pub(crate) struct RunServiceDependencies {
@@ -150,6 +156,7 @@ pub(crate) struct RunServiceDependencies {
     pub snapshot: Arc<EngineResourceSnapshot>,
     pub engine_timeout: std::time::Duration,
     pub result_max_file_bytes: u64,
+    pub failure_analyzer: Arc<dyn FailureAnalyzer>,
 }
 
 impl RunService {
@@ -167,6 +174,7 @@ impl RunService {
             snapshot,
             engine_timeout,
             result_max_file_bytes,
+            failure_analyzer,
         } = dependencies;
         Self {
             repo,
@@ -181,6 +189,7 @@ impl RunService {
             snapshot,
             engine_timeout,
             result_max_file_bytes,
+            failure_analyzer,
         }
     }
     pub async fn create(
@@ -354,24 +363,42 @@ impl RunService {
                 .unwrap_or_else(|| "run".to_string());
             eprintln!("[run] failed id={id}, stage={failed_stage}: {error}");
             let reason = public_failure_reason(&error);
-            let (engine_output, exit_code) = engine_failure_details(&error);
+            let (_, exit_code) = engine_failure_details(&error);
             let code = match &error {
                 RunError::ResultContract(code, _) => *code,
                 _ => "run_failed",
             };
-            let mut failure = serde_json::json!({"code":code,"reason":reason});
-            if let Some(engine_output) = engine_output {
-                failure["engineOutput"] = serde_json::Value::String(engine_output);
-            }
+            let finished_at = now_ms();
+            let engine_logs = match &error {
+                RunError::Adapter(error) => adapter_engine_logs(error),
+                _ => Vec::new(),
+            };
+            let failure = RunFailureDiagnosis {
+                code: code.into(),
+                reason: reason.into(),
+                stage: failed_stage.clone(),
+                duration_ms: run
+                    .as_ref()
+                    .and_then(|run| run.started_at_ms)
+                    .map(|started| finished_at.saturating_sub(started)),
+                engine_logs,
+                analysis_status: if matches!(error, RunError::Adapter(_)) {
+                    FailureAnalysisStatus::Pending
+                } else {
+                    FailureAnalysisStatus::Unavailable
+                },
+                analysis: None,
+            };
             let failed = self
                 .repo
                 .fail(
                     &user.id,
                     id,
                     &failed_stage,
-                    failure.to_string(),
+                    serde_json::to_string(&failure)
+                        .expect("bounded run failure diagnosis serializes"),
                     exit_code,
-                    now_ms(),
+                    finished_at,
                 )
                 .await;
             if failed.is_ok()
@@ -392,8 +419,65 @@ impl RunService {
                         run_failed_stages(&failed_stage),
                     )
                     .await;
+                if let RunError::Adapter(adapter_error) = error {
+                    let service = self.clone();
+                    let principal = user.clone();
+                    tokio::spawn(async move {
+                        service
+                            .enrich_failure_analysis(principal, run, adapter_error)
+                            .await;
+                    });
+                }
             }
         }
+    }
+
+    async fn enrich_failure_analysis(
+        &self,
+        user: CurrentUser,
+        run: SimulationRun,
+        error: crate::adapters::AdapterError,
+    ) {
+        let analysis = async {
+            let artifact_id = run.script_artifact_id?;
+            let artifact = self
+                .artifacts
+                .find_owned(user.storage_scope_id, artifact_id)
+                .await
+                .ok()?;
+            let path = self
+                .artifacts
+                .store()
+                .resolve(&artifact.storage_path)
+                .ok()?;
+            let current_script = std::fs::read_to_string(path).ok()?;
+            let stderr = sanitize_adapter_stderr(&error);
+            let request = FailureAnalysisRequest {
+                current_script,
+                sanitized_stdout: sanitize_adapter_stdout(&error).map(|stdout| stdout.text),
+                sanitized_stderr: stderr.text,
+                diagnostic: Some(serde_json::json!({
+                    "code": error.code,
+                    "category": error.category.as_str(),
+                    "exitCode": engine_failure_details(&RunError::Adapter(error.clone())).1,
+                })),
+                locked_contract: None,
+                inputs: None,
+            };
+            self.failure_analyzer.analyze_failure(request).await.ok()
+        };
+        let analysis = tokio::time::timeout(std::time::Duration::from_secs(30), analysis)
+            .await
+            .ok()
+            .flatten();
+        let (status, analysis) = match analysis.as_ref() {
+            Some(analysis) => (FailureAnalysisStatus::Complete, Some(analysis)),
+            None => (FailureAnalysisStatus::Unavailable, None),
+        };
+        let _ = self
+            .repo
+            .complete_failure_analysis(&user.id, run.id, status, analysis)
+            .await;
     }
     async fn execute_inner(&self, user: &CurrentUser, id: i32) -> Result<(), RunError> {
         self.repo

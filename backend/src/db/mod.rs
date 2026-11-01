@@ -68,6 +68,10 @@ pub fn recover_interrupted_runs(
              error_json='{{\"code\":\"service_restarted\",\"message\":\"服务重启，运行已中止\"}}',
              finished_at_ms={now_ms}
          WHERE status IN ('queued','running') AND managed_workflow_id IS NULL;
+         UPDATE simulation_runs
+         SET error_json=json_remove(json_set(error_json,'$.analysisStatus','unavailable'),'$.analysis')
+         WHERE status='failed' AND managed_workflow_id IS NULL
+           AND json_extract(error_json,'$.analysisStatus')='pending';
          UPDATE result_analysis_runs
          SET status='failed', stage='recovery',
              error_json='{{\"code\":\"service_restarted\",\"message\":\"服务重启，运行已中止\"}}',

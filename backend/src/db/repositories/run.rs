@@ -3,6 +3,8 @@ use diesel::sql_types::{BigInt, Integer, Nullable, Text};
 use sha2::Digest;
 
 use super::{ArtifactDraft, ArtifactRepo, RepoError, RepoResult, StateTransition};
+use crate::agent::FailureAnalysis;
+use crate::application::diagnostics::FailureAnalysisStatus;
 use crate::auth::UserId;
 use crate::db::models::SimulationRun;
 use crate::db::{DbPool, schema};
@@ -431,6 +433,66 @@ impl RunRepo {
             StateTransition::failed_with_exit_code(stage, error, exit_code, now),
         )
         .await
+    }
+    pub async fn complete_failure_analysis(
+        &self,
+        user: &UserId,
+        id: i32,
+        status: FailureAnalysisStatus,
+        analysis: Option<&FailureAnalysis>,
+    ) -> RepoResult<()> {
+        if status == FailureAnalysisStatus::Pending
+            || (status == FailureAnalysisStatus::Complete) != analysis.is_some()
+        {
+            return Err(RepoError::InvalidState(
+                "invalid failure analysis completion".into(),
+            ));
+        }
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        let status = status.as_str().to_string();
+        let analysis = analysis
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| RepoError::Storage(error.to_string()))?;
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            let count = if let Some(analysis) = analysis {
+                diesel::sql_query(
+                    "UPDATE simulation_runs
+                     SET error_json=json_set(error_json,'$.analysisStatus',?1,'$.analysis',json(?2))
+                     WHERE id=?3 AND status='failed' AND deleted_at_ms IS NULL
+                       AND json_extract(error_json,'$.analysisStatus')='pending'
+                       AND session_id IN(SELECT id FROM sessions WHERE user_id=?4 AND deletion_status='live')",
+                )
+                .bind::<Text, _>(status)
+                .bind::<Text, _>(analysis)
+                .bind::<Integer, _>(id)
+                .bind::<Text, _>(user)
+                .execute(&mut conn)?
+            } else {
+                diesel::sql_query(
+                    "UPDATE simulation_runs
+                     SET error_json=json_remove(json_set(error_json,'$.analysisStatus',?1),'$.analysis')
+                     WHERE id=?2 AND status='failed' AND deleted_at_ms IS NULL
+                       AND json_extract(error_json,'$.analysisStatus')='pending'
+                       AND session_id IN(SELECT id FROM sessions WHERE user_id=?3 AND deletion_status='live')",
+                )
+                .bind::<Text, _>(status)
+                .bind::<Integer, _>(id)
+                .bind::<Text, _>(user)
+                .execute(&mut conn)?
+            };
+            if count == 1 {
+                Ok(())
+            } else {
+                Err(RepoError::InvalidState(
+                    "failure analysis already completed".into(),
+                ))
+            }
+        })
+        .await
+        .map_err(RepoError::Join)?
     }
     async fn update_state(
         &self,

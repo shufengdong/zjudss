@@ -21,7 +21,8 @@ use crate::engine_resources::EngineResourceSnapshot;
 use crate::storage::{ArtifactStore, ParquetMetadata, StageLimits};
 
 use super::diagnostics::{
-    SanitizedDiagnostic, raw_adapter_stderr, sanitize_adapter_stderr, sanitize_adapter_stdout,
+    EngineLog, SanitizedDiagnostic, adapter_engine_logs, raw_adapter_stderr,
+    sanitize_adapter_stderr, sanitize_adapter_stdout,
 };
 use super::script_contract::ScriptContractInspector;
 use super::{
@@ -970,14 +971,31 @@ fn repairable_engine_error(code: &str, exit_code: Option<i32>) -> bool {
 }
 
 fn public_engine_diagnostic(error: &AdapterError, sanitized: &SanitizedDiagnostic) -> Value {
-    let stdout = sanitize_adapter_stdout(error);
+    let logs = adapter_engine_logs(error);
+    let stream = |name: &str| {
+        logs.iter()
+            .find(|log| log.stream == name)
+            .map(engine_log_diagnostic)
+    };
     json!({
         "code":error.code,
         "category":error.category.as_str(),
         "message":"仿真引擎执行失败，请查看已脱敏诊断",
         "exitCode":exit_code(error),
-        "stderr":sanitized,
-        "stdout":stdout,
+        "stderr":stream("stderr").unwrap_or_else(|| serde_json::to_value(sanitized).expect("sanitized diagnostic serializes")),
+        "stdout":stream("stdout"),
+    })
+}
+
+fn engine_log_diagnostic(log: &EngineLog) -> Value {
+    json!({
+        "text": log.text,
+        "fullHash": log.full_hash,
+        "retainedHash": log.retained_hash,
+        "sentHash": log.sent_hash,
+        "totalBytes": log.total_bytes,
+        "sentBytes": log.sent_bytes,
+        "truncated": log.truncated,
     })
 }
 

@@ -11,7 +11,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 use zjudss::adapters::{SimEngine, StubEngine};
 use zjudss::agent::knowledge::AgentKnowledge;
-use zjudss::agent::{AgentFactory, LlmAgentFactory, LlmConfig};
+use zjudss::agent::{AgentFactory, FailureAnalyzer, LlmAgentFactory, LlmConfig};
 use zjudss::application::{AppState, RunScheduler};
 use zjudss::application::{CandidateDecision, CandidatePurpose, UploadFile, UploadSourceKind};
 use zjudss::auth::{AuthService, CurrentUser, UserId};
@@ -270,6 +270,7 @@ impl TestApp {
                 provider: "deepseek".to_string(),
                 model: "test-model".to_string(),
             })),
+            None,
         )
         .await
     }
@@ -281,6 +282,7 @@ impl TestApp {
             RunScheduler::new(8, 2, 32),
             std::sync::Arc::new(StubEngine),
             factory,
+            None,
         )
         .await
     }
@@ -295,6 +297,25 @@ impl TestApp {
                 provider: "deepseek".to_string(),
                 model: "test-model".to_string(),
             })),
+            None,
+        )
+        .await
+    }
+
+    pub async fn spawn_with_engine_and_failure_analyzer(
+        engine: std::sync::Arc<dyn SimEngine>,
+        failure_analyzer: std::sync::Arc<dyn FailureAnalyzer>,
+    ) -> Self {
+        Self::spawn_with_scheduler_and_agent_factory(
+            std::time::Duration::from_secs(30 * 24 * 60 * 60),
+            false,
+            RunScheduler::new(8, 2, 32),
+            engine,
+            std::sync::Arc::new(LlmAgentFactory::new(LlmConfig {
+                provider: "deepseek".to_string(),
+                model: "test-model".to_string(),
+            })),
+            Some(failure_analyzer),
         )
         .await
     }
@@ -309,6 +330,7 @@ impl TestApp {
             RunScheduler::new(8, 2, 32),
             engine,
             agent_factory,
+            None,
         )
         .await
     }
@@ -319,6 +341,7 @@ impl TestApp {
         scheduler: RunScheduler,
         engine: std::sync::Arc<dyn SimEngine>,
         agent_factory: std::sync::Arc<dyn AgentFactory>,
+        failure_analyzer: Option<std::sync::Arc<dyn FailureAnalyzer>>,
     ) -> Self {
         let root = tempfile::tempdir().expect("create isolated test root");
         let engine_root = root.path().join("sparrowzz");
@@ -470,7 +493,7 @@ impl TestApp {
             std::time::Duration::from_millis(config.tensoreval_timeout_ms),
             config.result_max_file_bytes,
             None,
-            None,
+            failure_analyzer,
             false,
             zjudss::ingestion::ArchiveLimits {
                 max_entries: config.archive_max_entries,

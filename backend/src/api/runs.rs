@@ -128,11 +128,22 @@ fn public_run_error(status: &str, raw: Option<&str>) -> Option<Value> {
         _ => "run_failed",
     };
     let mut error = json!({"code":public_code,"message":message});
-    if let Some(engine_output) = parsed
+    let engine_output = parsed
         .as_ref()
         .and_then(|value| value.get("engineOutput"))
         .and_then(Value::as_str)
-        .and_then(crate::application::runs::sanitize_engine_output)
+        .or_else(|| {
+            parsed
+                .as_ref()?
+                .get("engineLogs")?
+                .as_array()?
+                .iter()
+                .find(|log| log.get("stream").and_then(Value::as_str) == Some("stderr"))?
+                .get("text")?
+                .as_str()
+        });
+    if let Some(engine_output) =
+        engine_output.and_then(crate::application::runs::sanitize_engine_output)
     {
         error["engineOutput"] = Value::String(engine_output);
     }

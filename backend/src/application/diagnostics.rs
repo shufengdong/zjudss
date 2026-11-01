@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::adapters::AdapterError;
+use crate::agent::FailureAnalysis;
 
 const MAX_SENT_BYTES: usize = 64 * 1024;
 const TRUNCATION_MARKER: &str = "\n…[诊断已截断]…\n";
@@ -16,6 +17,77 @@ pub struct SanitizedDiagnostic {
     pub total_bytes: u64,
     pub sent_bytes: u64,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineLog {
+    pub stream: String,
+    pub text: String,
+    pub full_hash: String,
+    pub retained_hash: String,
+    pub sent_hash: String,
+    pub total_bytes: u64,
+    pub sent_bytes: u64,
+    pub truncated: bool,
+}
+
+impl EngineLog {
+    fn from_diagnostic(stream: &str, diagnostic: SanitizedDiagnostic) -> Self {
+        Self {
+            stream: stream.into(),
+            text: diagnostic.text,
+            full_hash: diagnostic.full_hash,
+            retained_hash: diagnostic.retained_hash,
+            sent_hash: diagnostic.sent_hash,
+            total_bytes: diagnostic.total_bytes,
+            sent_bytes: diagnostic.sent_bytes,
+            truncated: diagnostic.truncated,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureAnalysisStatus {
+    Pending,
+    Complete,
+    Unavailable,
+}
+
+impl FailureAnalysisStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Complete => "complete",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunFailureDiagnosis {
+    pub code: String,
+    pub reason: String,
+    pub stage: String,
+    pub duration_ms: Option<i64>,
+    pub engine_logs: Vec<EngineLog>,
+    pub analysis_status: FailureAnalysisStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<FailureAnalysis>,
+}
+
+pub fn adapter_engine_logs(error: &AdapterError) -> Vec<EngineLog> {
+    let mut logs = Vec::with_capacity(2);
+    if let Some(stdout) = sanitize_adapter_stdout(error) {
+        logs.push(EngineLog::from_diagnostic("stdout", stdout));
+    }
+    logs.push(EngineLog::from_diagnostic(
+        "stderr",
+        sanitize_adapter_stderr(error),
+    ));
+    logs
 }
 
 pub fn sanitize_adapter_stderr(error: &AdapterError) -> SanitizedDiagnostic {

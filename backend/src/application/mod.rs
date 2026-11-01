@@ -563,6 +563,7 @@ impl AppState {
             snapshot: engine_snapshot.clone(),
             engine_timeout: managed_engine_timeout,
             result_max_file_bytes: managed_result_max_file_bytes,
+            failure_analyzer: failure_analyzer.clone(),
         });
         let case_import_service = CaseImportService::new(
             engine_snapshot.clone(),

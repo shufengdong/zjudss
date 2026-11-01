@@ -1,15 +1,47 @@
 mod common;
 
+use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use common::TestApp;
 use diesel::prelude::*;
 use serde_json::{Value, json};
+use std::sync::Arc;
+use tokio::sync::Notify;
 use tower::ServiceExt;
+use zjudss::agent::{
+    FailureAnalysis, FailureAnalysisError, FailureAnalysisEvidence, FailureAnalysisRequest,
+    FailureAnalyzer,
+};
 use zjudss::application::{CreateScriptRequest, PublishDraftRequest, ScriptSource};
 
 #[cfg(feature = "e2e-test")]
-use zjudss::testing::{EngineScenario, ScenarioEngine};
+use zjudss::testing::{EngineScenario, ScenarioEngine, ScriptedAuthor};
+
+#[cfg(feature = "e2e-test")]
+#[derive(Default)]
+struct PendingFailureAnalyzer {
+    entered: Notify,
+}
+
+#[cfg(feature = "e2e-test")]
+#[async_trait]
+impl FailureAnalyzer for PendingFailureAnalyzer {
+    async fn analyze_failure(
+        &self,
+        _request: FailureAnalysisRequest,
+    ) -> Result<FailureAnalysis, FailureAnalysisError> {
+        self.entered.notify_one();
+        std::future::pending().await
+    }
+}
+
+#[cfg(feature = "e2e-test")]
+impl PendingFailureAnalyzer {
+    async fn wait_until_entered(&self) {
+        self.entered.notified().await;
+    }
+}
 
 async fn setup(app: &TestApp) -> (zjudss::auth::CurrentUser, String, i32, String, String) {
     let user = common::test_user("alice@example.com");
@@ -311,8 +343,14 @@ async fn deleting_a_session_with_repair_attempt_lineage_removes_the_session() {
 #[tokio::test]
 async fn failed_run_publishes_a_terminal_failed_progress_event() {
     let engine = ScenarioEngine::default();
-    engine.enqueue(EngineScenario::RunFailure);
-    let app = TestApp::spawn_with_engine(std::sync::Arc::new(engine)).await;
+    engine.enqueue(EngineScenario::Failure {
+        code: "engine_exit_nonzero".into(),
+        stderr: b"/srv/private/run.rss token=secret parse failed".to_vec(),
+        exit_code: 7,
+    });
+    let analyzer = Arc::new(PendingFailureAnalyzer::default());
+    let app =
+        TestApp::spawn_with_engine_and_failure_analyzer(Arc::new(engine), analyzer.clone()).await;
     let (user, cookie, session_id, _version_id, script_id) = setup(&app).await;
     let response = post_run(&app, &cookie, &script_id, "failed-run").await;
     assert_eq!(response.status(), StatusCode::ACCEPTED);
@@ -325,13 +363,23 @@ async fn failed_run_publishes_a_terminal_failed_progress_event() {
         loop {
             let run = app.state.run_service.find(&user, run_id).await.unwrap();
             if run.status == "failed" {
-                break;
+                break run;
             }
             tokio::task::yield_now().await;
         }
     })
     .await
     .unwrap();
+    analyzer.wait_until_entered().await;
+
+    let stored = app.state.run_service.find(&user, run_id).await.unwrap();
+    let stored_error: Value = serde_json::from_str(stored.error_json.as_deref().unwrap()).unwrap();
+    assert_eq!(stored_error["analysisStatus"], "pending");
+    assert_eq!(stored_error["engineLogs"][0]["stream"], "stderr");
+    assert_eq!(
+        stored_error["engineLogs"][0]["text"],
+        "[服务器路径已隐藏] token=[敏感信息已隐藏] parse failed"
+    );
 
     let response = app
         .router
@@ -353,7 +401,7 @@ async fn failed_run_publishes_a_terminal_failed_progress_event() {
     assert_eq!(failed_run["error"]["message"], "仿真引擎执行失败");
     assert_eq!(
         failed_run["error"]["engineOutput"],
-        "RSS parse error: unexpected token\nat [服务器路径已隐藏]"
+        "[服务器路径已隐藏] token=[敏感信息已隐藏] parse failed"
     );
     assert_eq!(failed_run["exitCode"], 7);
     assert!(!failed_run.to_string().contains("/srv/private"));
@@ -397,6 +445,172 @@ async fn failed_run_publishes_a_terminal_failed_progress_event() {
             .iter()
             .any(|stage| stage["key"] == "run" && stage["status"] == "failed")
     );
+}
+
+#[cfg(feature = "e2e-test")]
+#[tokio::test]
+async fn failed_run_persists_structured_analysis_after_logs_and_terminal_progress() {
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::Failure {
+        code: "engine_exit_nonzero".into(),
+        stderr: b"parse failed".to_vec(),
+        exit_code: 7,
+    });
+    let analyzer = Arc::new(ScriptedAuthor::default());
+    analyzer.enqueue_analysis(Ok(FailureAnalysis {
+        summary: "脚本解析失败".into(),
+        facts: vec![FailureAnalysisEvidence {
+            statement: "引擎报告解析失败".into(),
+            evidence: "stderr: parse failed".into(),
+        }],
+        possible_causes: Vec::new(),
+        unknowns: vec!["具体语法位置".into()],
+        recommendations: vec!["核对脚本语法".into()],
+    }));
+    let app = TestApp::spawn_with_engine_and_failure_analyzer(Arc::new(engine), analyzer).await;
+    let (user, cookie, _session_id, _version_id, script_id) = setup(&app).await;
+    let response = post_run(&app, &cookie, &script_id, "failed-run-analysis").await;
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    let run_id = value["run"]["id"].as_str().unwrap().parse::<i32>().unwrap();
+
+    let stored_error = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let run = app.state.run_service.find(&user, run_id).await.unwrap();
+            let error = run
+                .error_json
+                .as_deref()
+                .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+            if error
+                .as_ref()
+                .is_some_and(|value| value["analysisStatus"] == "complete")
+            {
+                break error.unwrap();
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(stored_error["analysis"]["summary"], "脚本解析失败");
+    assert_eq!(stored_error["engineLogs"][0]["text"], "parse failed");
+}
+
+#[cfg(feature = "e2e-test")]
+#[tokio::test]
+async fn failed_run_keeps_logs_when_failure_analysis_is_unavailable() {
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::Failure {
+        code: "engine_exit_nonzero".into(),
+        stderr: b"solver failed".to_vec(),
+        exit_code: 9,
+    });
+    let analyzer = Arc::new(ScriptedAuthor::default());
+    analyzer.enqueue_analysis(Err("provider unavailable".into()));
+    let app = TestApp::spawn_with_engine_and_failure_analyzer(Arc::new(engine), analyzer).await;
+    let (user, cookie, _session_id, _version_id, script_id) = setup(&app).await;
+    let response = post_run(&app, &cookie, &script_id, "failed-run-unavailable").await;
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    let run_id = value["run"]["id"].as_str().unwrap().parse::<i32>().unwrap();
+
+    let stored_error = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let run = app.state.run_service.find(&user, run_id).await.unwrap();
+            let error = run
+                .error_json
+                .as_deref()
+                .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+            if error
+                .as_ref()
+                .is_some_and(|value| value["analysisStatus"] == "unavailable")
+            {
+                break error.unwrap();
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(stored_error["engineLogs"][0]["text"], "solver failed");
+    assert!(stored_error.get("analysis").is_none());
+}
+
+#[cfg(feature = "e2e-test")]
+#[tokio::test(start_paused = true)]
+async fn failed_run_times_out_analysis_without_reopening_the_terminal_run() {
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::Failure {
+        code: "engine_exit_nonzero".into(),
+        stderr: b"timeout diagnosis log".to_vec(),
+        exit_code: 12,
+    });
+    let analyzer = Arc::new(PendingFailureAnalyzer::default());
+    let app =
+        TestApp::spawn_with_engine_and_failure_analyzer(Arc::new(engine), analyzer.clone()).await;
+    let (user, cookie, _session_id, _version_id, script_id) = setup(&app).await;
+    let response = post_run(&app, &cookie, &script_id, "failed-run-timeout").await;
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    let run_id = value["run"]["id"].as_str().unwrap().parse::<i32>().unwrap();
+    analyzer.wait_until_entered().await;
+
+    tokio::time::advance(std::time::Duration::from_secs(31)).await;
+    let mut stored_error = None;
+    for _ in 0..100 {
+        let run = app.state.run_service.find(&user, run_id).await.unwrap();
+        let error: Value = serde_json::from_str(run.error_json.as_deref().unwrap()).unwrap();
+        if error["analysisStatus"] == "unavailable" {
+            stored_error = Some((run.status, error));
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let stored_error = stored_error.expect("analysis timeout must complete pending diagnosis");
+
+    assert_eq!(stored_error.0, "failed");
+    assert_eq!(
+        stored_error.1["engineLogs"][0]["text"],
+        "timeout diagnosis log"
+    );
+}
+
+#[cfg(feature = "e2e-test")]
+#[tokio::test]
+async fn restart_recovery_resolves_pending_run_analysis_without_changing_logs() {
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::Failure {
+        code: "engine_exit_nonzero".into(),
+        stderr: b"persistent failure".to_vec(),
+        exit_code: 11,
+    });
+    let analyzer = Arc::new(PendingFailureAnalyzer::default());
+    let app =
+        TestApp::spawn_with_engine_and_failure_analyzer(Arc::new(engine), analyzer.clone()).await;
+    let (user, cookie, _session_id, _version_id, script_id) = setup(&app).await;
+    let response = post_run(&app, &cookie, &script_id, "failed-run-recovery").await;
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    let run_id = value["run"]["id"].as_str().unwrap().parse::<i32>().unwrap();
+    analyzer.wait_until_entered().await;
+
+    let before = app.state.run_service.find(&user, run_id).await.unwrap();
+    let before: Value = serde_json::from_str(before.error_json.as_deref().unwrap()).unwrap();
+    let mut conn = app.pool.get().unwrap();
+    zjudss::db::recover_interrupted_runs(&mut conn, 99).unwrap();
+    drop(conn);
+    let after = app.state.run_service.find(&user, run_id).await.unwrap();
+    let after: Value = serde_json::from_str(after.error_json.as_deref().unwrap()).unwrap();
+
+    assert_eq!(before["analysisStatus"], "pending");
+    assert_eq!(after["analysisStatus"], "unavailable");
+    assert_eq!(after["engineLogs"], before["engineLogs"]);
 }
 
 #[cfg(feature = "e2e-test")]
