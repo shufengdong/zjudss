@@ -8,7 +8,7 @@ use tokio::sync::watch;
 
 use crate::adapters::{AdapterError, NamedInput, RunMode, RunSpec, SimEngine};
 use crate::agent::{
-    EngineDocRef, FailureAnalysisRequest, ScriptAuthor, ScriptGenerationRequest,
+    EngineDocRef, FailureAnalysisRequest, FailureAnalyzer, ScriptAuthor, ScriptGenerationRequest,
     ScriptRepairRequest,
 };
 use crate::auth::CurrentUser;
@@ -34,6 +34,7 @@ pub struct WorkflowWorker {
     repo: ManagedWorkflowRepo,
     artifacts: ArtifactService,
     author: Arc<dyn ScriptAuthor>,
+    failure_analyzer: Arc<dyn FailureAnalyzer>,
     engine: Arc<dyn SimEngine>,
     snapshot: Arc<EngineResourceSnapshot>,
     data_dir: PathBuf,
@@ -51,6 +52,7 @@ impl WorkflowWorker {
         repo: ManagedWorkflowRepo,
         artifacts: ArtifactService,
         author: Arc<dyn ScriptAuthor>,
+        failure_analyzer: Arc<dyn FailureAnalyzer>,
         engine: Arc<dyn SimEngine>,
         snapshot: Arc<EngineResourceSnapshot>,
         data_dir: PathBuf,
@@ -65,6 +67,7 @@ impl WorkflowWorker {
             repo,
             artifacts,
             author,
+            failure_analyzer,
             engine,
             snapshot,
             data_dir,
@@ -401,13 +404,17 @@ impl WorkflowWorker {
                     };
                     let analysis_request = FailureAnalysisRequest {
                         current_script: current_script.clone(),
+                        sanitized_stdout: sanitize_adapter_stdout(&error).map(|stdout| stdout.text),
                         sanitized_stderr: sanitized.text.clone(),
                         diagnostic: Some(diagnostic.clone()),
-                        locked_contract: locked.clone(),
-                        inputs: inputs.clone(),
+                        locked_contract: Some(locked.clone()),
+                        inputs: Some(inputs.clone()),
                     };
                     let analysis = tokio::select! {
-                        result = self.author.analyze_failure(analysis_request) => result.ok(),
+                        result = tokio::time::timeout(
+                            std::time::Duration::from_secs(30),
+                            self.failure_analyzer.analyze_failure(analysis_request),
+                        ) => result.ok().and_then(Result::ok),
                         changed = cancel.changed() => {
                             let _ = changed;
                             return Ok(());

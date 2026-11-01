@@ -8,14 +8,19 @@ use rig::Agent;
 use rig::tool::RegisteredTool;
 
 mod factory;
+mod failure_analyzer;
 pub mod knowledge;
 pub mod prompt;
 pub mod script_author;
 
 pub use factory::{AgentBuildRequest, AgentFactory, LlmAgentFactory};
+pub use failure_analyzer::{
+    FailureAnalysis, FailureAnalysisError, FailureAnalysisEvidence, FailureAnalysisRequest,
+    FailureAnalyzer, LlmFailureAnalyzer, validate_failure_analysis,
+};
 pub use script_author::{
-    EngineDocRef, FailureAnalysis, FailureAnalysisEvidence, FailureAnalysisRequest,
-    LlmScriptAuthor, ScriptAuthor, ScriptAuthorError, ScriptGenerationRequest, ScriptRepairRequest,
+    EngineDocRef, LlmScriptAuthor, ScriptAuthor, ScriptAuthorError, ScriptGenerationRequest,
+    ScriptRepairRequest,
 };
 
 const SYSTEM_PROMPT: &str = include_str!("../../resources/agent/v4/system.md");

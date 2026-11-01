@@ -37,7 +37,10 @@ use tokio::sync::Semaphore;
 
 use crate::adapters::{SimEngine, resolve_data_dir};
 use crate::agent::knowledge::AgentKnowledge;
-use crate::agent::{AgentFactory, LlmAgentFactory, LlmConfig, LlmScriptAuthor, ScriptAuthor};
+use crate::agent::{
+    AgentFactory, FailureAnalyzer, LlmAgentFactory, LlmConfig, LlmFailureAnalyzer, LlmScriptAuthor,
+    ScriptAuthor,
+};
 use crate::auth::AuthService;
 use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
@@ -139,6 +142,7 @@ pub struct AppState {
     pub engine: Arc<dyn SimEngine>,
     pub agent_factory: Arc<dyn AgentFactory>,
     pub script_author: Arc<dyn ScriptAuthor>,
+    pub failure_analyzer: Arc<dyn FailureAnalyzer>,
     pub auth: AuthService,
     pub scheduler: RunScheduler,
     pub session_cancellations: SessionCancellationRegistry,
@@ -152,6 +156,7 @@ pub struct AppState {
 #[cfg(feature = "e2e-test")]
 pub struct E2eAppOptions {
     pub script_author: Option<Arc<dyn ScriptAuthor>>,
+    pub failure_analyzer: Option<Arc<dyn FailureAnalyzer>>,
     pub managed_workflow_auto_start: bool,
     pub full_engine_catalog: bool,
 }
@@ -320,6 +325,7 @@ impl AppState {
             std::time::Duration::from_secs(120),
             512 * 1024 * 1024,
             options.script_author,
+            options.failure_analyzer,
             options.managed_workflow_auto_start,
             ArchiveLimits {
                 max_entries: 100,
@@ -453,6 +459,7 @@ impl AppState {
             std::time::Duration::from_secs(120),
             512 * 1024 * 1024,
             None,
+            None,
             true,
             archive_limits,
         )
@@ -477,6 +484,7 @@ impl AppState {
         managed_engine_timeout: std::time::Duration,
         managed_result_max_file_bytes: u64,
         script_author_override: Option<Arc<dyn ScriptAuthor>>,
+        failure_analyzer_override: Option<Arc<dyn FailureAnalyzer>>,
         managed_workflow_auto_start: bool,
         archive_limits: ArchiveLimits,
     ) -> Self {
@@ -487,6 +495,13 @@ impl AppState {
                 agent_model_retry_max,
             ))
         });
+        let failure_analyzer: Arc<dyn FailureAnalyzer> =
+            failure_analyzer_override.unwrap_or_else(|| {
+                Arc::new(LlmFailureAnalyzer::from_factory(
+                    agent_factory.clone(),
+                    agent_model_retry_max,
+                ))
+            });
         let message_repo = MessageRepo::new(pool.clone());
         let events = EventBus::new();
         let session_cancellations = SessionCancellationRegistry::default();
@@ -607,6 +622,7 @@ impl AppState {
             &agent_knowledge,
             script_repair_max_attempts,
             script_author.clone(),
+            failure_analyzer.clone(),
             engine.clone(),
             engine_snapshot.clone(),
             data_dir.clone(),
@@ -644,6 +660,7 @@ impl AppState {
             engine,
             agent_factory,
             script_author,
+            failure_analyzer,
             auth,
             scheduler,
             session_cancellations,
@@ -693,6 +710,7 @@ impl AppState {
             2,
             std::time::Duration::from_secs(120),
             512 * 1024 * 1024,
+            None,
             None,
             true,
             ArchiveLimits::default(),

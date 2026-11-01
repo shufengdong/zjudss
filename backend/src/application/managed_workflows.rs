@@ -5,9 +5,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::adapters::SimEngine;
-use crate::agent::FailureAnalysis;
-use crate::agent::ScriptAuthor;
 use crate::agent::knowledge::AgentKnowledge;
+use crate::agent::{FailureAnalysis, FailureAnalyzer, ScriptAuthor};
 use crate::auth::CurrentUser;
 use crate::db::repositories::{
     ManagedWorkflowAggregate, ManagedWorkflowRepo, ManagedWorkflowRepoError, NewWorkflowCandidate,
@@ -180,6 +179,7 @@ impl ManagedWorkflowService {
         knowledge: &AgentKnowledge,
         correction_budget: usize,
         author: Arc<dyn ScriptAuthor>,
+        failure_analyzer: Arc<dyn FailureAnalyzer>,
         engine: Arc<dyn SimEngine>,
         snapshot: Arc<EngineResourceSnapshot>,
         data_dir: PathBuf,
@@ -195,6 +195,7 @@ impl ManagedWorkflowService {
             repo.clone(),
             artifacts.clone(),
             author,
+            failure_analyzer,
             engine,
             snapshot.clone(),
             data_dir,

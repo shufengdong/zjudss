@@ -131,6 +131,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         std::time::Duration::from_millis(runtime.tensoreval_timeout_ms),
         runtime.result_max_file_bytes,
         None,
+        None,
         true,
         ArchiveLimits {
             max_entries: runtime.archive_max_entries,

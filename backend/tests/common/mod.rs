@@ -11,7 +11,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 use zjudss::adapters::{SimEngine, StubEngine};
 use zjudss::agent::knowledge::AgentKnowledge;
-use zjudss::agent::{AgentFactory, LlmAgentFactory, LlmConfig, ScriptAuthor};
+use zjudss::agent::{AgentFactory, LlmAgentFactory, LlmConfig};
 use zjudss::application::{AppState, RunScheduler};
 use zjudss::application::{CandidateDecision, CandidatePurpose, UploadFile, UploadSourceKind};
 use zjudss::auth::{AuthService, CurrentUser, UserId};
@@ -204,7 +204,7 @@ impl TestApp {
     pub async fn spawn_minimal_with_engine_and_agent_factory(
         engine: std::sync::Arc<dyn SimEngine>,
         agent_factory: std::sync::Arc<dyn AgentFactory>,
-        script_author: std::sync::Arc<dyn ScriptAuthor>,
+        script_author: std::sync::Arc<zjudss::testing::ScriptedAuthor>,
     ) -> Self {
         let root = tempfile::tempdir().expect("create isolated minimal test root");
         let data_dir = root.path().join("data");
@@ -231,7 +231,8 @@ impl TestApp {
             engine,
             auth,
             zjudss::application::E2eAppOptions {
-                script_author: Some(script_author),
+                script_author: Some(script_author.clone()),
+                failure_analyzer: Some(script_author),
                 managed_workflow_auto_start: false,
                 full_engine_catalog: false,
             },
@@ -468,6 +469,7 @@ impl TestApp {
             config.agent_model_retry_max,
             std::time::Duration::from_millis(config.tensoreval_timeout_ms),
             config.result_max_file_bytes,
+            None,
             None,
             false,
             zjudss::ingestion::ArchiveLimits {

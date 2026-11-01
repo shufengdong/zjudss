@@ -426,6 +426,7 @@ pub async fn run_e2e_server(
         ),
         crate::application::E2eAppOptions {
             script_author: Some(author.clone()),
+            failure_analyzer: Some(author.clone()),
             managed_workflow_auto_start: true,
             full_engine_catalog: true,
         },

@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use tokio::sync::Notify;
 
 use crate::agent::{
-    FailureAnalysis, FailureAnalysisRequest, ScriptAuthor, ScriptAuthorError,
-    ScriptGenerationRequest, ScriptRepairRequest,
+    FailureAnalysis, FailureAnalysisError, FailureAnalysisRequest, FailureAnalyzer, ScriptAuthor,
+    ScriptAuthorError, ScriptGenerationRequest, ScriptRepairRequest,
 };
 
 #[derive(Debug, Clone)]
@@ -167,11 +167,14 @@ impl ScriptAuthor for ScriptedAuthor {
             .push(request);
         self.next("repair").await
     }
+}
 
+#[async_trait]
+impl FailureAnalyzer for ScriptedAuthor {
     async fn analyze_failure(
         &self,
         _request: FailureAnalysisRequest,
-    ) -> Result<FailureAnalysis, ScriptAuthorError> {
+    ) -> Result<FailureAnalysis, FailureAnalysisError> {
         self.inner
             .trace
             .lock()
@@ -183,6 +186,6 @@ impl ScriptAuthor for ScriptedAuthor {
             .expect("analysis result queue")
             .pop_front()
             .unwrap_or_else(|| Err("没有可用的失败分析场景".into()))
-            .map_err(ScriptAuthorError::provider)
+            .map_err(FailureAnalysisError::provider)
     }
 }
