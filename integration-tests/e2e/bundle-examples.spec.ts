@@ -62,7 +62,7 @@ test('single-Solve bundles become drafts while repeated Solve and specialist lif
   }
 })
 
-test('case application uses the fixed action and creates only a mutable draft',async({appPage})=>{
+test('case application atomically activates a model version and replaces case resources',async({appPage})=>{
   const{page,api}=await appPage({subject:'examples@example.com',tenant:'grid-b'})
   const session=await createSessionFromPage(page,'案例导入')
   await page.getByRole('button',{name:'案例库'}).click()
@@ -76,14 +76,18 @@ test('case application uses the fixed action and creates only a mutable draft',a
   await expect(detail).toContainText('static_power_flow')
   await expect(detail).toContainText('dss-entry：1')
   await page.getByRole('button',{name:'使用案例“E2E demo”'}).click()
-  await expect(page.getByRole('button',{name:'确认用途并发布'}).last()).toBeVisible()
-  const uploadCard=page.getByRole('button',{name:'确认用途并发布'}).last().locator('xpath=ancestor::section[1]')
-  await expect(uploadCard.getByRole('checkbox')).toHaveCount(22)
-  await confirmLatestModelUpload(page)
+  await expect(page.getByRole('button',{name:'确认切换案例'}).last()).toBeVisible()
+  const uploadCard=page.getByRole('button',{name:'确认切换案例'}).last().locator('xpath=ancestor::section[1]')
+  await expect(uploadCard.getByRole('checkbox')).toHaveCount(21)
+  await expect(uploadCard).toContainText('历史模型版本、运行和结果保留')
+  const confirmation = page.waitForResponse(response => response.request().method()==='POST' && /\/upload-batches\/[^/]+\/confirm$/.test(new URL(response.url()).pathname))
+  await uploadCard.getByRole('button',{name:'确认切换案例'}).click()
+  expect((await confirmation).status()).toBe(200)
+  await expect.poll(async() => (await workspace(api,session)).active?.tables?.length).toBe(20)
   const state=await workspace(api,session)
-  expect(state.draft.tables).toHaveLength(20)
+  expect(state.draft).toBeNull()
   expect((await (await api.get(`/api/sessions/${session}/data-resources`)).json()).resources.map((item:any)=>item.alias)).toContain('para')
-  expect(state.active).toBeNull()
+  expect(state.active).not.toBeNull()
   expect((await (await api.get(`/api/sessions/${session}/runs`)).json()).runs).toHaveLength(0)
 
   await page.setViewportSize({width:390,height:844})

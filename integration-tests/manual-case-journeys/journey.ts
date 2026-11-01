@@ -10,7 +10,7 @@ export const JOURNEY_PHASES = [
   'discover',
   'apply_example',
   'confirm_candidates',
-  'publish_by_agent',
+  'verify_case_activation',
   'prepare_study_by_agent',
   'complete_configuration',
   'confirm_workflow',
@@ -172,7 +172,7 @@ export async function runCaseJourney(
   })
 
   await phase('confirm_candidates', async () => {
-    const confirm = page.getByRole('button', { name: '确认用途并发布' }).last()
+    const confirm = page.getByRole('button', { name: '确认切换案例' }).last()
     await expect(confirm).toBeVisible({ timeout: 5 * 60_000 })
     const responsePromise = page.waitForResponse(response => response.request().method() === 'POST'
       && /\/api\/upload-batches\/[^/]+\/confirm$/.test(new URL(response.url()).pathname), { timeout: 5 * 60_000 })
@@ -180,29 +180,11 @@ export async function runCaseJourney(
     await checkedJson(await responsePromise)
     await waitFor(async () => {
       const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`) as any
-      return workspace.draft?.tables?.length > 0 ? workspace : undefined
+      return workspace.active?.tables?.length > 0 && !workspace.draft ? workspace : undefined
     }, 5 * 60_000)
   })
 
-  await phase('publish_by_agent', async () => {
-    const turn = await sendAndCollect(
-      page,
-      api,
-      sessionId,
-      `请发布当前模型草稿并自动激活，版本描述为案例 ${example.exampleId} 的全链路长测。`,
-      ['publish_model_version'],
-    )
-    expectToolTrace(turn.trace, {
-      requiredTools: ['load_agent_skill', 'inspect_workspace', 'publish_model_version'],
-      allowedTools: ['load_agent_skill', 'inspect_workspace', 'publish_model_version'],
-      gatedTools: { publish_model_version: ['model-intake'] },
-    })
-    const orderedCalls = ['load_agent_skill', 'inspect_workspace', 'publish_model_version']
-      .map(toolName => turn.trace.findIndex(call => call.toolName === toolName && call.status === 'running'))
-    if (orderedCalls.some(index => index < 0)
-      || orderedCalls.some((index, position) => position > 0 && index <= orderedCalls[position - 1])) {
-      throw coded('publish_tool_order_invalid')
-    }
+  await phase('verify_case_activation', async () => {
     await waitFor(async () => {
       const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`) as any
       return workspace.active && !workspace.draft ? workspace : undefined

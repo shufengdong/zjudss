@@ -459,55 +459,14 @@ impl VersionRepo {
     ) -> Result<PublishResult, VersionRepoError> {
         let pool = self.pool.clone();
         let user = user.0.clone();
-        let PublishCommand {
-            expected,
-            client_publish_id,
-            description,
-            engine_contract,
-            now_ms,
-        } = command;
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.immediate_transaction::<PublishResult, VersionRepoError, _>(|conn| {
-                let workspace = load_workspace_by_session(conn, &user, session_id)?;
-                #[derive(QueryableByName)] struct Receipt { #[diesel(sql_type=Integer)] version_id:i32 }
-                if let Some(receipt) = diesel::sql_query("SELECT version_id FROM publish_receipts WHERE draft_id=?1 AND draft_revision=?2 AND client_publish_id=?3")
-                    .bind::<Integer,_>(expected.id).bind::<BigInt,_>(expected.revision).bind::<Text,_>(&client_publish_id)
-                    .get_result::<Receipt>(conn).optional()? {
-                    let version = scoped_version(conn, &user, receipt.version_id, true)?;
-                    if version.workspace_id != workspace.id { return Err(VersionRepoError::Repository(RepoError::NotFound)); }
-                    return Ok(PublishResult { version_id: receipt.version_id, deduplicated: false, replayed: true, release_artifact_ids: vec![] });
-                }
-                let draft = schema::workspace_drafts::table.filter(schema::workspace_drafts::workspace_id.eq(workspace.id)).first::<WorkspaceDraft>(conn).optional()?;
-                let Some(draft) = draft else { return Err(VersionRepoError::DraftRequired); };
-                if draft.id != expected.id || draft.revision != expected.revision { return Err(VersionRepoError::DraftConflict); }
-                let frames = schema::draft_dataframes::table.filter(schema::draft_dataframes::draft_id.eq(draft.id)).order(schema::draft_dataframes::table_name.asc()).load::<DraftDataframe>(conn)?;
-                if frames.is_empty() { return Err(VersionRepoError::EmptyDraft); }
-                ensure_artifacts_owned(conn, &user, frames.iter().map(|frame| frame.artifact_id))?;
-                let content_hash = content_hash(&frames);
-                let existing = diesel::sql_query("SELECT * FROM model_versions WHERE workspace_id=?1 AND content_hash=?2 AND deleted_at_ms IS NULL LIMIT 1")
-                    .bind::<Integer,_>(workspace.id).bind::<Text,_>(&content_hash).get_result::<VersionRow>(conn).optional()?;
-                let (version_id, deduplicated, release_artifact_ids) = if let Some(version) = existing {
-                    (version.id, true, frames.iter().map(|frame| frame.artifact_id).collect())
-                } else {
-                    let summary = serde_json::json!({"draftId":draft.id,"draftRevision":draft.revision,"tables":frames.iter().map(|frame| &frame.table_name).collect::<Vec<_>>()}).to_string();
-                    diesel::sql_query("INSERT INTO model_versions(workspace_id,description,content_hash,source_summary_json,engine_contract_version,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6)")
-                        .bind::<Integer,_>(workspace.id).bind::<Text,_>(&description).bind::<Text,_>(&content_hash).bind::<Text,_>(summary).bind::<Text,_>(&engine_contract).bind::<BigInt,_>(now_ms).execute(conn)?;
-                    let version_id = last_id(conn)?;
-                    for frame in &frames {
-                        diesel::sql_query("INSERT INTO model_dataframes(version_id,table_name,artifact_id,schema_json,row_count,content_hash,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7)")
-                            .bind::<Integer,_>(version_id).bind::<Text,_>(&frame.table_name).bind::<Integer,_>(frame.artifact_id).bind::<Text,_>(&frame.schema_json).bind::<BigInt,_>(frame.row_count).bind::<Text,_>(&frame.content_hash).bind::<BigInt,_>(now_ms).execute(conn)?;
-                    }
-                    (version_id, false, vec![])
-                };
-                diesel::sql_query("UPDATE workspaces SET active_version_id=?1,updated_at_ms=?2 WHERE id=?3")
-                    .bind::<Integer,_>(version_id).bind::<BigInt,_>(now_ms).bind::<Integer,_>(workspace.id).execute(conn)?;
-                diesel::delete(schema::workspace_drafts::table.find(draft.id)).execute(conn)?;
-                diesel::sql_query("INSERT INTO publish_receipts(draft_id,draft_revision,client_publish_id,version_id,created_at_ms) VALUES(?1,?2,?3,?4,?5)")
-                    .bind::<Integer,_>(draft.id).bind::<BigInt,_>(draft.revision).bind::<Text,_>(client_publish_id).bind::<Integer,_>(version_id).bind::<BigInt,_>(now_ms).execute(conn)?;
-                Ok(PublishResult { version_id, deduplicated, replayed: false, release_artifact_ids })
+                publish_on(conn, &user, session_id, command)
             })
-        }).await.map_err(|error| VersionRepoError::Repository(RepoError::Join(error)))?
+        })
+        .await
+        .map_err(|error| VersionRepoError::Repository(RepoError::Join(error)))?
     }
 
     pub async fn activate(
@@ -861,5 +820,85 @@ fn deletion_impact(
         result_ids,
         model_dataframe_ids,
         reclaimable_bytes,
+    })
+}
+
+pub(super) fn publish_on(
+    conn: &mut diesel::SqliteConnection,
+    user: &str,
+    session_id: i32,
+    command: PublishCommand,
+) -> Result<PublishResult, VersionRepoError> {
+    let PublishCommand {
+        expected,
+        client_publish_id,
+        description,
+        engine_contract,
+        now_ms,
+    } = command;
+    let workspace = load_workspace_by_session(conn, user, session_id)?;
+    #[derive(QueryableByName)]
+    struct Receipt {
+        #[diesel(sql_type=Integer)]
+        version_id: i32,
+    }
+    if let Some(receipt) = diesel::sql_query("SELECT version_id FROM publish_receipts WHERE draft_id=?1 AND draft_revision=?2 AND client_publish_id=?3")
+                    .bind::<Integer,_>(expected.id).bind::<BigInt,_>(expected.revision).bind::<Text,_>(&client_publish_id)
+                    .get_result::<Receipt>(conn).optional()? {
+                    let version = scoped_version(conn, user, receipt.version_id, true)?;
+                    if version.workspace_id != workspace.id { return Err(VersionRepoError::Repository(RepoError::NotFound)); }
+                    return Ok(PublishResult { version_id: receipt.version_id, deduplicated: false, replayed: true, release_artifact_ids: vec![] });
+                }
+    let draft = schema::workspace_drafts::table
+        .filter(schema::workspace_drafts::workspace_id.eq(workspace.id))
+        .first::<WorkspaceDraft>(conn)
+        .optional()?;
+    let Some(draft) = draft else {
+        return Err(VersionRepoError::DraftRequired);
+    };
+    if draft.id != expected.id || draft.revision != expected.revision {
+        return Err(VersionRepoError::DraftConflict);
+    }
+    let frames = schema::draft_dataframes::table
+        .filter(schema::draft_dataframes::draft_id.eq(draft.id))
+        .order(schema::draft_dataframes::table_name.asc())
+        .load::<DraftDataframe>(conn)?;
+    if frames.is_empty() {
+        return Err(VersionRepoError::EmptyDraft);
+    }
+    ensure_artifacts_owned(conn, user, frames.iter().map(|frame| frame.artifact_id))?;
+    let content_hash = content_hash(&frames);
+    let existing = diesel::sql_query("SELECT * FROM model_versions WHERE workspace_id=?1 AND content_hash=?2 AND deleted_at_ms IS NULL LIMIT 1")
+                    .bind::<Integer,_>(workspace.id).bind::<Text,_>(&content_hash).get_result::<VersionRow>(conn).optional()?;
+    let (version_id, deduplicated, release_artifact_ids) = if let Some(version) = existing {
+        (
+            version.id,
+            true,
+            frames.iter().map(|frame| frame.artifact_id).collect(),
+        )
+    } else {
+        let summary = serde_json::json!({"draftId":draft.id,"draftRevision":draft.revision,"tables":frames.iter().map(|frame| &frame.table_name).collect::<Vec<_>>()}).to_string();
+        diesel::sql_query("INSERT INTO model_versions(workspace_id,description,content_hash,source_summary_json,engine_contract_version,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6)")
+                        .bind::<Integer,_>(workspace.id).bind::<Text,_>(&description).bind::<Text,_>(&content_hash).bind::<Text,_>(summary).bind::<Text,_>(&engine_contract).bind::<BigInt,_>(now_ms).execute(conn)?;
+        let version_id = last_id(conn)?;
+        for frame in &frames {
+            diesel::sql_query("INSERT INTO model_dataframes(version_id,table_name,artifact_id,schema_json,row_count,content_hash,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7)")
+                            .bind::<Integer,_>(version_id).bind::<Text,_>(&frame.table_name).bind::<Integer,_>(frame.artifact_id).bind::<Text,_>(&frame.schema_json).bind::<BigInt,_>(frame.row_count).bind::<Text,_>(&frame.content_hash).bind::<BigInt,_>(now_ms).execute(conn)?;
+        }
+        (version_id, false, vec![])
+    };
+    diesel::sql_query("UPDATE workspaces SET active_version_id=?1,updated_at_ms=?2 WHERE id=?3")
+        .bind::<Integer, _>(version_id)
+        .bind::<BigInt, _>(now_ms)
+        .bind::<Integer, _>(workspace.id)
+        .execute(conn)?;
+    diesel::delete(schema::workspace_drafts::table.find(draft.id)).execute(conn)?;
+    diesel::sql_query("INSERT INTO publish_receipts(draft_id,draft_revision,client_publish_id,version_id,created_at_ms) VALUES(?1,?2,?3,?4,?5)")
+                    .bind::<Integer,_>(draft.id).bind::<BigInt,_>(draft.revision).bind::<Text,_>(client_publish_id).bind::<Integer,_>(version_id).bind::<BigInt,_>(now_ms).execute(conn)?;
+    Ok(PublishResult {
+        version_id,
+        deduplicated,
+        replayed: false,
+        release_artifact_ids,
     })
 }

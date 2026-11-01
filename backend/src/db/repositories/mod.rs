@@ -1,5 +1,6 @@
 mod analysis;
 mod artifact;
+mod case_switch;
 mod comparison;
 mod data_resource;
 mod engine_resource_snapshot;

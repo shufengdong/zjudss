@@ -806,7 +806,8 @@ impl DataResourceService {
         }
         self.commit_originals(user, &record).await?;
         let refreshed = self.upload_repo.find(&user.id, batch_id).await?;
-        if refreshed.batch.model_publish_status != "not_applicable"
+        if refreshed.batch.source_kind != "case"
+            && refreshed.batch.model_publish_status != "not_applicable"
             && refreshed.batch.model_publish_status != "published"
         {
             match self
@@ -839,8 +840,9 @@ impl DataResourceService {
         }
         let refreshed = self.upload_repo.find(&user.id, batch_id).await?;
         let mut published_rows = Vec::new();
-        if refreshed.batch.resource_publish_status != "not_applicable"
-            && refreshed.batch.resource_publish_status != "published"
+        if (refreshed.batch.resource_publish_status != "not_applicable"
+            && refreshed.batch.resource_publish_status != "published")
+            || (refreshed.batch.source_kind == "case" && refreshed.batch.model_publish_status != "published")
         {
             let inputs = refreshed.candidates.iter().filter(|candidate| candidate.selected && candidate.purpose.as_deref() == Some("data_resource")).map(|candidate| {
                 let proposed = candidate.normalized_alias.clone().or_else(|| candidate.proposed_alias.as_deref().map(normalize_alias)).unwrap_or_else(|| default_alias(&candidate.display_name));
@@ -874,11 +876,12 @@ impl DataResourceService {
                         .to_string(),
                 )
             });
-            match self
-                .repo
-                .publish_resources(&user.id, batch_id, inputs, replacement, now_ms())
-                .await
-            {
+            let published = if refreshed.batch.source_kind == "case" {
+                self.repo.switch_case(&user.id, batch_id, inputs, expected_draft, now_ms()).await
+            } else {
+                self.repo.publish_resources(&user.id, batch_id, inputs, replacement, now_ms()).await
+            };
+            match published {
                 Ok(result) => {
                     published_rows = result.resources;
                 }
@@ -892,7 +895,13 @@ impl DataResourceService {
                         _ => "resource_publish_failed",
                     };
                     let message = if code == "resource_alias_conflict" {
-                        let existing = self.repo.list_current_for_user(&user.id).await?;
+                        let mut existing = self.repo.list_current_for_user(&user.id).await?;
+                        if refreshed.batch.source_kind == "case" {
+                            let preview: Value = serde_json::from_str(&refreshed.batch.diagnostics_json).unwrap_or_default();
+                            if let Some(retiring) = preview["caseSwitch"]["retiringResources"].as_array() {
+                                existing.retain(|resource| !retiring.iter().any(|old| old["id"].as_str() == Some(resource.id.as_str())));
+                            }
+                        }
                         let conflicts = refreshed.candidates.iter()
                             .filter(|candidate| candidate.selected && candidate.purpose.as_deref() == Some("data_resource"))
                             .filter_map(|candidate| {
@@ -905,6 +914,9 @@ impl DataResourceService {
                         format!("以下数据资源与当前会话已有资源重名：{}。请修改别名后重试数据发布；已发布的模型无需重复发布。", conflicts.join("、"))
                     } else { error.to_string() };
                     let diagnostic = serde_json::json!({"code":code,"message":message});
+                    if refreshed.batch.source_kind == "case" {
+                        self.repo.mark_child_failed(&user.id, batch_id, "model", serde_json::json!([diagnostic.clone()]).to_string(), now_ms()).await?;
+                    }
                     self.repo
                         .mark_child_failed(
                             &user.id,
@@ -988,6 +1000,7 @@ impl DataResourceService {
             serde_json::from_str::<Vec<Value>>(&record.batch.resource_diagnostics_json)
                 .unwrap_or_default(),
         );
+        diagnostics.dedup();
         Ok(UploadConfirmation {
             upload_batch_id: batch_id.to_string(),
             status: record.batch.status,

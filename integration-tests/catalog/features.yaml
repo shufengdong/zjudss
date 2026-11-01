@@ -699,13 +699,22 @@
 
 - id: EXAMPLE-001
   source: docs/integration-testing-design.md#coverage-matrix
-  title: Applying a case creates a recoverable upload batch without publishing
+  title: Case preparation is recoverable and confirmation switches model and resources atomically
   layers: [api, application, agent, browser]
   lanes: [pr]
   tests:
     - runner: playwright
       file: integration-tests/e2e/bundle-examples.spec.ts
-      name: case application uses the fixed action and creates only a mutable draft
+      name: case application atomically activates a model version and replaces case resources
+    - runner: rust
+      file: backend/tests/case_import.rs
+      name: confirming_cases_atomically_activates_model_and_replaces_case_resources
+    - runner: rust
+      file: backend/tests/case_import.rs
+      name: case_switch_failure_preserves_active_model_and_resources
+    - runner: vitest
+      file: frontend/src/components/uploads/UploadBatchDecisionCard.test.tsx
+      name: confirms a whole case switch with activation and history guidance
     - runner: rust
       file: backend/tests/case_import.rs
       name: case_catalog_preserves_directories_and_includes_invalid_leaves
@@ -724,7 +733,7 @@
     - runner: rust
       file: backend/tests/workspace_tools.rs
       name: example_tools_return_manifest_metadata_and_never_physical_paths
-  assertions: [rssbundle directories and invalid leaves remain visible, schema v2 manifest projection metadata and relative paths are readable without physical paths, manifests must exactly match an enabled snapshot projection profile, apply executes only the controlled projector, projector outputs become catalog-driven Model Data or Struct candidates in declared order, diagnostic outputs stay out of candidates, no model or resource is published before confirmation]
+  assertions: [rssbundle directories and invalid leaves remain visible, schema v2 manifest projection metadata and relative paths are readable without physical paths, manifests must exactly match an enabled snapshot projection profile, apply executes only the controlled projector, projector outputs become catalog-driven Model Data or Struct candidates in declared order, diagnostic outputs stay out of candidates, no model or resource is published before confirmation, confirmed case switching atomically replaces the whole model and case resources and activates a deduplicated version, ordinary user resources and history are preserved, stale previews and resource failures preserve the previous case]
   fixtures: [nested rssbundle categories, valid schema v2 manifest-backed example, disabled and mismatched projection examples, diagnostic projector output, invalid manifest sibling, undeclared bundle file]
   contracts:
     - "route:GET /api/examples"
@@ -1020,6 +1029,9 @@
     - runner: vitest
       file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
       name: does not load results before success
+    - runner: vitest
+      file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
+      name: keeps loaded progress visible without a loading row during background polling
   assertions: [successful workflows show all live result names and dimensions, each result opens by stable dataset ID, restored workflows reload results, failed reads can retry without rerunning, non-successful workflows do not request results]
   fixtures: [managed workflow, live run datasets]
 

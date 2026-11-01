@@ -71,7 +71,7 @@ export default function WorkflowProgressCard({ message, onRetry, onChanged, noti
   return <><article className="mx-auto my-3 max-w-3xl rounded-xl border bg-white p-3 text-sm" aria-label="研究工作流进度">
     <div className="flex items-center"><b>研究工作流 #{message.card.workflowId}</b><span className="ml-auto text-xs">{state}</span></div>
     <p className="mt-2 text-xs text-slate-600">执行 {message.card.executionIndex}/{message.card.executionMax} · 修正 {message.card.repairIndex}/{message.card.repairMax} · {(elapsed / 1000).toFixed(1)} 秒</p>
-    {loading && <p className="mt-2 text-xs text-slate-400">读取详细进度…</p>}
+    {loading && !workflow && <p className="mt-2 text-xs text-slate-400">读取详细进度…</p>}
     {error && <p role="alert" className="mt-2 text-xs text-red-600">{error}</p>}
     {attempts.length > 0 && <section className="mt-2 text-xs">
       <button type="button" aria-expanded={attemptsExpanded} onClick={() => setAttemptsExpanded((value) => !value)} className="rounded border px-2 py-1">

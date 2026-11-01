@@ -93,8 +93,8 @@ engine snapshot 中 manifest v2 绑定的 projection profile 动态执行，`pro
 `data|struct` 形成普通资源候选，diagnostic 不形成候选。其他表格模型 schema 从有效门面动态取得，并按实际列名推断。暂存默认保留 24 小时，配额以
 `used_bytes + reserved_bytes` 原子检查；失败、放弃和到期幂等释放。
 
-确认请求为 `{decisions,replacementAction?,expectedDraft?,clientOperationId}`，其中 `clientOperationId` 必填且由客户端为本次确认生成。ModelTable 候选在一个草稿事务中
-发布，DataResource 候选在另一个资源事务中发布；任一侧失败不回滚已成功的另一侧，批次进入
+确认请求为 `{decisions,replacementAction?,expectedDraft?,clientOperationId}`，其中 `clientOperationId` 必填且由客户端为本次确认生成。普通上传的 ModelTable 候选在一个草稿事务中
+发布，DataResource 候选在另一个资源事务中发布（案例确认使用下文“案例整体切换”的单事务合同）；任一侧失败不回滚已成功的另一侧，批次进入
 `partially_confirmed`，重试只处理失败侧。两侧均失败回到 `ready_to_confirm`，两侧成功才进入 `confirmed` 并释放
 剩余 reservation；只有失败侧仍引用的暂存文件和 artifact 会继续占用空间，成功侧完成后立即结算，Skip 候选及
 已完成侧候选的暂存引用也会回收。成功子事务涉及的既有和新用途决定都被冻结，不能在重试时把 Skip 候选补入已发布侧。响应显式返回
@@ -277,3 +277,9 @@ DELETE 携带 opaque `impactToken` 并在事务中重新计算影响。影响变
 `cargo run --bin contract-manifest` 产生，并由功能目录逐项覆盖。
 
 上传批次详情的 `diagnostics` 包含模型和数据发布子事务的失败信息；对象形态合并至 `errors`，数组形态追加。`resource_alias_conflict` 的 `message` 列出当前会话内冲突资源名称和别名，提示修改别名后重试，不改变稳定错误码。
+
+### 案例整体切换
+
+`sourceKind=case` 的确认操作是当前会话的完整案例切换，不采用普通上传的双子事务语义。准备批次不改变当前模型或资源；`diagnostics.caseProjection.title` 给出目标案例名称，`diagnostics.caseSwitch` 保存准备时的 active/draft 基线、当前资源基线、上一案例和待替换资源清单。确认时基线必须仍匹配；变化时诊断要求重新准备案例，不自动覆盖新修改。
+
+案例候选须按目录角色整体确认。一次数据库事务退出上一案例资源及其 replacement 后代、完整替换模型草稿、创建/复用并激活模型版本、发布本案例 Data/Struct、失效未确认研究配置。用户普通资源保留，与新案例 alias 冲突时整体失败。成功的 `modelReceipt` 为 `{versionId,activated:true,deduplicated,caseBatchId}`；历史版本、运行、结果和旧资源引用保持可读。失败时模型和数据均未切换，两个子事务状态为 failed，批次回到 ready_to_confirm，已有模型/草稿/资源保持原状。普通上传和单资源替换仍使用原合同。

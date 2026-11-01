@@ -1079,6 +1079,7 @@ impl UploadBatchService {
                 &dataset.metadata,
                 serde_json::json!({
                     "source": "case_projection",
+                    "alias": output.alias,
                     "exampleId": example.id,
                     "profile": profile.id,
                     "projector": profile.projector,
@@ -1091,8 +1092,13 @@ impl UploadBatchService {
             ));
         }
         let mut diagnostics = batch_diagnostics(record, settings, None);
+        diagnostics["caseSwitch"] = self
+            .confirmation_repo
+            .case_switch_state(&user.id, record.batch.session_id)
+            .await?;
         diagnostics["caseProjection"] = serde_json::json!({
             "exampleId": example.id,
+            "title": example.title,
             "profile": profile.id,
             "projector": profile.projector,
             "targetFunction": profile.target_function,
@@ -1560,6 +1566,13 @@ fn view(record: UploadBatchRecordSet) -> UploadBatchView {
     .into_iter()
     .flat_map(|raw| serde_json::from_str::<Vec<serde_json::Value>>(raw).unwrap_or_default())
     .collect::<Vec<_>>();
+    let mut unique_errors = Vec::new();
+    for error in child_errors {
+        if !unique_errors.contains(&error) {
+            unique_errors.push(error);
+        }
+    }
+    let child_errors = unique_errors;
     if !child_errors.is_empty() {
         if diagnostics.is_array() {
             diagnostics.as_array_mut().unwrap().extend(child_errors);

@@ -32,6 +32,9 @@ export default function UploadBatchDecisionCard({ batch, actions, notify }: {
   actions?: UploadBatchActions
   notify: (text: string) => void
 }) {
+  const isCase = batch.sourceKind === 'case'
+  const caseDetails = batch.diagnostics as { caseProjection?: { title?: string }; caseSwitch?: { retiringResources?: { id: string; displayName: string; normalizedAlias: string }[]; previousCase?: { batchId: number; title?: string } } } | null
+  const retiring = caseDetails?.caseSwitch?.retiringResources ?? []
   const [decisions, setDecisions] = useState<CandidateDecision[]>(() => batch.candidates.map(defaultDecision))
   const [busy, setBusy] = useState(false)
   const selectable = useMemo(() => selectableCandidateIds(batch.candidates), [batch.candidates])
@@ -45,8 +48,12 @@ export default function UploadBatchDecisionCard({ batch, actions, notify }: {
   }
   const publish = async (replacementAction?: ReplacementAction) => {
     await actions!.updateCandidates(batch.id, decisions)
-    await actions!.confirm(batch.id, decisions, replacementAction)
-    notify(replacementAction === 'replace' ? '资源已覆盖' : replacementAction === 'save_as_new' ? '已另存为新资源' : replacementAction === 'cancel' ? '已取消替换' : '上传内容已确认')
+    const result = await actions!.confirm(batch.id, decisions, replacementAction) as { status?: string; diagnostics?: { message?: string }[] } | undefined
+    if (isCase && result?.status && result.status !== 'confirmed') {
+      notify(result.diagnostics?.[0]?.message ?? '案例切换失败，当前模型和资源保持不变')
+      return
+    }
+    notify(isCase ? '案例已切换，模型版本已激活' : replacementAction === 'replace' ? '资源已覆盖' : replacementAction === 'save_as_new' ? '已另存为新资源' : replacementAction === 'cancel' ? '已取消替换' : '上传内容已确认')
   }
   const update = (id: string, patch: Partial<CandidateDecision>) => setDecisions((values) => values.map((value) => value.candidateId === id ? { ...value, ...patch } : value))
 
@@ -54,8 +61,17 @@ export default function UploadBatchDecisionCard({ batch, actions, notify }: {
     <div className="flex items-center"><h3 className="font-semibold">上传批次 #{batch.id}</h3><span className="ml-auto">{batch.status}</span></div>
     <p className="mt-1 text-slate-600">模型：{batch.modelPublishStatus} · 数据：{batch.resourcePublishStatus}</p>
     {diagnostics.length > 0 && <div role="alert" className="mt-2 rounded bg-red-50 p-2 text-red-700">{diagnostics.map((message) => <p key={message}>{message}</p>)}</div>}
+    {isCase && <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2">
+      <p className="font-semibold">切换当前会话案例{caseDetails?.caseProjection?.title ? `：${caseDetails.caseProjection.title}` : ''}</p>
+      {caseDetails?.caseSwitch?.previousCase && <p>上一案例：{caseDetails.caseSwitch.previousCase.title ?? `批次 #${caseDetails.caseSwitch.previousCase.batchId}`}</p>}
+      <p>将替换 {retiring.length} 个上一案例的配套数据资源。</p>
+      {retiring.length > 0 && <details><summary>查看将替换的资源</summary><ul>{retiring.map(resource => <li key={resource.id}>{resource.displayName}（{resource.normalizedAlias}）</li>)}</ul></details>}
+      <p>确认后整体替换当前模型和上一案例的配套数据，创建或复用模型版本并自动激活。</p>
+      <p>当前草稿及上一案例的参数修改将被替换；历史模型版本、运行和结果保留。自行上传的数据保留，重名时阻止切换。</p>
+      <p>切换失败时保持原案例可用。</p>
+    </div>}
     {batch.status === 'awaiting_parse_settings' && <button type="button" disabled={busy || !actions} onClick={() => void act(() => actions!.updateParseSettings(batch.id, { encoding: 'utf-8', headerRow: 0, decimal: '.' }))} className="mt-2 rounded border bg-white px-2 py-1">使用默认解析设置</button>}
-    {batch.candidates.length > 0 && <label className="mt-2 flex gap-2 border-b border-blue-200 pb-2">
+    {!isCase && batch.candidates.length > 0 && <label className="mt-2 flex gap-2 border-b border-blue-200 pb-2">
       <input type="checkbox" checked={selectable.length > 0 && selected === selectable.length} onChange={(event) => setDecisions((values) => values.map((value) => selectable.includes(value.candidateId) ? { ...value, selected: event.target.checked } : value))} />
       <span>全选可见工作表</span>
     </label>}
@@ -64,12 +80,12 @@ export default function UploadBatchDecisionCard({ batch, actions, notify }: {
       const hidden = candidate.evidence?.hidden === true
       return <div key={candidate.id} className={`mt-2 rounded bg-white p-2 ${hidden ? 'opacity-60' : ''}`}>
         <div className="flex items-center gap-2">
-          <input aria-label={`选择 ${candidate.displayName}`} type="checkbox" checked={decision.selected} onChange={(event) => update(candidate.id, { selected: event.target.checked })} />
+          <input aria-label={`选择 ${candidate.displayName}`} disabled={isCase} type="checkbox" checked={decision.selected} onChange={(event) => update(candidate.id, { selected: event.target.checked })} />
           <span className="min-w-0 flex-1 truncate">{candidate.displayName}{candidate.sheetName ? ` · ${candidate.sheetName}` : ''}</span>
           {hidden && <span>隐藏 sheet</span>}
         </div>
         <label className="mt-2 flex items-center gap-2">用途
-          <select aria-label={`${candidate.displayName}用途`} value={decision.purpose} onChange={(event) => update(candidate.id, { purpose: event.target.value as CandidateDecision['purpose'] })} className="rounded border px-2 py-1">
+          <select disabled={isCase} aria-label={`${candidate.displayName}用途`} value={decision.purpose} onChange={(event) => update(candidate.id, { purpose: event.target.value as CandidateDecision['purpose'] })} className="rounded border px-2 py-1">
             <option value="model_table">模型表</option><option value="data_resource">数据文件</option><option value="skip">跳过</option>
           </select>
         </label>
@@ -77,7 +93,7 @@ export default function UploadBatchDecisionCard({ batch, actions, notify }: {
           <input
             aria-label={`${candidate.displayName}${candidate.sheetName ? ` · ${candidate.sheetName}` : ''} alias`}
             value={decision.alias ?? decision.tableName ?? ''}
-            disabled={!decision.selected || decision.purpose === 'skip'}
+            disabled={isCase || !decision.selected || decision.purpose === 'skip'}
             onChange={(event) => update(candidate.id, { alias: event.target.value, tableName: event.target.value })}
             className="min-w-0 flex-1 rounded border px-2 py-1 font-mono"
           />
@@ -92,7 +108,7 @@ export default function UploadBatchDecisionCard({ batch, actions, notify }: {
         <button type="button" disabled={busy || !actions} onClick={() => void act(() => publish('cancel'))} className="rounded border bg-white px-3 py-1">取消替换</button>
       </div>
       : <div className="mt-3 flex gap-2">
-        <button type="button" disabled={busy || !actions} onClick={() => void act(() => publish())} className="rounded bg-brand-500 px-3 py-1 text-white">确认用途并发布</button>
+        <button type="button" disabled={busy || !actions} onClick={() => void act(() => publish())} className="rounded bg-brand-500 px-3 py-1 text-white">{isCase ? '确认切换案例' : '确认用途并发布'}</button>
         <button type="button" disabled={busy || !actions} onClick={() => void act(() => actions!.discard(batch.id))} className="rounded border bg-white px-3 py-1">抛弃</button>
       </div>)}
   </section>

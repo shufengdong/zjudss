@@ -8,8 +8,8 @@ use tower::ServiceExt;
 use zjudss::agent::{ScriptAuthor, ScriptGenerationRequest, ScriptRepairRequest};
 use zjudss::application::{
     CandidateDecision, CandidatePurpose, ConfirmStudyRequest, CreateRunRequest,
-    LockedStudyContract, PrepareStudyRequest, PublishDraftRequest, ReplacementAction,
-    UpdateStudyStructRequest, WorkflowInputSnapshot,
+    LockedStudyContract, PrepareStudyRequest, ReplacementAction, UpdateStudyStructRequest,
+    WorkflowInputSnapshot,
 };
 use zjudss::db::repositories::{ManagedWorkflowRepo, ManagedWorkflowRepoError};
 use zjudss::testing::{AuthorTurn, ScriptedAuthor};
@@ -71,34 +71,8 @@ async fn ready_study(
         .workspace(user, session_id)
         .await
         .unwrap();
-    let draft = workspace.draft.unwrap().draft;
-    let published = app
-        .state
-        .version_service
-        .publish(
-            user,
-            session_id,
-            PublishDraftRequest {
-                expected_draft_id: draft.id,
-                expected_draft_revision: draft.revision,
-                client_publish_id: "workflow-model".into(),
-                description: Some("workflow fixture".into()),
-            },
-        )
-        .await
-        .unwrap();
-    app.state
-        .version_service
-        .activate(
-            user,
-            published.version.version.id,
-            zjudss::application::ActivateVersionRequest {
-                discard_draft: false,
-                expected_draft: None,
-            },
-        )
-        .await
-        .unwrap();
+    assert!(workspace.draft.is_none());
+    assert!(workspace.active.is_some());
     app.state
         .study_configuration_service
         .prepare(

@@ -7,9 +7,9 @@ use serde_json::json;
 use std::io::Cursor;
 use tower::ServiceExt;
 use zjudss::application::{
-    ActivateVersionRequest, CandidateDecision, CandidatePurpose, PrepareStudyRequest,
-    PublishDraftRequest, SelectStudyResultsRequest, StudyConfigurationError,
-    StudyConfigurationState, UpdateStudyStructRequest, UploadFile, UploadSourceKind,
+    CandidateDecision, CandidatePurpose, PrepareStudyRequest, SelectStudyResultsRequest,
+    StudyConfigurationError, StudyConfigurationState, UpdateStudyStructRequest, UploadFile,
+    UploadSourceKind,
 };
 use zjudss::storage::StageLimits;
 
@@ -70,34 +70,8 @@ async fn import_case(app: &TestApp, user: &zjudss::auth::CurrentUser, session_id
         .workspace(user, session_id)
         .await
         .unwrap();
-    let draft = workspace.draft.unwrap().draft;
-    let published = app
-        .state
-        .version_service
-        .publish(
-            user,
-            session_id,
-            PublishDraftRequest {
-                expected_draft_id: draft.id,
-                expected_draft_revision: draft.revision,
-                client_publish_id: format!("publish-{id}"),
-                description: Some("study fixture".into()),
-            },
-        )
-        .await
-        .unwrap();
-    app.state
-        .version_service
-        .activate(
-            user,
-            published.version.version.id,
-            ActivateVersionRequest {
-                discard_draft: false,
-                expected_draft: None,
-            },
-        )
-        .await
-        .unwrap();
+    assert!(workspace.draft.is_none());
+    assert!(workspace.active.is_some());
 }
 
 async fn add_second_para_resource(
@@ -105,56 +79,34 @@ async fn add_second_para_resource(
     user: &zjudss::auth::CurrentUser,
     session_id: i32,
 ) {
-    let example = app
-        .state
-        .engine_snapshot
-        .examples
-        .iter()
-        .find(|example| example.importable)
-        .unwrap();
-    let batch = app
-        .state
-        .case_import_service
-        .apply(
-            user,
-            session_id,
-            example.id.clone(),
-            app.state.engine_snapshot.id.clone(),
-            "second-para".into(),
-        )
+    let resources = zjudss::db::repositories::DataResourceRepo::new(app.pool.clone())
+        .list_current_for_user(&user.id)
         .await
         .unwrap();
-    let decisions = batch
-        .candidates
+    let original = resources
         .iter()
-        .map(|candidate| {
-            let para = candidate.proposed_alias.as_deref() == Some("para");
-            CandidateDecision {
-                candidate_id: candidate.id.clone(),
-                purpose: if para {
-                    CandidatePurpose::DataResource
-                } else {
-                    CandidatePurpose::Skip
-                },
-                selected: para,
-                table_name: None,
-                display_name: para.then(|| "备用潮流参数".into()),
-                alias: para.then(|| "para_alt".into()),
-            }
-        })
-        .collect();
-    app.state
+        .find(|resource| resource.session_id == session_id && resource.alias == "para")
+        .unwrap();
+    let original = app
+        .state
         .data_resource_service
-        .confirm_upload(
-            user,
-            batch.id.parse().unwrap(),
-            decisions,
-            None,
-            None,
-            "publish-second-para",
-        )
+        .get(user, &original.id)
         .await
         .unwrap();
+    let preview=app.state.data_resource_service.preview_structured_replacement(user,&original.id,&original.content_hash,"frames.para",
+        json!({"base_frequency_hz":50.0,"max_iter":30,"max_control_iter":10,"tol":1e-6,"line_model":"exact","result":"bus_phase,summary"})).await.unwrap();
+    let resource = app
+        .state
+        .data_resource_service
+        .confirm_structured_replacement(
+            user,
+            &preview.preview_token,
+            zjudss::application::ReplacementAction::SaveAsNew,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(resource.id, original.id);
 }
 
 async fn publish_data_resource(

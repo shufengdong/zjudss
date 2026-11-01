@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cancelManagedWorkflow, getManagedWorkflow, listRunDatasets } from '../../api/client'
 import type { ManagedWorkflowView, WorkflowProgressMessage } from '../../types'
 import WorkflowProgressCard from './WorkflowProgressCard'
@@ -22,7 +22,24 @@ const message = (state: string, outputDatasetIds: string[] = []): WorkflowProgre
 })
 
 describe('WorkflowProgressCard', () => {
+  afterEach(() => vi.useRealTimers())
   beforeEach(() => { vi.clearAllMocks(); vi.mocked(listRunDatasets).mockResolvedValue([]) })
+
+  it('keeps loaded progress visible without a loading row during background polling', async () => {
+    vi.useFakeTimers()
+    let resolve!: (value: ManagedWorkflowView) => void
+    vi.mocked(getManagedWorkflow).mockReturnValueOnce(new Promise(value => { resolve = value }))
+      .mockReturnValue(new Promise(() => {}))
+    render(<WorkflowProgressCard message={message('running')} notify={vi.fn()} />)
+    expect(screen.getByText('读取详细进度…')).toBeInTheDocument()
+    await act(async () => { resolve(workflow('running')) })
+    expect(screen.queryByText('读取详细进度…')).not.toBeInTheDocument()
+    await act(async () => { vi.advanceTimersByTime(750) })
+    expect(getManagedWorkflow).toHaveBeenCalledTimes(2)
+    expect(screen.getByText('执行尝试（1）')).toBeInTheDocument()
+    expect(screen.queryByText('读取详细进度…')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '取消' })).toBeInTheDocument()
+  })
 
   it('keeps attempts collapsed and reveals only sanitized diagnostics on demand', async () => {
     vi.mocked(getManagedWorkflow).mockResolvedValue(workflow('running'))
