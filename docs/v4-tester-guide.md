@@ -181,7 +181,7 @@ Data/Struct 输入、结果和可用函数均以本次启动加载的 eig-rs 动
 
    <!-- CASE_JOURNEY_PROMPT:ds_newton_raphson_pf:start -->
    ```text
-   请严格使用 ds_newton_raphson_pf 对当前 active 模型执行 Newton-Raphson 静态潮流，参数通过 para 参数卡确认，结果选择推荐的 bus_voltage。即使模型是径向网络也不要改用 ds_radial_pf。
+   请先检查当前工作区，再严格使用 ds_newton_raphson_pf 对当前 active 模型执行 Newton-Raphson 静态潮流，参数通过 para 参数卡确认，结果选择推荐的 bus_voltage。即使模型是径向网络也不要改用 ds_radial_pf。
    ```
    <!-- CASE_JOURNEY_PROMPT:ds_newton_raphson_pf:end -->
 
@@ -209,7 +209,7 @@ Data/Struct 输入、结果和可用函数均以本次启动加载的 eig-rs 动
 
    <!-- CASE_JOURNEY_PROMPT:ds_fault_study:start -->
    ```text
-   请严格使用 ds_fault_study 对当前 active 模型执行短路研究，故障工况使用已上传且 schema 兼容的 fault 数据资源，para 通过参数卡确认，结果选择推荐的 fault；缺少故障数据时先要求上传或选择。
+   请先检查当前工作区，再严格使用 ds_fault_study 对当前 active 模型执行短路研究，故障工况使用已上传且 schema 兼容的 fault 数据资源，para 通过参数卡确认，结果选择推荐的 fault；缺少故障数据时先要求上传或选择。
    ```
    <!-- CASE_JOURNEY_PROMPT:ds_fault_study:end -->
 
@@ -263,7 +263,7 @@ Data/Struct 输入、结果和可用函数均以本次启动加载的 eig-rs 动
 
     <!-- CASE_JOURNEY_PROMPT:ds_network_dynamics:start -->
     ```text
-    请严格使用 ds_network_dynamics 对当前 active 模型执行完整网络动态研究，使用已上传且 schema 兼容的 timeline、event、tcc_curve 和 fault 数据资源，spec 与 para 通过参数卡确认，结果选择推荐的 bus_voltage；不要改用电机专用旧版门面。
+    请先检查当前工作区，再严格使用 ds_network_dynamics 对当前 active 模型执行完整网络动态研究，使用已上传且 schema 兼容的 timeline、event、tcc_curve 和 fault 数据资源，spec 与 para 通过参数卡确认，结果选择推荐的 bus_voltage；不要改用电机专用旧版门面。
     ```
     <!-- CASE_JOURNEY_PROMPT:ds_network_dynamics:end -->
 
@@ -279,7 +279,7 @@ Data/Struct 输入、结果和可用函数均以本次启动加载的 eig-rs 动
 
     <!-- CASE_JOURNEY_PROMPT:ds_radial_execution_plan:start -->
     ```text
-    请严格使用 ds_radial_execution_plan 重放当前案例的径向执行计划。使用案例导入产生且 schema 兼容的 solution、load_shape、tcc_curve、fault、execution_epoch、execution_setting、execution_mutation、post_solve_action、execution_reference、execution_event 和 projection_diagnostic 资源，para 通过参数卡确认，结果选择推荐的 bus_voltage；不要改用 Newton 执行计划。
+    请先检查当前工作区，再严格使用 ds_radial_execution_plan 重放当前案例的径向执行计划。使用案例导入产生且 schema 兼容的 solution、load_shape、tcc_curve、fault、execution_epoch、execution_setting、execution_mutation、post_solve_action、execution_reference、execution_event 和 projection_diagnostic 资源，para 通过参数卡确认，结果选择推荐的 bus_voltage；不要改用 Newton 执行计划。
     ```
     <!-- CASE_JOURNEY_PROMPT:ds_radial_execution_plan:end -->
 
@@ -287,7 +287,7 @@ Data/Struct 输入、结果和可用函数均以本次启动加载的 eig-rs 动
 
     <!-- CASE_JOURNEY_PROMPT:ds_newton_raphson_execution_plan:start -->
     ```text
-    请严格使用 ds_newton_raphson_execution_plan 重放当前案例的 Newton-Raphson 执行计划。使用案例导入产生且 schema 兼容的 solution、load_shape、tcc_curve、fault、execution_epoch、execution_setting、execution_mutation、post_solve_action、execution_reference、execution_event 和 projection_diagnostic 资源，para 通过参数卡确认，结果选择推荐的 bus_voltage；不要改用径向执行计划。
+    请先检查当前工作区，再严格使用 ds_newton_raphson_execution_plan 重放当前案例的 Newton-Raphson 执行计划。使用案例导入产生且 schema 兼容的 solution、load_shape、tcc_curve、fault、execution_epoch、execution_setting、execution_mutation、post_solve_action、execution_reference、execution_event 和 projection_diagnostic 资源，para 通过参数卡确认，结果选择推荐的 bus_voltage；不要改用径向执行计划。
     ```
     <!-- CASE_JOURNEY_PROMPT:ds_newton_raphson_execution_plan:end -->
 
