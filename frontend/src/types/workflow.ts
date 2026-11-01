@@ -1,12 +1,6 @@
-export interface FailureAnalysisEvidence { statement:string; evidence:string }
-export interface FailureAnalysis {
-  summary:string
-  facts:FailureAnalysisEvidence[]
-  possibleCauses:FailureAnalysisEvidence[]
-  unknowns:string[]
-  recommendations:string[]
-}
-export interface WorkflowEngineLog { stream:string; text:string; totalBytes:number; sentBytes:number; truncated:boolean }
+import type { EngineLog, FailureAnalysis } from './failureDiagnosis'
+
+export type WorkflowEngineLog = EngineLog
 export interface WorkflowAttemptSummary {
   id:number
   attemptNumber:number

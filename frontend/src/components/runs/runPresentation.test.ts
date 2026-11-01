@@ -4,6 +4,7 @@ import {
   formatBytes,
   formatDuration,
   formatTimestamp,
+  parseRunFailureDiagnosis,
   runDurationMs,
   runFailure,
   runStageLabel,
@@ -89,5 +90,44 @@ describe('run presentation', () => {
     } })).engineOutput!
     expect(Array.from(boundedOutput)).toHaveLength(16_385)
     expect(boundedOutput.endsWith('…')).toBe(true)
+  })
+
+  it('parses modern run diagnosis into the shared bounded shape', () => {
+    const diagnosis = parseRunFailureDiagnosis(run({
+      status: 'failed', exitCode: 7, stage: 'run', error: {
+        code: 'run_failed', message: '仿真引擎执行失败', stage: 'run', durationMs: 999,
+        engineLogs: [{ stream: 'stderr', text: 'parse failed', totalBytes: 12, sentBytes: 12, truncated: false }],
+        analysisStatus: 'complete',
+        analysis: {
+          summary: '脚本解析失败',
+          facts: [{ statement: '引擎报告解析失败', evidence: 'stderr: parse failed' }],
+          possibleCauses: [], unknowns: ['具体语法位置'], recommendations: ['核对脚本语法'],
+        },
+      },
+    }))
+
+    expect(diagnosis).toEqual({
+      code: 'run_failed', message: '仿真引擎执行失败', stage: 'run', exitCode: 7,
+      durationMs: 2_500,
+      engineLogs: [{ stream: 'stderr', text: 'parse failed', totalBytes: 12, sentBytes: 12, truncated: false }],
+      analysisStatus: 'complete',
+      analysis: {
+        summary: '脚本解析失败',
+        facts: [{ statement: '引擎报告解析失败', evidence: 'stderr: parse failed' }],
+        possibleCauses: [], unknowns: ['具体语法位置'], recommendations: ['核对脚本语法'],
+      },
+    })
+  })
+
+  it('maps legacy engine output to one stderr log with unavailable analysis', () => {
+    const diagnosis = parseRunFailureDiagnosis(run({ status: 'failed', error: {
+      code: 'run_failed', message: '旧运行失败', engineOutput: 'legacy stderr',
+    } }))
+
+    expect(diagnosis.engineLogs).toEqual([{
+      stream: 'stderr', text: 'legacy stderr', totalBytes: null, sentBytes: null, truncated: false,
+    }])
+    expect(diagnosis.analysisStatus).toBe('unavailable')
+    expect(diagnosis.analysis).toBeNull()
   })
 })

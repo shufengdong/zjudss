@@ -60,7 +60,7 @@ export default function WorkflowProgressCard({ message, onRetry, onChanged, noti
   const diagnosisLogs = diagnosisAttempt?.engineLogs?.length
     ? diagnosisAttempt.engineLogs
     : diagnosisAttempt?.sanitizedStderr
-      ? [{ stream: 'stderr', text: diagnosisAttempt.sanitizedStderr, totalBytes: diagnosisAttempt.sanitizedStderr.length, sentBytes: diagnosisAttempt.sanitizedStderr.length, truncated: false }]
+      ? [{ stream: 'stderr' as const, text: diagnosisAttempt.sanitizedStderr, totalBytes: diagnosisAttempt.sanitizedStderr.length, sentBytes: diagnosisAttempt.sanitizedStderr.length, truncated: false }]
       : []
   const analysis = diagnosisAttempt?.failureAnalysis
   const workflowElapsed = workflow

@@ -1,4 +1,11 @@
-import type { SimulationRun } from '../../types'
+import type {
+  EngineLog,
+  FailureAnalysis,
+  FailureAnalysisEvidence,
+  FailureAnalysisStatus,
+  FailureDiagnosis,
+  SimulationRun,
+} from '../../types'
 
 const STUDY_TITLES = new Map<string, string>([
   ['ds_radial_pf', '静态潮流'],
@@ -32,6 +39,12 @@ function boundedText(value: unknown, limit = 500): string | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined
   const characters = Array.from(value.trim())
   return characters.length > limit ? `${characters.slice(0, limit).join('')}…` : characters.join('')
+}
+
+function boundedLogText(value: unknown, limit: number): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const characters = Array.from(value)
+  return characters.length > limit ? `${characters.slice(0, limit).join('')}…` : value
 }
 
 function timestamp(value: string | null): number | null {
@@ -105,16 +118,114 @@ export function formatTimestamp(value: string | null): string {
 }
 
 export function runFailure(run: SimulationRun): { code?: string; message: string; engineOutput?: string } {
+  const diagnosis = parseRunFailureDiagnosis(run)
+  const engineOutput = diagnosis.engineLogs.find((log) => log.stream === 'stderr')?.text
+  return {
+    ...(diagnosis.code ? { code: diagnosis.code } : {}),
+    ...(engineOutput ? { engineOutput } : {}),
+    message: diagnosis.message,
+  }
+}
+
+function publicByteCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+function parseEngineLogs(value: unknown): EngineLog[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const logs: EngineLog[] = []
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue
+    const log = candidate as Record<string, unknown>
+    if ((log.stream !== 'stdout' && log.stream !== 'stderr') || seen.has(log.stream)) continue
+    const text = boundedLogText(log.text, 65_536)
+    if (text === undefined) continue
+    seen.add(log.stream)
+    logs.push({
+      stream: log.stream,
+      text: text ?? '',
+      totalBytes: publicByteCount(log.totalBytes),
+      sentBytes: publicByteCount(log.sentBytes),
+      truncated: log.truncated === true,
+    })
+  }
+  return logs
+}
+
+function parseEvidence(value: unknown): FailureAnalysisEvidence[] | null {
+  if (!Array.isArray(value) || value.length > 5) return null
+  const parsed: FailureAnalysisEvidence[] = []
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
+    const item = candidate as Record<string, unknown>
+    const statement = boundedText(item.statement, 800)
+    const evidence = boundedText(item.evidence, 800)
+    if (!statement || !evidence) return null
+    parsed.push({ statement, evidence })
+  }
+  return parsed
+}
+
+function parseTextItems(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length > 5) return null
+  const parsed = value.map((item) => boundedText(item, 800))
+  return parsed.every((item): item is string => Boolean(item)) ? parsed : null
+}
+
+function parseFailureAnalysis(value: unknown): FailureAnalysis | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const candidate = value as Record<string, unknown>
+  const summary = boundedText(candidate.summary, 500)
+  const facts = parseEvidence(candidate.facts)
+  const possibleCauses = parseEvidence(candidate.possibleCauses)
+  const unknowns = parseTextItems(candidate.unknowns)
+  const recommendations = parseTextItems(candidate.recommendations)
+  if (!summary || !facts || !possibleCauses || !unknowns || !recommendations) return null
+  return { summary, facts, possibleCauses, unknowns, recommendations }
+}
+
+export function parseRunFailureDiagnosis(run: SimulationRun): FailureDiagnosis {
   if (!run.error || typeof run.error !== 'object' || Array.isArray(run.error)) {
-    return { message: '运行失败，未提供可用原因' }
+    return {
+      message: '运行失败，未提供可用原因',
+      exitCode: publicByteCount(run.exitCode),
+      durationMs: runDurationMs(run),
+      engineLogs: [],
+      analysisStatus: 'unavailable',
+      analysis: null,
+    }
   }
   const error = run.error as Record<string, unknown>
   const code = boundedText(error.code, 128)
   const message = boundedText(error.message)
-  const engineOutput = boundedText(error.engineOutput, 16_384)
+  const modern = Array.isArray(error.engineLogs)
+    || error.analysisStatus === 'pending'
+    || error.analysisStatus === 'complete'
+    || error.analysisStatus === 'unavailable'
+  const engineLogs = modern
+    ? parseEngineLogs(error.engineLogs)
+    : (() => {
+        const engineOutput = boundedLogText(error.engineOutput, 16_384)
+        return engineOutput
+          ? [{ stream: 'stderr' as const, text: engineOutput, totalBytes: null, sentBytes: null, truncated: false }]
+          : []
+      })()
+  const analysis = parseFailureAnalysis(error.analysis)
+  const requestedStatus: FailureAnalysisStatus = error.analysisStatus === 'pending'
+    ? 'pending'
+    : error.analysisStatus === 'complete' && analysis
+      ? 'complete'
+      : 'unavailable'
+  const stage = boundedText(error.stage, 128) ?? boundedText(run.stage, 128)
   return {
     ...(code ? { code } : {}),
-    ...(engineOutput ? { engineOutput } : {}),
     message: message ?? '运行失败，未提供可用原因',
+    ...(stage ? { stage } : {}),
+    exitCode: publicByteCount(run.exitCode),
+    durationMs: runDurationMs(run),
+    engineLogs,
+    analysisStatus: requestedStatus,
+    analysis: requestedStatus === 'complete' ? analysis : null,
   }
 }

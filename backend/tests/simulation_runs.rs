@@ -399,9 +399,17 @@ async fn failed_run_publishes_a_terminal_failed_progress_event() {
     assert_eq!(failed_run["stage"], "run");
     assert_eq!(failed_run["error"]["code"], "run_failed");
     assert_eq!(failed_run["error"]["message"], "仿真引擎执行失败");
+    assert_eq!(failed_run["error"]["analysisStatus"], "pending");
+    assert_eq!(failed_run["error"]["engineLogs"][0]["stream"], "stderr");
     assert_eq!(
-        failed_run["error"]["engineOutput"],
+        failed_run["error"]["engineLogs"][0]["text"],
         "[服务器路径已隐藏] token=[敏感信息已隐藏] parse failed"
+    );
+    assert!(failed_run["error"].get("engineOutput").is_none());
+    assert!(
+        failed_run["error"]["engineLogs"][0]
+            .get("fullHash")
+            .is_none()
     );
     assert_eq!(failed_run["exitCode"], 7);
     assert!(!failed_run.to_string().contains("/srv/private"));
@@ -496,6 +504,30 @@ async fn failed_run_persists_structured_analysis_after_logs_and_terminal_progres
 
     assert_eq!(stored_error["analysis"]["summary"], "脚本解析失败");
     assert_eq!(stored_error["engineLogs"][0]["text"], "parse failed");
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/runs/{run_id}"))
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let public_run: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert_eq!(public_run["error"]["analysisStatus"], "complete");
+    assert_eq!(public_run["error"]["analysis"]["summary"], "脚本解析失败");
+    assert_eq!(public_run["error"]["engineLogs"][0]["text"], "parse failed");
+    assert!(
+        public_run["error"]["engineLogs"][0]
+            .get("fullHash")
+            .is_none()
+    );
 }
 
 #[cfg(feature = "e2e-test")]

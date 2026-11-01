@@ -1,4 +1,6 @@
 use super::ApiError;
+use crate::agent::{FailureAnalysis, validate_failure_analysis};
+use crate::application::diagnostics::sanitize_text;
 use crate::application::{AppState, CreateRunRequest, RunSummary, ms_to_iso};
 use crate::auth::CurrentUser;
 use axum::Json;
@@ -128,6 +130,69 @@ fn public_run_error(status: &str, raw: Option<&str>) -> Option<Value> {
         _ => "run_failed",
     };
     let mut error = json!({"code":public_code,"message":message});
+    let modern = parsed.as_ref().is_some_and(|value| {
+        value.get("engineLogs").is_some()
+            || value.get("analysisStatus").is_some()
+            || value.get("analysis").is_some()
+    });
+    if modern {
+        if let Some(stage) = parsed
+            .as_ref()
+            .and_then(|value| value.get("stage"))
+            .and_then(Value::as_str)
+            .and_then(|value| bounded_public_text(value, 128))
+        {
+            error["stage"] = Value::String(stage);
+        }
+        if let Some(duration_ms) = parsed
+            .as_ref()
+            .and_then(|value| value.get("durationMs"))
+            .and_then(Value::as_i64)
+            .filter(|value| *value >= 0)
+        {
+            error["durationMs"] = Value::from(duration_ms);
+        }
+        let engine_logs = parsed
+            .as_ref()
+            .and_then(|value| value.get("engineLogs"))
+            .and_then(Value::as_array)
+            .map(|logs| public_engine_logs(logs))
+            .unwrap_or_default();
+        let sanitized_stderr = engine_logs
+            .iter()
+            .filter(|log| log.get("stream").and_then(Value::as_str) == Some("stderr"))
+            .filter_map(|log| log.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        error["engineLogs"] = Value::Array(engine_logs);
+
+        let stored_status = parsed
+            .as_ref()
+            .and_then(|value| value.get("analysisStatus"))
+            .and_then(Value::as_str);
+        let valid_analysis = (stored_status == Some("complete"))
+            .then(|| {
+                parsed
+                    .as_ref()?
+                    .get("analysis")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value::<FailureAnalysis>(value).ok())
+                    .filter(|analysis| {
+                        validate_failure_analysis(analysis, &sanitized_stderr).is_ok()
+                    })
+            })
+            .flatten();
+        let analysis_status = match (stored_status, valid_analysis.as_ref()) {
+            (Some("pending"), _) => "pending",
+            (Some("complete"), Some(_)) => "complete",
+            _ => "unavailable",
+        };
+        error["analysisStatus"] = Value::String(analysis_status.into());
+        if let Some(analysis) = valid_analysis {
+            error["analysis"] = serde_json::to_value(analysis).unwrap_or(Value::Null);
+        }
+        return Some(error);
+    }
     let engine_output = parsed
         .as_ref()
         .and_then(|value| value.get("engineOutput"))
@@ -148,6 +213,76 @@ fn public_run_error(status: &str, raw: Option<&str>) -> Option<Value> {
         error["engineOutput"] = Value::String(engine_output);
     }
     Some(error)
+}
+
+const MAX_PUBLIC_LOG_BYTES: usize = 64 * 1024;
+const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
+fn bounded_public_text(value: &str, max_chars: usize) -> Option<String> {
+    let sanitized = sanitize_text(value);
+    let trimmed = sanitized.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut characters = trimmed.chars();
+    let bounded = characters.by_ref().take(max_chars).collect::<String>();
+    Some(if characters.next().is_some() {
+        format!("{bounded}…")
+    } else {
+        bounded
+    })
+}
+
+fn bounded_public_log(value: &str) -> (String, bool) {
+    let sanitized = sanitize_text(value);
+    if sanitized.len() <= MAX_PUBLIC_LOG_BYTES {
+        return (sanitized, false);
+    }
+    let mut end = MAX_PUBLIC_LOG_BYTES.saturating_sub('…'.len_utf8());
+    while !sanitized.is_char_boundary(end) {
+        end -= 1;
+    }
+    (format!("{}…", &sanitized[..end]), true)
+}
+
+fn public_engine_logs(logs: &[Value]) -> Vec<Value> {
+    let mut seen_stdout = false;
+    let mut seen_stderr = false;
+    logs.iter()
+        .filter_map(|log| {
+            let stream = log.get("stream").and_then(Value::as_str)?;
+            let seen = match stream {
+                "stdout" => &mut seen_stdout,
+                "stderr" => &mut seen_stderr,
+                _ => return None,
+            };
+            if *seen {
+                return None;
+            }
+            *seen = true;
+            let (text, locally_truncated) =
+                bounded_public_log(log.get("text").and_then(Value::as_str).unwrap_or_default());
+            let sent_bytes = text.len() as u64;
+            let total_bytes = log
+                .get("totalBytes")
+                .and_then(Value::as_u64)
+                .unwrap_or(sent_bytes)
+                .max(sent_bytes)
+                .min(MAX_SAFE_INTEGER);
+            let truncated = locally_truncated
+                || log
+                    .get("truncated")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+            Some(json!({
+                "stream": stream,
+                "text": text,
+                "totalBytes": total_bytes,
+                "sentBytes": sent_bytes,
+                "truncated": truncated
+            }))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -196,5 +331,112 @@ mod tests {
             .to_string();
         assert_eq!(output.chars().count(), 16_385);
         assert!(output.ends_with('…'));
+    }
+
+    #[test]
+    fn current_run_errors_expose_only_bounded_structured_diagnosis() {
+        let raw = serde_json::json!({
+            "code": "engine_exit_nonzero",
+            "reason": "engine",
+            "stage": "run",
+            "durationMs": 1_234,
+            "engineLogs": [{
+                    "stream": "stderr",
+                    "text": "/srv/private/input.rss token=secret\u{1} parse failed",
+                    "fullHash": "full-secret-hash",
+                    "retainedHash": "retained-secret-hash",
+                    "sentHash": "sent-secret-hash",
+                    "totalBytes": 61,
+                    "sentBytes": 61,
+                    "truncated": false,
+                    "diagnostic": {"command": "tensoreval /srv/private/input.rss"}
+                }, {
+                    "stream": "stdout",
+                    "text": "错".repeat(30_000),
+                    "totalBytes": 90_000,
+                    "sentBytes": 90_000,
+                    "truncated": false
+                }, {
+                    "stream": "command",
+                    "text": "tensoreval /srv/private/input.rss"
+                }],
+            "analysisStatus": "complete",
+            "analysis": {
+                "summary": "脚本解析失败",
+                "facts": [{"statement": "引擎报告解析失败", "evidence": "stderr: parse failed"}],
+                "possibleCauses": [],
+                "unknowns": ["具体语法位置"],
+                "recommendations": ["核对脚本语法"],
+                "providerTrace": "private"
+            },
+            "serverPath": "/srv/private",
+            "providerError": "secret"
+        })
+        .to_string();
+
+        let public = public_run_error("failed", Some(&raw)).expect("public error");
+
+        assert_eq!(public["code"], "run_failed");
+        assert_eq!(public["stage"], "run");
+        assert_eq!(public["durationMs"], 1_234);
+        assert_eq!(public["analysisStatus"], "unavailable");
+        assert!(public.get("analysis").is_none());
+        assert_eq!(public["engineLogs"][0]["stream"], "stderr");
+        assert_eq!(
+            public["engineLogs"][0]["text"],
+            "[服务器路径已隐藏] token=[敏感信息已隐藏] parse failed"
+        );
+        assert_eq!(public["engineLogs"].as_array().unwrap().len(), 2);
+        assert!(public["engineLogs"][1]["text"].as_str().unwrap().len() <= 64 * 1024);
+        assert_eq!(public["engineLogs"][1]["truncated"], true);
+        assert!(public["engineLogs"][0].get("fullHash").is_none());
+        let serialized = public.to_string();
+        for private in [
+            "full-secret-hash",
+            "retained-secret-hash",
+            "sent-secret-hash",
+            "providerTrace",
+            "providerError",
+            "/srv/private",
+        ] {
+            assert!(
+                !serialized.contains(private),
+                "leaked {private}: {serialized}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_optional_analysis_does_not_hide_structured_logs() {
+        let raw = serde_json::json!({
+            "code": "engine_exit_nonzero",
+            "reason": "solver",
+            "stage": "run",
+            "engineLogs": [{
+                "stream": "stderr",
+                "text": "solver did not converge",
+                "fullHash": "full",
+                "retainedHash": "retained",
+                "sentHash": "sent",
+                "totalBytes": 23,
+                "sentBytes": 23,
+                "truncated": false
+            }],
+            "analysisStatus": "complete",
+            "analysis": {
+                "summary": "求解失败",
+                "facts": [{"statement": "输入不可用", "evidence": "stderr: fabricated evidence"}],
+                "possibleCauses": [],
+                "unknowns": [],
+                "recommendations": []
+            }
+        })
+        .to_string();
+
+        let public = public_run_error("failed", Some(&raw)).expect("public error");
+
+        assert_eq!(public["analysisStatus"], "unavailable");
+        assert!(public.get("analysis").is_none());
+        assert_eq!(public["engineLogs"][0]["text"], "solver did not converge");
     }
 }
