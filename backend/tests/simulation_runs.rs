@@ -3,6 +3,7 @@ mod common;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use common::TestApp;
+use diesel::prelude::*;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use zjudss::application::{CreateScriptRequest, PublishDraftRequest, ScriptSource};
@@ -157,6 +158,153 @@ async fn deleting_a_session_with_a_completed_run_removes_its_history_and_storage
         .unwrap();
     assert_eq!(usage.used_artifacts, 0);
     assert_eq!(usage.used_bytes, 0);
+}
+
+#[tokio::test]
+async fn deleting_a_run_before_its_session_does_not_release_tombstoned_artifacts_twice() {
+    let app = TestApp::spawn().await;
+    let (user, cookie, session_id, _version_id, script_id) = setup(&app).await;
+    let response = post_run(&app, &cookie, &script_id, "delete-run-before-session").await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    let run_id = value["run"]["id"].as_str().unwrap().parse::<i32>().unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let run = app.state.run_service.find(&user, run_id).await.unwrap();
+            if matches!(run.status.as_str(), "succeeded" | "failed") {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let preview = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/runs/{run_id}/deletion-preview"))
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preview.status(), StatusCode::OK);
+    let preview: Value =
+        serde_json::from_slice(&to_bytes(preview.into_body(), 1024 * 1024).await.unwrap()).unwrap();
+    let run_token = preview["impactToken"].as_str().unwrap();
+    let deleted_run = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/runs/{run_id}?impactToken={run_token}"))
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(deleted_run.status(), StatusCode::NO_CONTENT);
+
+    let session_token = common::session_deletion_token(&app, session_id, &cookie).await;
+    let deleted_session = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete(format!(
+                "/api/sessions/{session_id}?impactToken={session_token}"
+            ))
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = deleted_session.status();
+    let body = to_bytes(deleted_session.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+    assert!(
+        app.state
+            .session_repo
+            .find(&user.id, session_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let usage = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
+    assert_eq!(usage.used_artifacts, 0);
+    assert_eq!(usage.used_bytes, 0);
+}
+
+#[tokio::test]
+async fn deleting_a_session_with_repair_attempt_lineage_removes_the_session() {
+    let app = TestApp::spawn().await;
+    let (user, cookie, session_id, _version_id, _script_id) = setup(&app).await;
+    let mut conn = app.pool.get().unwrap();
+    diesel::sql_query(
+        "INSERT INTO managed_workflows(
+           id,session_id,status,intent_json,correction_budget,corrections_used,created_at_ms,updated_at_ms
+         ) VALUES(900,?1,'failed','{}',2,2,1,1)",
+    )
+    .bind::<diesel::sql_types::Integer, _>(session_id)
+    .execute(&mut conn)
+    .unwrap();
+    diesel::sql_query(
+        "INSERT INTO workflow_attempts(
+           id,workflow_id,attempt_number,parent_attempt_id,phase,status,agent_skill_refs_json,created_at_ms
+         ) VALUES
+           (901,900,1,NULL,'generation','engine_failed','[]',1),
+           (902,900,2,901,'repair','engine_failed','[]',2),
+           (903,900,3,902,'repair','engine_failed','[]',3)",
+    )
+    .execute(&mut conn)
+    .unwrap();
+    drop(conn);
+
+    let token = common::session_deletion_token(&app, session_id, &cookie).await;
+    let deleted = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/sessions/{session_id}?impactToken={token}"))
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = deleted.status();
+    let body = to_bytes(deleted.into_body(), 1024 * 1024).await.unwrap();
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+    assert!(
+        app.state
+            .session_repo
+            .find(&user.id, session_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[cfg(feature = "e2e-test")]

@@ -360,15 +360,16 @@ impl SessionRepo {
                        UNION ALL
                        SELECT artifact_id FROM script_resources WHERE session_id=?1
                        UNION ALL
-                       SELECT script_artifact_id FROM simulation_runs WHERE session_id=?1 AND script_artifact_id IS NOT NULL
+                       SELECT script_artifact_id FROM simulation_runs
+                       WHERE session_id=?1 AND deleted_at_ms IS NULL AND script_artifact_id IS NOT NULL
                        UNION ALL
                        SELECT CAST(json_extract(j.value,'$.artifactId') AS INTEGER)
                        FROM simulation_runs r,json_each(r.input_snapshot_json,'$.model.frames') j
-                       WHERE r.session_id=?1 AND json_extract(j.value,'$.artifactId') IS NOT NULL
+                       WHERE r.session_id=?1 AND r.deleted_at_ms IS NULL AND json_extract(j.value,'$.artifactId') IS NOT NULL
                        UNION ALL
                        SELECT CAST(json_extract(j.value,'$.artifactId') AS INTEGER)
                        FROM simulation_runs r,json_each(r.input_snapshot_json,'$.resources') j
-                       WHERE r.session_id=?1 AND json_extract(j.value,'$.artifactId') IS NOT NULL
+                       WHERE r.session_id=?1 AND r.deleted_at_ms IS NULL AND json_extract(j.value,'$.artifactId') IS NOT NULL
                        UNION ALL
                        SELECT i.artifact_id FROM workflow_input_snapshots i
                        JOIN managed_workflows w ON w.id=i.workflow_id
@@ -464,6 +465,23 @@ impl SessionRepo {
                 diesel::sql_query("DELETE FROM result_analysis_runs WHERE session_id=?1")
                     .bind::<diesel::sql_types::Integer, _>(session_id)
                     .execute(conn)?;
+                loop {
+                    let deleted = diesel::sql_query(
+                        "DELETE FROM workflow_attempts
+                         WHERE workflow_id IN (
+                           SELECT id FROM managed_workflows WHERE session_id=?1
+                         )
+                         AND NOT EXISTS (
+                           SELECT 1 FROM workflow_attempts child
+                           WHERE child.parent_attempt_id=workflow_attempts.id
+                         )",
+                    )
+                    .bind::<diesel::sql_types::Integer, _>(session_id)
+                    .execute(conn)?;
+                    if deleted == 0 {
+                        break;
+                    }
+                }
                 diesel::sql_query("DELETE FROM managed_workflows WHERE session_id=?1")
                     .bind::<diesel::sql_types::Integer, _>(session_id)
                     .execute(conn)?;
