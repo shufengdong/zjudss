@@ -1,27 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
 import WorkflowResultsCard from './WorkflowResultsCard'
 import { useManagedWorkflow } from '../../hooks/useManagedWorkflow'
-import type { WorkflowProgressMessage } from '../../types'
-import type { WorkflowEngineLog } from '../../types/workflow'
+import type { FailureDiagnosis, WorkflowProgressMessage } from '../../types'
+import FailureDiagnosisPanel from './FailureDiagnosisPanel'
 
 const terminal = new Set(['succeeded', 'failed', 'cancelled_by_user', 'service_restarted'])
 
-function failureText(value: unknown): string {
+function failureDetails(value: unknown): { code?: string; message: string } {
   if (value && typeof value === 'object') {
     const error = value as { code?: unknown; message?: unknown }
-    if (typeof error.message === 'string') return error.code ? `${error.message}（${String(error.code)}）` : error.message
+    if (typeof error.message === 'string') {
+      return {
+        ...(typeof error.code === 'string' ? { code: error.code } : {}),
+        message: error.message,
+      }
+    }
   }
-  return typeof value === 'string' ? value : '研究执行失败'
-}
-
-function downloadLog(workflowId: string, log: WorkflowEngineLog) {
-  const blob = new Blob([log.text], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `workflow-${workflowId}-${log.stream}-sanitized.log`
-  anchor.click()
-  URL.revokeObjectURL(url)
+  return { message: typeof value === 'string' ? value : '研究执行失败' }
 }
 
 export default function WorkflowProgressCard({ message, onRetry, onChanged, notify, onOpenDataset }: {
@@ -63,6 +58,16 @@ export default function WorkflowProgressCard({ message, onRetry, onChanged, noti
       ? [{ stream: 'stderr' as const, text: diagnosisAttempt.sanitizedStderr, totalBytes: diagnosisAttempt.sanitizedStderr.length, sentBytes: diagnosisAttempt.sanitizedStderr.length, truncated: false }]
       : []
   const analysis = diagnosisAttempt?.failureAnalysis
+  const workflowFailure = failureDetails(workflow?.error ?? message.card.failureCode)
+  const diagnosis: FailureDiagnosis = {
+    ...workflowFailure,
+    ...(diagnosisAttempt?.phase ? { stage: diagnosisAttempt.phase } : {}),
+    exitCode: diagnosisAttempt?.exitCode ?? null,
+    durationMs: diagnosisAttempt?.durationMs ?? null,
+    engineLogs: diagnosisLogs,
+    analysisStatus: analysis ? 'complete' : 'unavailable',
+    analysis: analysis ?? null,
+  }
   const workflowElapsed = workflow
     ? Math.max(0, (terminal.has(state) && workflow.finishedAt ? new Date(workflow.finishedAt).getTime() : now) - new Date(workflow.createdAt).getTime())
     : 0
@@ -93,40 +98,10 @@ export default function WorkflowProgressCard({ message, onRetry, onChanged, noti
     <p className="mt-2 text-xs text-slate-600">执行 {message.card.executionIndex}/{message.card.executionMax} · 修正 {message.card.repairIndex}/{message.card.repairMax} · {(elapsed / 1000).toFixed(1)} 秒</p>
     {loading && !workflow && <p className="mt-2 text-xs text-slate-400">读取详细进度…</p>}
     {error && <p role="alert" className="mt-2 text-xs text-red-600">{error}</p>}
-    {['failed', 'service_restarted'].includes(state) && <section className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs" aria-label="失败诊断">
-      <h3 className="font-semibold text-red-800">失败诊断</h3>
-      <p className="mt-1 text-red-700">{failureText(workflow?.error ?? message.card.failureCode)}</p>
-      {diagnosisAttempt && <p className="mt-2 text-slate-600">
-        第 {diagnosisAttempt.attemptNumber} 次执行
-        {diagnosisAttempt.exitCode !== null && diagnosisAttempt.exitCode !== undefined ? ` · 退出码 ${diagnosisAttempt.exitCode}` : ''}
-        {diagnosisAttempt.durationMs !== null && diagnosisAttempt.durationMs !== undefined ? ` · ${(diagnosisAttempt.durationMs / 1000).toFixed(1)} 秒` : ''}
-      </p>}
-      <div className="mt-3 space-y-3">
-        {diagnosisLogs.map((log) => <section key={log.stream}>
-          <div className="flex items-center gap-2">
-            <h4 className="font-medium text-slate-800">引擎 {log.stream}</h4>
-            <button type="button" onClick={() => downloadLog(message.card.workflowId, log)} className="rounded border bg-white px-2 py-1 text-slate-700">下载 {log.stream} 脱敏日志</button>
-          </div>
-          {log.truncated && <p className="mt-1 text-amber-700">日志已截断；下载内容也是当前已保留的脱敏片段。</p>}
-          <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded bg-slate-950 p-2 text-slate-100">{log.text || '（无输出）'}</pre>
-        </section>)}
-        {diagnosisLogs.length === 0 && <p className="text-slate-600">本次失败没有可用的引擎输出。</p>}
-      </div>
-      <section className="mt-3 rounded bg-white p-2 text-slate-700" aria-label="大模型分析">
-        <h4 className="font-medium text-slate-900">大模型分析</h4>
-        {analysis ? <>
-          <p className="mt-1">{analysis.summary}</p>
-          <h5 className="mt-2 font-medium">已确认事实</h5>
-          <ul className="list-disc pl-5">{analysis.facts.map((item, index) => <li key={index}>{item.statement}<code className="ml-1 text-slate-500">{item.evidence}</code></li>)}</ul>
-          <h5 className="mt-2 font-medium">可能原因</h5>
-          <ul className="list-disc pl-5">{analysis.possibleCauses.map((item, index) => <li key={index}>{item.statement}<code className="ml-1 text-slate-500">{item.evidence}</code></li>)}</ul>
-          <h5 className="mt-2 font-medium">仍未知</h5>
-          <ul className="list-disc pl-5">{analysis.unknowns.map((item, index) => <li key={index}>{item}</li>)}</ul>
-          <h5 className="mt-2 font-medium">建议动作</h5>
-          <ul className="list-disc pl-5">{analysis.recommendations.map((item, index) => <li key={index}>{item}</li>)}</ul>
-        </> : <p className="mt-1 text-slate-500">智能分析暂不可用</p>}
-      </section>
-    </section>}
+    {['failed', 'service_restarted'].includes(state) && <>
+      {diagnosisAttempt && <p className="mt-3 text-xs text-slate-600">第 {diagnosisAttempt.attemptNumber} 次执行</p>}
+      <FailureDiagnosisPanel diagnosis={diagnosis} downloadPrefix={`workflow-${message.card.workflowId}`} />
+    </>}
     {attempts.length > 0 && <section className="mt-2 text-xs">
       <button type="button" aria-expanded={attemptsExpanded} onClick={() => setAttemptsExpanded((value) => !value)} className="rounded border px-2 py-1">
         {['failed', 'service_restarted'].includes(state) ? '自动修正记录' : '执行尝试'}（{attempts.length}）
@@ -153,7 +128,7 @@ export default function WorkflowProgressCard({ message, onRetry, onChanged, noti
       {outputDatasetIds.length > 0 && <ul className="mt-2">{outputDatasetIds.map((id) => <li key={id}>结果数据集 #{id}</li>)}</ul>}
     </div>}
     {['failed', 'service_restarted', 'cancelled_by_user'].includes(state) && <div role="alert" className="mt-3 text-xs text-red-700">
-      {state === 'cancelled_by_user' && <p>{failureText(workflow?.error ?? message.card.failureCode)}</p>}
+      {state === 'cancelled_by_user' && <p>{failureDetails(workflow?.error ?? message.card.failureCode).message}</p>}
       {scriptId && onRetry && <button type="button" disabled={retrying} onClick={() => void retry()} className="mt-2 rounded border border-red-200 bg-white px-3 py-1.5">{retrying ? '提交中…' : '重新尝试'}</button>}
     </div>}
     {!terminal.has(state) && <button type="button" disabled={cancelling} onClick={() => void stop()} className="mt-3 rounded border px-3 py-1.5 text-xs">{cancelling ? '取消中…' : '取消'}</button>}

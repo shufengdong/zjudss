@@ -1,5 +1,7 @@
 import type { ProgressMessage, StageStatus } from '../../types'
+import { useRunFailureDiagnosis } from '../../hooks/useRunFailureDiagnosis'
 import { CheckIcon, XIcon } from '../icons'
+import FailureDiagnosisPanel from './FailureDiagnosisPanel'
 
 function StageIcon({ status }: { status: StageStatus }) {
   if (status === 'done') {
@@ -23,6 +25,12 @@ function StageIcon({ status }: { status: StageStatus }) {
 }
 
 export default function ProgressCard({ message }: { message: ProgressMessage }) {
+  const failedRun = message.operation.kind === 'run'
+    && message.stages.some((stage) => stage.status === 'failed')
+  const { diagnosis, loading, error, retry } = useRunFailureDiagnosis(
+    failedRun ? message.operation.id : null,
+    failedRun,
+  )
   const operationLabel = {
     ingestion: '模型摄取进度',
     run: '运行进度',
@@ -52,6 +60,12 @@ export default function ProgressCard({ message }: { message: ProgressMessage }) 
           )
         })}
       </ol>
+      {failedRun && loading && <p className="mt-3 text-xs text-slate-500">读取失败详情…</p>}
+      {failedRun && error && <div role="alert" className="mt-3 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+        <p>{error}</p>
+        <button type="button" onClick={retry} className="mt-2 rounded border bg-white px-2 py-1">重试读取失败详情</button>
+      </div>}
+      {failedRun && diagnosis && <FailureDiagnosisPanel diagnosis={diagnosis} downloadPrefix={`run-${message.operation.id}`} />}
     </div>
   )
 }
