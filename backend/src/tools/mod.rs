@@ -292,6 +292,7 @@ define_tool_registry!(
     read_model_dataframe::ReadModelDataFrameTool,
     search_study_facades::SearchStudyFacadesTool,
     prepare_study::PrepareStudyTool,
+    update_study_results::UpdateStudyResultsTool,
     search_examples::SearchExamplesTool,
     inspect_example::InspectExampleTool,
     modify_model::ModifyModelTool,

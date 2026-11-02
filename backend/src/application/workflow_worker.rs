@@ -535,7 +535,7 @@ impl WorkflowWorker {
                     artifact_id: artifact.id,
                     content_hash: artifact.sha256,
                     agent_bundle_version: self.agent_bundle_version.clone(),
-                    agent_skill_refs_json: serde_json::to_string(&["study-planning@1.3.0"])
+                    agent_skill_refs_json: serde_json::to_string(&["study-planning@1.4.0"])
                         .expect("static skill refs serialize"),
                     agent_model: None,
                     engine_snapshot_id: self.snapshot.id.clone(),

@@ -274,7 +274,7 @@ impl ManagedWorkflowService {
                 facade.contract_hash.clone(),
                 self.correction_budget,
                 self.agent_bundle_version.clone(),
-                serde_json::to_string(&["study-planning@1.3.0"]).unwrap(),
+                serde_json::to_string(&["study-planning@1.4.0"]).unwrap(),
                 token_hash,
                 expires,
                 now,
@@ -341,7 +341,7 @@ impl ManagedWorkflowService {
                 facade.contract_hash.clone(),
                 self.correction_budget,
                 self.agent_bundle_version.clone(),
-                serde_json::to_string(&["study-planning@1.3.0"]).unwrap(),
+                serde_json::to_string(&["study-planning@1.4.0"]).unwrap(),
                 now_ms(),
             )
             .await
@@ -403,7 +403,7 @@ impl ManagedWorkflowService {
                 operation.to_string(),
                 self.correction_budget,
                 self.agent_bundle_version.clone(),
-                serde_json::to_string(&["study-planning@1.3.0"]).unwrap(),
+                serde_json::to_string(&["study-planning@1.4.0"]).unwrap(),
                 now_ms(),
             )
             .await;
@@ -518,7 +518,7 @@ impl ManagedWorkflowService {
                     artifact_id: artifact.id,
                     content_hash: artifact.sha256,
                     agent_bundle_version: self.agent_bundle_version.clone(),
-                    agent_skill_refs_json: serde_json::to_string(&["study-planning@1.3.0"])
+                    agent_skill_refs_json: serde_json::to_string(&["study-planning@1.4.0"])
                         .unwrap(),
                     agent_model,
                     engine_snapshot_id: self.configurations.snapshot_id().to_string(),

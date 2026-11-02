@@ -97,6 +97,7 @@ fn contract_manifest_contains_all_public_enums() {
             "recoverable_upload_batches",
             "independent_data_resources",
             "managed_study_configurations",
+            "conversational_study_result_selection",
             "durable_workflow_messages",
             "v4_conversational_agent",
             "managed_study_workflows",
@@ -122,11 +123,12 @@ fn contract_manifest_contains_all_public_enums() {
             "workflow-progress",
         ]
     );
-    assert_eq!(manifest.tool_names.len(), 23);
+    assert_eq!(manifest.tool_names.len(), 24);
     assert!(manifest.tool_names.contains(&"publish_model_version"));
     assert!(!manifest.tool_names.contains(&"create_script"));
     assert!(manifest.tool_names.contains(&"search_study_facades"));
     assert!(manifest.tool_names.contains(&"prepare_study"));
+    assert!(manifest.tool_names.contains(&"update_study_results"));
     for tool in [
         "list_data_resources",
         "read_data_resource",

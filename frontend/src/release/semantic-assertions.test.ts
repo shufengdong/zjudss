@@ -151,6 +151,43 @@ describe('release semantic assertions', () => {
     })).toThrow(/publish_model_version succeeded 2 times/)
   })
 
+  test('requires study result updates to be skill-gated and single-shot side effects', () => {
+    const trace = [
+      call('load_agent_skill', 'success', { skill_id: 'study-planning' }),
+      call('update_study_results', 'running', {
+        configurationId: '41', expectedRevision: 7, results: ['bus_voltage', 'summary'],
+      }),
+      call('update_study_results', 'success', {
+        configurationId: '41', expectedRevision: 7, results: ['bus_voltage', 'summary'],
+      }),
+    ]
+    expect(() => expectToolTrace(trace, {
+      requiredTools: ['update_study_results'],
+      gatedTools: { update_study_results: ['study-planning'] },
+    })).not.toThrow()
+    expect(() => expectToolTrace([
+      ...trace,
+      call('update_study_results', 'success', {
+        configurationId: '41', expectedRevision: 7, results: ['bus_voltage'],
+      }),
+    ], {
+      requiredTools: ['update_study_results'],
+      gatedTools: { update_study_results: ['study-planning'] },
+    })).toThrow(/update_study_results succeeded 2 times/)
+    expect(() => expectToolTrace([
+      call('update_study_results', 'running', {
+        configurationId: '41', expectedRevision: 7, results: ['bus_voltage'],
+      }),
+      call('load_agent_skill', 'success', { skill_id: 'study-planning' }),
+      call('update_study_results', 'success', {
+        configurationId: '41', expectedRevision: 7, results: ['bus_voltage'],
+      }),
+    ], {
+      requiredTools: ['update_study_results'],
+      gatedTools: { update_study_results: ['study-planning'] },
+    })).toThrow(/not loaded before/)
+  })
+
   test('rejects illegal tools, unstable IDs, failed tools, and missing skill ordering', () => {
     expect(() => expectToolTrace([call('shell', 'success')], { requiredTools: ['shell'] })).toThrow(/disallowed/)
     expect(() => expectToolTrace([call('inspect_example', 'success', { exampleId: '/tmp/case.rss' })], { requiredTools: ['inspect_example'] })).toThrow(/stable example ID/)

@@ -6,9 +6,13 @@ use std::sync::Arc;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
+use diesel::{RunQueryDsl, sql_query};
 use serde_json::{Value, json};
 use tower::ServiceExt;
-use zjudss::application::PublishDraftRequest;
+use zjudss::application::{
+    CandidateDecision, CandidatePurpose, PrepareStudyRequest, PublishDraftRequest,
+    StudyConfigurationState,
+};
 use zjudss::auth::CurrentUser;
 use zjudss::db::models::DraftRef;
 use zjudss::testing::{ScriptScenario, ScriptTurn, ScriptedAgentFactory};
@@ -179,6 +183,54 @@ async fn publish_agent_study_model(app: &TestApp, session_id: i32) {
                 client_publish_id: format!("publish-agent-study-{session_id}"),
                 description: None,
             },
+        )
+        .await
+        .unwrap();
+}
+
+async fn import_agent_study_case(app: &TestApp, user: &CurrentUser, session_id: i32) {
+    let operation_id = format!("agent-result-selection-{session_id}");
+    let example = app
+        .state
+        .engine_snapshot
+        .examples
+        .iter()
+        .find(|example| example.importable)
+        .unwrap();
+    let batch = app
+        .state
+        .case_import_service
+        .apply(
+            user,
+            session_id,
+            example.id.clone(),
+            app.state.engine_snapshot.id.clone(),
+            operation_id.clone(),
+        )
+        .await
+        .unwrap();
+    let decisions = batch
+        .candidates
+        .iter()
+        .map(|candidate| CandidateDecision {
+            candidate_id: candidate.id.clone(),
+            purpose: candidate.purpose.unwrap(),
+            selected: true,
+            table_name: (candidate.purpose == Some(CandidatePurpose::ModelTable))
+                .then(|| candidate.proposed_alias.clone().unwrap()),
+            display_name: None,
+            alias: None,
+        })
+        .collect();
+    app.state
+        .data_resource_service
+        .confirm_upload(
+            user,
+            batch.id.parse().unwrap(),
+            decisions,
+            None,
+            None,
+            &operation_id,
         )
         .await
         .unwrap();
@@ -461,6 +513,102 @@ async fn study_power_flow_searches_then_prepares_a_configuration_without_a_scrip
         event["type"] == "assistant"
             && event["content"].as_str() == Some("PROVIDER_TAIL_SHOULD_NOT_APPEAR")
     }));
+}
+
+#[tokio::test]
+async fn natural_language_result_selection_updates_the_durable_card_without_starting_work() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let session = create_session(&app).await;
+    let session_id = session.parse().unwrap();
+    let user = common::test_user("instance");
+    import_agent_study_case(&app, &user, session_id).await;
+    let configuration = app
+        .state
+        .study_configuration_service
+        .prepare(
+            &user,
+            session_id,
+            PrepareStudyRequest {
+                facade_id: "static_power_flow_newton".into(),
+                intent: json!({"request":"求解牛顿法潮流"}),
+                derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        configuration.status,
+        StudyConfigurationState::ReadyToConfirm
+    );
+    factory.enqueue(ScriptScenario {
+        id: "natural-language-result-selection".into(),
+        expected_prompt: Some("bus_voltage，summary".into()),
+        turns: vec![
+            ScriptTurn::ToolCall {
+                call_id: "load-planning".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"study-planning"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "update-results".into(),
+                name: "update_study_results".into(),
+                args: json!({
+                    "configurationId": configuration.id.to_string(),
+                    "expectedRevision": configuration.revision,
+                    "results": ["bus_voltage", "summary"]
+                }),
+            },
+            ScriptTurn::Text {
+                text: "已选择 bus_voltage、summary；仍需在研究配置卡中点击“确认并生成脚本”。"
+                    .into(),
+            },
+        ],
+    });
+
+    assert_eq!(
+        post_and_wait(&app, &session, "bus_voltage，summary").await,
+        StatusCode::ACCEPTED
+    );
+    let events = messages(&app, &session).await;
+    assert_eq!(
+        tool_names(&events),
+        ["load_agent_skill", "update_study_results"]
+    );
+    let card = events
+        .iter()
+        .find(|event| {
+            event["type"] == "study-config"
+                && event["card"]["configurationId"] == configuration.id.to_string()
+        })
+        .expect("updated durable study configuration card");
+    assert_eq!(card["card"]["revision"], configuration.revision + 1);
+    assert_eq!(
+        card["card"]["actionCard"]["results"]["selected"],
+        json!(["bus_voltage", "summary"])
+    );
+    assert!(events.iter().any(|event| {
+        event["type"] == "assistant"
+            && event["content"]
+                .as_str()
+                .is_some_and(|text| text.contains("仍需") && text.contains("确认并生成脚本"))
+    }));
+    assert_no_script_or_run(&events);
+    assert!(runs(&app, &session).await.is_empty());
+    assert!(
+        app.state
+            .script_service
+            .list(&user, session_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let mut connection = app.pool.get().unwrap();
+    let workflows = sql_query("SELECT count(*) count FROM managed_workflows WHERE session_id = ?1")
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .get_result::<common::CountRow>(&mut connection)
+        .unwrap();
+    assert_eq!(workflows.count, 0);
 }
 
 #[tokio::test]

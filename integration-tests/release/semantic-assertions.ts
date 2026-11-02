@@ -130,7 +130,7 @@ interface AgentTurnMessage {
 }
 
 const allowedTools = new Set([
-  'inspect_workspace', 'read_model_dataframe', 'search_study_facades', 'prepare_study',
+  'inspect_workspace', 'read_model_dataframe', 'search_study_facades', 'prepare_study', 'update_study_results',
   'search_examples', 'inspect_example', 'modify_model', 'publish_model_version',
   'list_result_datasets',
   'run_result_analysis', 'create_dataset_view', 'compare_simulations',
@@ -139,7 +139,7 @@ const allowedTools = new Set([
   'list_data_resources', 'read_data_resource', 'update_data_resource_alias', 'promote_result_dataset',
 ])
 const sideEffectTools = new Set([
-  'prepare_study', 'modify_model', 'publish_model_version', 'update_data_resource_alias', 'promote_result_dataset',
+  'prepare_study', 'update_study_results', 'modify_model', 'publish_model_version', 'update_data_resource_alias', 'promote_result_dataset',
   'run_result_analysis', 'create_dataset_view', 'compare_simulations',
 ])
 
@@ -165,7 +165,9 @@ export function agentTurnCompleted(messages: AgentTurnMessage[], requiredTools: 
 function assertStableIds(call: ToolTraceEntry) {
   const visit = (value: unknown, key = '') => {
     if (value === null || value === undefined) return
-    if (key === 'exampleId' || key === 'example_id') {
+    if (key === 'configurationId' || key === 'configuration_id') {
+      invariant(typeof value === 'string' && /^[1-9][0-9]*$/.test(value), `${call.toolName}.${key} is not a stable configuration ID`)
+    } else if (key === 'exampleId' || key === 'example_id') {
       invariant(typeof value === 'string' && /^ex_[a-f0-9]+$/.test(value), `${call.toolName}.${key} is not a stable example ID`)
     } else if (key === 'engineResourceSnapshot') {
       invariant(typeof value === 'string' && /^ers_[a-f0-9]+$/.test(value), `${call.toolName}.${key} is not a stable snapshot ID`)
