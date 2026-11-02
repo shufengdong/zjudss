@@ -419,7 +419,7 @@ async fn study_power_flow_searches_then_prepares_a_configuration_without_a_scrip
             ScriptTurn::ToolCall { call_id: "load-planning".into(), name: "load_agent_skill".into(), args: json!({"skill_id":"study-planning"}) },
             ScriptTurn::ToolCall { call_id: "search".into(), name: "search_study_facades".into(), args: json!({"query":"牛顿法潮流","explicitFunction":"ds_newton_raphson_pf"}) },
             ScriptTurn::ToolCall { call_id: "prepare".into(), name: "prepare_study".into(), args: json!({"facadeId":"static_power_flow_newton","intent":{"request":"求解牛顿法潮流"}}) },
-            ScriptTurn::Text { text: "研究配置已准备，请在卡片中确认输入、参数和结果。".into() },
+            ScriptTurn::Text { text: "PROVIDER_TAIL_SHOULD_NOT_APPEAR".into() },
         ],
     });
     assert_eq!(
@@ -438,6 +438,29 @@ async fn study_power_flow_searches_then_prepares_a_configuration_without_a_scrip
     );
     assert_no_script_or_run(&events);
     assert!(runs(&app, &session).await.is_empty());
+    let configuration_index = events
+        .iter()
+        .position(|event| event["type"] == "study-config")
+        .expect("study configuration card");
+    let configuration_id = events[configuration_index]["card"]["configurationId"]
+        .as_str()
+        .expect("configuration id");
+    let acknowledgement_index = events
+        .iter()
+        .position(|event| {
+            event["type"] == "assistant"
+                && event["content"].as_str().is_some_and(|content| {
+                    content.contains("牛顿-拉夫逊潮流")
+                        && content.contains(&format!("ID: {configuration_id}"))
+                        && content.contains("请在卡片中检查并确认输入、参数和结果")
+                })
+        })
+        .expect("deterministic study acknowledgement");
+    assert!(acknowledgement_index < configuration_index);
+    assert!(!events.iter().any(|event| {
+        event["type"] == "assistant"
+            && event["content"].as_str() == Some("PROVIDER_TAIL_SHOULD_NOT_APPEAR")
+    }));
 }
 
 #[tokio::test]
@@ -471,12 +494,20 @@ async fn prepared_configuration_survives_provider_finalization_failure() {
     );
     let events = messages(&app, &session).await;
     assert_no_script_or_run(&events);
-    assert!(events.iter().any(|event| {
-        event["type"] == "assistant"
-            && event["content"]
-                .as_str()
-                .is_some_and(|text| text.contains("研究配置已准备"))
-    }));
+    let configuration_index = events
+        .iter()
+        .position(|event| event["type"] == "study-config")
+        .expect("study configuration card");
+    let acknowledgement_index = events
+        .iter()
+        .position(|event| {
+            event["type"] == "assistant"
+                && event["content"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("已为您创建“牛顿-拉夫逊潮流”研究配置卡"))
+        })
+        .expect("deterministic study acknowledgement");
+    assert!(acknowledgement_index < configuration_index);
     assert!(!events.iter().any(|event| {
         event["type"] == "assistant" && event["content"] == "agent 运行失败，请稍后重试"
     }));

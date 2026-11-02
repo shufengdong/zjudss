@@ -1,4 +1,4 @@
-import type { Message, MessageHandlers } from '../../types'
+import type { Message, MessageHandlers, ScriptMessage } from '../../types'
 import UserMessageCard from './UserMessage'
 import AssistantMessageCard from './AssistantMessage'
 import ToolCallCard from './ToolCallCard'
@@ -15,9 +15,11 @@ import WorkflowProgressCard from './WorkflowProgressCard'
 interface MessageItemProps {
   message: Message
   handlers: MessageHandlers
+  linkedScript?: ScriptMessage
+  highlightedMessageId?: string | null
 }
 
-export default function MessageItem({ message, handlers }: MessageItemProps) {
+export default function MessageItem({ message, handlers, linkedScript, highlightedMessageId }: MessageItemProps) {
   switch (message.type) {
     case 'user':
       return <UserMessageCard message={message} />
@@ -47,7 +49,7 @@ export default function MessageItem({ message, handlers }: MessageItemProps) {
     case 'study-config':
       return <StudyConfigurationCard message={message} onWorkflowStarted={handlers.onWorkflowChanged} notify={handlers.notify}/>
     case 'workflow-progress':
-      return <WorkflowProgressCard onOpenDataset={handlers.onOpenDataset} message={message} onRetry={handlers.onRetryScript} onChanged={handlers.onWorkflowChanged} notify={handlers.notify}/>
+      return <WorkflowProgressCard onOpenDataset={handlers.onOpenDataset} message={message} onRetry={handlers.onRetryScript} onChanged={handlers.onWorkflowChanged} notify={handlers.notify} linkedScript={linkedScript} onRunScript={handlers.onRunScript} highlightedMessageId={highlightedMessageId}/>
     default:
       return null
   }

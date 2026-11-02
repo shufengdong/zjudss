@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cancelManagedWorkflow, getManagedWorkflow, listRunDatasets } from '../../api/client'
-import type { ManagedWorkflowView, WorkflowProgressMessage } from '../../types'
+import type { ManagedWorkflowView, ScriptMessage, WorkflowProgressMessage } from '../../types'
 import WorkflowProgressCard from './WorkflowProgressCard'
 
 vi.mock('../../api/client', () => ({ cancelManagedWorkflow: vi.fn(), getManagedWorkflow: vi.fn(), listRunDatasets: vi.fn() }))
@@ -20,6 +20,13 @@ const message = (state: string, outputDatasetIds: string[] = []): WorkflowProgre
   card: { workflowId: '9', state, executionIndex: 2, executionMax: 4, repairIndex: 1, repairMax: 3,
     elapsedMs: 1000, attempts: [], scriptId: '7', outputDatasetIds, failureCode: state === 'failed' ? 'repair_exhausted' : undefined },
 })
+const linkedScript: ScriptMessage = {
+  id: '10', type: 'script', timestamp: '2026-01-01T00:00:01Z',
+  script: { id: '7', sessionId: '1', name: 'managed-workflow-9.rss', sourceKind: 'agent',
+    contentHash: 'abc', validationStatus: 'valid', requiredAliases: [], outputs: [], diagnostics: {},
+    preview: 'voltage = ds_newton_raphson_pf(...);', previewTruncated: false, canRun: true,
+    disabledReason: null, createdAt: '2026-01-01T00:00:01Z' },
+}
 
 describe('WorkflowProgressCard', () => {
   afterEach(() => vi.useRealTimers())
@@ -89,6 +96,28 @@ describe('WorkflowProgressCard', () => {
     expect(screen.getByRole('button', { name: '查看 电压' })).toBeInTheDocument()
     expect(screen.getAllByText('12 行 · 1 列')).toHaveLength(2)
     expect(listRunDatasets).toHaveBeenCalledWith('8')
+  })
+
+  it('renders the linked script before run results in one highlighted research outcome', async () => {
+    vi.mocked(getManagedWorkflow).mockResolvedValue(workflow('succeeded'))
+    vi.mocked(listRunDatasets).mockResolvedValue([{
+      id: '21', runId: '8', analysisRunId: null, name: '电压', rowCount: 12,
+      sizeBytes: 100, columns: [{ name: 'value', dtype: 'Float64', nullable: false }],
+      views: [], schemaHash: 'hash', lineage: [],
+    }])
+    const run = vi.fn().mockResolvedValue(undefined)
+
+    render(<WorkflowProgressCard message={message('succeeded')} notify={vi.fn()}
+      onOpenDataset={vi.fn()} linkedScript={linkedScript} onRunScript={run} highlightedMessageId="10" />)
+
+    const outcome = await screen.findByRole('region', { name: '研究成果' })
+    const scriptAnchor = within(outcome).getByTestId('message-script')
+    const resultTitle = await within(outcome).findByText('运行结果')
+    expect(scriptAnchor).toHaveAttribute('data-message-id', '10')
+    expect(scriptAnchor).toHaveClass('ring-2', 'ring-brand-400')
+    expect(scriptAnchor.compareDocumentPosition(resultTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(within(scriptAnchor).getByRole('button', { name: '运行' }))
+    await waitFor(() => expect(run).toHaveBeenCalledWith(linkedScript.script))
   })
 
   it('retries failed result loading without rerunning the workflow', async () => {

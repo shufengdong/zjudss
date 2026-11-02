@@ -47,8 +47,8 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 | 案例库 | complete | schema v2 manifest 与 projection profile 严格匹配；当前 144/144 案例通过受控 projector 转成目录声明的 Model/Data/Struct 候选，diagnostic 不进入输入；目录树、详情/搜索、无效叶诊断和窄屏浏览完整 |
 | 脚本与运行 | complete | 受管 Agent 脚本已实现候选持久化、直接执行、自动修正和冻结结果合同；普通运行与工作流共用脱敏日志/失败分析器，失败进度卡可恢复展示诊断；成功脚本单次运行读取最新所需输入，失败脚本可比较输入后派生“重新尝试”，手写/上传脚本开放结果合同且不修正；终态 run 支持影响预览和原子删除 |
 | 结果与派生 | complete | 单结果删除、分析、物化视图、比较、tombstone 血缘 |
-| 前端 | complete | 三列/窄屏、运行摘要与失败原因/耗时/全结果选择、普通运行与研究工作流共用失败诊断面板、pending-only 轮询、结果数据表/图表、active/draft/历史模型表只读工作台、登录用户菜单 |
-| Agent bundle | complete | V4 `v4.1.0`、23 个受控工具；DeepSeek/百炼 provider；`publish_model_version` 只响应明确发布意图并发布精确草稿 revision；`search_study_facades`/`prepare_study` 准备配置卡，对话 Agent 无通用脚本创建权限 |
+| 前端 | complete | 三列/窄屏、运行摘要与失败原因/耗时/全结果选择、普通运行与研究工作流共用失败诊断面板、成功研究的脚本/运行结果成果归组与脚本锚定、pending-only 轮询、结果数据表/图表、active/draft/历史模型表只读工作台、登录用户菜单 |
+| Agent bundle | complete | V4 `v4.1.0`、23 个受控工具；DeepSeek/百炼 provider；`publish_model_version` 只响应明确发布意图并发布精确草稿 revision；`search_study_facades`/`prepare_study` 以确定性 assistant 确认语先于配置卡完成准备，对话 Agent 无通用脚本创建权限 |
 | 发布门禁 | complete | deterministic Rust/Vitest/build/Playwright/coverage；真实 eig-rs/tensoreval 与所选 LLM provider 候选门禁 |
 
 ## Runtime contracts

@@ -10,6 +10,7 @@ import ComparisonView from'./components/comparisons/ComparisonView';import Examp
 import{PanelLeftIcon,PanelRightIcon}from'./components/icons'
 import LoginPage from'./components/auth/LoginPage'
 import{uploadBatchWorkbenchTab}from'./components/uploads/batchPlacement'
+import{projectMessageTimeline}from'./components/messages/timelineProjection'
 import{AUTHENTICATION_REQUIRED_EVENT,authReducer,initialAuthState,preferenceKey}from'./state/auth'
 const localId=()=>`local-user-${Date.now()}-${Math.random()}`
 function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
@@ -29,6 +30,7 @@ function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
   const uploadBatchIds=useMemo(()=>Array.from(new Set((feed?.messages??[]).filter(message=>message.type==='upload-batch').map(message=>message.card.batchId))),[feed?.messages])
   const uploads=useUploadBatches(selectedId,workspaceState.workspace?.draft,reloadWorkspace,uploadBatchIds)
   const runHistory=useRunHistory(selectedId,feed?.revision??0),usage=useStorageUsage(feed?.messages.length??0)
+  const timeline=useMemo(()=>projectMessageTimeline(feed?.messages??[]),[feed?.messages])
   const select=useCallback((id:string)=>{setSelectedId(id);setOpenDataFrame(null);setComparisonId(null);if(isNarrow)setSidebarCollapsed(true);localStorage.setItem(preferenceKey(user.id),id)},[user.id,isNarrow])
   useEffect(()=>{if(isNarrow){setSidebarCollapsed(true);setPanelOpen(false)}},[isNarrow])
   useEffect(()=>{let live=true;setSessionLoadState('loading');void listSessions().then(async list=>{if(!live)return
@@ -73,7 +75,7 @@ function AuthenticatedApp({user,onLogout}:{user:User;onLogout:()=>void}){
     </header>
     <div className="relative flex-1 overflow-y-auto">{feed?.mode==='anchored'&&<div className="sticky top-0 z-10 bg-amber-50 py-2 text-center text-xs text-amber-800"><button onClick={returnLatest} className="rounded border border-amber-300 bg-white px-3 py-1">返回最新消息{feed.hasNewerMessages?'（有新消息）':''}</button></div>}{feed?.hasMoreBefore&&<div className="py-2 text-center"><button onClick={()=>void older()} className="rounded border bg-white px-3 py-1 text-xs">加载更早消息</button></div>}
       {!feed?.messages.length?<div className="flex h-full items-center justify-center text-center"><div><div className="text-3xl">⚡</div><p className="mt-2 text-sm text-slate-500">描述要做的仿真，或上传 RSS、文件夹、CSV、Excel、Parquet</p></div></div>:
-        <div className="py-4">{feed.messages.map(message=><div key={message.id} data-testid={`message-${message.type}`} data-message-id={message.id} className={highlightedMessageId===message.id?'rounded ring-2 ring-brand-400':''}><MessageItem message={message} handlers={handlers}/></div>)}</div>}<p className="sr-only" aria-live="polite">{locationAnnouncement}</p></div>
+        <div className="py-4">{timeline.map(({message,linkedScript})=><div key={message.id} data-testid={`message-${message.type}`} data-message-id={message.id} className={highlightedMessageId===message.id?'rounded ring-2 ring-brand-400':''}><MessageItem message={message} handlers={handlers} linkedScript={linkedScript} highlightedMessageId={highlightedMessageId}/></div>)}</div>}<p className="sr-only" aria-live="polite">{locationAnnouncement}</p></div>
     <UploadQueue entries={uploads.queue}/><Composer value={draft} onChange={setDraft} onSend={()=>sendText(draft)} uploading={uploads.queue.some(e=>e.status==='uploading')} onUploadFiles={files=>void uploads.upload(files)} onCreateScript={createScript}/>
     </main>
     <ResultPanel open={panelOpen} overlay={isNarrow} tab={tab} onTab={setTab} onClose={()=>setPanelOpen(false)} sessionId={selectedId} workspace={workspaceState.workspace} batches={uploads.batches} batchActions={uploads} runHistory={runHistory} datasetRevision={datasetRevision} onReload={reloadWorkspace} notify={notify} onOpenDataset={id=>setOpenDataFrame({kind:'result',datasetId:id})} onLocateScript={locateScriptMessage} onRunDeleted={(_runId,resultIds)=>{setOpenDataFrame(current=>current?.kind==='result'&&resultIds.includes(current.datasetId)?null:current);setDatasetRevision(value=>value+1)}} onOpenDataFrame={setOpenDataFrame} onInvalidateDataFrame={invalidateDataFrame}/>

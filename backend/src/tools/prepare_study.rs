@@ -68,6 +68,16 @@ impl Tool for PrepareStudyTool {
             .map_err(|error| DomainToolError::new("serialization_error", error.to_string()))?;
         self.services
             .writer
+            .assistant(&format!(
+                "已为您创建“{}”研究配置卡（ID: {}），请在卡片中检查并确认输入、参数和结果。",
+                configuration.facade.title, configuration.id
+            ))
+            .await
+            .map_err(|error| {
+                DomainToolError::new("study_config_message_failed", error.to_string())
+            })?;
+        self.services
+            .writer
             .study_config(StudyConfigCard {
                 configuration_id: configuration.id.to_string(),
                 revision: configuration.revision,

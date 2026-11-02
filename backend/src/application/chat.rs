@@ -23,13 +23,11 @@ use tokio::sync::Semaphore;
 
 /// 单次对话允许的最大模型调用轮数（防死循环）。
 const MAX_TURNS: usize = 8;
-const CONFIG_PREPARED_REPLY: &str = "研究配置已准备，请在卡片中补齐并确认输入、参数和结果";
 const TURN_LIMIT_REPLY: &str = "本轮工具调用已达到上限，尚未完成研究配置，请重新发送请求";
 const AGENT_FAILED_REPLY: &str = "agent 运行失败，请稍后重试";
 
 #[derive(Default)]
 struct TurnOutcome {
-    assistant_emitted: bool,
     configuration_prepared: bool,
 }
 
@@ -194,11 +192,9 @@ impl ChatService {
                 Some(AGENT_FAILED_REPLY)
             }
         };
-        if outcome.configuration_prepared {
-            if !outcome.assistant_emitted {
-                let _ = writer.assistant(CONFIG_PREPARED_REPLY).await;
-            }
-        } else if let Some(reply) = failure_reply {
+        if !outcome.configuration_prepared
+            && let Some(reply) = failure_reply
+        {
             let _ = writer.assistant(reply).await;
         }
         let _ = self
@@ -237,10 +233,8 @@ impl ChatService {
                 MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::End {
                     content: AssistantContent::Text(text),
                     ..
-                })) if !text.text.trim().is_empty() => {
-                    if writer.assistant(&text.text).await.is_ok() {
-                        outcome.assistant_emitted = true;
-                    }
+                })) if !text.text.trim().is_empty() && !outcome.configuration_prepared => {
+                    let _ = writer.assistant(&text.text).await;
                 }
                 // 工具调用已提交 → tool-call(running)（§4）。
                 MultiTurnStreamItem::ToolCall { tool_call } => {

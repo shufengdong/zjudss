@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import WorkflowResultsCard from './WorkflowResultsCard'
 import { useManagedWorkflow } from '../../hooks/useManagedWorkflow'
-import type { FailureDiagnosis, WorkflowProgressMessage } from '../../types'
+import type { FailureDiagnosis, MessageHandlers, ScriptMessage, WorkflowProgressMessage } from '../../types'
 import FailureDiagnosisPanel from './FailureDiagnosisPanel'
+import ScriptCard from './ScriptCard'
 
 const terminal = new Set(['succeeded', 'failed', 'cancelled_by_user', 'service_restarted'])
 
@@ -19,12 +20,15 @@ function failureDetails(value: unknown): { code?: string; message: string } {
   return { message: typeof value === 'string' ? value : '研究执行失败' }
 }
 
-export default function WorkflowProgressCard({ message, onRetry, onChanged, notify, onOpenDataset }: {
+export default function WorkflowProgressCard({ message, onRetry, onChanged, notify, onOpenDataset, linkedScript, onRunScript, highlightedMessageId }: {
   message: WorkflowProgressMessage
   onRetry?: (scriptId: string) => Promise<void>
   onChanged?: () => void
   notify: (text: string) => void
   onOpenDataset?: (datasetId: string) => void
+  linkedScript?: ScriptMessage
+  onRunScript?: MessageHandlers['onRunScript']
+  highlightedMessageId?: string | null
 }) {
   const { workflow, loading, error, cancel } = useManagedWorkflow(message.card.workflowId, message.revision ?? 0)
   const [now, setNow] = useState(Date.now())
@@ -133,6 +137,12 @@ export default function WorkflowProgressCard({ message, onRetry, onChanged, noti
     </div>}
     {!terminal.has(state) && <button type="button" disabled={cancelling} onClick={() => void stop()} className="mt-3 rounded border px-3 py-1.5 text-xs">{cancelling ? '取消中…' : '取消'}</button>}
   </article>
-    {state === 'succeeded' && workflow?.runId && onOpenDataset && <WorkflowResultsCard key={workflow.runId} runId={String(workflow.runId)} onOpenDataset={onOpenDataset} />}
+    {state === 'succeeded' && ((linkedScript && onRunScript) || (workflow?.runId && onOpenDataset)) && <section aria-label="研究成果" className="mx-auto my-3 max-w-3xl rounded-xl border border-emerald-200 bg-emerald-50/40 p-3">
+      <h3 className="text-sm font-semibold text-slate-800">研究成果</h3>
+      {linkedScript && onRunScript && <div data-testid="message-script" data-message-id={linkedScript.id} tabIndex={-1} className={highlightedMessageId === linkedScript.id ? 'rounded ring-2 ring-brand-400' : ''}>
+        <ScriptCard script={linkedScript.script} onRun={onRunScript} notify={notify} />
+      </div>}
+      {workflow?.runId && onOpenDataset && <WorkflowResultsCard key={workflow.runId} runId={String(workflow.runId)} onOpenDataset={onOpenDataset} />}
+    </section>}
   </>
 }

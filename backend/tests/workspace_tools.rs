@@ -456,7 +456,7 @@ async fn study_tools_search_explicit_functions_and_prepare_persisted_cards() {
         .create(&user.id, "study configuration", 1)
         .await
         .unwrap();
-    let services = tool_services_for_session(&app, user, session.id);
+    let services = tool_services_for_session(&app, user.clone(), session.id);
     services
         .loaded_skills
         .lock()
@@ -495,6 +495,27 @@ async fn study_tools_search_explicit_functions_and_prepare_persisted_cards() {
             .await
             .is_ok()
     );
+    let messages = app
+        .state
+        .message_repo
+        .list_by_session(&user.id, session.id)
+        .await
+        .unwrap();
+    let acknowledgement = messages
+        .iter()
+        .position(|message| {
+            message.role == "assistant"
+                && message.content
+                    == format!(
+                        "已为您创建“牛顿-拉夫逊潮流”研究配置卡（ID: {id}），请在卡片中检查并确认输入、参数和结果。"
+                    )
+        })
+        .expect("deterministic acknowledgement");
+    let configuration = messages
+        .iter()
+        .position(|message| message.kind == "study-config")
+        .expect("study configuration message");
+    assert!(acknowledgement < configuration);
 }
 
 #[tokio::test]

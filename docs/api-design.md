@@ -262,8 +262,9 @@ tensoreval 以非零状态退出时保留实际退出码。原始有界 stderr �
 `messageId:revision`，重连时同时按消息 ID 和 revision 去重；补发除游标后的普通消息外，还返回当前最新操作卡，即使该卡的
 稳定消息 ID 早于游标，避免错过旧卡的新 revision。旧的纯数字 `Last-Event-ID` 仍按 revision 1 解释。卡片只携稳定 ID、
 公共状态和脱敏诊断，不序列化服务器路径或原始 stderr；attempt
-详情由前端默认折叠。运行关联字段统一为 `runId`。V4 对话 Agent 只持久化研究配置卡，不具备脚本创建权限；
-后续模型收尾失败不追加通用 Agent 失败，缺少 assistant 收尾时由服务端补充“研究配置已准备”的提示。
+详情由前端默认折叠。运行关联字段统一为 `runId`。V4 对话 Agent 只持久化研究配置卡，不具备脚本创建权限。
+`prepare_study` 成功时，工具先持久化一条包含研究标题与配置 ID 的确定性 assistant 确认语，再持久化 `study-config` 卡；
+成功后的 provider 尾声不再写入，provider 收尾失败也不追加通用 Agent 失败，因此用户立即确认时工作流仍严格位于说明和配置之后。
 Agent 在完成配置前耗尽单轮模型调用预算时，assistant 明确提示本轮尚未完成配置并可重新发送请求；后台日志记录
 session ID 和失败类别，消息正文不暴露 provider 诊断。
 

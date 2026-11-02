@@ -760,7 +760,7 @@
     - runner: release
       file: scripts/test-release-integration
       name: real LLM provider and tensoreval complete the V4 semantic release journey
-  assertions: [tool calls are controlled and persisted, skills are loaded on demand, prepare_study is a durable success even if provider finalization fails, conversational tools cannot create or run scripts]
+  assertions: [tool calls are controlled and persisted, skills are loaded on demand, prepare_study persists a deterministic assistant acknowledgement before its configuration card and suppresses the later provider tail, prepare_study is a durable success even if provider finalization fails, conversational tools cannot create or run scripts]
   fixtures: [embedded V4 agent bundle]
   contracts:
     - "tool:load_agent_skill"
@@ -883,6 +883,12 @@
     - runner: vitest
       file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
       name: keeps logs visible when AI analysis is unavailable
+    - runner: vitest
+      file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
+      name: renders the linked script before run results in one highlighted research outcome
+    - runner: vitest
+      file: frontend/src/components/messages/timelineProjection.test.ts
+      name: groups only the matching script into a successful workflow without mutating stable order
     - runner: rust
       file: backend/tests/managed_workflows.rs
       name: confirmation_is_idempotent_and_creates_one_provisional_run
@@ -904,7 +910,7 @@
     - runner: rust
       file: backend/tests/managed_workflows.rs
       name: scripted_author_sequences_generation_and_repair
-  assertions: [confirmation and frozen inputs commit atomically, one session has at most one nonterminal workflow, operation IDs are idempotent, a managed run may remain scriptless until the first candidate exists, candidate artifacts and parent attempts are immutable, script messages anchor terminal runs once, failure cards show sanitized logs and bounded evidence-citing analysis while repair history stays collapsed, cancellation and restart converge deterministically, resources and workflows are user scoped]
+  assertions: [confirmation and frozen inputs commit atomically, one session has at most one nonterminal workflow, operation IDs are idempotent, a managed run may remain scriptless until the first candidate exists, candidate artifacts and parent attempts are immutable, successful workflows visually group the exact managed script before run results while preserving the durable script message anchor, failure cards show sanitized logs and bounded evidence-citing analysis while repair history stays collapsed, cancellation and restart converge deterministically, resources and workflows are user scoped]
   fixtures: [ready study configuration, imported active model and para resource, temporary V4 database]
   contracts:
     - "route:POST /api/study-configurations/{id}/confirm"
