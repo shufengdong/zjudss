@@ -31,6 +31,7 @@ pub mod search_examples;
 pub mod search_study_facades;
 mod support;
 pub mod update_data_resource_alias;
+pub mod update_study_results;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

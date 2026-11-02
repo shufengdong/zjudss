@@ -7,7 +7,9 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 use zjudss::adapters::StubEngine;
 use zjudss::application::EventWriter;
-use zjudss::application::{ModelChange, ModelPatch, PublishDraftRequest};
+use zjudss::application::{
+    ModelChange, ModelPatch, PrepareStudyRequest, PublishDraftRequest, StudyConfigurationView,
+};
 use zjudss::auth::CurrentUser;
 use zjudss::db::models::DraftRef;
 use zjudss::tools::{self, ToolServices};
@@ -516,6 +518,261 @@ async fn study_tools_search_explicit_functions_and_prepare_persisted_cards() {
         .position(|message| message.kind == "study-config")
         .expect("study configuration message");
     assert!(acknowledgement < configuration);
+}
+
+async fn prepare_study_results_configuration(
+    app: &TestApp,
+    user: &CurrentUser,
+    session_id: i32,
+) -> StudyConfigurationView {
+    app.state
+        .study_configuration_service
+        .prepare(
+            user,
+            session_id,
+            PrepareStudyRequest {
+                facade_id: "static_power_flow_newton".into(),
+                intent: serde_json::json!({"request":"select study results"}),
+                derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn update_study_results_requires_the_study_planning_skill() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "study result skill gate", 1)
+        .await
+        .unwrap();
+    let configuration = prepare_study_results_configuration(&app, &user, session.id).await;
+    let services = tool_services_for_session(&app, user.clone(), session.id);
+    let mut context = ToolContext::new();
+
+    let error = tools::update_study_results::UpdateStudyResultsTool::new(services)
+        .call(
+            &mut context,
+            tools::update_study_results::Args {
+                configuration_id: configuration.id.to_string(),
+                expected_revision: configuration.revision,
+                results: vec!["bus_voltage".into(), "summary".into()],
+            },
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "skill_required");
+    let persisted = app
+        .state
+        .study_configuration_service
+        .get(&user, configuration.id)
+        .await
+        .unwrap();
+    assert_eq!(persisted.revision, configuration.revision);
+    assert_eq!(persisted.results.selected, configuration.results.selected);
+}
+
+#[tokio::test]
+async fn update_study_results_persists_order_and_revises_the_durable_card() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "study result update", 1)
+        .await
+        .unwrap();
+    let configuration = prepare_study_results_configuration(&app, &user, session.id).await;
+    let services = tool_services_for_session(&app, user.clone(), session.id);
+    services
+        .loaded_skills
+        .lock()
+        .await
+        .insert("study-planning".into());
+    let mut context = ToolContext::new();
+
+    let updated = tools::update_study_results::UpdateStudyResultsTool::new(services)
+        .call(
+            &mut context,
+            tools::update_study_results::Args {
+                configuration_id: configuration.id.to_string(),
+                expected_revision: configuration.revision,
+                results: vec!["bus_voltage".into(), "summary".into()],
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(updated["revision"], configuration.revision + 1);
+    assert_eq!(
+        updated["results"]["selected"],
+        serde_json::json!(["bus_voltage", "summary"])
+    );
+    let persisted = app
+        .state
+        .study_configuration_service
+        .get(&user, configuration.id)
+        .await
+        .unwrap();
+    assert_eq!(persisted.revision, configuration.revision + 1);
+    assert_eq!(persisted.results.selected, vec!["bus_voltage", "summary"]);
+
+    let messages = app
+        .state
+        .message_repo
+        .list_by_session(&user.id, session.id)
+        .await
+        .unwrap();
+    let card = messages
+        .iter()
+        .find(|message| {
+            message.kind == "study-config"
+                && message.operation_id.as_deref() == Some(configuration.id.to_string().as_str())
+        })
+        .expect("revised study configuration card");
+    let payload: serde_json::Value =
+        serde_json::from_str(card.payload_json.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["revision"], persisted.revision);
+    assert_eq!(
+        payload["actionCard"]["results"]["selected"],
+        serde_json::json!(["bus_voltage", "summary"])
+    );
+}
+
+#[tokio::test]
+async fn update_study_results_rejects_other_sessions_stale_terminal_and_invalid_selections() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "study result validation", 1)
+        .await
+        .unwrap();
+    let other_session = app
+        .state
+        .session_repo
+        .create(&user.id, "other study session", 1)
+        .await
+        .unwrap();
+    let configuration = prepare_study_results_configuration(&app, &user, session.id).await;
+    let other_services = tool_services_for_session(&app, user.clone(), other_session.id);
+    other_services
+        .loaded_skills
+        .lock()
+        .await
+        .insert("study-planning".into());
+    let mut context = ToolContext::new();
+    let cross_session = tools::update_study_results::UpdateStudyResultsTool::new(other_services)
+        .call(
+            &mut context,
+            tools::update_study_results::Args {
+                configuration_id: configuration.id.to_string(),
+                expected_revision: configuration.revision,
+                results: vec!["bus_voltage".into(), "summary".into()],
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(cross_session.code, "not_found");
+
+    let services = tool_services_for_session(&app, user.clone(), session.id);
+    services
+        .loaded_skills
+        .lock()
+        .await
+        .insert("study-planning".into());
+    let tool = tools::update_study_results::UpdateStudyResultsTool::new(services);
+    let malformed_id = tool
+        .call(
+            &mut context,
+            tools::update_study_results::Args {
+                configuration_id: "not-an-integer".into(),
+                expected_revision: configuration.revision,
+                results: vec!["bus_voltage".into()],
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(malformed_id.code, "not_found");
+    for results in [
+        Vec::<String>::new(),
+        vec!["bus_voltage".into(), "bus_voltage".into()],
+        vec!["unknown_result".into()],
+    ] {
+        let error = tool
+            .call(
+                &mut context,
+                tools::update_study_results::Args {
+                    configuration_id: configuration.id.to_string(),
+                    expected_revision: configuration.revision,
+                    results,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "result_selection_invalid");
+    }
+    let unchanged = app
+        .state
+        .study_configuration_service
+        .get(&user, configuration.id)
+        .await
+        .unwrap();
+    assert_eq!(unchanged.revision, configuration.revision);
+    assert_eq!(unchanged.results.selected, configuration.results.selected);
+
+    let revised = tool
+        .call(
+            &mut context,
+            tools::update_study_results::Args {
+                configuration_id: configuration.id.to_string(),
+                expected_revision: configuration.revision,
+                results: vec!["bus_voltage".into(), "summary".into()],
+            },
+        )
+        .await
+        .unwrap();
+    let stale = tool
+        .call(
+            &mut context,
+            tools::update_study_results::Args {
+                configuration_id: configuration.id.to_string(),
+                expected_revision: configuration.revision,
+                results: vec!["summary".into()],
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(stale.code, "configuration_stale");
+
+    let cancelled = app
+        .state
+        .study_configuration_service
+        .cancel(
+            &user,
+            configuration.id,
+            revised["revision"].as_i64().unwrap(),
+        )
+        .await
+        .unwrap();
+    let terminal = tool
+        .call(
+            &mut context,
+            tools::update_study_results::Args {
+                configuration_id: configuration.id.to_string(),
+                expected_revision: cancelled.revision,
+                results: vec!["bus_voltage".into()],
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(terminal.code, "configuration_stale");
 }
 
 #[tokio::test]
