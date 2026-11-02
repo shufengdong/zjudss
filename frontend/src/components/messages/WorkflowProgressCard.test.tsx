@@ -120,6 +120,21 @@ describe('WorkflowProgressCard', () => {
     await waitFor(() => expect(run).toHaveBeenCalledWith(linkedScript.script))
   })
 
+  it('keeps the linked script visible when durable success arrives before refreshed workflow details', async () => {
+    vi.mocked(getManagedWorkflow)
+      .mockResolvedValueOnce(workflow('running'))
+      .mockReturnValue(new Promise(() => {}))
+    const run = vi.fn().mockResolvedValue(undefined)
+    const { rerender } = render(<WorkflowProgressCard message={message('running')} notify={vi.fn()}
+      linkedScript={linkedScript} onRunScript={run} />)
+    await screen.findByRole('button', { name: '取消' })
+
+    rerender(<WorkflowProgressCard message={{ ...message('succeeded'), revision: 2 }} notify={vi.fn()}
+      linkedScript={linkedScript} onRunScript={run} />)
+
+    expect(await screen.findByTestId('message-script')).toHaveAttribute('data-message-id', '10')
+  })
+
   it('retries failed result loading without rerunning the workflow', async () => {
     vi.mocked(getManagedWorkflow).mockResolvedValue(workflow('succeeded'))
     vi.mocked(listRunDatasets).mockRejectedValueOnce(new Error('结果读取失败')).mockResolvedValueOnce([])

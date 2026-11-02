@@ -887,6 +887,9 @@
       file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
       name: renders the linked script before run results in one highlighted research outcome
     - runner: vitest
+      file: frontend/src/components/messages/WorkflowProgressCard.test.tsx
+      name: keeps the linked script visible when durable success arrives before refreshed workflow details
+    - runner: vitest
       file: frontend/src/components/messages/timelineProjection.test.ts
       name: groups only the matching script into a successful workflow without mutating stable order
     - runner: rust

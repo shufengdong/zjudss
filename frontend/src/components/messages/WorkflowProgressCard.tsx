@@ -36,7 +36,7 @@ export default function WorkflowProgressCard({ message, onRetry, onChanged, noti
   const [retrying, setRetrying] = useState(false)
   const [attemptsExpanded, setAttemptsExpanded] = useState(false)
   const terminalNotified = useRef(false)
-  const state = workflow?.status ?? message.card.state
+  const state = terminal.has(message.card.state) ? message.card.state : workflow?.status ?? message.card.state
   useEffect(() => {
     if (terminal.has(state)) return
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
