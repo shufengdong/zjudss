@@ -515,6 +515,9 @@
       file: integration-tests/e2e/v4-managed-studies.spec.ts
       name: study configuration maps a generic data resource and can be cancelled
     - runner: playwright
+      file: integration-tests/e2e/v4-managed-studies.spec.ts
+      name: natural-language result selection updates the current durable card without confirming or starting work
+    - runner: playwright
       file: integration-tests/e2e/auth-isolation.spec.ts
       name: two users cannot enumerate or guess each other session, message, SSE, run, or dataset resources
     - runner: rust
@@ -797,6 +800,9 @@
     - runner: vitest
       file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
       name: offers generation only for the complete summary and confirms explicitly
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: ready-to-confirm configurations can change results before final confirmation
     - runner: rust
       file: backend/tests/study_configurations.rs
       name: explicit_facade_creates_catalog_driven_cards_without_a_model
@@ -821,7 +827,19 @@
     - runner: rust
       file: backend/tests/workspace_tools.rs
       name: study_tools_search_explicit_functions_and_prepare_persisted_cards
-  assertions: [explicit functions are never topology-rewritten, model inputs come only from active tables declared by the selected facade, para remains an independent Struct resource, multiple resources require user selection, Struct changes require replacement intent, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, confirmation accepts only expected revision and a client operation ID]
+    - runner: rust
+      file: backend/tests/workspace_tools.rs
+      name: update_study_results_requires_the_study_planning_skill
+    - runner: rust
+      file: backend/tests/workspace_tools.rs
+      name: update_study_results_persists_order_and_revises_the_durable_card
+    - runner: rust
+      file: backend/tests/workspace_tools.rs
+      name: update_study_results_rejects_other_sessions_stale_terminal_and_invalid_selections
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: natural_language_result_selection_updates_the_durable_card_without_starting_work
+  assertions: [explicit functions are never topology-rewritten, model inputs come only from active tables declared by the selected facade, para remains an independent Struct resource, multiple resources require user selection, Struct changes require replacement intent, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, ready-to-confirm cards keep result editing beside the final confirmation gate, natural-language result updates require the planning skill and exact current card revision, result updates revise the same durable card without creating scripts workflows or runs, final confirmation remains a fixed UI action]
   fixtures: [current engine facade catalog, imported active model plus independent para resource, ambiguous compatible resources]
   contracts:
     - "route:GET /api/study-configurations/{id}"
@@ -833,6 +851,7 @@
     - "route:DELETE /api/study-configurations/{id}"
     - "tool:search_study_facades"
     - "tool:prepare_study"
+    - "tool:update_study_results"
     - "skill:study-planning"
     - "error:configuration_stale"
     - "error:configuration_incomplete"

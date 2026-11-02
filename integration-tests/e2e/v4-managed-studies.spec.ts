@@ -25,6 +25,28 @@ test('managed Newton study confirms, repairs one engine failure, and publishes o
   expect(configured.status, JSON.stringify(configured, null, 2)).toBe('ready_to_confirm')
   await page.reload()
   await expect(configuration.card).toContainText(`修订 ${configured.revision}`)
+  const summary = configuration.card.getByRole('checkbox', { name: /summary/ })
+  await expect(summary).toBeVisible()
+  await expect(summary).not.toBeChecked()
+  await expect(configuration.card.getByRole('button', { name: '确认并生成脚本' })).toBeVisible()
+  await summary.check()
+  const resultResponse = page.waitForResponse(response => response.request().method() === 'PUT'
+    && /\/api\/study-configurations\/\d+\/results$/.test(new URL(response.url()).pathname))
+  await configuration.card.getByRole('button', { name: '确认结果' }).click()
+  const revisedResults = await resultResponse
+  expect(revisedResults.status()).toBe(200)
+  const resultConfiguration = await revisedResults.json() as { revision: number }
+  expect(resultConfiguration.revision).toBe(configured.revision + 1)
+  await expect(configuration.card).toContainText(`修订 ${resultConfiguration.revision}`)
+  await expect(configuration.card).toContainText('bus_voltage、summary')
+  await expect(configuration.card.getByRole('button', { name: '确认并生成脚本' })).toBeVisible()
+  await summary.uncheck()
+  const restoreResponse = page.waitForResponse(response => response.request().method() === 'PUT'
+    && /\/api\/study-configurations\/\d+\/results$/.test(new URL(response.url()).pathname))
+  await configuration.card.getByRole('button', { name: '确认结果' }).click()
+  const restoredResults = await restoreResponse
+  expect(restoredResults.status()).toBe(200)
+  expect((await restoredResults.json() as any).results.selected).toEqual(['bus_voltage'])
   await settleNewtonConfiguration(page, configuration.card)
 
   const baseline = await control.trace() as { author: string[]; authorRepairCount: number; engine: Array<{ scenario: string }> }
@@ -65,6 +87,46 @@ test('managed Newton study confirms, repairs one engine failure, and publishes o
   expect((await api.delete(`/api/study-configurations/${disposable.id}?expectedRevision=${disposableView.revision}`)).status()).toBe(200)
 })
 
+test('natural-language result selection updates the current durable card without confirming or starting work', async ({ appPage, control }) => {
+  const { page, api } = await appPage({ subject: 'studies@example.com' })
+  const sessionId = await createSessionFromPage(page, '自然语言选择结果')
+  await publishExampleModel(page, api, sessionId)
+  const prepared = await prepareNewtonStudy(page, api, sessionId, control)
+  const configuration = await (await api.get(`/api/study-configurations/${prepared.id}`)).json() as {
+    revision: number
+    status: string
+  }
+  expect(configuration.status).toBe('ready_to_confirm')
+  await control.enqueueLlm({
+    id: `update-results-${Date.now()}`,
+    expectedPrompt: 'bus_voltage，summary',
+    turns: [
+      { kind: 'tool_call', call_id: 'skill-results', name: 'load_agent_skill', args: { skill_id: 'study-planning' } },
+      { kind: 'tool_call', call_id: 'update-results', name: 'update_study_results', args: {
+        configurationId: prepared.id,
+        expectedRevision: configuration.revision,
+        results: ['bus_voltage', 'summary'],
+      } },
+      { kind: 'text', text: '结果已更新；仍需在研究配置卡中点击“确认并生成脚本”。' },
+    ],
+  })
+
+  await send(page, 'bus_voltage，summary')
+  await expect(page.getByText('结果已更新；仍需在研究配置卡中点击“确认并生成脚本”。')).toBeVisible()
+  await expect(prepared.card).toContainText(`修订 ${configuration.revision + 1}`)
+  await expect(prepared.card).toContainText('bus_voltage、summary')
+  await expect(prepared.card.getByRole('button', { name: '确认并生成脚本' })).toBeVisible()
+  const persisted = await (await api.get(`/api/study-configurations/${prepared.id}`)).json() as any
+  expect(persisted.results.selected).toEqual(['bus_voltage', 'summary'])
+  expect(persisted.status).toBe('ready_to_confirm')
+  const runs = (await (await api.get(`/api/sessions/${sessionId}/runs`)).json() as { runs: unknown[] }).runs
+  const scripts = (await (await api.get(`/api/sessions/${sessionId}/scripts`)).json() as { scripts: unknown[] }).scripts
+  const messages = (await (await api.get(`/api/sessions/${sessionId}/messages`)).json() as { messages: Array<{ type: string }> }).messages
+  expect(runs).toHaveLength(0)
+  expect(scripts).toHaveLength(0)
+  expect(messages.some(message => message.type === 'workflow-progress')).toBe(false)
+})
+
 test('study configuration maps a generic data resource and can be cancelled', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'dataframe-ready@example.com' })
   const sessionId = await createSessionFromPage(page, '时序输入映射')
@@ -92,7 +154,7 @@ test('study configuration maps a generic data resource and can be cancelled', as
     ],
   })
   await send(page, '准备时序潮流')
-  await expect(page.getByText('时序研究配置已准备。')).toBeVisible()
+  await expect(page.getByRole('article', { name: '研究配置卡' }).last()).toContainText('径向 QSTS')
   const messages = await (await api.get(`/api/sessions/${sessionId}/messages`)).json() as { messages: Array<any> }
   const configMessage = [...messages.messages].reverse().find(message => message.type === 'study-config')
   const configurationId = configMessage.card.configurationId as string

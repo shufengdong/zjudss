@@ -10,8 +10,8 @@ use diesel::{RunQueryDsl, sql_query};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use zjudss::application::{
-    CandidateDecision, CandidatePurpose, PrepareStudyRequest, PublishDraftRequest,
-    StudyConfigurationState,
+    CandidateDecision, CandidatePurpose, EventWriter, PrepareStudyRequest, PublishDraftRequest,
+    StudyConfigCard, StudyConfigurationState,
 };
 use zjudss::auth::CurrentUser;
 use zjudss::db::models::DraftRef;
@@ -541,6 +541,22 @@ async fn natural_language_result_selection_updates_the_durable_card_without_star
         configuration.status,
         StudyConfigurationState::ReadyToConfirm
     );
+    let configuration_id = configuration.id.to_string();
+    let action_card = serde_json::to_value(&configuration).unwrap();
+    EventWriter::new(
+        user.id.clone(),
+        session_id,
+        app.state.message_repo.clone(),
+        app.state.events.clone(),
+    )
+    .study_config(StudyConfigCard {
+        configuration_id: configuration_id.clone(),
+        revision: configuration.revision,
+        state: "ready_to_confirm".into(),
+        action_card,
+    })
+    .await
+    .unwrap();
     factory.enqueue(ScriptScenario {
         id: "natural-language-result-selection".into(),
         expected_prompt: Some("bus_voltage，summary".into()),
@@ -554,7 +570,7 @@ async fn natural_language_result_selection_updates_the_durable_card_without_star
                 call_id: "update-results".into(),
                 name: "update_study_results".into(),
                 args: json!({
-                    "configurationId": configuration.id.to_string(),
+                    "configurationId": configuration_id.clone(),
                     "expectedRevision": configuration.revision,
                     "results": ["bus_voltage", "summary"]
                 }),
@@ -570,6 +586,14 @@ async fn natural_language_result_selection_updates_the_durable_card_without_star
         post_and_wait(&app, &session, "bus_voltage，summary").await,
         StatusCode::ACCEPTED
     );
+    let trace = factory.trace();
+    let history = trace[0].calls[0].history.to_string();
+    assert!(history.contains("currentStudyConfiguration"), "{history}");
+    assert!(history.contains(&configuration_id), "{history}");
+    assert!(
+        history.contains(&configuration.revision.to_string()),
+        "{history}"
+    );
     let events = messages(&app, &session).await;
     assert_eq!(
         tool_names(&events),
@@ -579,7 +603,7 @@ async fn natural_language_result_selection_updates_the_durable_card_without_star
         .iter()
         .find(|event| {
             event["type"] == "study-config"
-                && event["card"]["configurationId"] == configuration.id.to_string()
+                && event["card"]["configurationId"].as_str() == Some(configuration_id.as_str())
         })
         .expect("updated durable study configuration card");
     assert_eq!(card["card"]["revision"], configuration.revision + 1);

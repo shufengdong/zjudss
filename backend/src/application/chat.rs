@@ -15,7 +15,7 @@ use rig::streaming::{Item, StreamEvent};
 
 use crate::adapters::SimEngine;
 use crate::agent::{AgentBuildRequest, AgentFactory};
-use crate::application::{AppState, EventBus, EventWriter, ToolStatus, now_ms};
+use crate::application::{AppState, EventBus, EventWriter, StudyConfigCard, ToolStatus, now_ms};
 use crate::auth::CurrentUser;
 use crate::db::repositories::{MessageRepo, SessionRepo};
 use crate::tools::{self, ToolServices};
@@ -203,19 +203,37 @@ impl ChatService {
             .await;
     }
 
-    /// 加载本次 prompt 之前的历史 user/assistant 消息，转成 rig `Message`。
+    /// 加载本次 prompt 之前的历史 user/assistant 消息，并附上最新未确认研究配置的
+    /// 有界上下文，转成 rig `Message`。
     async fn load_history(&self, session_id: i32, prompt_id: i32) -> Vec<Message> {
         let msgs = self
             .message_repo
             .list_by_session(&self.principal.id, session_id)
             .await
             .unwrap_or_default();
+        let latest_configuration_message_id =
+            msgs.iter()
+                .filter(|message| message.id < prompt_id && message.kind == "study-config")
+                .filter_map(|message| {
+                    let card = message.payload_json.as_deref().and_then(|payload| {
+                        serde_json::from_str::<StudyConfigCard>(payload).ok()
+                    })?;
+                    matches!(
+                        card.state.as_str(),
+                        "collecting_inputs" | "ready_to_confirm"
+                    )
+                    .then_some(message.id)
+                })
+                .max();
         msgs.into_iter()
             .filter(|m| m.id < prompt_id)
-            .filter(|m| m.role == "user" || m.role == "assistant")
-            .map(|m| match m.role.as_str() {
-                "user" => Message::user(m.content),
-                _ => Message::assistant(m.content),
+            .filter_map(|m| match m.role.as_str() {
+                "user" => Some(Message::user(m.content)),
+                "assistant" => Some(Message::assistant(m.content)),
+                _ if Some(m.id) == latest_configuration_message_id => {
+                    study_configuration_context(m.payload_json.as_deref())
+                }
+                _ => None,
             })
             .collect()
     }
@@ -281,6 +299,27 @@ impl ChatService {
         }
         outcome
     }
+}
+
+fn study_configuration_context(payload: Option<&str>) -> Option<Message> {
+    let card = serde_json::from_str::<StudyConfigCard>(payload?).ok()?;
+    let available_result_ids = card.action_card["results"]["available"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|result| result["id"].as_str())
+        .collect::<Vec<_>>();
+    let context = serde_json::json!({
+        "currentStudyConfiguration": {
+            "configurationId": card.configuration_id,
+            "revision": card.revision,
+            "state": card.state,
+            "facadeId": card.action_card["facade"]["id"],
+            "selectedResults": card.action_card["results"]["selected"],
+            "availableResultIds": available_result_ids,
+        }
+    });
+    Some(Message::assistant(context.to_string()))
 }
 
 /// 从工具结果内容提取可读摘要（文本拼接，JSON 序列化）。

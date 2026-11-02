@@ -2,7 +2,7 @@
 
 ## Bundle
 
-生产 bundle 位于 `backend/resources/agent/v4/`，版本 `v4.1.0`。manifest 固定 system prompt、skill index、
+生产 bundle 位于 `backend/resources/agent/v4/`，版本 `v4.2.0`。manifest 固定 system prompt、skill index、
 engine contract、允许工具和文件 SHA-256；启动时完整验证。Agent prompt 只常驻策略，不常驻整套引擎文档。
 
 ## Skills
@@ -17,11 +17,11 @@ schema 再执行分析时，Agent 必须在读取后继续调用 `run_result_ana
 
 ## Tool authority
 
-当前运行时允许工具共 23 个：
+当前运行时允许工具共 24 个：
 
 ```text
 inspect_workspace       read_model_dataframe     search_study_facades
-prepare_study            search_examples
+prepare_study           update_study_results     search_examples
 inspect_example
 modify_model            publish_model_version    list_result_datasets
 run_result_analysis     create_dataset_view      compare_simulations
@@ -41,6 +41,12 @@ draft、读取运行/结果并创建派生分析或比较。规划或分析普�
 删除版本/结果、创建脚本或创建运行。`prepare_study` 成功即表示本轮配置准备完成；后续 provider
 收尾失败不会用通用错误覆盖已持久化的配置卡。
 
+`update_study_results` 是唯一新增的研究配置写工具。它必须在当前消息加载 `study-planning` 后，以当前 durable 卡的精确
+十进制字符串 ID、revision 和门面内结果 ID 调用；只允许当前会话的未确认配置。它不具备门面、输入、Struct 参数或最终确认权限，
+也不会生成脚本、workflow 或 run。`configuration_stale` 后必须刷新卡片，不得猜测新 revision 或切换到另一张配置。
+构建 Agent 历史时，服务只额外注入当前会话最新一张未确认配置的有界摘要：配置 ID、revision、状态、门面 ID、已选结果和
+可选结果 ID；不会注入完整卡片、服务器路径或已终态配置。这样模型可以准确提交并发保护参数，同时保持上下文最小化。
+
 该发布授权同时由工具运行时强制执行：授权只来自当前 request message，且本轮 `inspect_workspace` 记录的 draft ref
 必须与 `expectedDraft` 完全一致。缺少明确发布意图或本轮检查分别返回 `publish_authorization_required`、
 `workspace_inspection_required`；描述超限返回 `version_description_invalid`，不会发布草稿。运行时只接受消息开头的肯定发布命令；
@@ -50,7 +56,9 @@ draft、读取运行/结果并创建派生分析或比较。规划或分析普�
 `ds_...` 标识时才传 `explicitFunction`；Newton/牛顿法等算法名称保留在自然语言 `query`，目录搜索按核心字段与差异
 相关度返回最匹配门面，不会根据网络拓扑改写用户选择。候选不唯一时 Agent 展示 `differences`，禁用门面显示合同诊断。
 `prepare_study` 创建持久化配置卡，由服务端按门面动态展开实际 model/Data/Struct/结果输入。多个兼容资源不能猜选，
-同门面历史 Struct 只形成复用建议。配置卡未最终确认前，Agent 不得生成或运行受管脚本；运行时不存在绕过配置卡的旧规划或聊天脚本创建权限。
+同门面历史 Struct 只形成复用建议。用户明确指定当前配置的结果时，链路为
+`load study-planning -> update_study_results(exact configurationId/revision/results)`，成功后仍等待固定 UI 的“确认并生成脚本”。
+配置卡未最终确认前，Agent 不得生成或运行受管脚本；运行时不存在绕过配置卡的旧规划或聊天脚本创建权限。
 
 模型修改遵循 `inspect_workspace -> read_model_dataframe -> modify_model`。`read_model_dataframe` 只在加载
 `model-intake` skill 后可用，scope 只能是 active 或携带准确 expected draft 的 draft；查询只允许表名、最多
@@ -63,7 +71,8 @@ draft、读取运行/结果并创建派生分析或比较。规划或分析普�
 shell 命令和任意图表 option。`modify_model` 使用 `tableName + rowKey + changes + expectedDraft`；
 `read_model_dataframe` 使用 `scope + tableName + columns + equals + limit + expectedDraft?`；
 `publish_model_version` 使用 `expectedDraft + description?`，服务端从当前消息 ID 生成幂等键，不接受 session/version/path；
-`search_study_facades` 只接收查询词和可选显式函数名；`prepare_study` 只接收目录 facade ID、结构化原始意图和可选来源 workflow ID；比较使用两个 run ID。模型范围不存在、查询无效、输出过大、草稿 revision
+`search_study_facades` 只接收查询词和可选显式函数名；`prepare_study` 只接收目录 facade ID、结构化原始意图和可选来源 workflow ID；
+`update_study_results` 只接收十进制字符串 `configurationId`、正整数 `expectedRevision` 和有序唯一 `results`；比较使用两个 run ID。模型范围不存在、查询无效、输出过大、草稿 revision
 冲突和表不存在分别使用稳定错误码，工具响应不包含 artifact 路径。
 
 配置确认后的脚本由独立无工具 ScriptAuthor 处理，不把脚本生成能力重新开放给对话 Agent。generation 请求只含冻结合同、

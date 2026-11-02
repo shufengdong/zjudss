@@ -70,6 +70,10 @@ RUN-001 在 Rust 层验证创建、重放、列表和详情都返回绑定脚本
 应用层 scripted-agent 测试额外覆盖配置卡已创建后的 provider 收尾失败不覆盖成功、对话 Agent 无脚本创建权限；
 并用“求解牛顿法潮流”等原始短指令验证显式函数选择不被拓扑改写，缺 Data/Struct、资源歧义和禁用门面都只返回
 选择或配置卡，不提前生成或运行脚本。
+研究结果选择同时覆盖两个入口：Vitest 验证 `ready_to_confirm` 状态下结果编辑器与最终确认按钮共存并使用当前 revision；
+Rust 直接工具测试验证 skill 门禁、十进制字符串 ID、当前会话隔离、乐观锁、终态和非法集合；scripted-agent 与 Playwright
+验证自然语言 `bus_voltage，summary` 原位更新 durable 卡，且脚本、workflow 和 run 仍为空。受管研究浏览器旅程还通过卡片
+选择 `summary`、提交“确认结果”并检查 revision/摘要，再恢复原结果继续验证既有执行修正链路。
 模型发布行为还覆盖明确发布请求使用精确 draft/revision 并自动激活、消息级幂等、内容去重、stale/跨用户拒绝，以及
 普通修改、研究和“生成脚本/结果”文字不触发隐式发布。
 

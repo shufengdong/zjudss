@@ -51,8 +51,8 @@ export async function prepareNewtonStudy(page: Page, api: APIRequestContext, ses
     ],
   })
   await send(page, '求解牛顿法潮流')
-  await expect(page.getByText('研究配置已准备，请确认后开始。').last()).toBeVisible()
   const configuration = page.getByRole('article', { name: '研究配置卡' }).last()
+  await expect(configuration).toContainText('牛顿-拉夫逊潮流')
   const snapshot = await (await api.get(`/api/sessions/${sessionId}/messages`)).json() as { messages: Array<{ type: string; card?: { configurationId?: string } }> }
   await expect(configuration, JSON.stringify(snapshot, null, 2)).toContainText('牛顿-拉夫逊潮流')
   await settleNewtonConfiguration(page, configuration)

@@ -146,6 +146,13 @@ Data 输入的 mapping 只接受源列到目标列的受控映射。服务端按
 事务创建 `sourceKind=mapping` 的新普通资源，并冻结源资源 ID、目标 schema 和映射血缘；不会修改源资源。结果集合
 必须有序、唯一、属于门面且满足 fixed/minimum/conditional 约束。
 
+`PUT /api/study-configurations/{id}/results` 与 Agent 工具 `update_study_results` 共用同一个
+`select_results` 领域操作。工具参数固定为 `{configurationId:string, expectedRevision:integer, results:string[]}`，其中
+配置 ID 是十进制稳定字符串；工具先要求 `study-planning`，再校验配置属于当前用户和当前会话。跨会话或不存在配置统一
+`not_found`，过期 revision 或 confirmed/invalidated/cancelled 配置返回 `configuration_stale`，空、重复、未知或违反目录约束的
+结果返回 `result_selection_invalid`。成功只按传入顺序持久化结果、递增 revision 并更新同一条 `study-config` 消息；不确认配置、
+不创建脚本、workflow 或 run。
+
 ## Managed study workflows
 
 `POST /api/study-configurations/{id}/confirm` 只接受
@@ -265,6 +272,10 @@ tensoreval 以非零状态退出时保留实际退出码。原始有界 stderr �
 详情由前端默认折叠。运行关联字段统一为 `runId`。V4 对话 Agent 只持久化研究配置卡，不具备脚本创建权限。
 `prepare_study` 成功时，工具先持久化一条包含研究标题与配置 ID 的确定性 assistant 确认语，再持久化 `study-config` 卡；
 成功后的 provider 尾声不再写入，provider 收尾失败也不追加通用 Agent 失败，因此用户立即确认时工作流仍严格位于说明和配置之后。
+自然语言修改结果时，`update_study_results` 使用当前 durable 卡的精确 ID/revision 原位更新该卡；成功后的 assistant 只说明
+结果已更新并提醒用户仍需点击“确认并生成脚本”，不会把自然语言肯定解释为最终确认。
+Agent 历史仅附带当前会话最新一张未确认研究配置的有界摘要（配置 ID、revision、状态、门面 ID、已选结果、可选结果 ID），
+不附带完整 action card、路径或已终态配置；工具仍在服务端重新校验用户、会话、revision 和结果合同。
 Agent 在完成配置前耗尽单轮模型调用预算时，assistant 明确提示本轮尚未完成配置并可重新发送请求；后台日志记录
 session ID 和失败类别，消息正文不暴露 provider 诊断。
 
