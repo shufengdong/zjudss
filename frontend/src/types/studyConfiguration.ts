@@ -1,5 +1,3 @@
-import type { ReplacementAction } from './uploadBatch'
-
 export type StudyConfigurationState='choosing_facade'|'collecting_inputs'|'ready_to_confirm'|'confirmed'|'invalidated'|'cancelled'
 export type DataTypeContract={kind:'primitive'|'semantic';name:string}|{kind:'constructor';name:string;element:DataTypeContract}
 export interface StructCardContract {default:{state:string;value?:unknown};unit:{state:string;value?:string};range:{state:string;minimum?:unknown;maximum?:unknown;minimumInclusive?:boolean;maximumInclusive?:boolean};enum:{state:string;values:unknown[];caseInsensitive:boolean};visibleWhen:{state:string;when?:unknown};enabledWhen:{state:string;when?:unknown}}
@@ -13,4 +11,4 @@ export interface StudyInputCard {inputId:string;alias:string;kind:'model'|'struc
 export interface StudyResultCard {available:FacadeResultContract[];selected:string[];constraints:ResultSelectionRule[]}
 export interface StudyConfigurationView {id:number;sessionId:number;status:StudyConfigurationState;revision:number;engineSnapshotId:string;facade:FacadeContract;intent:unknown;inputs:StudyInputCard[];results:StudyResultCard}
 export interface ColumnMapping {source:string;target:string}
-export interface StudyStructUpdate {expectedRevision:number;values:Record<string,unknown>;replacementAction?:ReplacementAction|null}
+export interface StudyStructUpdate {expectedRevision:number;values:Record<string,unknown>}

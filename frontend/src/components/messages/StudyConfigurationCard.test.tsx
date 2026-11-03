@@ -145,10 +145,57 @@ describe('StudyConfigurationCard', () => {
     expect(screen.getByLabelText(/start_at/)).toHaveAttribute('type', 'datetime-local')
     expect(screen.getByLabelText(/frequency \(Hz\)/)).toHaveValue(50)
     fireEvent.change(screen.getByLabelText(/max_iter/), { target: { value: '30' } })
-    fireEvent.click(screen.getByRole('button', { name: '确认参数' }))
-    await waitFor(() => expect(updateStudyStruct).toHaveBeenCalledWith('41', 'para', expect.objectContaining({
-      expectedRevision: 7, values: expect.objectContaining({ max_iter: 30 }), replacementAction: 'replace',
-    })))
+    fireEvent.click(screen.getByRole('button', { name: '应用参数' }))
+    await waitFor(() => expect(updateStudyStruct).toHaveBeenCalled())
+    expect(vi.mocked(updateStudyStruct).mock.calls[0][2]).toEqual({
+      expectedRevision: 7,
+      values: expect.objectContaining({ max_iter: 30 }),
+    })
+    expect(screen.queryByLabelText('参数资源保存方式')).not.toBeInTheDocument()
+  })
+
+  it('describes bound template edits as run overrides and omits server-owned selectors', async () => {
+    const current = configuration({
+      status: 'collecting_inputs', inputs: [{
+        inputId: 'para', alias: 'para', kind: 'struct', schemaRef: 'frames.para', required: true, position: 1,
+        binding: { resourceId: 'resource-7', mapping: { baselineValues: { max_iter: 20, tolerance: 0.001, result: null } } },
+        resourceOptions: [],
+        structCard: {
+          schemaRef: 'frames.para',
+          fields: [
+            card({ name: 'max_iter', dtype: { kind: 'primitive', name: 'u32' } }),
+            card({ name: 'tolerance', dtype: { kind: 'primitive', name: 'f64' } }),
+            card({ name: 'result' }),
+          ],
+          values: { max_iter: 30, tolerance: 0.0001, result: 'bus_voltage' },
+          resultSelectorFields: ['result'],
+        },
+      }],
+    })
+    vi.mocked(updateStudyStruct).mockResolvedValue({ ...current, revision: 8 })
+    render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
+
+    expect(screen.getByText('本次运行覆盖：max_iter、tolerance；不会修改参数模板')).toBeInTheDocument()
+    expect(screen.queryByLabelText('参数资源保存方式')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '应用参数' }))
+    await waitFor(() => expect(updateStudyStruct).toHaveBeenCalledWith('41', 'para', {
+      expectedRevision: 7,
+      values: { max_iter: 30, tolerance: 0.0001 },
+    }))
+  })
+
+  it('explains that source-less Struct values stay private to the study', () => {
+    const current = configuration({
+      status: 'collecting_inputs', inputs: [{
+        inputId: 'para', alias: 'para', kind: 'struct', schemaRef: 'frames.para', required: true, position: 1,
+        binding: { resourceId: null }, resourceOptions: [],
+        structCard: { schemaRef: 'frames.para', fields: [card({ name: 'max_iter' })], values: { max_iter: 20 } },
+      }],
+    })
+    render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
+
+    expect(screen.getByText('使用目录默认值；保存后仅用于本次研究')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '应用参数' })).toBeInTheDocument()
   })
 
   it('requires every catalog-required Struct field before confirming parameters', () => {
@@ -160,17 +207,17 @@ describe('StudyConfigurationCard', () => {
       }],
     })
     render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
-    const confirm = screen.getByRole('button', { name: '确认参数' })
+    const confirm = screen.getByRole('button', { name: '应用参数' })
     expect(confirm).toBeDisabled()
     fireEvent.change(screen.getByLabelText(/base_frequency_hz/), { target: { value: '50' } })
     expect(confirm).toBeEnabled()
   })
 
-  it('hides server-managed result selector fields from Struct editing', () => {
+  it('hides server-managed result selector fields from Struct editing', async () => {
     const current = configuration({
       status: 'collecting_inputs', inputs: [{
         inputId: 'para', alias: 'para', kind: 'struct', schemaRef: 'frames.para', required: true, position: 1,
-        binding: { resourceId: 'resource-7' }, resourceOptions: [],
+        binding: { resourceId: 'resource-7', mapping: { baselineValues: { max_iter: 20, result: null } } }, resourceOptions: [],
         structCard: {
           schemaRef: 'frames.para',
           fields: [card({ name: 'max_iter', dtype: { kind: 'primitive', name: 'u32' } }), card({ name: 'result', required: true })],
@@ -179,12 +226,19 @@ describe('StudyConfigurationCard', () => {
         },
       }],
     })
+    vi.mocked(updateStudyStruct).mockResolvedValue({ ...current, revision: 8 })
     render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
 
     expect(screen.getByLabelText(/max_iter/)).toBeInTheDocument()
     expect(screen.queryByLabelText(/^result/)).not.toBeInTheDocument()
     expect(screen.getByText('结果字段由结果选择自动写入')).toBeInTheDocument()
-    expect(screen.getByText('当前值来自已选择的参数资源')).toBeInTheDocument()
+    expect(screen.getByText('当前值来自参数模板；本次研究不会修改模板')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText(/max_iter/), { target: { value: '30' } })
+    fireEvent.click(screen.getByRole('button', { name: '应用参数' }))
+    await waitFor(() => expect(updateStudyStruct).toHaveBeenCalledWith('41', 'para', {
+      expectedRevision: 7,
+      values: { max_iter: 30 },
+    }))
   })
 
   it('asks for an ambiguous Struct resource before showing its parameter editor', () => {
@@ -202,7 +256,7 @@ describe('StudyConfigurationCard', () => {
     render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
 
     expect(screen.getByRole('button', { name: '确认文件' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '确认参数' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '应用参数' })).not.toBeInTheDocument()
   })
 
   it('renders resolved non-Struct inputs as compact ready rows', () => {
@@ -244,7 +298,7 @@ describe('StudyConfigurationCard', () => {
     expect(screen.getByLabelText(/^result/)).toHaveValue('bus_voltage')
   })
 
-  it('keeps a pending Struct replacement visible after the configuration is reloaded', async () => {
+  it('keeps pending run-private Struct overrides visible after the configuration is reloaded', async () => {
     const current = configuration({
       status: 'collecting_inputs', inputs: [{
         inputId: 'para', alias: 'para', kind: 'struct', schemaRef: 'frames.para', required: true, position: 1,
@@ -262,11 +316,10 @@ describe('StudyConfigurationCard', () => {
     })
     vi.mocked(updateStudyStruct).mockResolvedValue({ ...current, status: 'ready_to_confirm', revision: 8 })
     render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
-    expect(screen.getByText('已修改：base_frequency_hz')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '确认参数' }))
-    await waitFor(() => expect(updateStudyStruct).toHaveBeenCalledWith('41', 'para', expect.objectContaining({
-      expectedRevision: 7, replacementAction: 'replace',
-    })))
+    expect(screen.getByText('本次运行覆盖：base_frequency_hz；不会修改参数模板')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '应用参数' }))
+    await waitFor(() => expect(updateStudyStruct).toHaveBeenCalled())
+    expect(vi.mocked(updateStudyStruct).mock.calls[0][2]).not.toHaveProperty('replacementAction')
   })
 
   it('shows the final confirmation after saving the last required parameter', async () => {
@@ -280,7 +333,7 @@ describe('StudyConfigurationCard', () => {
     vi.mocked(updateStudyStruct).mockResolvedValue({ ...current, status: 'ready_to_confirm', revision: 8 })
     render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
     fireEvent.change(screen.getByLabelText(/base_frequency_hz/), { target: { value: '50' } })
-    fireEvent.click(screen.getByRole('button', { name: '确认参数' }))
+    fireEvent.click(screen.getByRole('button', { name: '应用参数' }))
     expect(await screen.findByRole('button', { name: '确认并生成脚本' })).toBeInTheDocument()
   })
 
@@ -322,6 +375,22 @@ describe('StudyConfigurationCard', () => {
     expect(await screen.findByText('修订 8 · 待确认')).toBeInTheDocument()
     expect(screen.getByText('bus_voltage、summary')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '确认并生成脚本' })).toBeInTheDocument()
+  })
+
+  it('labels Struct differences as run overrides in the final summary', () => {
+    const ready = configuration({
+      status: 'ready_to_confirm',
+      inputs: [{
+        inputId: 'para', alias: 'para', kind: 'struct', schemaRef: 'frames.para', required: true, position: 1,
+        binding: { resourceId: 'resource-7', mapping: { baselineValues: { max_iter: 20 } } },
+        resourceOptions: [{ resourceId: 'resource-7', displayName: '牛顿参数', alias: 'para', contentHash: 'a', rowCount: 1 }],
+        structCard: { schemaRef: 'frames.para', fields: [card({ name: 'max_iter' })], values: { max_iter: 30 }, resultSelectorFields: [] },
+      }],
+    })
+    render(<StudyConfigurationCard message={message(ready)} notify={vi.fn()} />)
+
+    expect(screen.getByText(/牛顿参数（para） · 运行覆盖：max_iter/)).toBeInTheDocument()
+    expect(screen.queryByText(/覆盖当前资源|另存/)).not.toBeInTheDocument()
   })
 
   it('offers generation only for the complete summary and confirms explicitly', async () => {

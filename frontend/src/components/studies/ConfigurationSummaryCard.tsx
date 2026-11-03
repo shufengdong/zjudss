@@ -1,14 +1,34 @@
 import type { StudyConfigurationView, StudyInputCard } from '../../types'
 
+function structBaseline(input: StudyInputCard): Record<string, unknown> {
+  const mapping = input.binding.mapping
+  if (mapping && typeof mapping === 'object' && !Array.isArray(mapping)) {
+    const baseline = (mapping as Record<string, unknown>).baselineValues
+    if (baseline && typeof baseline === 'object' && !Array.isArray(baseline)) {
+      return baseline as Record<string, unknown>
+    }
+  }
+  return input.structCard?.values ?? {}
+}
+
+function structDifferences(input: StudyInputCard): string[] {
+  if (input.kind !== 'struct' || !input.structCard) return []
+  const baseline = structBaseline(input)
+  const selectors = new Set(input.structCard.resultSelectorFields ?? [])
+  return input.structCard.fields
+    .filter((field) => !selectors.has(field.name))
+    .filter((field) => JSON.stringify(input.structCard!.values[field.name]) !== JSON.stringify(baseline[field.name]))
+    .map((field) => field.name)
+}
+
 function resourceLabel(input: StudyInputCard): string {
-  if (!input.binding.resourceId) return `${input.alias} → 新资源`
+  const differences = structDifferences(input)
+  const override = differences.length ? ` · 运行覆盖：${differences.join('、')}` : ''
+  if (!input.binding.resourceId) {
+    return `${input.alias} → ${input.kind === 'struct' ? '目录默认值' : '新资源'}${override}`
+  }
   const resource = input.resourceOptions.find((option) => option.resourceId === input.binding.resourceId)
-  const metadata = input.binding.mapping && typeof input.binding.mapping === 'object'
-    ? input.binding.mapping as { replacementAction?: unknown; differences?: unknown }
-    : null
-  const action = metadata?.replacementAction === 'replace' ? '覆盖' : metadata?.replacementAction === 'save_as_new' ? '另存' : null
-  const differences = Array.isArray(metadata?.differences) ? metadata.differences.length : 0
-  return `${input.alias} → ${resource ? `${resource.displayName}（${resource.alias}）` : `资源 #${input.binding.resourceId}`}${action ? ` · ${action}` : ''}${differences ? ` · ${differences} 项修改` : ''}`
+  return `${input.alias} → ${resource ? `${resource.displayName}（${resource.alias}）` : `资源 #${input.binding.resourceId}`}${override}`
 }
 
 export default function ConfigurationSummaryCard({ configuration, busy, onConfirm }: {

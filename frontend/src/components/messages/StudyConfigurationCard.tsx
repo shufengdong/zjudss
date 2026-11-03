@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { bindStudyResource, confirmStudyConfiguration, mapStudyResource, selectStudyFacade, selectStudyResults, updateStudyStruct } from '../../api/client'
 import { useStudyConfiguration } from '../../hooks/useStudyConfiguration'
-import type { ColumnMapping, ReplacementAction, StudyConfigMessage, StudyInputCard } from '../../types'
+import type { ColumnMapping, StudyConfigMessage, StudyInputCard } from '../../types'
 import ColumnMappingCard from '../studies/ColumnMappingCard'
 import ConfigurationSummaryCard from '../studies/ConfigurationSummaryCard'
 import FacadeChoiceCard from '../studies/FacadeChoiceCard'
@@ -33,7 +33,7 @@ function StudyInputSection({ input, busy, onBind, onMap, onStruct }: {
   input: StudyInputCard; busy: boolean
   onBind: (resourceId: string | null) => void
   onMap: (sourceResourceId: string, mappings: ColumnMapping[]) => void
-  onStruct: (values: Record<string, unknown>, action?: ReplacementAction) => void
+  onStruct: (values: Record<string, unknown>) => void
 }) {
   if (input.kind === 'model') return <ReadyInput input={input} text={input.binding.modelTableName ? '已就绪' : '等待 active 模型'} />
   if (mappingFlag(input, 'selectionRequired')) return <ResourceBindingCard input={input} busy={busy} onSave={onBind} />
@@ -65,7 +65,7 @@ export default function StudyConfigurationCard({ message, onWorkflowStarted, not
         input={input}
         busy={busy}
         onBind={(resourceId) => void run((current) => bindStudyResource(configId, input.inputId, current.revision, resourceId))}
-        onStruct={(values, replacementAction) => void run((current) => updateStudyStruct(configId, input.inputId, { expectedRevision: current.revision, values, replacementAction }))}
+        onStruct={(values) => void run((current) => updateStudyStruct(configId, input.inputId, { expectedRevision: current.revision, values }))}
         onMap={(sourceResourceId, mappings) => void run((current) => mapStudyResource(configId, input.inputId, { expectedRevision: current.revision, sourceResourceId, displayName: `${input.alias} 映射`, alias: `${input.alias}_mapped`, mappings }))}
       />)}
       {['collecting_inputs', 'ready_to_confirm'].includes(configuration.status) && <ResultSelectionCard card={configuration.results} busy={busy} onSave={(results) => void run((current) => selectStudyResults(configId, current.revision, results))} />}
