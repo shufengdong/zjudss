@@ -30,8 +30,8 @@ pub use history::{HistoryHit, HistoryRepo, SearchFilters};
 pub(crate) use managed_workflow::recover_interrupted_workflows;
 pub use managed_workflow::{
     ConfirmStartOutcome, ManagedWorkflowAggregate, ManagedWorkflowRepo, ManagedWorkflowRepoError,
-    NewWorkflowCandidate, PendingRunDataset, WorkflowAttemptUpdate, WorkflowReplacementMaterial,
-    WorkflowStructOverlayMaterial,
+    NewWorkflowCandidate, PendingRunDataset, RetryStructOverlayRequest, WorkflowAttemptUpdate,
+    WorkflowReplacementMaterial, WorkflowStructOverlayMaterial,
 };
 pub use message::MessageRepo;
 pub use result::{DeleteResultError, DeletedResult, LineageRow, ResultRepo, ResultViewRow};

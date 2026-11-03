@@ -131,6 +131,7 @@ pub struct RunService {
     repo: RunRepo,
     scripts: ScriptRepo,
     artifacts: ArtifactService,
+    data_resources: super::DataResourceService,
     engine: Arc<dyn SimEngine>,
     scheduler: RunScheduler,
     messages: MessageRepo,
@@ -147,6 +148,7 @@ pub(crate) struct RunServiceDependencies {
     pub repo: RunRepo,
     pub scripts: ScriptRepo,
     pub artifacts: ArtifactService,
+    pub data_resources: super::DataResourceService,
     pub engine: Arc<dyn SimEngine>,
     pub scheduler: RunScheduler,
     pub messages: MessageRepo,
@@ -165,6 +167,7 @@ impl RunService {
             repo,
             scripts,
             artifacts,
+            data_resources,
             engine,
             scheduler,
             messages,
@@ -180,6 +183,7 @@ impl RunService {
             repo,
             scripts,
             artifacts,
+            data_resources,
             engine,
             scheduler,
             messages,
@@ -208,7 +212,21 @@ impl RunService {
             .scheduler
             .try_admit(&user.id, script.session_id)
             .map_err(|_| RunError::QueueFull)?;
-        let created = self
+        let overlay_requests = self
+            .repo
+            .struct_overlay_requests(&user.id, script_id)
+            .await?;
+        let overlays = self
+            .data_resources
+            .materialize_retry_struct_overlays(user, &overlay_requests)
+            .await
+            .map_err(|error| RunError::Invalid(error.to_string()))?;
+        let overlay_artifact_ids = overlays
+            .iter()
+            .filter(|overlay| overlay.owns_artifact_reference)
+            .map(|overlay| overlay.artifact_id)
+            .collect::<Vec<_>>();
+        let result = self
             .repo
             .create(
                 &user.id,
@@ -218,8 +236,16 @@ impl RunService {
                     engine_contract_version: ENGINE_CONTRACT_VERSION.into(),
                     created_at_ms: now_ms(),
                 },
+                overlays,
             )
-            .await?;
+            .await;
+        for artifact_id in overlay_artifact_ids {
+            let _ = self
+                .artifacts
+                .release(user.storage_scope_id, artifact_id)
+                .await;
+        }
+        let created = result?;
         if !created.replayed {
             let service = self.clone();
             let principal = user.clone();

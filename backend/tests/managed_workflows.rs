@@ -1,6 +1,6 @@
 mod common;
 
-use arrow_array::{Array, StringArray};
+use arrow_array::{Array, StringArray, UInt32Array};
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use diesel::prelude::*;
@@ -1062,6 +1062,43 @@ async fn save_as_new_struct_keeps_the_facade_alias_for_engine_injection() {
         .finalize_with_script(&user, workflow.id, candidate.attempts[0].id, true, None)
         .await
         .unwrap();
+    let current_para = app
+        .state
+        .data_resource_service
+        .get(&user, &aliases.resource_id)
+        .await
+        .unwrap();
+    let page = app
+        .state
+        .data_resource_service
+        .rows(&user, &aliases.resource_id, Some(1), None, Vec::new())
+        .await
+        .unwrap();
+    let mut latest_values = page
+        .columns
+        .into_iter()
+        .zip(page.rows[0].clone())
+        .collect::<serde_json::Map<_, _>>();
+    latest_values.insert("max_iter".into(), json!(77));
+    let preview = app
+        .state
+        .data_resource_service
+        .preview_structured_replacement(
+            &user,
+            &aliases.resource_id,
+            &current_para.content_hash,
+            "frames.para",
+            Value::Object(latest_values),
+        )
+        .await
+        .unwrap();
+    let latest_para = app
+        .state
+        .data_resource_service
+        .confirm_structured_replacement(&user, &preview.preview_token, ReplacementAction::Replace)
+        .await
+        .unwrap()
+        .unwrap();
     let rerun = app
         .state
         .run_service
@@ -1076,7 +1113,40 @@ async fn save_as_new_struct_keeps_the_facade_alias_for_engine_injection() {
         .unwrap();
     let frozen: Value = serde_json::from_str(&rerun.run.input_snapshot_json).unwrap();
     assert_eq!(frozen["resources"][0]["alias"], "para");
-    assert_eq!(frozen["resources"][0]["resourceId"], aliases.resource_id);
+    assert_eq!(frozen["resources"][0]["resourceId"], latest_para.id);
+    let rerun_para = frozen["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|resource| resource["alias"] == "para")
+        .unwrap();
+    let file = app
+        .state
+        .artifact_service
+        .open_owned(
+            user.storage_scope_id,
+            rerun_para["artifactId"].as_i64().unwrap() as i32,
+        )
+        .await
+        .unwrap();
+    let mut reader = ParquetRecordBatchReaderBuilder::try_new(file)
+        .unwrap()
+        .build()
+        .unwrap();
+    let batch = reader.next().unwrap().unwrap();
+    let result = batch
+        .column(batch.schema().index_of("result").unwrap())
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+    assert!(!result.is_null(0));
+    assert_eq!(result.value(0), "bus_voltage");
+    let max_iter = batch
+        .column(batch.schema().index_of("max_iter").unwrap())
+        .as_any()
+        .downcast_ref::<UInt32Array>()
+        .unwrap();
+    assert_eq!(max_iter.value(0), 77);
 }
 
 #[tokio::test]

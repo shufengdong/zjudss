@@ -156,6 +156,18 @@ pub struct WorkflowStructOverlayMaterial {
     pub owns_artifact_reference: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetryStructOverlayRequest {
+    pub input_id: String,
+    pub source_resource_id: String,
+    pub source_artifact_id: i32,
+    pub source_content_hash: String,
+    pub source_schema_hash: String,
+    pub schema_ref: String,
+    pub overrides: serde_json::Value,
+}
+
 impl ManagedWorkflowRepo {
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -465,6 +477,7 @@ impl ManagedWorkflowRepo {
         &self,
         user: &UserId,
         token_hash: String,
+        overlays: Vec<WorkflowStructOverlayMaterial>,
         engine_snapshot_id: String,
         current_facade_hash: String,
         correction_budget: i32,
@@ -483,8 +496,9 @@ impl ManagedWorkflowRepo {
                 let stored: serde_json::Value = serde_json::from_str(&preview.impact_json).map_err(|error| RepoError::Storage(error.to_string()))?;
                 let script_id = stored.get("scriptId").and_then(serde_json::Value::as_i64).and_then(|id| i32::try_from(id).ok()).ok_or(ManagedWorkflowRepoError::InvalidRetryToken)?;
                 let client_retry_id = stored.get("clientRetryId").and_then(serde_json::Value::as_str).ok_or(ManagedWorkflowRepoError::InvalidRetryToken)?;
-                let material = retry_material(conn, &user, script_id, client_retry_id, &engine_snapshot_id, &current_facade_hash)?;
+                let mut material = retry_material(conn, &user, script_id, client_retry_id, &engine_snapshot_id, &current_facade_hash)?;
                 if material.source_workflow_id != preview.workflow_id || material.impact_hash != preview.impact_hash { return Err(ManagedWorkflowRepoError::RetryImpactChanged); }
+                apply_retry_overlays(&mut material, &overlays)?;
                 let aggregate = insert_retry_workflow(conn, &user, material, correction_budget, &agent_bundle_version, &agent_skill_refs_json, now_ms)?;
                 diesel::delete(schema::retry_previews::table.find(token_hash)).execute(conn)?;
                 Ok(aggregate)
@@ -514,6 +528,62 @@ impl ManagedWorkflowRepo {
                 .optional()?
                 .flatten()
                 .ok_or(ManagedWorkflowRepoError::InvalidRetryToken)
+        })
+        .await
+        .map_err(|error| ManagedWorkflowRepoError::Repository(RepoError::Join(error)))?
+    }
+
+    pub async fn retry_struct_overlay_requests(
+        &self,
+        user: &UserId,
+        token_hash: &str,
+        engine_snapshot_id: &str,
+        current_facade_hash: &str,
+        now_ms: i64,
+    ) -> Result<Vec<RetryStructOverlayRequest>, ManagedWorkflowRepoError> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        let token_hash = token_hash.to_string();
+        let engine_snapshot_id = engine_snapshot_id.to_string();
+        let current_facade_hash = current_facade_hash.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            #[derive(QueryableByName)]
+            struct Preview {
+                #[diesel(sql_type = diesel::sql_types::Integer)]
+                workflow_id: i32,
+                #[diesel(sql_type = diesel::sql_types::Text)]
+                impact_hash: String,
+                #[diesel(sql_type = diesel::sql_types::Text)]
+                impact_json: String,
+            }
+            let preview = diesel::sql_query("SELECT workflow_id,impact_hash,impact_json FROM retry_previews WHERE token_hash=?1 AND user_id=?2 AND expires_at_ms>=?3")
+                .bind::<diesel::sql_types::Text,_>(&token_hash).bind::<diesel::sql_types::Text,_>(&user).bind::<diesel::sql_types::BigInt,_>(now_ms).get_result::<Preview>(&mut conn).optional()?.ok_or(ManagedWorkflowRepoError::InvalidRetryToken)?;
+            let stored: serde_json::Value = serde_json::from_str(&preview.impact_json)
+                .map_err(|error| RepoError::Storage(error.to_string()))?;
+            let script_id = stored
+                .get("scriptId")
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|id| i32::try_from(id).ok())
+                .ok_or(ManagedWorkflowRepoError::InvalidRetryToken)?;
+            let client_retry_id = stored
+                .get("clientRetryId")
+                .and_then(serde_json::Value::as_str)
+                .ok_or(ManagedWorkflowRepoError::InvalidRetryToken)?;
+            let material = retry_material(
+                &mut conn,
+                &user,
+                script_id,
+                client_retry_id,
+                &engine_snapshot_id,
+                &current_facade_hash,
+            )?;
+            if material.source_workflow_id != preview.workflow_id
+                || material.impact_hash != preview.impact_hash
+            {
+                return Err(ManagedWorkflowRepoError::RetryImpactChanged);
+            }
+            Ok(material.pending_overlays)
         })
         .await
         .map_err(|error| ManagedWorkflowRepoError::Repository(RepoError::Join(error)))?
@@ -1546,6 +1616,7 @@ struct RetryMaterial {
     facade_contract_hash: String,
     result_contract_json: String,
     inputs: Vec<RetryFrozenInput>,
+    pending_overlays: Vec<RetryStructOverlayRequest>,
     input_snapshot_json: String,
     changes: serde_json::Value,
     impact_json: String,
@@ -1606,6 +1677,7 @@ fn retry_material(
     let active = diesel::sql_query("SELECT v.id version_id,v.content_hash FROM workspaces w JOIN model_versions v ON v.id=w.active_version_id WHERE w.session_id=?1 AND v.deleted_at_ms IS NULL")
         .bind::<diesel::sql_types::Integer,_>(source.workflow.session_id).get_result::<Active>(conn).optional()?;
     let mut inputs = Vec::new();
+    let mut pending_overlays = Vec::new();
     let mut changes = Vec::new();
     for frozen in &source.inputs {
         if frozen.input_kind == "model" {
@@ -1664,25 +1736,74 @@ fn retry_material(
             if resource.schema_ref.as_deref() != frozen.schema_ref.as_deref() {
                 return Err(ManagedWorkflowRepoError::RetryInputUnavailable);
             }
-            if frozen.resource_id.as_deref() != Some(&resource.id)
-                || frozen.content_hash.as_deref() != Some(&resource.content_hash)
-                || frozen.schema_hash.as_deref() != Some(&resource.schema_hash)
-            {
-                changes.push(json!({"input":frozen.input_name,"kind":frozen.input_kind,"before":{"resourceId":frozen.resource_id,"contentHash":frozen.content_hash,"schemaHash":frozen.schema_hash},"after":{"resourceId":resource.id,"contentHash":resource.content_hash,"schemaHash":resource.schema_hash}}));
+            let frozen_source = frozen_snapshot.get("source").unwrap_or(&frozen_snapshot);
+            let frozen_resource_id = frozen_source
+                .get("resourceId")
+                .and_then(serde_json::Value::as_str)
+                .or(frozen.resource_id.as_deref());
+            let frozen_source_hash = frozen_source
+                .get("contentHash")
+                .and_then(serde_json::Value::as_str)
+                .or(frozen.content_hash.as_deref());
+            let frozen_schema_hash = frozen_source
+                .get("schemaHash")
+                .and_then(serde_json::Value::as_str)
+                .or(frozen.schema_hash.as_deref());
+            let changed = frozen_resource_id != Some(&resource.id)
+                || frozen_source_hash != Some(&resource.content_hash)
+                || frozen_schema_hash != Some(&resource.schema_hash);
+            if changed {
+                changes.push(json!({"input":frozen.input_name,"kind":frozen.input_kind,"before":{"resourceId":frozen_resource_id,"contentHash":frozen_source_hash,"schemaHash":frozen_schema_hash},"after":{"resourceId":resource.id,"contentHash":resource.content_hash,"schemaHash":resource.schema_hash}}));
+                if let Some(overrides) = frozen_snapshot
+                    .get("effective")
+                    .and_then(|effective| effective.get("overrides"))
+                    .filter(|overrides| {
+                        overrides
+                            .as_object()
+                            .is_some_and(|values| !values.is_empty())
+                    })
+                {
+                    pending_overlays.push(RetryStructOverlayRequest {
+                        input_id: frozen.input_name.clone(),
+                        source_resource_id: resource.id.clone(),
+                        source_artifact_id: resource.artifact_id,
+                        source_content_hash: resource.content_hash.clone(),
+                        source_schema_hash: resource.schema_hash.clone(),
+                        schema_ref: resource
+                            .schema_ref
+                            .clone()
+                            .ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?,
+                        overrides: overrides.clone(),
+                    });
+                }
             }
-            inputs.push(RetryFrozenInput { input_name: frozen.input_name.clone(), input_kind: frozen.input_kind.clone(), resource_id: Some(resource.id.clone()), model_version_id: None, artifact_id: resource.artifact_id, input_alias: input_alias.into(), resource_alias: Some(resource_alias.into()), schema_ref: resource.schema_ref.clone(), schema_hash: Some(resource.schema_hash.clone()), content_hash: resource.content_hash.clone(), snapshot: json!({"resourceId":resource.id,"alias":input_alias,"resourceAlias":resource_alias,"schemaRef":resource.schema_ref,"schemaHash":resource.schema_hash,"contentHash":resource.content_hash,"sourceKind":resource.source_kind,"lineage":serde_json::from_str::<serde_json::Value>(&resource.lineage_json).unwrap_or(serde_json::Value::Null)}) });
+            if !changed && frozen_snapshot.get("effective").is_some() {
+                inputs.push(RetryFrozenInput {
+                    input_name: frozen.input_name.clone(),
+                    input_kind: frozen.input_kind.clone(),
+                    resource_id: Some(resource.id.clone()),
+                    model_version_id: None,
+                    artifact_id: frozen
+                        .artifact_id
+                        .ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?,
+                    input_alias: input_alias.into(),
+                    resource_alias: Some(resource_alias.into()),
+                    schema_ref: resource.schema_ref.clone(),
+                    schema_hash: Some(resource.schema_hash.clone()),
+                    content_hash: frozen
+                        .content_hash
+                        .clone()
+                        .ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?,
+                    snapshot: frozen_snapshot,
+                });
+            } else {
+                inputs.push(RetryFrozenInput { input_name: frozen.input_name.clone(), input_kind: frozen.input_kind.clone(), resource_id: Some(resource.id.clone()), model_version_id: None, artifact_id: resource.artifact_id, input_alias: input_alias.into(), resource_alias: Some(resource_alias.into()), schema_ref: resource.schema_ref.clone(), schema_hash: Some(resource.schema_hash.clone()), content_hash: resource.content_hash.clone(), snapshot: json!({"resourceId":resource.id,"alias":input_alias,"resourceAlias":resource_alias,"schemaRef":resource.schema_ref,"schemaHash":resource.schema_hash,"contentHash":resource.content_hash,"sourceKind":resource.source_kind,"lineage":serde_json::from_str::<serde_json::Value>(&resource.lineage_json).unwrap_or(serde_json::Value::Null)}) });
+            }
         }
     }
-    let model_inputs = inputs
-        .iter()
-        .filter(|input| input.input_kind == "model")
-        .collect::<Vec<_>>();
-    let input_snapshot_json = json!({
-        "model": model_inputs.first().map(|first| json!({"modelVersionId":first.model_version_id,"contentHash":active.as_ref().map(|value|value.content_hash.clone()),"tables":model_inputs.iter().map(|input|input.input_alias.clone()).collect::<Vec<_>>()})),
-        "resources": inputs.iter().filter(|input| input.input_kind != "model").map(|input|json!({"inputId":input.input_name,"alias":input.input_alias,"resourceAlias":input.resource_alias,"kind":input.input_kind,"resourceId":input.resource_id,"schemaRef":input.schema_ref,"schemaHash":input.schema_hash,"contentHash":input.content_hash})).collect::<Vec<_>>()
-    }).to_string();
+    let input_snapshot_json = retry_input_snapshot_json(&inputs);
     let changes = serde_json::Value::Array(changes);
-    let impact = json!({"sourceWorkflowId":source_workflow_id,"scriptId":script_id,"clientRetryId":client_retry_id,"engineSnapshotId":engine_snapshot_id,"facadeContractHash":current_facade_hash,"inputs":inputs,"changes":changes});
+    let impact = json!({"sourceWorkflowId":source_workflow_id,"scriptId":script_id,"clientRetryId":client_retry_id,"engineSnapshotId":engine_snapshot_id,"facadeContractHash":current_facade_hash,"inputs":inputs,"pendingOverlays":pending_overlays,"changes":changes});
     let impact_json = crate::application::canonical_json(&impact);
     let impact_hash = hex::encode(sha2::Sha256::digest(impact_json.as_bytes()));
     Ok(RetryMaterial {
@@ -1697,11 +1818,90 @@ fn retry_material(
         facade_contract_hash: current_facade_hash.into(),
         result_contract_json,
         inputs,
+        pending_overlays,
         input_snapshot_json,
         changes,
         impact_json,
         impact_hash,
     })
+}
+
+fn retry_input_snapshot_json(inputs: &[RetryFrozenInput]) -> String {
+    let model_inputs = inputs
+        .iter()
+        .filter(|input| input.input_kind == "model")
+        .collect::<Vec<_>>();
+    let model_content_hash = model_inputs.first().and_then(|input| {
+        input
+            .snapshot
+            .get("modelContentHash")
+            .and_then(serde_json::Value::as_str)
+    });
+    json!({
+        "model": model_inputs.first().map(|first| json!({"modelVersionId":first.model_version_id,"contentHash":model_content_hash,"tables":model_inputs.iter().map(|input|input.input_alias.clone()).collect::<Vec<_>>()})),
+        "resources": inputs.iter().filter(|input| input.input_kind != "model").map(|input|json!({"inputId":input.input_name,"alias":input.input_alias,"resourceAlias":input.resource_alias,"kind":input.input_kind,"resourceId":input.resource_id,"schemaRef":input.schema_ref,"schemaHash":input.schema_hash,"contentHash":input.content_hash})).collect::<Vec<_>>()
+    }).to_string()
+}
+
+fn apply_retry_overlays(
+    material: &mut RetryMaterial,
+    overlays: &[WorkflowStructOverlayMaterial],
+) -> Result<(), ManagedWorkflowRepoError> {
+    if material.pending_overlays.len() != overlays.len() {
+        return Err(ManagedWorkflowRepoError::RetryImpactChanged);
+    }
+    for request in &material.pending_overlays {
+        let overlay = overlays
+            .iter()
+            .find(|overlay| overlay.input_id == request.input_id)
+            .ok_or(ManagedWorkflowRepoError::RetryImpactChanged)?;
+        if overlay.source_resource_id != request.source_resource_id
+            || overlay.source_artifact_id != request.source_artifact_id
+            || overlay.source_content_hash != request.source_content_hash
+            || overlay.source_schema_hash != request.source_schema_hash
+            || overlay.schema_ref != request.schema_ref
+            || serde_json::from_str::<serde_json::Value>(&overlay.overrides_json)
+                .ok()
+                .as_ref()
+                != Some(&request.overrides)
+        {
+            return Err(ManagedWorkflowRepoError::RetryImpactChanged);
+        }
+        let input = material
+            .inputs
+            .iter_mut()
+            .find(|input| input.input_name == request.input_id)
+            .ok_or(ManagedWorkflowRepoError::RetryImpactChanged)?;
+        let source = json!({
+            "resourceId": overlay.source_resource_id,
+            "resourceAlias": input.resource_alias,
+            "artifactId": overlay.source_artifact_id,
+            "schemaRef": overlay.schema_ref,
+            "schemaHash": overlay.source_schema_hash,
+            "contentHash": overlay.source_content_hash,
+        });
+        input.artifact_id = overlay.artifact_id;
+        input.content_hash = overlay.content_hash.clone();
+        input.snapshot = json!({
+            "resourceId": overlay.source_resource_id,
+            "alias": input.input_alias,
+            "resourceAlias": input.resource_alias,
+            "schemaRef": overlay.schema_ref,
+            "schemaHash": overlay.source_schema_hash,
+            "contentHash": overlay.content_hash,
+            "source": source,
+            "effective": {
+                "artifactId": overlay.artifact_id,
+                "contentHash": overlay.content_hash,
+                "values": serde_json::from_str::<serde_json::Value>(&overlay.effective_values_json)
+                    .map_err(|error| RepoError::Storage(error.to_string()))?,
+                "overrides": request.overrides,
+            },
+        });
+    }
+    material.input_snapshot_json = retry_input_snapshot_json(&material.inputs);
+    material.pending_overlays.clear();
+    Ok(())
 }
 
 fn insert_retry_workflow(

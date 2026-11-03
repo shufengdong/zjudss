@@ -555,6 +555,7 @@ impl AppState {
             repo: RunRepo::new(pool.clone()),
             scripts: ScriptRepo::new(pool.clone()),
             artifacts: artifact_service.clone(),
+            data_resources: data_resource_service.clone(),
             engine: engine.clone(),
             scheduler: scheduler.clone(),
             messages: message_repo.clone(),

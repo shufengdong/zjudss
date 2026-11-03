@@ -2,7 +2,10 @@ use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Integer, Nullable, Text};
 use sha2::Digest;
 
-use super::{ArtifactDraft, ArtifactRepo, RepoError, RepoResult, StateTransition};
+use super::{
+    ArtifactDraft, ArtifactRepo, RepoError, RepoResult, RetryStructOverlayRequest, StateTransition,
+    WorkflowStructOverlayMaterial,
+};
 use crate::agent::FailureAnalysis;
 use crate::application::diagnostics::FailureAnalysisStatus;
 use crate::auth::UserId;
@@ -167,10 +170,95 @@ impl RunRepo {
         Self { pool }
     }
 
+    pub async fn struct_overlay_requests(
+        &self,
+        user: &UserId,
+        script_id: i32,
+    ) -> Result<Vec<RetryStructOverlayRequest>, RunRepoError> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            #[derive(QueryableByName)]
+            struct OverlayRow {
+                #[diesel(sql_type = Text)]
+                input_name: String,
+                #[diesel(sql_type = Text)]
+                resource_id: String,
+                #[diesel(sql_type = Integer)]
+                artifact_id: i32,
+                #[diesel(sql_type = Text)]
+                content_hash: String,
+                #[diesel(sql_type = Text)]
+                schema_hash: String,
+                #[diesel(sql_type = Text)]
+                schema_ref: String,
+                #[diesel(sql_type = Text)]
+                snapshot_json: String,
+            }
+            let rows = diesel::sql_query(
+                "SELECT i.input_name,d.id resource_id,d.normalized_artifact_id artifact_id,a.sha256 content_hash,d.schema_hash,d.declared_schema_ref schema_ref,i.snapshot_json \
+                 FROM script_resources s \
+                 JOIN sessions se ON se.id=s.session_id \
+                 JOIN workflow_input_snapshots i ON i.workflow_id=s.managed_workflow_id AND i.input_kind<>'model' \
+                 JOIN data_resources d ON d.session_id=s.session_id AND lower(d.alias)=lower(COALESCE(json_extract(i.snapshot_json,'$.resourceAlias'),i.input_alias)) AND d.status='live' \
+                 JOIN artifacts a ON a.id=d.normalized_artifact_id \
+                 WHERE s.id=?1 AND se.user_id=?2 AND se.deletion_status='live' AND s.source_kind='agent'",
+            )
+            .bind::<Integer, _>(script_id)
+            .bind::<Text, _>(&user)
+            .load::<OverlayRow>(&mut conn)?;
+            let mut requests = Vec::new();
+            for row in rows {
+                let snapshot: serde_json::Value = serde_json::from_str(&row.snapshot_json)
+                    .map_err(|error| RepoError::Storage(error.to_string()))?;
+                let Some(overrides) = snapshot
+                    .get("effective")
+                    .and_then(|effective| effective.get("overrides"))
+                    .filter(|overrides| {
+                        overrides
+                            .as_object()
+                            .is_some_and(|values| !values.is_empty())
+                    })
+                else {
+                    continue;
+                };
+                let source = snapshot.get("source").unwrap_or(&snapshot);
+                let source_unchanged = source
+                    .get("resourceId")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(row.resource_id.as_str())
+                    && source
+                        .get("contentHash")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(row.content_hash.as_str())
+                    && source
+                        .get("schemaHash")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(row.schema_hash.as_str());
+                if !source_unchanged {
+                    requests.push(RetryStructOverlayRequest {
+                        input_id: row.input_name,
+                        source_resource_id: row.resource_id,
+                        source_artifact_id: row.artifact_id,
+                        source_content_hash: row.content_hash,
+                        source_schema_hash: row.schema_hash,
+                        schema_ref: row.schema_ref,
+                        overrides: overrides.clone(),
+                    });
+                }
+            }
+            Ok(requests)
+        })
+        .await
+        .map_err(|error| RunRepoError::Repository(RepoError::Join(error)))?
+    }
+
     pub async fn create(
         &self,
         user: &UserId,
         request: CreateRun,
+        overlays: Vec<WorkflowStructOverlayMaterial>,
     ) -> Result<CreatedRun, RunRepoError> {
         let pool = self.pool.clone();
         let user = user.0.clone();
@@ -253,13 +341,16 @@ impl RunRepo {
                     #[diesel(sql_type=Text)] content_hash: String,
                     #[diesel(sql_type=Text)] source_kind: String,
                     #[diesel(sql_type=Text)] lineage_json: String,
+                    #[diesel(sql_type=Nullable<Integer>)] frozen_artifact_id: Option<i32>,
+                    #[diesel(sql_type=Nullable<Text>)] frozen_content_hash: Option<String>,
+                    #[diesel(sql_type=Nullable<Text>)] snapshot_json: Option<String>,
                 }
                 let resource_rows = if managed {
                     let workflow_id = script.managed_workflow_id.expect("managed workflow");
-                    diesel::sql_query("SELECT i.input_name,i.input_kind,d.id resource_id,i.input_alias alias,d.normalized_artifact_id artifact_id,i.schema_ref expected_schema_ref,d.declared_schema_ref current_schema_ref,d.schema_hash,a.sha256 content_hash,d.source_kind,d.lineage_json FROM workflow_input_snapshots i JOIN data_resources d ON lower(d.alias)=lower(COALESCE(json_extract(i.snapshot_json,'$.resourceAlias'),i.input_alias)) AND d.session_id=?1 AND d.status='live' JOIN artifacts a ON a.id=d.normalized_artifact_id WHERE i.workflow_id=?2 AND i.input_kind<>'model' ORDER BY i.input_name")
+                    diesel::sql_query("SELECT i.input_name,i.input_kind,d.id resource_id,i.input_alias alias,d.normalized_artifact_id artifact_id,i.schema_ref expected_schema_ref,d.declared_schema_ref current_schema_ref,d.schema_hash,a.sha256 content_hash,d.source_kind,d.lineage_json,i.artifact_id frozen_artifact_id,i.content_hash frozen_content_hash,i.snapshot_json FROM workflow_input_snapshots i JOIN data_resources d ON lower(d.alias)=lower(COALESCE(json_extract(i.snapshot_json,'$.resourceAlias'),i.input_alias)) AND d.session_id=?1 AND d.status='live' JOIN artifacts a ON a.id=d.normalized_artifact_id WHERE i.workflow_id=?2 AND i.input_kind<>'model' ORDER BY i.input_name")
                         .bind::<Integer, _>(script.session_id).bind::<Integer, _>(workflow_id).load::<ResourceRow>(conn)?
                 } else {
-                    diesel::sql_query("SELECT NULL input_name,NULL input_kind,d.id resource_id,d.alias,d.normalized_artifact_id artifact_id,NULL expected_schema_ref,d.declared_schema_ref current_schema_ref,d.schema_hash,a.sha256 content_hash,d.source_kind,d.lineage_json FROM data_resources d JOIN artifacts a ON a.id=d.normalized_artifact_id WHERE d.session_id=?1 AND d.status='live' ORDER BY d.alias")
+                    diesel::sql_query("SELECT NULL input_name,NULL input_kind,d.id resource_id,d.alias,d.normalized_artifact_id artifact_id,NULL expected_schema_ref,d.declared_schema_ref current_schema_ref,d.schema_hash,a.sha256 content_hash,d.source_kind,d.lineage_json,NULL frozen_artifact_id,NULL frozen_content_hash,NULL snapshot_json FROM data_resources d JOIN artifacts a ON a.id=d.normalized_artifact_id WHERE d.session_id=?1 AND d.status='live' ORDER BY d.alias")
                         .bind::<Integer, _>(script.session_id).load::<ResourceRow>(conn)?
                 };
                 if managed {
@@ -270,18 +361,50 @@ impl RunRepo {
                     if resource_rows.len() as i64 != expected { incompatible.push("missing_data_resource".into()); }
                     if !incompatible.is_empty() { return Err(RunRepoError::ScriptIncompatible(incompatible)); }
                 }
-                let resources = resource_rows.into_iter().map(|row| FrozenRunResource {
-                    input_name: row.input_name,
-                    input_kind: row.input_kind,
-                    resource_id: row.resource_id,
-                    alias: row.alias,
-                    artifact_id: row.artifact_id,
-                    schema_ref: row.current_schema_ref,
-                    schema_hash: row.schema_hash,
-                    content_hash: row.content_hash,
-                    source_kind: row.source_kind,
-                    lineage: serde_json::from_str(&row.lineage_json).unwrap_or(serde_json::Value::Null),
-                }).collect::<Vec<_>>();
+                let resources = resource_rows.into_iter().map(|row| {
+                    let mut artifact_id = row.artifact_id;
+                    let mut content_hash = row.content_hash.clone();
+                    if let Some(snapshot_json) = &row.snapshot_json {
+                        let snapshot: serde_json::Value = serde_json::from_str(snapshot_json)
+                            .map_err(|error| RunRepoError::Repository(RepoError::Storage(error.to_string())))?;
+                        if snapshot.get("effective").is_some() {
+                            let source = snapshot.get("source").unwrap_or(&snapshot);
+                            let source_unchanged = source.get("resourceId").and_then(serde_json::Value::as_str) == Some(row.resource_id.as_str())
+                                && source.get("contentHash").and_then(serde_json::Value::as_str) == Some(row.content_hash.as_str())
+                                && source.get("schemaHash").and_then(serde_json::Value::as_str) == Some(row.schema_hash.as_str());
+                            if source_unchanged {
+                                artifact_id = row.frozen_artifact_id.ok_or(RunRepoError::ScriptIncompatible(vec![row.input_name.clone().unwrap_or_default()]))?;
+                                content_hash = row.frozen_content_hash.clone().ok_or(RunRepoError::ScriptIncompatible(vec![row.input_name.clone().unwrap_or_default()]))?;
+                            } else {
+                                let input_name = row.input_name.as_deref().unwrap_or_default();
+                                let overlay = overlays.iter().find(|overlay| overlay.input_id == input_name)
+                                    .ok_or_else(|| RunRepoError::ScriptIncompatible(vec![input_name.into()]))?;
+                                if overlay.source_resource_id != row.resource_id
+                                    || overlay.source_artifact_id != row.artifact_id
+                                    || overlay.source_content_hash != row.content_hash
+                                    || overlay.source_schema_hash != row.schema_hash
+                                    || overlay.schema_ref.as_str() != row.current_schema_ref.as_deref().unwrap_or_default()
+                                {
+                                    return Err(RunRepoError::ScriptIncompatible(vec![input_name.into()]));
+                                }
+                                artifact_id = overlay.artifact_id;
+                                content_hash = overlay.content_hash.clone();
+                            }
+                        }
+                    }
+                    Ok(FrozenRunResource {
+                        input_name: row.input_name,
+                        input_kind: row.input_kind,
+                        resource_id: row.resource_id,
+                        alias: row.alias,
+                        artifact_id,
+                        schema_ref: row.current_schema_ref,
+                        schema_hash: row.schema_hash,
+                        content_hash,
+                        source_kind: row.source_kind,
+                        lineage: serde_json::from_str(&row.lineage_json).unwrap_or(serde_json::Value::Null),
+                    })
+                }).collect::<Result<Vec<_>, RunRepoError>>()?;
                 let frozen = FrozenRunInputs { model, resources };
                 let input_snapshot_json = serde_json::to_string(&frozen).map_err(|error| RunRepoError::Repository(RepoError::Storage(error.to_string())))?;
                 let scope_id = schema::users::table

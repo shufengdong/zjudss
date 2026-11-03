@@ -332,11 +332,33 @@ impl ManagedWorkflowService {
                 "研究门面合同已变化".into(),
             ));
         }
-        let aggregate = self
+        let overlay_requests = self
+            .repo
+            .retry_struct_overlay_requests(
+                &user.id,
+                &token_hash,
+                &self.snapshot.id,
+                &facade.contract_hash,
+                now_ms(),
+            )
+            .await
+            .map_err(map_repo_error)?;
+        let overlays = self
+            .data_resources
+            .materialize_retry_struct_overlays(user, &overlay_requests)
+            .await
+            .map_err(|error| WorkflowError::Invalid(error.code(), error.to_string()))?;
+        let overlay_artifact_ids = overlays
+            .iter()
+            .filter(|overlay| overlay.owns_artifact_reference)
+            .map(|overlay| overlay.artifact_id)
+            .collect::<Vec<_>>();
+        let result = self
             .repo
             .confirm_retry(
                 &user.id,
                 token_hash,
+                overlays,
                 self.snapshot.id.clone(),
                 facade.contract_hash.clone(),
                 self.correction_budget,
@@ -344,8 +366,14 @@ impl ManagedWorkflowService {
                 serde_json::to_string(&["study-planning@1.5.0"]).unwrap(),
                 now_ms(),
             )
-            .await
-            .map_err(map_repo_error)?;
+            .await;
+        for artifact_id in overlay_artifact_ids {
+            let _ = self
+                .artifacts
+                .release(user.storage_scope_id, artifact_id)
+                .await;
+        }
+        let aggregate = result.map_err(map_repo_error)?;
         let workflow = view(aggregate);
         self.publish(&workflow);
         if self.auto_start {
