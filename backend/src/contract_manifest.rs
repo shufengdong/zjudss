@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use crate::agent::knowledge::{AgentKnowledge, KnowledgeError};
 use crate::api::{RouteContract, route_manifest};
-use crate::application::{MESSAGE_TYPES, visualization::VISUALIZATION_KINDS};
+use crate::application::{MESSAGE_TYPES, charting::VISUALIZATION_KINDS};
 use crate::tools::registered_tool_names;
 
 pub const UPLOAD_FORMATS: &[&str] = &[
@@ -171,6 +171,23 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "result_total_too_large",
     "result_symlink_rejected",
     "result_path_escape",
+    "chart_config_invalid",
+    "chart_capabilities_too_large",
+    "chart_column_missing",
+    "chart_column_incompatible",
+    "chart_component_invalid",
+    "chart_unit_conflict",
+    "chart_series_name_conflict",
+    "chart_duplicate_requires_aggregation",
+    "chart_no_data",
+    "chart_too_large",
+    "chart_name_conflict",
+    "chart_operation_conflict",
+    "chart_operation_gone",
+    "chart_source_deleted",
+    "chart_materialization_failed",
+    "chart_not_found",
+    "chart_cursor_invalid",
 ];
 
 #[derive(Debug, Serialize)]

@@ -275,6 +275,7 @@ impl From<DataFrameReadError> for DataResourceError {
                 "invalid_page"
             }
             DataFrameReadError::NotFound => "not_found",
+            DataFrameReadError::TooManyRows(_) => "dataframe_read_failed",
             DataFrameReadError::Storage(_) => "dataframe_read_failed",
         };
         Self::Read(code, value.to_string())

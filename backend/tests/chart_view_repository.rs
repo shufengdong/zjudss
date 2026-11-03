@@ -141,7 +141,7 @@ async fn publish_replay_delete_and_source_tombstone_are_user_scoped_and_atomic()
         Err(RepoError::NotFound)
     ));
     assert!(matches!(
-        repo.publish(&u1, draft("op-1", "r1", "A", &sha), |_| Ok(()))
+        repo.publish(&u1, draft("op-1", "changed", "A", &sha), |_| Ok(()))
             .await,
         Err(RepoError::InvalidState(code)) if code == "chart_operation_gone"
     ));

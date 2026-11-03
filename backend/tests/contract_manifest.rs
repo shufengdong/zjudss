@@ -10,8 +10,10 @@ fn production_router_and_manifest_share_one_declaration() {
         .map(|route| (route.method, route.path))
         .collect::<HashSet<_>>();
 
-    assert_eq!(routes.len(), 75);
-    assert_eq!(unique.len(), 75);
+    // Six method/path pairs are newly registered. The seventh chart API replaces
+    // the existing GET /api/dataset-views/{id}/data handler in place.
+    assert_eq!(routes.len(), 81);
+    assert_eq!(unique.len(), 81);
     assert!(unique.contains(&("GET", "/health")));
     assert!(unique.contains(&("POST", "/api/auth/login")));
     assert!(unique.contains(&("POST", "/api/auth/logout")));
@@ -79,6 +81,17 @@ fn production_router_and_manifest_share_one_declaration() {
         "/api/draft-dataframes/{id}/download",
     ] {
         assert!(unique.contains(&("GET", path)), "missing {path}");
+    }
+    for route in [
+        ("GET", "/api/datasets/{id}/chart-capabilities"),
+        ("POST", "/api/datasets/{id}/chart-previews"),
+        ("POST", "/api/datasets/{id}/views"),
+        ("GET", "/api/dataset-views/{id}"),
+        ("GET", "/api/dataset-views/{id}/data"),
+        ("DELETE", "/api/dataset-views/{id}"),
+        ("GET", "/api/sessions/{id}/dataset-views"),
+    ] {
+        assert!(unique.contains(&route), "missing {route:?}");
     }
 
     let _ = build_router;
@@ -179,6 +192,30 @@ fn contract_manifest_contains_all_public_enums() {
         "upload_batch_expired",
         "upload_parse_settings_invalid",
         "excel_formula_value_missing",
+    ] {
+        assert!(
+            manifest.stable_error_codes.contains(&code),
+            "missing {code}"
+        );
+    }
+    for code in [
+        "chart_config_invalid",
+        "chart_capabilities_too_large",
+        "chart_column_missing",
+        "chart_column_incompatible",
+        "chart_component_invalid",
+        "chart_unit_conflict",
+        "chart_series_name_conflict",
+        "chart_duplicate_requires_aggregation",
+        "chart_no_data",
+        "chart_too_large",
+        "chart_name_conflict",
+        "chart_operation_conflict",
+        "chart_operation_gone",
+        "chart_source_deleted",
+        "chart_materialization_failed",
+        "chart_not_found",
+        "chart_cursor_invalid",
     ] {
         assert!(
             manifest.stable_error_codes.contains(&code),

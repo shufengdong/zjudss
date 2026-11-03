@@ -67,10 +67,7 @@ impl BoundedBatchCollector {
     pub(crate) fn push(&mut self, batch: RecordBatch) -> Result<(), DataFrameReadError> {
         let rows = self.rows.saturating_add(batch.num_rows());
         if rows > self.max_rows {
-            return Err(DataFrameReadError::Storage(format!(
-                "DataFrame 扫描行数超过限制 {}",
-                self.max_rows
-            )));
+            return Err(DataFrameReadError::TooManyRows(self.max_rows));
         }
         self.rows = rows;
         self.batches.push(batch);
@@ -87,6 +84,7 @@ pub(crate) enum DataFrameReadError {
     NotFound,
     InvalidCursor,
     InvalidPage(String),
+    TooManyRows(usize),
     Storage(String),
 }
 
@@ -96,6 +94,7 @@ impl std::fmt::Display for DataFrameReadError {
             Self::NotFound => write!(formatter, "资源不存在"),
             Self::InvalidCursor => write!(formatter, "分页 cursor 无效"),
             Self::InvalidPage(message) => write!(formatter, "分页参数无效: {message}"),
+            Self::TooManyRows(limit) => write!(formatter, "DataFrame 扫描行数超过限制 {limit}"),
             Self::Storage(message) => write!(formatter, "DataFrame 读取失败: {message}"),
         }
     }

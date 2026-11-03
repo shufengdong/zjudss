@@ -156,6 +156,9 @@ impl From<DataFrameReadError> for ModelDataFrameReadError {
             DataFrameReadError::NotFound => Self::NotFound,
             DataFrameReadError::InvalidCursor => Self::InvalidPage("cursor 无效".into()),
             DataFrameReadError::InvalidPage(message) => Self::InvalidPage(message),
+            DataFrameReadError::TooManyRows(limit) => {
+                Self::ReadFailed(format!("DataFrame 扫描行数超过限制 {limit}"))
+            }
             DataFrameReadError::Storage(message) => Self::ReadFailed(message),
         }
     }

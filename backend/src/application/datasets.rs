@@ -53,6 +53,9 @@ impl From<DataFrameReadError> for DatasetError {
             DataFrameReadError::NotFound => Self::NotFound,
             DataFrameReadError::InvalidCursor => Self::InvalidCursor,
             DataFrameReadError::InvalidPage(message) => Self::InvalidPage(message),
+            DataFrameReadError::TooManyRows(limit) => {
+                Self::Storage(format!("DataFrame 扫描行数超过限制 {limit}"))
+            }
             DataFrameReadError::Storage(message) => Self::Storage(message),
         }
     }

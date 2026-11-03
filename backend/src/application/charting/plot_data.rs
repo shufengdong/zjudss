@@ -385,6 +385,7 @@ fn decode_model(mut model: ChartModel, batches: &[RecordBatch]) -> Result<ChartM
             y_axis,
             x_categories,
             y_categories,
+            value,
             cells,
             ..
         } => {
@@ -417,6 +418,16 @@ fn decode_model(mut model: ChartModel, batches: &[RecordBatch]) -> Result<ChartM
             *y_categories = ordered_categories(y_map)?;
             x_axis.categories.clone_from(x_categories);
             y_axis.categories.clone_from(y_categories);
+            value.min = cells
+                .iter()
+                .map(|cell| cell.value)
+                .min_by(f64::total_cmp)
+                .ok_or_else(|| materialization("heatmap Plot Data 为空"))?;
+            value.max = cells
+                .iter()
+                .map(|cell| cell.value)
+                .max_by(f64::total_cmp)
+                .ok_or_else(|| materialization("heatmap Plot Data 为空"))?;
         }
         ChartModel::Boxplot {
             category_axis,

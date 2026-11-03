@@ -46,9 +46,9 @@ use crate::auth::AuthService;
 use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
-    AnalysisRepo, ArtifactRepo, ComparisonRepo, DataResourceRepo, HistoryRepo, ManagedWorkflowRepo,
-    MessageRepo, ResultRepo, RunRepo, ScriptRepo, SessionRepo, StorageScopeRepo,
-    StudyConfigurationRepo, UploadRepo, VersionRepo,
+    AnalysisRepo, ArtifactRepo, ChartViewRepo, ComparisonRepo, DataResourceRepo, HistoryRepo,
+    ManagedWorkflowRepo, MessageRepo, ResultRepo, RunRepo, ScriptRepo, SessionRepo,
+    StorageScopeRepo, StudyConfigurationRepo, UploadRepo, VersionRepo,
 };
 use crate::engine_resources::EngineResourceSnapshot;
 use crate::ingestion::ArchiveLimits;
@@ -63,6 +63,7 @@ pub use artifacts::{
     StorageUsage, StorageUsageSummary,
 };
 pub use case_import::{CaseImportError, CaseImportService};
+pub use charting::ChartService;
 pub use chat::ChatService;
 pub use comparisons::{ComparisonError, ComparisonService};
 pub use data_mapping::{ColumnMapping, CreateMappedResourceRequest, DataMappingService};
@@ -131,6 +132,7 @@ pub struct AppState {
     pub case_import_service: CaseImportService,
     pub model_patch_service: ModelPatchService,
     pub dataset_service: DatasetService,
+    pub chart_service: ChartService,
     pub analysis_service: AnalysisService,
     pub comparison_service: ComparisonService,
     pub history_service: HistoryService,
@@ -580,6 +582,11 @@ impl AppState {
             message_repo.clone(),
             events.clone(),
         );
+        let chart_service = ChartService::new(
+            ResultRepo::new(pool.clone()),
+            ChartViewRepo::new(pool.clone()),
+            artifact_service.clone(),
+        );
         let agent_knowledge = Arc::new(
             AgentKnowledge::load_embedded("v4.3.0").expect("内置 agent knowledge 已在构建时校验"),
         );
@@ -651,6 +658,7 @@ impl AppState {
             case_import_service,
             model_patch_service,
             dataset_service,
+            chart_service,
             analysis_service,
             comparison_service,
             history_service,

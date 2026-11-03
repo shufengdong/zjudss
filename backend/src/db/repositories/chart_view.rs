@@ -104,26 +104,30 @@ impl ChartViewRepo {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             let mut publish = Some(publish);
             conn.immediate_transaction::<PublishedChartView, RepoError, _>(|conn| {
-                let source = live_source(conn, &user, draft.source_dataset_id)?;
                 let replay = schema::dataset_views::table
+                    .inner_join(schema::sessions::table)
                     .filter(schema::dataset_views::source_dataset_id.eq(draft.source_dataset_id))
                     .filter(
                         schema::dataset_views::client_operation_id.eq(&draft.client_operation_id),
                     )
+                    .filter(schema::sessions::user_id.eq(&user))
+                    .filter(schema::sessions::deletion_status.eq("live"))
+                    .select(schema::dataset_views::all_columns)
                     .first::<ChartViewRow>(conn)
                     .optional()?;
                 if let Some(view) = replay {
-                    if view.request_hash != draft.request_hash {
-                        return Err(RepoError::IdempotencyConflict);
-                    }
                     if view.deleted_at_ms.is_some() {
                         return Err(RepoError::InvalidState("chart_operation_gone".into()));
+                    }
+                    if view.request_hash != draft.request_hash {
+                        return Err(RepoError::IdempotencyConflict);
                     }
                     return Ok(PublishedChartView {
                         view,
                         replayed: true,
                     });
                 }
+                let source = live_source(conn, &user, draft.source_dataset_id)?;
                 let name_taken = schema::dataset_views::table
                     .filter(schema::dataset_views::source_dataset_id.eq(draft.source_dataset_id))
                     .filter(schema::dataset_views::name.eq(&draft.name))
@@ -185,6 +189,32 @@ impl ChartViewRepo {
                     replayed: false,
                 })
             })
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
+    pub async fn find_operation(
+        &self,
+        user: &UserId,
+        source_dataset_id: i32,
+        client_operation_id: &str,
+    ) -> RepoResult<Option<ChartViewRow>> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        let client_operation_id = client_operation_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            schema::dataset_views::table
+                .inner_join(schema::sessions::table)
+                .filter(schema::dataset_views::source_dataset_id.eq(source_dataset_id))
+                .filter(schema::dataset_views::client_operation_id.eq(client_operation_id))
+                .filter(schema::sessions::user_id.eq(user))
+                .filter(schema::sessions::deletion_status.eq("live"))
+                .select(schema::dataset_views::all_columns)
+                .first::<ChartViewRow>(&mut conn)
+                .optional()
+                .map_err(RepoError::from)
         })
         .await
         .map_err(RepoError::Join)?

@@ -2,6 +2,7 @@
 
 mod analysis;
 mod auth;
+mod chart_views;
 mod comparisons;
 mod data_resources;
 mod datasets;
@@ -42,6 +43,7 @@ use crate::application::StudyConfigurationError;
 use crate::application::UploadBatchError;
 use crate::application::VersionError;
 use crate::application::WorkflowError;
+use crate::application::charting::ChartServiceError;
 use crate::db::repositories::RepoError;
 
 /// 统一 API 错误：把仓储/适配器错误映射为 HTTP 响应。
@@ -200,6 +202,30 @@ impl From<ArtifactError> for ApiError {
                 details: None,
             },
             other => Self::internal(other.to_string()),
+        }
+    }
+}
+
+impl From<ChartServiceError> for ApiError {
+    fn from(error: ChartServiceError) -> Self {
+        let code = error.code();
+        let status = match code {
+            "not_found" => StatusCode::NOT_FOUND,
+            "chart_name_conflict"
+            | "chart_operation_conflict"
+            | "chart_operation_gone"
+            | "chart_source_deleted" => StatusCode::CONFLICT,
+            "chart_too_large" | "chart_capabilities_too_large" | "storage_quota_exceeded" => {
+                StatusCode::PAYLOAD_TOO_LARGE
+            }
+            "chart_materialization_failed" => StatusCode::INTERNAL_SERVER_ERROR,
+            _ => StatusCode::BAD_REQUEST,
+        };
+        Self {
+            status,
+            message: error.to_string(),
+            code,
+            details: error.details(),
         }
     }
 }
@@ -821,6 +847,26 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
         ["GET"]
     );
     add_route!(
+        "/api/datasets/{id}/chart-capabilities",
+        get(chart_views::capabilities),
+        ["GET"]
+    );
+    add_route!(
+        "/api/datasets/{id}/chart-previews",
+        post(chart_views::preview),
+        ["POST"]
+    );
+    add_route!(
+        "/api/datasets/{id}/views",
+        post(chart_views::save),
+        ["POST"]
+    );
+    add_route!(
+        "/api/sessions/{id}/dataset-views",
+        get(chart_views::list),
+        ["GET"]
+    );
+    add_route!(
         "/api/model-dataframes/{id}",
         get(model_dataframes::version_metadata),
         ["GET"]
@@ -852,8 +898,13 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
     );
     add_route!("/api/analysis-runs/{id}", get(analysis::get), ["GET"]);
     add_route!(
+        "/api/dataset-views/{id}",
+        get(chart_views::metadata).delete(chart_views::delete),
+        ["GET", "DELETE"]
+    );
+    add_route!(
         "/api/dataset-views/{id}/data",
-        get(analysis::view_data),
+        get(chart_views::data),
         ["GET"]
     );
     add_route!("/api/run-comparisons/{id}", get(comparisons::get), ["GET"]);

@@ -55,10 +55,3 @@ pub async fn get(
         datasets,
     }))
 }
-pub async fn view_data(
-    State(s): State<AppState>,
-    p: CurrentUser,
-    Path(id): Path<i32>,
-) -> Result<Json<crate::application::datasets::DatasetViewData>, ApiError> {
-    Ok(Json(s.dataset_service.view_data(&p, id).await?))
-}

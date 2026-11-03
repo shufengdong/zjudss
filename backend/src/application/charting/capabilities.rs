@@ -609,17 +609,28 @@ mod tests {
         ])
         .unwrap();
         let columns = vec![column("a", "Float64"), column("b", "Float64")];
-        let mut budgets = ChartBudgets::default();
-        budgets.max_fields = 1;
+        let budgets = ChartBudgets {
+            max_fields: 1,
+            ..ChartBudgets::default()
+        };
         assert_eq!(
-            CapabilityInspector::inspect("7", "hash", &columns, &[batch.clone()], 1, budgets)
-                .unwrap_err()
-                .code,
+            CapabilityInspector::inspect(
+                "7",
+                "hash",
+                &columns,
+                std::slice::from_ref(&batch),
+                1,
+                budgets,
+            )
+            .unwrap_err()
+            .code,
             "chart_capabilities_too_large"
         );
 
-        let mut budgets = ChartBudgets::default();
-        budgets.max_capability_response_bytes = 1;
+        let budgets = ChartBudgets {
+            max_capability_response_bytes: 1,
+            ..ChartBudgets::default()
+        };
         assert_eq!(
             CapabilityInspector::inspect("7", "hash", &columns[..1], &[batch], 1, budgets)
                 .unwrap_err()
