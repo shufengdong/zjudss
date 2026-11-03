@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
@@ -39,7 +39,77 @@ const message = (value: StudyConfigurationView): StudyConfigMessage => ({
 })
 
 describe('StudyConfigurationCard', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.sessionStorage.clear()
+  })
+
+  it('starts expanded and can collapse and restore the current confirmation controls', () => {
+    const ready = configuration({ status: 'ready_to_confirm' })
+    render(<StudyConfigurationCard message={message(ready)} notify={vi.fn()} />)
+
+    const collapse = screen.getByRole('button', { name: '收起研究配置' })
+    expect(collapse).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('修订 7 · 待确认')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认并生成脚本' })).toBeInTheDocument()
+
+    fireEvent.click(collapse)
+    expect(screen.getByText('已收起，展开后可继续配置或确认')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '确认并生成脚本' })).not.toBeInTheDocument()
+    expect(window.sessionStorage.getItem('study-configuration:41:collapsed')).toBe('true')
+
+    const expand = screen.getByRole('button', { name: '展开研究配置' })
+    expect(expand).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(expand)
+    expect(screen.getByText('修订 7 · 待确认')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认并生成脚本' })).toBeInTheDocument()
+    expect(window.sessionStorage.getItem('study-configuration:41:collapsed')).toBeNull()
+  })
+
+  it('keeps a collapsed preference across remounts and newer revisions', () => {
+    const ready = configuration({ status: 'ready_to_confirm' })
+    const first = render(<StudyConfigurationCard message={message(ready)} notify={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '收起研究配置' }))
+    first.unmount()
+
+    const revised = { ...ready, revision: 8 }
+    render(<StudyConfigurationCard message={message(revised)} notify={vi.fn()} />)
+
+    expect(screen.getByRole('button', { name: '展开研究配置' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByText('修订 8 · 待确认')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '确认并生成脚本' })).not.toBeInTheDocument()
+  })
+
+  it('automatically expands a collapsed card when a mutation reports a stale configuration', async () => {
+    const current = configuration()
+    let rejectMutation: ((reason: unknown) => void) | undefined
+    vi.mocked(selectStudyFacade).mockReturnValue(new Promise((_resolve, reject) => {
+      rejectMutation = reject
+    }))
+    vi.mocked(getStudyConfiguration).mockResolvedValue({ ...current, revision: 8 })
+    render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '选择此方法' }))
+    fireEvent.click(screen.getByRole('button', { name: '收起研究配置' }))
+    expect(screen.queryByRole('button', { name: '选择此方法' })).not.toBeInTheDocument()
+    await act(async () => rejectMutation?.(new ApiError(409, '配置已过期', 'configuration_stale')))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('配置已更新，请确认最新内容后重试')
+    expect(screen.getByRole('button', { name: '收起研究配置' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('button', { name: '选择此方法' })).toBeInTheDocument()
+    expect(window.sessionStorage.getItem('study-configuration:41:collapsed')).toBeNull()
+  })
+
+  it('keeps terminal configuration cards compact without a collapse control', () => {
+    const confirmed = render(<StudyConfigurationCard message={message(configuration({ status: 'confirmed' }))} notify={vi.fn()} />)
+    expect(screen.getByText('研究配置 #41：已确认')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /研究配置/ })).not.toBeInTheDocument()
+    confirmed.unmount()
+
+    render(<StudyConfigurationCard message={message(configuration({ status: 'cancelled' }))} notify={vi.fn()} />)
+    expect(screen.getByText('研究配置 #41：已取消')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /研究配置/ })).not.toBeInTheDocument()
+  })
 
   it('explains the selected facade differences and sends the current revision', async () => {
     const next = configuration({ status: 'collecting_inputs', revision: 8 })
@@ -171,7 +241,7 @@ describe('StudyConfigurationCard', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认结果' }))
 
     await waitFor(() => expect(selectStudyResults).toHaveBeenCalledWith('41', 7, ['bus_voltage', 'summary']))
-    expect(await screen.findByText('修订 8')).toBeInTheDocument()
+    expect(await screen.findByText('修订 8 · 待确认')).toBeInTheDocument()
     expect(screen.getByText('bus_voltage、summary')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '确认并生成脚本' })).toBeInTheDocument()
   })
