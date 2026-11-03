@@ -109,6 +109,59 @@ async fn add_second_para_resource(
     assert_ne!(resource.id, original.id);
 }
 
+async fn add_result_selector_only_para_resource(
+    app: &TestApp,
+    user: &zjudss::auth::CurrentUser,
+    session_id: i32,
+) -> (String, String) {
+    let original = app
+        .state
+        .data_resource_service
+        .list(user, session_id, None, 100)
+        .await
+        .unwrap()
+        .resources
+        .into_iter()
+        .find(|resource| resource.alias == "para")
+        .unwrap();
+    let page = app
+        .state
+        .data_resource_service
+        .rows(user, &original.id, Some(2), None, Vec::new())
+        .await
+        .unwrap();
+    let mut values = page
+        .columns
+        .into_iter()
+        .zip(page.rows[0].clone())
+        .collect::<serde_json::Map<_, _>>();
+    values.insert("result".into(), json!("bus_voltage,load_state"));
+    let preview = app
+        .state
+        .data_resource_service
+        .preview_structured_replacement(
+            user,
+            &original.id,
+            &original.content_hash,
+            "frames.para",
+            serde_json::Value::Object(values),
+        )
+        .await
+        .unwrap();
+    let child = app
+        .state
+        .data_resource_service
+        .confirm_structured_replacement(
+            user,
+            &preview.preview_token,
+            zjudss::application::ReplacementAction::SaveAsNew,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    (original.id, child.id)
+}
+
 async fn publish_data_resource(
     app: &TestApp,
     user: &zjudss::auth::CurrentUser,
@@ -272,12 +325,197 @@ async fn imported_case_binds_exact_active_tables_and_independent_para_resource()
         .unwrap();
     assert_eq!(prepared.locked.function, "ds_newton_raphson_pf");
     assert_eq!(prepared.inputs.model.unwrap().tables.len(), 20);
+    assert_eq!(prepared.locked.structs[0].resource_diff, json!([]));
+    assert!(prepared.replacement_actions.is_empty());
+    assert_eq!(prepared.struct_overlays.len(), 1);
+}
+
+#[tokio::test]
+async fn result_selector_fields_are_server_owned_and_prepare_private_overlay() {
+    let app = TestApp::spawn().await;
+    let (user, session_id) = session(&app, "server-owned-result-selector").await;
+    import_case(&app, &user, session_id, "server-owned-result-selector-case").await;
+
+    let configuration = app
+        .state
+        .study_configuration_service
+        .prepare(
+            &user,
+            session_id,
+            PrepareStudyRequest {
+                facade_id: "static_power_flow_radial".into(),
+                intent: json!({"request":"计算径向潮流"}),
+                derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let para = configuration
+        .inputs
+        .iter()
+        .find(|input| input.input_id == "para")
+        .unwrap();
+    let card = para.struct_card.as_ref().unwrap();
+    assert_eq!(card.result_selector_fields, vec!["result"]);
+    let baseline_result = card.values.get("result").cloned();
+    let mut forged = card.values.clone();
+    forged["result"] = json!("forged_result");
+
+    let updated = app
+        .state
+        .study_configuration_service
+        .update_struct(
+            &user,
+            configuration.id,
+            "para",
+            UpdateStudyStructRequest {
+                expected_revision: configuration.revision,
+                values: forged,
+                replacement_action: None,
+            },
+        )
+        .await
+        .unwrap();
+    let updated_result = updated
+        .inputs
+        .iter()
+        .find(|input| input.input_id == "para")
+        .unwrap()
+        .struct_card
+        .as_ref()
+        .unwrap()
+        .values
+        .get("result")
+        .cloned();
+    assert_eq!(updated_result, baseline_result);
+
+    let prepared = app
+        .state
+        .study_configuration_service
+        .prepare_confirmation(&user, updated.id, updated.revision)
+        .await
+        .unwrap();
+    assert!(prepared.replacement_actions.is_empty());
+    assert_eq!(prepared.struct_overlays.len(), 1);
+    assert_eq!(prepared.struct_overlays[0].input_id, "para");
     assert_eq!(
-        prepared.locked.structs[0].resource_diff,
-        json!([{"field":"result","before":null,"after":"bus_voltage"}])
+        prepared.struct_overlays[0].overrides,
+        json!({"result":"bus_voltage"})
     );
-    assert_eq!(prepared.replacement_actions.len(), 1);
-    assert_eq!(prepared.replacement_actions[0].action, "create_new");
+    assert_eq!(
+        prepared.struct_overlays[0].effective_values["result"],
+        json!("bus_voltage")
+    );
+}
+
+#[tokio::test]
+async fn result_selector_only_resource_does_not_create_ambiguity() {
+    let app = TestApp::spawn().await;
+    let (user, session_id) = session(&app, "selector-only-resource").await;
+    import_case(&app, &user, session_id, "selector-only-resource-case").await;
+    let (source_id, selector_only_id) =
+        add_result_selector_only_para_resource(&app, &user, session_id).await;
+
+    let configuration = app
+        .state
+        .study_configuration_service
+        .prepare(
+            &user,
+            session_id,
+            PrepareStudyRequest {
+                facade_id: "static_power_flow_radial".into(),
+                intent: json!({"request":"计算径向潮流"}),
+                derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let para = configuration
+        .inputs
+        .iter()
+        .find(|input| input.input_id == "para")
+        .unwrap();
+    assert_eq!(para.resource_options.len(), 1);
+    assert_eq!(para.resource_options[0].resource_id, source_id);
+    assert_ne!(para.resource_options[0].resource_id, selector_only_id);
+    assert_eq!(
+        para.binding.resource_id.as_deref(),
+        Some(source_id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn result_selector_only_resource_with_non_live_source_remains_a_candidate() {
+    let app = TestApp::spawn().await;
+    let (user, session_id) = session(&app, "selector-only-orphan").await;
+    import_case(&app, &user, session_id, "selector-only-orphan-case").await;
+    let (source_id, selector_only_id) =
+        add_result_selector_only_para_resource(&app, &user, session_id).await;
+    diesel::update(
+        zjudss::db::schema::data_resources::table
+            .filter(zjudss::db::schema::data_resources::id.eq(&source_id)),
+    )
+    .set(zjudss::db::schema::data_resources::status.eq("replaced"))
+    .execute(&mut app.pool.get().unwrap())
+    .unwrap();
+
+    let configuration = app
+        .state
+        .study_configuration_service
+        .prepare(
+            &user,
+            session_id,
+            PrepareStudyRequest {
+                facade_id: "static_power_flow_radial".into(),
+                intent: json!({"request":"计算径向潮流"}),
+                derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let para = configuration
+        .inputs
+        .iter()
+        .find(|input| input.input_id == "para")
+        .unwrap();
+    assert_eq!(para.resource_options.len(), 1);
+    assert_eq!(para.resource_options[0].resource_id, selector_only_id);
+    assert_eq!(
+        para.binding.resource_id.as_deref(),
+        Some(selector_only_id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn facade_without_result_selector_keeps_struct_fields_user_managed() {
+    let app = TestApp::spawn().await;
+    let (user, session_id) = session(&app, "fixed-results-struct").await;
+    let configuration = app
+        .state
+        .study_configuration_service
+        .prepare(
+            &user,
+            session_id,
+            PrepareStudyRequest {
+                facade_id: "state_estimation_wls".into(),
+                intent: json!({"request":"进行 WLS 状态估计"}),
+                derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let para = configuration
+        .inputs
+        .iter()
+        .find(|input| input.input_id == "para")
+        .unwrap();
+    assert!(
+        para.struct_card
+            .as_ref()
+            .unwrap()
+            .result_selector_fields
+            .is_empty()
+    );
 }
 
 #[tokio::test]
