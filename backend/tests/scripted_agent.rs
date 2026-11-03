@@ -355,7 +355,11 @@ async fn publish_then_study_request_continues_to_prepare_configuration_without_b
             ScriptTurn::ToolCall {
                 call_id: "prepare".into(),
                 name: "prepare_study".into(),
-                args: json!({"facadeId":"static_power_flow_newton","intent":{"request":"潮流研究"}}),
+                args: json!({
+                    "facadeId":"static_power_flow_newton",
+                    "intent":{"request":"潮流研究"},
+                    "explanation":"您要求在刚发布的模型上准备牛顿潮流研究。将使用目录中的牛顿-拉夫逊方法，并请您核对模型输入、参数和计划结果；配置完成后仍需点击确认按钮。"
+                }),
             },
             ScriptTurn::Text {
                 text: "版本已发布，研究配置已准备，请在卡片中最终确认。".into(),
@@ -463,6 +467,7 @@ async fn study_power_flow_searches_then_prepares_a_configuration_without_a_scrip
     let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
     let session = create_session(&app).await;
     publish_agent_study_model(&app, session.parse().unwrap()).await;
+    let explanation = "您希望用牛顿-拉夫逊法求解当前模型的静态潮流。该方法按您指定的算法处理网络；请核对模型输入和 para 参数，初始计划输出母线电压，之后仍需在卡片中确认。";
     factory.enqueue(ScriptScenario {
         id: "study-power-flow-config".into(),
         expected_prompt: Some("求解牛顿法潮流".into()),
@@ -470,7 +475,7 @@ async fn study_power_flow_searches_then_prepares_a_configuration_without_a_scrip
             ScriptTurn::ToolCall { call_id: "inspect".into(), name: "inspect_workspace".into(), args: json!({}) },
             ScriptTurn::ToolCall { call_id: "load-planning".into(), name: "load_agent_skill".into(), args: json!({"skill_id":"study-planning"}) },
             ScriptTurn::ToolCall { call_id: "search".into(), name: "search_study_facades".into(), args: json!({"query":"牛顿法潮流","explicitFunction":"ds_newton_raphson_pf"}) },
-            ScriptTurn::ToolCall { call_id: "prepare".into(), name: "prepare_study".into(), args: json!({"facadeId":"static_power_flow_newton","intent":{"request":"求解牛顿法潮流"}}) },
+            ScriptTurn::ToolCall { call_id: "prepare".into(), name: "prepare_study".into(), args: json!({"facadeId":"static_power_flow_newton","intent":{"request":"求解牛顿法潮流"},"explanation":explanation}) },
             ScriptTurn::Text { text: "PROVIDER_TAIL_SHOULD_NOT_APPEAR".into() },
         ],
     });
@@ -497,17 +502,22 @@ async fn study_power_flow_searches_then_prepares_a_configuration_without_a_scrip
     let configuration_id = events[configuration_index]["card"]["configurationId"]
         .as_str()
         .expect("configuration id");
-    let acknowledgement_index = events
+    let explanations = events
         .iter()
-        .position(|event| {
+        .enumerate()
+        .filter(|(_, event)| {
             event["type"] == "assistant"
-                && event["content"].as_str().is_some_and(|content| {
-                    content.contains("牛顿-拉夫逊潮流")
-                        && content.contains(&format!("ID: {configuration_id}"))
-                        && content.contains("请在卡片中检查并确认输入、参数和结果")
-                })
+                && event["content"]
+                    .as_str()
+                    .is_some_and(|content| content.contains(explanation))
         })
-        .expect("deterministic study acknowledgement");
+        .collect::<Vec<_>>();
+    assert_eq!(explanations.len(), 1);
+    let (acknowledgement_index, acknowledgement) = explanations[0];
+    let acknowledgement = acknowledgement["content"].as_str().unwrap();
+    assert!(acknowledgement.contains("牛顿-拉夫逊潮流"));
+    assert!(acknowledgement.contains(&format!("ID: {configuration_id}")));
+    assert!(acknowledgement.contains("只有点击“确认并生成脚本”后才会开始执行"));
     assert!(acknowledgement_index < configuration_index);
     assert!(!events.iter().any(|event| {
         event["type"] == "assistant"
@@ -641,6 +651,7 @@ async fn prepared_configuration_survives_provider_finalization_failure() {
     let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
     let session = create_session(&app).await;
     publish_agent_study_model(&app, session.parse().unwrap()).await;
+    let explanation = "您希望准备牛顿-拉夫逊潮流研究。请检查当前模型输入、para 参数和母线电压结果，并在确认配置后再开始执行。";
     factory.enqueue(ScriptScenario {
         id: "prepared-config-provider-failure".into(),
         expected_prompt: Some("求解牛顿法潮流".into()),
@@ -653,7 +664,7 @@ async fn prepared_configuration_survives_provider_finalization_failure() {
             ScriptTurn::ToolCall {
                 call_id: "prepare".into(),
                 name: "prepare_study".into(),
-                args: json!({"facadeId":"static_power_flow_newton","intent":{"request":"求解牛顿法潮流"}}),
+                args: json!({"facadeId":"static_power_flow_newton","intent":{"request":"求解牛顿法潮流"},"explanation":explanation}),
             },
             ScriptTurn::Error {
                 message: "provider closed after tool success".into(),
@@ -674,11 +685,11 @@ async fn prepared_configuration_survives_provider_finalization_failure() {
         .iter()
         .position(|event| {
             event["type"] == "assistant"
-                && event["content"]
-                    .as_str()
-                    .is_some_and(|text| text.contains("已为您创建“牛顿-拉夫逊潮流”研究配置卡"))
+                && event["content"].as_str().is_some_and(|text| {
+                    text.contains(explanation) && text.contains("已创建“牛顿-拉夫逊潮流”研究配置卡")
+                })
         })
-        .expect("deterministic study acknowledgement");
+        .expect("detailed study explanation");
     assert!(acknowledgement_index < configuration_index);
     assert!(!events.iter().any(|event| {
         event["type"] == "assistant" && event["content"] == "agent 运行失败，请稍后重试"
@@ -781,7 +792,11 @@ async fn transient_studies_use_catalog_search_and_configuration_cards() {
             ScriptTurn::ToolCall {
                 call_id: "prepare".into(),
                 name: "prepare_study".into(),
-                args: json!({"facadeId":"motor_dynamics","intent":{"request":"模拟电机启动暂态"}}),
+                args: json!({
+                    "facadeId":"motor_dynamics",
+                    "intent":{"request":"模拟电机启动暂态"},
+                    "explanation":"您希望模拟电机启动暂态。将使用目录中的电机动态门面；请在卡片中补齐动态数据和参数、核对计划结果，并在最终确认后开始执行。"
+                }),
             },
             ScriptTurn::Text {
                 text: "电机动态配置已准备，请补齐数据和参数后确认。".into(),

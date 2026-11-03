@@ -36,8 +36,8 @@ fn skill(id: &str, path: &str, tool: &str, content: &str) -> Value {
 
 #[test]
 fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
-    let knowledge = AgentKnowledge::load_embedded("v4.2.0").expect("embedded knowledge");
-    assert_eq!(knowledge.manifest.agent_bundle_version, "v4.2.0");
+    let knowledge = AgentKnowledge::load_embedded("v4.3.0").expect("embedded knowledge");
+    assert_eq!(knowledge.manifest.agent_bundle_version, "v4.3.0");
     assert_eq!(
         knowledge.manifest.engine_contract_version,
         "tensoreval-parquet-v3"
@@ -61,7 +61,7 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     assert_eq!(knowledge.skill_index().count(), 5);
     assert!(knowledge.skill("result-analysis").is_some());
     let study_skill = knowledge.skill("study-planning").unwrap();
-    assert_eq!(study_skill.metadata.version, "1.4.0");
+    assert_eq!(study_skill.metadata.version, "1.5.0");
     assert!(
         study_skill
             .metadata
@@ -78,6 +78,13 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     assert!(result_analysis.contains("分号"));
     assert!(result_analysis.contains("必须继续调用 `run_result_analysis`"));
     assert!(study_planning.contains("prepare_study"));
+    assert!(study_planning.contains("explanation"));
+    assert!(study_planning.contains("用户目标"));
+    assert!(study_planning.contains("选定方法"));
+    assert!(study_planning.contains("输入和参数"));
+    assert!(study_planning.contains("计划结果"));
+    assert!(study_planning.contains("确认并生成脚本"));
+    assert!(study_planning.contains("不得声称配置已经确认、脚本已经生成或仿真已经运行"));
     assert!(study_planning.contains("update_study_results"));
     assert!(study_planning.contains("精确 ID 和 revision"));
     assert!(study_planning.contains("explicitFunction"));
@@ -94,6 +101,12 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
             .contains("只有用户原文包含完整的 `ds_...` 函数标识")
     );
     assert!(knowledge.system_prompt.contains("prepare_study"));
+    assert!(knowledge.system_prompt.contains("explanation"));
+    assert!(
+        knowledge
+            .system_prompt
+            .contains("不得声称配置已经确认、脚本已经生成或仿真已经运行")
+    );
     assert!(knowledge.system_prompt.contains("update_study_results"));
     assert!(knowledge.system_prompt.contains("明确要求发布当前模型版本"));
     assert!(knowledge.system_prompt.contains("publish_model_version"));

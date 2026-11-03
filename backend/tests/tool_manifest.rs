@@ -191,7 +191,7 @@ async fn data_resource_tools_list_read_rename_and_promote_owned_session_resource
 
 #[test]
 fn manifest_allowed_tools_equal_runtime_registry() {
-    let mut manifest = AgentKnowledge::load_embedded("v4.2.0")
+    let mut manifest = AgentKnowledge::load_embedded("v4.3.0")
         .unwrap()
         .manifest
         .allowed_tools;

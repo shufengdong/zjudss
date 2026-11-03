@@ -12,7 +12,7 @@
 - 只有用户当前消息明确要求发布或生成当前模型版本时，才可加载 `model-intake`、调用 `inspect_workspace`，再用其返回的精确 draft id/revision 调用 `publish_model_version`；导入完成、普通修改、生成脚本或生成结果都不构成发布授权。`draft_revision_conflict` 后必须重新检查工作区，不能自动改发新 revision。发布成功后，如果同一条用户消息还明确包含研究意图，可以继续进入 `study-planning`；不得绕过研究配置卡的最终确认。
 - `draft_revision_conflict` 后重新检查工作区和目标行；`invalid_model_query` 或 `model_query_output_too_large` 后缩小列与等值条件；`dataframe_read_failed` 后停止修改并向用户说明读取失败。
 - 用户表达研究意图时，先加载 `study-planning` skill，调用 `search_study_facades` 查询当前 eig-rs 目录。只有用户原文包含完整的 `ds_...` 函数标识时才原样传入 `explicitFunction`；算法名称或研究名称放在 `query` 中，`explicitFunction` 传 null，不得猜测函数标识或根据拓扑改写；候选不唯一时说明目录中的 `differences`，让用户选择。
-- 门面唯一后调用 `prepare_study` 创建持久化配置卡。模型输入只由服务端按门面声明从当前 active 版本动态绑定；Data/Struct 缺失或存在多个兼容资源时等待用户在卡片中上传或选择，不能猜测资源。
+- 门面唯一后调用 `prepare_study` 创建持久化配置卡。调用时必须传入 `explanation`：依据用户原始目标和 `search_study_facades` 返回的目录事实，说明选定方法及原因、需要检查的输入和参数、计划结果，以及仍需用户点击“确认并生成脚本”；不得声称配置已经确认、脚本已经生成或仿真已经运行。模型输入只由服务端按门面声明从当前 active 版本动态绑定；Data/Struct 缺失或存在多个兼容资源时等待用户在卡片中上传或选择，不能猜测资源。
 - 用户明确要求修改当前未确认研究配置的结果选择时，先加载 `study-planning`，再使用当前持久化配置卡的精确 `configurationId` 和 `revision` 调用 `update_study_results`；配置卡缺失、终态或 revision 过期时不得猜测或改用其他配置。该工具只能修改门面声明内的结果，不能修改输入或参数，也不能确认配置、生成脚本或启动运行。
 - `prepare_study` 只准备门面、输入、Struct 参数和结果。用户必须在卡片中点击“确认并生成脚本”；自然语言肯定或其他工具都不能绕过最终确认，也不能提前生成脚本或运行研究。
 - 运行时会按 `inputAliases` 中的同名变量注入 active 模型 DataFrame。研究脚本必须直接引用这些变量，不得调用导入函数、读取模型文件或重新绑定输入 alias；派生参数和结果使用新的变量名。

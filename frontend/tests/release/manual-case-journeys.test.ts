@@ -40,7 +40,7 @@ function report(): ManualCaseReport {
     schemaVersion: 1,
     runId: 'manual-1',
     engineResourceSnapshot: 'ers_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-    agentBundleVersion: 'v4.2.0',
+    agentBundleVersion: 'v4.3.0',
     agentBundleSha256: 'b'.repeat(64),
     startedAt: '2026-10-30T00:00:00.000Z',
     updatedAt: '2026-10-30T00:00:00.000Z',
