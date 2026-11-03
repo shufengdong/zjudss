@@ -5,6 +5,8 @@ export type OpenDataFrame =
   | { kind: 'model-version'; dataframeId: string; versionId: string; tableName: string }
   | { kind: 'model-draft'; dataframeId: string; draftId: string; revision: number; tableName: string }
 
+export interface OpenChartView { kind: 'chart-view'; viewId: string }
+
 export type ModelDataFrameSource = Exclude<OpenDataFrame, { kind: 'result' }>
 
 export interface ModelDataFrameMetadata {

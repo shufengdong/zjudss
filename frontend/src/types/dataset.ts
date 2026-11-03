@@ -2,7 +2,7 @@ export const VISUALIZATION_KINDS = ['line','bar','scatter','heatmap','boxplot','
 export type VisualizationKind = (typeof VISUALIZATION_KINDS)[number]
 export interface ResultColumn { name:string; dtype:string; nullable:boolean; unit?:string|null }
 export interface DatasetView {
-  id:string; name:string; kind:VisualizationKind; spec:Record<string,unknown>; isDefault:boolean
+  id:string; name:string; kind:VisualizationKind; createdAt:number
 }
 export interface DatasetMetadata {
   id:string; runId:string|null; analysisRunId:string|null; name:string; rowCount:number
@@ -14,6 +14,5 @@ export interface DatasetPage {
 }
 export interface ResultOutputRef {
   datasetId:string; name:string; rowCount:number; columns:ResultColumn[]; previewRows?:unknown[][]
-  previewTruncated:boolean; defaultViewId:string|null
-  views:{id:string;name:string;kind:VisualizationKind;isDefault:boolean}[]
+  previewTruncated:boolean; views:DatasetView[]
 }

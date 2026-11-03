@@ -32,8 +32,7 @@ export default function WorkflowResultsCard({ runId, onOpenDataset }: {
     id: `workflow-results-${runId}`, type: 'result', timestamp: '', runId, title: '运行结果',
     outputs: datasets.map(dataset => ({
       datasetId: dataset.id, name: dataset.name, rowCount: dataset.rowCount, columns: dataset.columns,
-      previewTruncated: false, defaultViewId: dataset.views.find(view => view.isDefault)?.id ?? null,
-      views: dataset.views,
+      previewTruncated: false, views: dataset.views,
     })),
   }} />
 }

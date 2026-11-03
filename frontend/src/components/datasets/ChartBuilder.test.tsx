@@ -4,6 +4,7 @@ import { createChartView, getChartCapabilities, previewChart } from '../../api/c
 import ChartBuilder from './ChartBuilder'
 import { useChartCapabilities } from '../../hooks/useChartCapabilities'
 import { useChartPreview } from '../../hooks/useChartPreview'
+import type { ChartConfig } from '../../types'
 
 vi.mock('../../api/client', () => ({
   ApiError: class extends Error {}, getChartCapabilities: vi.fn(), previewChart: vi.fn(), createChartView: vi.fn(),
@@ -91,4 +92,40 @@ it('isolates late capability and preview responses after source or config change
   previewHook.rerender({id:'8'})
   expect(previewHook.result.current.model).toBeNull()
   expect(previewHook.result.current.previewHash).toBeNull()
+})
+
+it('copies a frozen config as a new name and requires a new preview and operation id',async()=>{
+  const config: ChartConfig={version:1,kind:'histogram',title:'原图',presentation:{legend:{show:true,position:'right',orientation:'vertical'},palette:'monochrome',title:{show:false},axis:{showGrid:false}},value:{column:'v_mag',path:[0],label:'自定义 A 相'},bins:12}
+  vi.mocked(createChartView).mockRejectedValueOnce(new Error('网络中断')).mockRejectedValueOnce(new Error('网络中断')).mockResolvedValueOnce({view:{id:'9'},replayed:false} as never)
+  render(<ChartBuilder datasetId="7" sourceName="result" initialConfig={config} initialName="原图 副本" onSaved={vi.fn()} notify={vi.fn()}/>)
+  expect(await screen.findByDisplayValue('原图 副本')).toBeInTheDocument()
+  expect(screen.getByRole('button',{name:'保存图表'})).toBeDisabled()
+  fireEvent.click(screen.getByRole('button',{name:'生成预览'}))
+  await waitFor(()=>expect(screen.getByRole('button',{name:'保存图表'})).toBeEnabled())
+  fireEvent.click(screen.getByRole('button',{name:'保存图表'}))
+  await waitFor(()=>expect(createChartView).toHaveBeenCalledTimes(1))
+  await waitFor(()=>expect(screen.getByRole('button',{name:'保存图表'})).toBeEnabled())
+  fireEvent.click(screen.getByRole('button',{name:'保存图表'}))
+  await waitFor(()=>expect(createChartView).toHaveBeenCalledTimes(2))
+  await waitFor(()=>expect(screen.getByRole('button',{name:'保存图表'})).toBeEnabled())
+  fireEvent.change(screen.getByLabelText('图表名称'),{target:{value:'原图 新副本'}})
+  fireEvent.click(screen.getByRole('button',{name:'保存图表'}))
+  await waitFor(()=>expect(createChartView).toHaveBeenCalledTimes(3))
+  const requests=vi.mocked(createChartView).mock.calls.map(call=>call[1])
+  expect(requests[0]).toEqual(expect.objectContaining({name:'原图 副本',clientOperationId:expect.any(String),config:expect.objectContaining({kind:'histogram',bins:12,value:expect.objectContaining({label:'自定义 A 相'}),presentation:expect.objectContaining({title:{show:false}})})}))
+  expect(requests[1].clientOperationId).toBe(requests[0].clientOperationId)
+  expect(requests[2].name).toBe('原图 新副本')
+  expect(requests[2].clientOperationId).not.toBe(requests[0].clientOperationId)
+})
+
+it('keeps distinct frozen labels when scatter axes reference the same field',async()=>{
+  const config: ChartConfig={version:1,kind:'scatter',presentation:{legend:{show:true,position:'auto',orientation:'auto'},palette:'colorblind',title:{show:false},axis:{showGrid:true}},x:{column:'v_mag',path:[0],label:'横轴'},measures:[{column:'v_mag',path:[0],label:'纵轴'}]}
+  render(<ChartBuilder datasetId="7" sourceName="result" initialConfig={config} initialName="散点副本" onSaved={vi.fn()} notify={vi.fn()}/>)
+  await waitFor(()=>expect(screen.getByRole('button',{name:'生成预览'})).toBeEnabled())
+  fireEvent.click(screen.getByRole('button',{name:'生成预览'}))
+  await waitFor(()=>expect(screen.getByRole('button',{name:'保存图表'})).toBeEnabled())
+  fireEvent.click(screen.getByRole('button',{name:'保存图表'}))
+  await waitFor(()=>expect(createChartView).toHaveBeenCalled())
+  const calls=vi.mocked(createChartView).mock.calls
+  expect(calls[calls.length-1]?.[1].config).toMatchObject({x:{label:'横轴'},measures:[{label:'纵轴'}]})
 })
