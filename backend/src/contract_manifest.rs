@@ -129,6 +129,7 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "study_plan_function_mismatch",
     "configuration_stale",
     "configuration_incomplete",
+    "invalid_study_explanation",
     "workflow_in_progress",
     "workflow_terminal_conflict",
     "repair_contract_violated",

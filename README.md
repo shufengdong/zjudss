@@ -2,7 +2,7 @@
 
 配电网仿真智能体 V4。用户可以上传单个 `.rss`、ZIP/目录形式的 `.rssbundle`，也可以分批上传
 CSV、Excel 或 Parquet DataFrame。模型表进入可变草稿和不可变版本；负荷曲线、预测数据、`para` 等
-Data/Struct DataFrame 作为独立数据资源管理。自然语言 Agent 先准备研究配置，用户在参数卡、资源卡和结果卡中
+Data/Struct DataFrame 作为独立数据资源管理。自然语言 Agent 先给出研究方法、输入参数和预期结果的详细说明，再准备研究配置；用户在可收起的参数卡、资源卡和结果卡中
 确认全部细节后，后台生成脚本、立即执行，并在失败时按预算自动修正。聊天、资源、模型版本、受管工作流、运行、
 结果数据集和分析血缘都持久化，可在刷新后恢复。
 
@@ -20,7 +20,7 @@ TypeScript、Vite 和 ECharts。仿真及派生分析结果统一保存为 Snapp
 - 内置案例搜索与导入；案例导入后可继续用自然语言修改参数并重跑。
 - 24 个 Agent 工具、5 个按需领域技能、明确自然语言发布当前精确草稿、可按当前配置 revision 修改结果、动态研究门面目录和独立无工具 ScriptAuthor。
 - 统一上传用途确认；静态 DSS 的 21 个输出拆为 20 张模型表和普通 `para` 数据资源。
-- 研究配置卡、Struct 参数卡、Data 列映射、结果选择、确认后自动执行和最多 3 次脚本修正。
+- 模型生成的研究说明、可按配置记忆收起状态的研究配置卡、Struct 参数卡、Data 列映射、结果选择、确认后自动执行和最多 3 次脚本修正。
 - 原生 Parquet 仿真结果、自然语言结果分析、分页表格、六类受控 ECharts 视图和任务比较。
 - 固定用户登录、侧栏用户菜单、会话历史、全文搜索、可恢复 SSE、身份隔离、存储配额和并发调度。
 - 功能目录驱动的 Rust、Vitest、Playwright 和真实 LLM provider/tensoreval 发布验收。
@@ -68,7 +68,7 @@ cp .env.example .env
 # 必填：TENSOREVAL_BIN、SPARROWZZ_DIR，以及所选 provider 的 LLM 配置
 # DeepSeek：LLM_PROVIDER=deepseek、DEEPSEEK_API_KEY
 # 百炼：LLM_PROVIDER=bailian、LLM_MODEL、BAILIAN_API_KEY、BAILIAN_BASE_URL
-# 可选：AGENT_BUNDLE_VERSION（缺省 v4.2.0）、DATABASE_URL、DATA_DIR 等
+# 可选：AGENT_BUNDLE_VERSION（缺省 v4.3.0）、DATABASE_URL、DATA_DIR 等
 cargo run --release
 ```
 

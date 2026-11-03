@@ -213,6 +213,7 @@ fn contract_manifest_contains_all_public_enums() {
         "study_plan_not_found",
         "study_plan_stale",
         "study_plan_function_mismatch",
+        "invalid_study_explanation",
         "session_deleting",
         "study_facades_missing",
         "facade_contract_invalid",

@@ -131,7 +131,8 @@ schemaRef、规范字段和 expected content hash，确认前不创建资源，�
 ## Managed study configurations
 
 `search_study_facades` 只查询本次 engine snapshot 的有效门面，显式函数名优先，返回目录中的方法差异和禁用诊断；
-`prepare_study` 持久化配置卡，不生成脚本或运行。状态为
+`prepare_study` 参数包含目录 `facadeId`、结构化 `intent`、必填 `explanation` 与可选来源 workflow ID；`explanation` 去除首尾空白后必须为 1..=4000 个 Unicode 字符，否则返回
+`invalid_study_explanation`，并且不执行领域写入。成功时工具持久化模型说明和服务端生成的实际研究标题/配置 ID 页脚，再持久化配置卡；不生成脚本或运行。状态为
 `choosing_facade|collecting_inputs|ready_to_confirm|confirmed|invalidated|cancelled`，所有卡片写入都必须提交
 `expectedRevision`。跨用户和不存在配置统一 404，revision、资源或 snapshot 竞争返回
 `configuration_stale`。
@@ -270,7 +271,7 @@ tensoreval 以非零状态退出时保留实际退出码。原始有界 stderr �
 稳定消息 ID 早于游标，避免错过旧卡的新 revision。旧的纯数字 `Last-Event-ID` 仍按 revision 1 解释。卡片只携稳定 ID、
 公共状态和脱敏诊断，不序列化服务器路径或原始 stderr；attempt
 详情由前端默认折叠。运行关联字段统一为 `runId`。V4 对话 Agent 只持久化研究配置卡，不具备脚本创建权限。
-`prepare_study` 成功时，工具先持久化一条包含研究标题与配置 ID 的确定性 assistant 确认语，再持久化 `study-config` 卡；
+`prepare_study` 成功时，工具先持久化一条 assistant 消息：正文是模型依据用户目标和目录结果生成的详细说明，页脚由服务端以实际研究标题与配置 ID 生成；随后才持久化 `study-config` 卡。
 成功后的 provider 尾声不再写入，provider 收尾失败也不追加通用 Agent 失败，因此用户立即确认时工作流仍严格位于说明和配置之后。
 自然语言修改结果时，`update_study_results` 使用当前 durable 卡的精确 ID/revision 原位更新该卡；成功后的 assistant 只说明
 结果已更新并提醒用户仍需点击“确认并生成脚本”，不会把自然语言肯定解释为最终确认。

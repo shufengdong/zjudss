@@ -27,10 +27,11 @@ Agent 只负责根据自然语言建立 revisioned 研究配置。配置卡按�
 Data 资源绑定、Struct 参数、受控列映射和结果集合。唯一匹配资源可以预选但仍由用户确认；同会话同类研究可以显示
 上次资源复用建议。Struct 字段直接使用 snapshot 目录的 bool/number/enum/string/date、单位、默认值和范围合同，`para`
 与其他 Struct 一样引用普通数据资源；修改已有资源时必须选择覆盖当前资源或另存为新资源。
-`prepare_study` 成功后，服务端先写入包含研究标题和配置 ID 的确定性 assistant 确认语，再写入配置卡；成功后的 provider
+`prepare_study` 成功后，服务端先写入模型生成的详细研究说明，并以服务端掌握的实际研究标题和配置 ID 作为页脚，再写入配置卡；成功后的 provider
 尾声不再追加为迟到消息，因此即使用户立即确认，也保持“AI 说明、配置卡、工作流”的因果顺序。
 参数卡从服务端 `baselineValues` 恢复资源基线；刷新后仍显示尚未确认的字段变化和覆盖/另存选择，不把当前草稿值误作
-新的资源基线。
+新的资源基线。非终态配置卡首次出现时展开，标题栏始终显示实际研究标题、revision、状态和“收起/展开研究配置”开关；收起后卸载输入与确认控件，只保留继续配置提示。
+收起偏好以 `study-configuration:<configurationId>:collapsed` 保存在当前浏览器会话的 `sessionStorage`，因此刷新、revision 更新和切换会话后仍保持；任一 mutation 错误会清除偏好并自动展开以显示错误。已确认或已取消卡片保持紧凑终态，不显示开关。
 
 所有 mutation 携带当前 `expectedRevision`。服务端返回 `configuration_stale` 时刷新整张卡并要求用户基于新 revision
 重试，浏览器不合并旧输入。结果选择卡在 `collecting_inputs` 和 `ready_to_confirm` 都保持可编辑；达到

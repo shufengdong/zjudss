@@ -27,7 +27,7 @@ checkout、pull、reset、clean、构建或改写配置的 eig-rs 工作树。
 | `DATABASE_URL` | `sqlite://backend.db` |
 | `DATA_DIR` | `data` |
 | `LLM_PROVIDER` / `LLM_MODEL` | `deepseek` / `deepseek-v4-pro` |
-| `AGENT_BUNDLE_VERSION` | `v4.2.0` |
+| `AGENT_BUNDLE_VERSION` | `v4.3.0` |
 | `SESSION_TTL_DAYS` / `SESSION_COOKIE_SECURE` | `30` / `false` |
 | `AGENT_MAX_CONCURRENT_RUNS` / `AGENT_MAX_USER_RUNS` / `AGENT_QUEUE_CAPACITY` | `8` / `2` / `32` |
 | `TENSOREVAL_TIMEOUT_MS` / `AGENT_MODEL_RETRY_MAX` | `120000` / `2` |

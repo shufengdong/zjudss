@@ -763,7 +763,7 @@
     - runner: release
       file: scripts/test-release-integration
       name: real LLM provider and tensoreval complete the V4 semantic release journey
-  assertions: [tool calls are controlled and persisted, skills are loaded on demand, prepare_study persists a deterministic assistant acknowledgement before its configuration card and suppresses the later provider tail, prepare_study is a durable success even if provider finalization fails, conversational tools cannot create or run scripts]
+  assertions: [tool calls are controlled and persisted, skills are loaded on demand, prepare_study validates and persists the bounded model-generated explanation plus a server-authored title and configuration ID footer before its configuration card and suppresses the later provider tail, prepare_study is a durable success even if provider finalization fails, conversational tools cannot create or run scripts]
   fixtures: [embedded V4 agent bundle]
   contracts:
     - "tool:load_agent_skill"
@@ -803,6 +803,18 @@
     - runner: vitest
       file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
       name: ready-to-confirm configurations can change results before final confirmation
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: starts expanded and can collapse and restore the current confirmation controls
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: keeps a collapsed preference across remounts and newer revisions
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: automatically expands a collapsed card when a mutation reports a stale configuration
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: keeps terminal configuration cards compact without a collapse control
     - runner: rust
       file: backend/tests/study_configurations.rs
       name: explicit_facade_creates_catalog_driven_cards_without_a_model
@@ -839,7 +851,7 @@
     - runner: rust
       file: backend/tests/scripted_agent.rs
       name: natural_language_result_selection_updates_the_durable_card_without_starting_work
-  assertions: [explicit functions are never topology-rewritten, model inputs come only from active tables declared by the selected facade, para remains an independent Struct resource, multiple resources require user selection, Struct changes require replacement intent, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, ready-to-confirm cards keep result editing beside the final confirmation gate, natural-language result updates require the planning skill and exact current card revision, result updates revise the same durable card without creating scripts workflows or runs, final confirmation remains a fixed UI action]
+  assertions: [explicit functions are never topology-rewritten, prepare_study requires a bounded nonblank model explanation and persists it before the durable configuration card, model inputs come only from active tables declared by the selected facade, para remains an independent Struct resource, multiple resources require user selection, Struct changes require replacement intent, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, mutable cards start expanded and remember their collapsed state per configuration in the current browser session while mutation errors force them open, terminal cards stay compact, ready-to-confirm cards keep result editing beside the final confirmation gate, natural-language result updates require the planning skill and exact current card revision, result updates revise the same durable card without creating scripts workflows or runs, final confirmation remains a fixed UI action]
   fixtures: [current engine facade catalog, imported active model plus independent para resource, ambiguous compatible resources]
   contracts:
     - "route:GET /api/study-configurations/{id}"
@@ -854,6 +866,7 @@
     - "tool:update_study_results"
     - "skill:study-planning"
     - "error:configuration_stale"
+    - "error:invalid_study_explanation"
     - "error:configuration_incomplete"
     - "error:result_selection_invalid"
     - "error:study_facade_unavailable"

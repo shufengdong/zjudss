@@ -2,12 +2,12 @@
 
 ## Bundle
 
-生产 bundle 位于 `backend/resources/agent/v4/`，版本 `v4.2.0`。manifest 固定 system prompt、skill index、
+生产 bundle 位于 `backend/resources/agent/v4/`，版本 `v4.3.0`。manifest 固定 system prompt、skill index、
 engine contract、允许工具和文件 SHA-256；启动时完整验证。Agent prompt 只常驻策略，不常驻整套引擎文档。
 
 ## Skills
 
-按需 skill 为 `model-intake`、`study-planning`、`result-analysis`、`comparison` 和
+按需 skill 为 `model-intake`、`study-planning@1.5.0`、`result-analysis`、`comparison` 和
 `troubleshooting`。结果分析和比较要求先加载对应 skill；实际引用保存在资源/运行/
 分析快照中。
 
@@ -38,7 +38,8 @@ draft、读取运行/结果并创建派生分析或比较。规划或分析普�
 生成当前模型版本时，Agent 才能在加载 `model-intake` 并调用 `inspect_workspace` 后，以精确 `expectedDraft` 调用
 `publish_model_version`；成功会沿用版本服务的去重、描述规则并自动激活。导入完成、模型修改、准备研究以及“生成脚本/结果”
 均不构成发布授权，草稿并发变化时必须重新检查，不能猜测新 revision。Agent 仍不能确认导入、应用案例、激活历史版本、
-删除版本/结果、创建脚本或创建运行。`prepare_study` 成功即表示本轮配置准备完成；后续 provider
+删除版本/结果、创建脚本或创建运行。`prepare_study` 要求模型根据当前用户目标和目录结果生成非空、最多 4000 个 Unicode 字符的
+`explanation`，说明选择的方法与原因、输入/参数、计划结果和最终确认动作；服务端只补充实际标题与配置 ID。成功即表示本轮配置准备完成；后续 provider
 收尾失败不会用通用错误覆盖已持久化的配置卡。
 
 `update_study_results` 是唯一新增的研究配置写工具。它必须在当前消息加载 `study-planning` 后，以当前 durable 卡的精确
@@ -55,7 +56,7 @@ draft、读取运行/结果并创建派生分析或比较。规划或分析普�
 研究请求遵循 `load study-planning -> inspect_workspace -> search_study_facades -> prepare_study`。只有用户原文包含完整
 `ds_...` 标识时才传 `explicitFunction`；Newton/牛顿法等算法名称保留在自然语言 `query`，目录搜索按核心字段与差异
 相关度返回最匹配门面，不会根据网络拓扑改写用户选择。候选不唯一时 Agent 展示 `differences`，禁用门面显示合同诊断。
-`prepare_study` 创建持久化配置卡，由服务端按门面动态展开实际 model/Data/Struct/结果输入。多个兼容资源不能猜选，
+`prepare_study` 使用目录 facade ID、结构化原始意图和上述详细 `explanation` 创建持久化配置卡，由服务端按门面动态展开实际 model/Data/Struct/结果输入。多个兼容资源不能猜选，
 同门面历史 Struct 只形成复用建议。用户明确指定当前配置的结果时，链路为
 `load study-planning -> update_study_results(exact configurationId/revision/results)`，成功后仍等待固定 UI 的“确认并生成脚本”。
 配置卡未最终确认前，Agent 不得生成或运行受管脚本；运行时不存在绕过配置卡的旧规划或聊天脚本创建权限。
@@ -71,7 +72,7 @@ draft、读取运行/结果并创建派生分析或比较。规划或分析普�
 shell 命令和任意图表 option。`modify_model` 使用 `tableName + rowKey + changes + expectedDraft`；
 `read_model_dataframe` 使用 `scope + tableName + columns + equals + limit + expectedDraft?`；
 `publish_model_version` 使用 `expectedDraft + description?`，服务端从当前消息 ID 生成幂等键，不接受 session/version/path；
-`search_study_facades` 只接收查询词和可选显式函数名；`prepare_study` 只接收目录 facade ID、结构化原始意图和可选来源 workflow ID；
+`search_study_facades` 只接收查询词和可选显式函数名；`prepare_study` 只接收目录 facade ID、结构化原始意图、必填 `explanation` 和可选来源 workflow ID；空白或超过 4000 个 Unicode 字符的说明返回 `invalid_study_explanation`，且不产生领域写入；
 `update_study_results` 只接收十进制字符串 `configurationId`、正整数 `expectedRevision` 和有序唯一 `results`；比较使用两个 run ID。模型范围不存在、查询无效、输出过大、草稿 revision
 冲突和表不存在分别使用稳定错误码，工具响应不包含 artifact 路径。
 

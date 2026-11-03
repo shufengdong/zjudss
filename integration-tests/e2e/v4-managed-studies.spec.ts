@@ -8,6 +8,25 @@ test('managed Newton study confirms, repairs one engine failure, and publishes o
   const sessionId = await createSessionFromPage(page, '受管牛顿潮流')
   await publishExampleModel(page, api, sessionId)
   const configuration = await prepareNewtonStudy(page, api, sessionId, control)
+  const collapse = configuration.card.getByRole('button', { name: '收起研究配置' })
+  await expect(collapse).toHaveAttribute('aria-expanded', 'true')
+  await collapse.click()
+  await expect(configuration.card).toContainText('已收起，展开后可继续配置或确认')
+  await expect(configuration.card.getByRole('button', { name: '确认并生成脚本' })).toHaveCount(0)
+  await expect(configuration.card.getByRole('checkbox')).toHaveCount(0)
+
+  const other = await api.post('/api/sessions', { data: { title: '折叠记忆切换目标' } })
+  expect(other.status()).toBe(201)
+  await page.reload()
+  await expect(configuration.card.getByRole('button', { name: '展开研究配置' })).toHaveAttribute('aria-expanded', 'false')
+  if (await page.getByRole('button', { name: '展开历史侧栏' }).isVisible()) await page.getByRole('button', { name: '展开历史侧栏' }).click()
+  await page.getByRole('button', { name: /打开会话.*折叠记忆切换目标/ }).click()
+  await expect(page.getByRole('heading', { name: '折叠记忆切换目标' })).toBeVisible()
+  await page.getByRole('button', { name: /打开会话.*受管牛顿潮流/ }).click()
+  await expect(page.getByRole('heading', { name: '受管牛顿潮流' })).toBeVisible()
+  await expect(configuration.card.getByRole('button', { name: '展开研究配置' })).toHaveAttribute('aria-expanded', 'false')
+  await configuration.card.getByRole('button', { name: '展开研究配置' }).click()
+  await expect(configuration.card.getByRole('button', { name: '确认并生成脚本' })).toBeVisible()
   let configured = await (await api.get(`/api/study-configurations/${configuration.id}`)).json() as any
   let edited = await api.put(`/api/study-configurations/${configuration.id}/facade`, { data: { expectedRevision: configured.revision, facadeId: configured.facade.id } })
   expect(edited.status()).toBe(200)
@@ -149,7 +168,11 @@ test('study configuration maps a generic data resource and can be cancelled', as
       { kind: 'tool_call', call_id: 'inspect-qsts', name: 'inspect_workspace', args: {} },
       { kind: 'tool_call', call_id: 'skill-qsts', name: 'load_agent_skill', args: { skill_id: 'study-planning' } },
       { kind: 'tool_call', call_id: 'search-qsts', name: 'search_study_facades', args: { query: '时序潮流', explicitFunction: 'ds_radial_qsts' } },
-      { kind: 'tool_call', call_id: 'prepare-qsts', name: 'prepare_study', args: { facadeId: 'qsts_radial', intent: { request: '准备时序潮流' } } },
+      { kind: 'tool_call', call_id: 'prepare-qsts', name: 'prepare_study', args: {
+        facadeId: 'qsts_radial',
+        intent: { request: '准备时序潮流' },
+        explanation: '我将使用径向 QSTS 方法处理当前模型和已上传的日负荷曲线，因为该方法能按时间序列执行径向潮流。配置卡将引导映射 profile、seconds 与 multiplier 字段，并在最终确认后生成脚本。',
+      } },
       { kind: 'text', text: '时序研究配置已准备。' },
     ],
   })
