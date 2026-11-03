@@ -636,17 +636,10 @@ pub struct NormalizedCreateChart {
 
 pub fn normalize_create_request(
     name: String,
-    mut config: ChartConfig,
+    config: ChartConfig,
 ) -> Result<NormalizedCreateChart, ChartError> {
     let name = normalize_required_text(name, 100, "name")?;
-    normalize_config(&mut config)?;
-    let config_json = serde_json::to_string(&config).map_err(|error| {
-        ChartError::new(
-            "chart_config_invalid",
-            format!("图表配置无法序列化: {error}"),
-        )
-    })?;
-    let config_hash = hash_parts(&[CHART_CONTRACT_VERSION, "config", &config_json]);
+    let (config, config_json, config_hash) = normalize_chart_config(config)?;
     let request_hash = hash_parts(&[
         CHART_CONTRACT_VERSION,
         "request",
@@ -660,6 +653,20 @@ pub fn normalize_create_request(
         config_hash,
         request_hash,
     })
+}
+
+pub(crate) fn normalize_chart_config(
+    mut config: ChartConfig,
+) -> Result<(ChartConfig, String, String), ChartError> {
+    normalize_config(&mut config)?;
+    let config_json = serde_json::to_string(&config).map_err(|error| {
+        ChartError::new(
+            "chart_config_invalid",
+            format!("图表配置无法序列化: {error}"),
+        )
+    })?;
+    let config_hash = hash_parts(&[CHART_CONTRACT_VERSION, "config", &config_json]);
+    Ok((config, config_json, config_hash))
 }
 
 fn normalize_config(config: &mut ChartConfig) -> Result<(), ChartError> {
