@@ -824,10 +824,10 @@ fn normalize_field(field: &mut ChartFieldRef) -> Result<(), ChartError> {
     if column_length == 0 || column_length > 256 {
         return Err(config_error("column 长度必须为 1..=256"));
     }
-    if let Some(path) = &field.path {
-        if path.is_empty() || path.len() > 4 || path.iter().any(|index| *index > 1023) {
-            return Err(config_error("path 必须包含 1..=4 个 0..=1023 索引"));
-        }
+    if let Some(path) = &field.path
+        && (path.is_empty() || path.len() > 4 || path.iter().any(|index| *index > 1023))
+    {
+        return Err(config_error("path 必须包含 1..=4 个 0..=1023 索引"));
     }
     let label = match field.label.take() {
         Some(label) => normalize_required_text(label, 64, "label")?,
