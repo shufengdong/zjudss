@@ -6,6 +6,7 @@
 pub mod analysis;
 pub mod artifacts;
 pub mod case_import;
+pub mod charting;
 pub mod chat;
 pub mod comparisons;
 mod data_mapping;

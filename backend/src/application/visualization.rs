@@ -1,10 +1,8 @@
+pub use crate::application::charting::VISUALIZATION_KINDS;
 use crate::application::datasets::DatasetColumn;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
-
-pub const VISUALIZATION_KINDS: &[&str] =
-    &["line", "bar", "scatter", "heatmap", "boxplot", "histogram"];
 
 #[derive(Debug, Clone, Copy)]
 pub struct VisualizationBudgets {
