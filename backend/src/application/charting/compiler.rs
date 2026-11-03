@@ -5,10 +5,12 @@ use arrow_array::RecordBatch;
 
 use super::contracts::normalize_chart_config;
 use super::{
-    Aggregation, AxisMode, BarSeries, CHART_CONTRACT_VERSION, CategoryAxis, CategoryAxisType,
-    CategoryValue, ChartBudgets, ChartConfig, ChartDiagnostics, ChartError, ChartFieldRef,
-    ChartModel, ChartModelBase, ChartOrder, ChartSampling, LinePoint, LineSeries, LineXValue,
-    MixedAxis, NumericPoint, ResolvedField, ScatterSeries, ValueAxis,
+    Aggregation, AxisMode, BarSeries, BoxplotOutlier, BoxplotSeries, CHART_CONTRACT_VERSION,
+    CategoryAxis, CategoryAxisType, CategoryValue, ChartBudgets, ChartConfig, ChartDiagnostics,
+    ChartError, ChartFieldRef, ChartModel, ChartModelBase, ChartOrder, ChartSampling,
+    HeatmapAggregation, HeatmapCell, HeatmapValue, HistogramBin, HistogramValue, LinePoint,
+    LineSeries, LineXValue, MixedAxis, NamedCategoryAxis, NamedValueAxis, NumericPoint,
+    ResolvedField, ScatterSeries, ValueAxis,
 };
 use crate::application::dataframe_reader::DataFrameColumn;
 
@@ -38,6 +40,9 @@ pub enum PlotData {
     Line(Vec<PlotLineRow>),
     Bar(Vec<PlotBarRow>),
     Scatter(Vec<PlotScatterRow>),
+    Heatmap(Vec<PlotHeatmapRow>),
+    Boxplot(Vec<PlotBoxplotRow>),
+    Histogram(Vec<PlotHistogramRow>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,6 +67,33 @@ pub struct PlotScatterRow {
     pub series: String,
     pub x: f64,
     pub y: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlotHeatmapRow {
+    pub x_index: usize,
+    pub x_category: CategoryValue,
+    pub y_index: usize,
+    pub y_category: CategoryValue,
+    pub value: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlotBoxplotRow {
+    pub category_index: usize,
+    pub category: CategoryValue,
+    pub series: String,
+    pub values: [f64; 5],
+    pub outliers: Vec<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlotHistogramRow {
+    pub bin_index: usize,
+    pub start: f64,
+    pub end: f64,
+    pub count: u64,
+    pub includes_end: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -215,12 +247,65 @@ impl ChartCompiler {
                     budgets,
                 )?
             }
-            _ => {
-                return Err(ChartError::new(
-                    "chart_config_invalid",
-                    "该图表类型尚未由标量编译器实现",
-                ));
-            }
+            ChartConfig::Heatmap {
+                title,
+                presentation,
+                x,
+                y,
+                value,
+                aggregation,
+                ..
+            } => compile_heatmap(
+                source,
+                title,
+                presentation,
+                x,
+                y,
+                value,
+                aggregation,
+                &resolved,
+                config_hash,
+                diagnostics,
+                budgets,
+            )?,
+            ChartConfig::Boxplot {
+                title,
+                presentation,
+                category,
+                value,
+                split_by,
+                show_outliers,
+                ..
+            } => compile_boxplot(
+                source,
+                title,
+                presentation,
+                category,
+                value,
+                split_by,
+                show_outliers,
+                &resolved,
+                config_hash,
+                diagnostics,
+                budgets,
+            )?,
+            ChartConfig::Histogram {
+                title,
+                presentation,
+                value,
+                bins,
+                ..
+            } => compile_histogram(
+                source,
+                title,
+                presentation,
+                value,
+                bins,
+                &resolved[0],
+                config_hash,
+                diagnostics,
+                budgets,
+            )?,
         };
         let response_bytes = serde_json::to_vec(&compiled.model)
             .map_err(|error| {
@@ -660,6 +745,469 @@ fn compile_scatter(
     Ok(compiled_from_model(model, diagnostics))
 }
 
+#[derive(Debug, Clone)]
+struct HeatCandidate {
+    x: CategoryValue,
+    y: CategoryValue,
+    value: f64,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compile_heatmap(
+    source: &ChartSource,
+    title: Option<String>,
+    presentation: super::ChartPresentation,
+    x: ChartFieldRef,
+    y: ChartFieldRef,
+    value: ChartFieldRef,
+    aggregation: HeatmapAggregation,
+    fields: &[ResolvedField],
+    config_hash: String,
+    mut diagnostics: ChartDiagnostics,
+    budgets: ChartBudgets,
+) -> Result<CompiledChart, ChartError> {
+    let raw_values = source.batches.iter().map(RecordBatch::num_rows).sum();
+    enforce_budget("rawValues", raw_values, budgets.max_raw_values)?;
+    diagnostics.candidate_points = raw_values as u64;
+    let mut candidates = Vec::with_capacity(raw_values);
+    for batch in &source.batches {
+        for row in 0..batch.num_rows() {
+            let values = [
+                fields[0].read(batch, row)?,
+                fields[1].read(batch, row)?,
+                fields[2].read(batch, row)?,
+            ];
+            if !candidate_values_are_valid(&values, &mut diagnostics) {
+                continue;
+            }
+            candidates.push(HeatCandidate {
+                x: values[0].as_category()?,
+                y: values[1].as_category()?,
+                value: values[2].as_number()?,
+            });
+        }
+    }
+    if candidates.is_empty() {
+        return Err(no_data());
+    }
+    let x_categories = distinct_categories(candidates.iter().map(|candidate| &candidate.x));
+    let y_categories = distinct_categories(candidates.iter().map(|candidate| &candidate.y));
+    enforce_budget("categories", x_categories.len(), budgets.max_categories)?;
+    enforce_budget("categories", y_categories.len(), budgets.max_categories)?;
+    let x_indices = category_indices(&x_categories);
+    let y_indices = category_indices(&y_categories);
+    let mut positions = HashMap::<(String, String), usize>::new();
+    let mut groups = Vec::<(HeatCandidate, usize, f64, f64, f64)>::new();
+    for candidate in candidates {
+        let key = (category_key(&candidate.x), category_key(&candidate.y));
+        if let Some(position) = positions.get(&key).copied() {
+            let group = &mut groups[position];
+            group.1 += 1;
+            group.2 += candidate.value;
+            group.3 = group.3.min(candidate.value);
+            group.4 = group.4.max(candidate.value);
+        } else {
+            let position = groups.len();
+            positions.insert(key, position);
+            let observed = candidate.value;
+            groups.push((candidate, 1, observed, observed, observed));
+        }
+    }
+    diagnostics.aggregated_groups = groups.iter().filter(|group| group.1 > 1).count() as u64;
+    enforce_budget("heatmapCells", groups.len(), budgets.max_heatmap_cells)?;
+    let cells = groups
+        .into_iter()
+        .map(|(candidate, count, sum, min, max)| HeatmapCell {
+            x_index: x_indices[&category_key(&candidate.x)],
+            y_index: y_indices[&category_key(&candidate.y)],
+            value: match aggregation {
+                HeatmapAggregation::Mean => sum / count as f64,
+                HeatmapAggregation::Min => min,
+                HeatmapAggregation::Max => max,
+                HeatmapAggregation::Sum => sum,
+                HeatmapAggregation::Count => count as f64,
+            },
+        })
+        .collect::<Vec<_>>();
+    diagnostics.output_points = cells.len() as u64;
+    let min = cells
+        .iter()
+        .map(|cell| cell.value)
+        .min_by(f64::total_cmp)
+        .expect("non-empty heatmap");
+    let max = cells
+        .iter()
+        .map(|cell| cell.value)
+        .max_by(f64::total_cmp)
+        .expect("non-empty heatmap");
+    let base = model_base(source, title, config_hash, diagnostics.clone());
+    let model = ChartModel::Heatmap {
+        base,
+        presentation,
+        x_axis: NamedCategoryAxis {
+            name: x.display_name(),
+            categories: x_categories.clone(),
+        },
+        y_axis: NamedCategoryAxis {
+            name: y.display_name(),
+            categories: y_categories.clone(),
+        },
+        x_categories,
+        y_categories,
+        value: HeatmapValue {
+            name: value.display_name(),
+            unit: if aggregation == HeatmapAggregation::Count {
+                None
+            } else {
+                fields[2].unit.clone()
+            },
+            min,
+            max,
+        },
+        cells,
+    };
+    Ok(compiled_from_model(model, diagnostics))
+}
+
+#[derive(Debug, Clone)]
+struct BoxCandidate {
+    category: CategoryValue,
+    split: Option<CategoryValue>,
+    value: f64,
+    ordinal: u64,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compile_boxplot(
+    source: &ChartSource,
+    title: Option<String>,
+    presentation: super::ChartPresentation,
+    category: ChartFieldRef,
+    value: ChartFieldRef,
+    split_by: Option<ChartFieldRef>,
+    show_outliers: bool,
+    fields: &[ResolvedField],
+    config_hash: String,
+    mut diagnostics: ChartDiagnostics,
+    budgets: ChartBudgets,
+) -> Result<CompiledChart, ChartError> {
+    if split_by.as_ref().is_some_and(|field| field.path.is_some()) {
+        return Err(incompatible("splitBy 只能引用标量类别字段"));
+    }
+    let raw_values = source.batches.iter().map(RecordBatch::num_rows).sum();
+    enforce_budget("rawValues", raw_values, budgets.max_raw_values)?;
+    diagnostics.candidate_points = raw_values as u64;
+    let mut candidates = Vec::with_capacity(raw_values);
+    let mut ordinal = 0u64;
+    for batch in &source.batches {
+        for row in 0..batch.num_rows() {
+            let category_value = fields[0].read(batch, row)?;
+            let value_value = fields[1].read(batch, row)?;
+            let split_value = fields
+                .get(2)
+                .map(|field| field.read(batch, row))
+                .transpose()?;
+            let mut values = vec![category_value, value_value];
+            if let Some(split_value) = split_value {
+                values.push(split_value);
+            }
+            if !candidate_values_are_valid(&values, &mut diagnostics) {
+                ordinal += 1;
+                continue;
+            }
+            let split = if values.len() == 3 {
+                let split = values[2].as_category()?;
+                if matches!(split, CategoryValue::Number { .. }) {
+                    return Err(incompatible("splitBy 只允许字符串、布尔或整数类别字段"));
+                }
+                Some(split)
+            } else {
+                None
+            };
+            candidates.push(BoxCandidate {
+                category: values[0].as_category()?,
+                split,
+                value: values[1].as_number()?,
+                ordinal,
+            });
+            ordinal += 1;
+        }
+    }
+    if candidates.is_empty() {
+        return Err(no_data());
+    }
+    let categories = distinct_categories(candidates.iter().map(|candidate| &candidate.category));
+    enforce_budget("categories", categories.len(), budgets.max_categories)?;
+    let category_indices = category_indices(&categories);
+    let series_keys = box_series_keys(&candidates);
+    enforce_budget("series", series_keys.len(), budgets.max_series)?;
+    let names = box_series_names(&series_keys, &value)?;
+    let mut grouped = HashMap::<(Option<String>, String), Vec<f64>>::new();
+    for candidate in &candidates {
+        grouped
+            .entry((
+                candidate.split.as_ref().map(category_key),
+                category_key(&candidate.category),
+            ))
+            .or_default()
+            .push(candidate.value);
+    }
+    diagnostics.aggregated_groups =
+        grouped.values().filter(|values| values.len() > 1).count() as u64;
+    let mut series = Vec::with_capacity(series_keys.len());
+    for (series_index, key) in series_keys.iter().enumerate() {
+        let mut boxes = vec![None; categories.len()];
+        let mut outliers = Vec::new();
+        for category_value in &categories {
+            let Some(values) = grouped.get(&(key.clone(), category_key(category_value))) else {
+                continue;
+            };
+            let (summary, observed_outliers) = box_summary(values);
+            let category_index = category_indices[&category_key(category_value)];
+            boxes[category_index] = Some(summary);
+            if show_outliers {
+                outliers.extend(observed_outliers.into_iter().map(|value| BoxplotOutlier {
+                    category_index,
+                    value,
+                }));
+            }
+        }
+        series.push(BoxplotSeries {
+            name: names[series_index].clone(),
+            values: boxes,
+            outliers,
+        });
+    }
+    diagnostics.output_points = series
+        .iter()
+        .flat_map(|series| series.values.iter())
+        .filter(|value| value.is_some())
+        .count() as u64;
+    ensure_output(&diagnostics)?;
+    enforce_budget(
+        "points",
+        diagnostics.output_points as usize,
+        budgets.max_points,
+    )?;
+    let base = model_base(source, title, config_hash, diagnostics.clone());
+    let model = ChartModel::Boxplot {
+        base,
+        presentation,
+        category_axis: NamedCategoryAxis {
+            name: category.display_name(),
+            categories: categories.clone(),
+        },
+        value_axis: NamedValueAxis {
+            name: value.display_name(),
+            unit: fields[1].unit.clone(),
+        },
+        series,
+    };
+    Ok(compiled_from_model(model, diagnostics))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compile_histogram(
+    source: &ChartSource,
+    title: Option<String>,
+    presentation: super::ChartPresentation,
+    value: ChartFieldRef,
+    bin_count: u16,
+    field: &ResolvedField,
+    config_hash: String,
+    mut diagnostics: ChartDiagnostics,
+    budgets: ChartBudgets,
+) -> Result<CompiledChart, ChartError> {
+    let raw_values = source.batches.iter().map(RecordBatch::num_rows).sum();
+    enforce_budget("rawValues", raw_values, budgets.max_raw_values)?;
+    diagnostics.candidate_points = raw_values as u64;
+    let mut values = Vec::with_capacity(raw_values);
+    for batch in &source.batches {
+        for row in 0..batch.num_rows() {
+            let observed = field.read(batch, row)?;
+            if !candidate_values_are_valid(std::slice::from_ref(&observed), &mut diagnostics) {
+                continue;
+            }
+            values.push(observed.as_number()?);
+        }
+    }
+    if values.is_empty() {
+        return Err(no_data());
+    }
+    let minimum = values
+        .iter()
+        .copied()
+        .min_by(f64::total_cmp)
+        .expect("non-empty histogram");
+    let maximum = values
+        .iter()
+        .copied()
+        .max_by(f64::total_cmp)
+        .expect("non-empty histogram");
+    let bins = if minimum == maximum {
+        vec![HistogramBin {
+            start: minimum,
+            end: maximum,
+            count: values.len() as u64,
+            includes_end: true,
+        }]
+    } else {
+        let count = usize::from(bin_count);
+        let width = (maximum - minimum) / count as f64;
+        let mut counts = vec![0u64; count];
+        for observed in values {
+            let index = (((observed - minimum) / width).floor() as usize).min(count - 1);
+            counts[index] += 1;
+        }
+        counts
+            .into_iter()
+            .enumerate()
+            .map(|(index, count)| HistogramBin {
+                start: minimum + index as f64 * width,
+                end: if index + 1 == usize::from(bin_count) {
+                    maximum
+                } else {
+                    minimum + (index + 1) as f64 * width
+                },
+                count,
+                includes_end: index + 1 == usize::from(bin_count),
+            })
+            .collect()
+    };
+    diagnostics.aggregated_groups = bins.iter().filter(|bin| bin.count > 1).count() as u64;
+    diagnostics.output_points = bins.len() as u64;
+    enforce_budget("points", bins.len(), budgets.max_points)?;
+    let base = model_base(source, title, config_hash, diagnostics.clone());
+    let model = ChartModel::Histogram {
+        base,
+        presentation,
+        value: HistogramValue {
+            name: value.display_name(),
+            unit: field.unit.clone(),
+        },
+        bins,
+    };
+    Ok(compiled_from_model(model, diagnostics))
+}
+
+fn candidate_values_are_valid(
+    values: &[super::FieldValue],
+    diagnostics: &mut ChartDiagnostics,
+) -> bool {
+    diagnostics.missing_components += values
+        .iter()
+        .filter(|value| matches!(value, super::FieldValue::MissingComponent))
+        .count() as u64;
+    if values.iter().any(|value| {
+        matches!(
+            value,
+            super::FieldValue::Missing | super::FieldValue::MissingComponent
+        )
+    }) {
+        diagnostics.dropped_missing += 1;
+        return false;
+    }
+    if values
+        .iter()
+        .any(|value| matches!(value, super::FieldValue::NonFinite))
+    {
+        diagnostics.dropped_non_finite += 1;
+        return false;
+    }
+    true
+}
+
+fn distinct_categories<'a>(values: impl Iterator<Item = &'a CategoryValue>) -> Vec<CategoryValue> {
+    let mut seen = HashSet::new();
+    values
+        .filter(|value| seen.insert(category_key(value)))
+        .cloned()
+        .collect()
+}
+
+fn category_indices(categories: &[CategoryValue]) -> HashMap<String, usize> {
+    categories
+        .iter()
+        .enumerate()
+        .map(|(index, category)| (category_key(category), index))
+        .collect()
+}
+
+fn box_series_keys(candidates: &[BoxCandidate]) -> Vec<Option<String>> {
+    let mut ordered = candidates.iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|candidate| candidate.ordinal);
+    let mut seen = HashSet::new();
+    ordered
+        .into_iter()
+        .map(|candidate| candidate.split.as_ref().map(category_key))
+        .filter(|key| seen.insert(key.clone()))
+        .collect()
+}
+
+fn box_series_names(
+    keys: &[Option<String>],
+    value: &ChartFieldRef,
+) -> Result<Vec<String>, ChartError> {
+    let names = keys
+        .iter()
+        .map(|key| {
+            key.as_ref().map_or_else(
+                || value.display_name(),
+                |key| {
+                    let category =
+                        serde_json::from_str::<CategoryValue>(key).expect("canonical category key");
+                    format!("{} · {}", value.display_name(), category_display(&category))
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut unique = HashSet::new();
+    if names.iter().any(|name| !unique.insert(name.clone())) {
+        return Err(ChartError::new(
+            "chart_series_name_conflict",
+            "图表系列名称冲突，请调整 label",
+        ));
+    }
+    Ok(names)
+}
+
+fn box_summary(values: &[f64]) -> ([f64; 5], Vec<f64>) {
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let q1 = quantile_r7(&sorted, 0.25);
+    let median = quantile_r7(&sorted, 0.5);
+    let q3 = quantile_r7(&sorted, 0.75);
+    let fence = 1.5 * (q3 - q1);
+    let lower = q1 - fence;
+    let upper = q3 + fence;
+    let whisker_min = sorted
+        .iter()
+        .copied()
+        .find(|value| *value >= lower)
+        .expect("q1 is inside the lower fence");
+    let whisker_max = sorted
+        .iter()
+        .copied()
+        .rev()
+        .find(|value| *value <= upper)
+        .expect("q3 is inside the upper fence");
+    let outliers = sorted
+        .into_iter()
+        .filter(|value| *value < whisker_min || *value > whisker_max)
+        .collect();
+    ([whisker_min, q1, median, q3, whisker_max], outliers)
+}
+
+fn quantile_r7(sorted: &[f64], probability: f64) -> f64 {
+    if sorted.len() == 1 {
+        return sorted[0];
+    }
+    let position = (sorted.len() - 1) as f64 * probability;
+    let lower = position.floor() as usize;
+    let fraction = position - lower as f64;
+    sorted[lower] + fraction * (sorted[(lower + 1).min(sorted.len() - 1)] - sorted[lower])
+}
+
 fn aggregate_candidates(
     candidates: Vec<Candidate>,
     aggregation: Aggregation,
@@ -946,7 +1494,77 @@ fn compiled_from_model(model: ChartModel, diagnostics: ChartDiagnostics) -> Comp
             model,
             diagnostics,
         },
-        _ => unreachable!("scalar compiler only returns line/bar/scatter"),
+        ChartModel::Heatmap {
+            x_categories,
+            y_categories,
+            cells,
+            ..
+        } => CompiledChart {
+            plot_data: PlotData::Heatmap(
+                cells
+                    .iter()
+                    .map(|cell| PlotHeatmapRow {
+                        x_index: cell.x_index,
+                        x_category: x_categories[cell.x_index].clone(),
+                        y_index: cell.y_index,
+                        y_category: y_categories[cell.y_index].clone(),
+                        value: cell.value,
+                    })
+                    .collect(),
+            ),
+            plot_schema: heatmap_plot_schema(),
+            model,
+            diagnostics,
+        },
+        ChartModel::Boxplot {
+            category_axis,
+            series,
+            ..
+        } => CompiledChart {
+            plot_data: PlotData::Boxplot(
+                series
+                    .iter()
+                    .flat_map(|series| {
+                        category_axis.categories.iter().enumerate().filter_map(
+                            |(category_index, category)| {
+                                series.values[category_index].map(|values| PlotBoxplotRow {
+                                    category_index,
+                                    category: category.clone(),
+                                    series: series.name.clone(),
+                                    values,
+                                    outliers: series
+                                        .outliers
+                                        .iter()
+                                        .filter(|outlier| outlier.category_index == category_index)
+                                        .map(|outlier| outlier.value)
+                                        .collect(),
+                                })
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+            plot_schema: boxplot_plot_schema(),
+            model,
+            diagnostics,
+        },
+        ChartModel::Histogram { bins, .. } => CompiledChart {
+            plot_data: PlotData::Histogram(
+                bins.iter()
+                    .enumerate()
+                    .map(|(bin_index, bin)| PlotHistogramRow {
+                        bin_index,
+                        start: bin.start,
+                        end: bin.end,
+                        count: bin.count,
+                        includes_end: bin.includes_end,
+                    })
+                    .collect(),
+            ),
+            plot_schema: histogram_plot_schema(),
+            model,
+            diagnostics,
+        },
     }
 }
 
@@ -976,6 +1594,39 @@ fn scatter_plot_schema() -> Vec<DataFrameColumn> {
         plot_column("series", "Utf8", false),
         plot_column("x", "Float64", false),
         plot_column("y", "Float64", false),
+    ]
+}
+
+fn heatmap_plot_schema() -> Vec<DataFrameColumn> {
+    vec![
+        plot_column("x_index", "UInt64", false),
+        plot_column("x_category_json", "Utf8", false),
+        plot_column("y_index", "UInt64", false),
+        plot_column("y_category_json", "Utf8", false),
+        plot_column("value", "Float64", false),
+    ]
+}
+
+fn boxplot_plot_schema() -> Vec<DataFrameColumn> {
+    vec![
+        plot_column("category_index", "UInt64", false),
+        plot_column("category_json", "Utf8", false),
+        plot_column("series", "Utf8", false),
+        plot_column("min", "Float64", false),
+        plot_column("q1", "Float64", false),
+        plot_column("median", "Float64", false),
+        plot_column("q3", "Float64", false),
+        plot_column("max", "Float64", false),
+        plot_column("outliers", "Utf8", false),
+    ]
+}
+
+fn histogram_plot_schema() -> Vec<DataFrameColumn> {
+    vec![
+        plot_column("bin_index", "UInt64", false),
+        plot_column("bin_start", "Float64", false),
+        plot_column("bin_end", "Float64", false),
+        plot_column("count", "UInt64", false),
     ]
 }
 
@@ -1530,6 +2181,229 @@ mod tests {
         }));
         assert_eq!(
             ChartCompiler::compile(&too_many_points, &source)
+                .unwrap_err()
+                .code,
+            "chart_too_large"
+        );
+    }
+
+    #[test]
+    fn heatmap_reducers_and_count_use_only_complete_finite_cells() {
+        let source = make_source(
+            vec![
+                column("x", "Utf8", None),
+                column("y", "Utf8", None),
+                column("value", "Float64", Some("MW")),
+            ],
+            vec![
+                ("x", Arc::new(StringArray::from(vec!["a", "a", "b"]))),
+                ("y", Arc::new(StringArray::from(vec!["r", "r", "s"]))),
+                ("value", Arc::new(Float64Array::from(vec![1.0, 3.0, 5.0]))),
+            ],
+        );
+        for (aggregation, expected) in [
+            ("mean", 2.0),
+            ("min", 1.0),
+            ("max", 3.0),
+            ("sum", 4.0),
+            ("count", 2.0),
+        ] {
+            let chart_config = config(json!({
+                "version":1,"kind":"heatmap","presentation":presentation(),
+                "x":{"column":"x"},"y":{"column":"y"},"value":{"column":"value"},
+                "aggregation":aggregation
+            }));
+            let compiled = ChartCompiler::compile(&chart_config, &source).unwrap();
+            let ChartModel::Heatmap { cells, .. } = compiled.model else {
+                panic!()
+            };
+            assert_eq!(cells.len(), 2);
+            assert_eq!(cells[0].value, expected);
+            assert_eq!(compiled.diagnostics.aggregated_groups, 1);
+        }
+
+        let incomplete = make_source(
+            vec![
+                column("x", "Utf8", None),
+                column("y", "Utf8", None),
+                column("value", "Float64", None),
+            ],
+            vec![
+                (
+                    "x",
+                    Arc::new(StringArray::from(vec![Some("a"), Some("a"), None])),
+                ),
+                ("y", Arc::new(StringArray::from(vec!["r", "r", "r"]))),
+                (
+                    "value",
+                    Arc::new(Float64Array::from(vec![Some(1.0), None, Some(3.0)])),
+                ),
+            ],
+        );
+        let count = config(json!({
+            "version":1,"kind":"heatmap","presentation":presentation(),
+            "x":{"column":"x"},"y":{"column":"y"},"value":{"column":"value"},
+            "aggregation":"count"
+        }));
+        let compiled = ChartCompiler::compile(&count, &incomplete).unwrap();
+        assert_eq!(compiled.diagnostics.dropped_missing, 2);
+        assert_eq!(compiled.diagnostics.output_points, 1);
+    }
+
+    #[test]
+    fn boxplot_uses_r7_quartiles_tukey_whiskers_and_optional_outliers() {
+        let source = make_source(
+            vec![
+                column("category", "Utf8", None),
+                column("value", "Float64", Some("kV")),
+            ],
+            vec![
+                (
+                    "category",
+                    Arc::new(StringArray::from(vec!["A", "A", "A", "A", "A", "B"])),
+                ),
+                (
+                    "value",
+                    Arc::new(Float64Array::from(vec![1.0, 2.0, 3.0, 4.0, 100.0, 5.0])),
+                ),
+            ],
+        );
+        let chart_config = config(json!({
+            "version":1,"kind":"boxplot","presentation":presentation(),
+            "category":{"column":"category"},"value":{"column":"value"},
+            "showOutliers":true
+        }));
+        let compiled = ChartCompiler::compile(&chart_config, &source).unwrap();
+        let ChartModel::Boxplot { series, .. } = compiled.model else {
+            panic!()
+        };
+        assert_eq!(series[0].values[0], Some([1.0, 2.0, 3.0, 4.0, 4.0]));
+        assert_eq!(series[0].values[1], Some([5.0; 5]));
+        assert_eq!(series[0].outliers.len(), 1);
+        assert_eq!(series[0].outliers[0].value, 100.0);
+
+        let hidden = config(json!({
+            "version":1,"kind":"boxplot","presentation":presentation(),
+            "category":{"column":"category"},"value":{"column":"value"},
+            "showOutliers":false
+        }));
+        let compiled = ChartCompiler::compile(&hidden, &source).unwrap();
+        let ChartModel::Boxplot { series, .. } = compiled.model else {
+            panic!()
+        };
+        assert!(series[0].outliers.is_empty());
+    }
+
+    #[test]
+    fn histogram_freezes_equal_and_normal_bin_boundaries_and_rejects_empty_data() {
+        let equal = make_source(
+            vec![column("value", "Float64", Some("Hz"))],
+            vec![("value", Arc::new(Float64Array::from(vec![2.0, 2.0, 2.0])))],
+        );
+        let chart_config = config(json!({
+            "version":1,"kind":"histogram","presentation":presentation(),
+            "value":{"column":"value"},"bins":5
+        }));
+        let compiled = ChartCompiler::compile(&chart_config, &equal).unwrap();
+        let ChartModel::Histogram { bins, .. } = compiled.model else {
+            panic!()
+        };
+        assert_eq!(bins.len(), 1);
+        assert_eq!((bins[0].start, bins[0].end, bins[0].count), (2.0, 2.0, 3));
+        assert!(bins[0].includes_end);
+
+        let normal = make_source(
+            vec![column("value", "Float64", None)],
+            vec![(
+                "value",
+                Arc::new(Float64Array::from(vec![0.0, 1.0, 2.0, 3.0])),
+            )],
+        );
+        let normal_config = config(json!({
+            "version":1,"kind":"histogram","presentation":presentation(),
+            "value":{"column":"value"},"bins":3
+        }));
+        let compiled = ChartCompiler::compile(&normal_config, &normal).unwrap();
+        let ChartModel::Histogram { bins, .. } = compiled.model else {
+            panic!()
+        };
+        assert_eq!(
+            bins.iter().map(|bin| bin.count).collect::<Vec<_>>(),
+            [1, 1, 2]
+        );
+        assert!(!bins[0].includes_end);
+        assert!(bins[2].includes_end);
+
+        let empty = make_source(
+            vec![column("value", "Float64", None)],
+            vec![(
+                "value",
+                Arc::new(Float64Array::from(vec![Some(f64::NAN), None])),
+            )],
+        );
+        assert_eq!(
+            ChartCompiler::compile(&normal_config, &empty)
+                .unwrap_err()
+                .code,
+            "chart_no_data"
+        );
+    }
+
+    #[test]
+    fn remaining_chart_kinds_enforce_raw_category_and_cell_budgets() {
+        let heatmap_source = make_source(
+            vec![
+                column("x", "Utf8", None),
+                column("y", "Utf8", None),
+                column("value", "Float64", None),
+            ],
+            vec![
+                ("x", Arc::new(StringArray::from(vec!["a", "b"]))),
+                ("y", Arc::new(StringArray::from(vec!["r", "s"]))),
+                ("value", Arc::new(Float64Array::from(vec![1.0, 2.0]))),
+            ],
+        );
+        let heatmap = config(json!({
+            "version":1,"kind":"heatmap","presentation":presentation(),
+            "x":{"column":"x"},"y":{"column":"y"},"value":{"column":"value"},
+            "aggregation":"mean"
+        }));
+        let budgets = ChartBudgets {
+            max_heatmap_cells: 1,
+            ..ChartBudgets::default()
+        };
+        assert_eq!(
+            ChartCompiler::compile_with_budgets(&heatmap, &heatmap_source, budgets)
+                .unwrap_err()
+                .code,
+            "chart_too_large"
+        );
+
+        let boxplot = config(json!({
+            "version":1,"kind":"boxplot","presentation":presentation(),
+            "category":{"column":"x"},"value":{"column":"value"},"showOutliers":false
+        }));
+        let budgets = ChartBudgets {
+            max_categories: 1,
+            ..ChartBudgets::default()
+        };
+        assert_eq!(
+            ChartCompiler::compile_with_budgets(&boxplot, &heatmap_source, budgets)
+                .unwrap_err()
+                .code,
+            "chart_too_large"
+        );
+
+        let histogram = config(json!({
+            "version":1,"kind":"histogram","presentation":presentation(),
+            "value":{"column":"value"},"bins":2
+        }));
+        let budgets = ChartBudgets {
+            max_raw_values: 1,
+            ..ChartBudgets::default()
+        };
+        assert_eq!(
+            ChartCompiler::compile_with_budgets(&histogram, &heatmap_source, budgets)
                 .unwrap_err()
                 .code,
             "chart_too_large"
