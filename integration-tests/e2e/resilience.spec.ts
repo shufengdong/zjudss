@@ -3,7 +3,7 @@ import { test, expect } from './fixtures'
 import { createReadySession, uploadScriptAndRun, send } from './helpers/journeys'
 import { restartBackend } from './helpers/server'
 
-test('committed sessions, results, and views survive restart while a running script converges and FTS fails locally', async ({ appPage, control }) => {
+test('committed sessions and results survive restart while a running script converges and FTS fails locally', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'restart@example.com', tenant: 'grid-r' })
   const { sessionId } = await createReadySession(page, api, '重启恢复')
   const { run } = await uploadScriptAndRun({
@@ -12,15 +12,14 @@ test('committed sessions, results, and views survive restart while a running scr
   })
   const source = (await (await api.get(`/api/runs/${run.id}/datasets`)).json()).datasets[0]
   await control.enqueueEngine({ kind: 'success', data: [{ name: 'derived', rows: [['b1', 1], ['b2', 0.99]], valueUnit: 'pu' }] })
-  await control.enqueueLlm({ id: 'persisted-analysis', expectedPrompt: '创建可恢复视图', turns: [
+  await control.enqueueLlm({ id: 'persisted-analysis', expectedPrompt: '筛选并保存可恢复的派生结果', turns: [
     { kind: 'tool_call', call_id: 'analysis-skill', name: 'load_agent_skill', args: { skill_id: 'result-analysis' } },
     { kind: 'tool_call', call_id: 'analysis-run', name: 'run_result_analysis', args: {
-      intent: { goal: 'restart recovery' }, script: 'derived = source', inputs: [{ datasetId: Number(source.id), alias: 'source' }], expectedOutputs: ['derived'],
-      initialViews: { derived: [{ name: '恢复折线', spec: { kind: 'line', x: 'key', y: ['value'] } }] },
+      intent: { goal: 'filter and persist a derived dataframe for restart recovery' }, script: 'derived = source', inputs: [{ datasetId: Number(source.id), alias: 'source' }], expectedOutputs: ['derived'],
     } },
     { kind: 'text', text: '持久分析完成' },
   ] })
-  await send(page, '创建可恢复视图')
+  await send(page, '筛选并保存可恢复的派生结果')
   await expect(page.getByText('持久分析完成', { exact: true })).toBeVisible()
 
   await page.locator('input[type=file]').first().setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/rss/replacement.rss'))
@@ -43,8 +42,7 @@ test('committed sessions, results, and views survive restart while a running scr
   await page.reload()
   await expect(page.getByText('持久分析完成', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: '查看 derived' }).click()
-  await page.getByRole('button', { name: '恢复折线', exact: true }).click()
-  await expect(page.getByLabel('line 图表')).toBeVisible()
+  await expect(page.getByRole('table')).toBeVisible()
   await page.getByRole('button', { name: '关闭数据集' }).click()
 
   await control.dropHistoryIndex()

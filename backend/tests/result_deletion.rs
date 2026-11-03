@@ -419,7 +419,6 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
                 alias: "source".into(),
             }],
             expected_outputs: vec!["result".into()],
-            initial_views: Default::default(),
             skill_refs: vec![],
         })
         .await
@@ -478,7 +477,6 @@ async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outpu
                 alias: "source".into(),
             }],
             expected_outputs: vec!["result".into()],
-            initial_views: Default::default(),
             skill_refs: vec![json!({"id":"result-analysis","version":"3"})],
         })
         .await

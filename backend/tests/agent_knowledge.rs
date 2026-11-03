@@ -36,8 +36,8 @@ fn skill(id: &str, path: &str, tool: &str, content: &str) -> Value {
 
 #[test]
 fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
-    let knowledge = AgentKnowledge::load_embedded("v4.3.0").expect("embedded knowledge");
-    assert_eq!(knowledge.manifest.agent_bundle_version, "v4.3.0");
+    let knowledge = AgentKnowledge::load_embedded("v4.4.0").expect("embedded knowledge");
+    assert_eq!(knowledge.manifest.agent_bundle_version, "v4.4.0");
     assert_eq!(
         knowledge.manifest.engine_contract_version,
         "tensoreval-parquet-v3"
@@ -73,10 +73,24 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     assert!(study_planning.contains("search_study_facades"));
     assert!(study_planning.contains("只有用户原文包含目录中的完整函数标识"));
     assert!(study_planning.contains("算法名称（如 Newton/牛顿法）"));
-    let result_analysis = knowledge.skill("result-analysis").unwrap().content.as_str();
+    let result_skill = knowledge.skill("result-analysis").unwrap();
+    assert_eq!(
+        result_skill.metadata.required_tools,
+        ["run_result_analysis"]
+    );
+    let result_analysis = result_skill.content.as_str();
     assert!(result_analysis.contains("右侧必须是返回 DataFrame 的函数调用"));
     assert!(result_analysis.contains("分号"));
     assert!(result_analysis.contains("必须继续调用 `run_result_analysis`"));
+    assert!(!result_analysis.contains("VisualizationSpec"));
+    assert!(!knowledge.system_prompt.contains("create_dataset_view"));
+    assert!(
+        !knowledge
+            .manifest
+            .allowed_tools
+            .iter()
+            .any(|tool| tool == "create_dataset_view")
+    );
     assert!(study_planning.contains("prepare_study"));
     assert!(study_planning.contains("explanation"));
     assert!(study_planning.contains("用户目标"));

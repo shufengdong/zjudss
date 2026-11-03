@@ -98,17 +98,8 @@
     - "error:analysis_staging_failed"
     - "error:analysis_update_failed"
     - "error:dataset_not_found"
-    - "error:dataset_schema_invalid"
     - "error:dataset_view_read_failed"
     - "error:storage_unavailable"
-    - "error:view_create_failed"
-    - "error:view_materialization_failed"
-    - "error:visualization_column_missing"
-    - "error:visualization_dtype_invalid"
-    - "error:visualization_kind_invalid"
-    - "error:visualization_spec_invalid"
-    - "error:visualization_too_large"
-    - "error:visualization_unsafe"
     - "error:comparison_event_failed"
     - "error:invalid_model_patch"
     - "error:comparison_incompatible"
@@ -1345,7 +1336,7 @@
   tests:
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
-      name: analysis, materialized views, and comparisons survive source-result deletion with tombstone lineage
+      name: analysis, saved charts, and comparisons survive source-result deletion with tombstone lineage
   assertions: [analysis is readable after source deletion, lineage retains tombstones]
   fixtures: [completed run, scripted analysis]
   contracts:
@@ -1354,18 +1345,17 @@
 
 - id: VIEW-001
   source: docs/integration-testing-design.md#coverage-matrix
-  title: Dataset views accept only controlled specs and materialize data
+  title: Saved charts use controlled configs and materialized Plot Data
   layers: [api, application, browser]
   lanes: [pr]
   tests:
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
-      name: analysis, materialized views, and comparisons survive source-result deletion with tombstone lineage
-  assertions: [materialized view survives source deletion, all controlled kinds are public]
-  fixtures: [materialized dataset view]
+      name: analysis, saved charts, and comparisons survive source-result deletion with tombstone lineage
+  assertions: [saved chart survives source deletion, all controlled kinds are public]
+  fixtures: [saved chart]
   contracts:
     - "route:GET /api/dataset-views/{id}/data"
-    - "tool:create_dataset_view"
     - "view:line"
     - "view:bar"
     - "view:scatter"
@@ -1381,7 +1371,7 @@
   tests:
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
-      name: analysis, materialized views, and comparisons survive source-result deletion with tombstone lineage
+      name: analysis, saved charts, and comparisons survive source-result deletion with tombstone lineage
   assertions: [comparison remains readable after source deletion]
   fixtures: [two compatible runs]
   contracts:

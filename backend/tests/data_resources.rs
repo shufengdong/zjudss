@@ -1,12 +1,8 @@
 mod common;
 
 use std::io::Cursor;
-use std::sync::Arc;
 
-use arrow_array::{Float64Array, RecordBatch};
-use arrow_schema::{DataType, Field, Schema};
 use diesel::RunQueryDsl;
-use parquet::arrow::ArrowWriter;
 
 use zjudss::application::{
     ActivateVersionRequest, CandidateDecision, CandidatePurpose, PublishDraftRequest,
@@ -28,37 +24,6 @@ fn csv(app: &TestApp, client_id: &str, name: &str, body: &[u8]) -> UploadFile {
             .artifact_service
             .store()
             .stage(Cursor::new(body), StageLimits::default())
-            .unwrap(),
-    }
-}
-
-fn numeric_parquet(app: &TestApp, client_id: &str, name: &str) -> UploadFile {
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("time", DataType::Float64, false),
-        Field::new("value", DataType::Float64, false),
-    ]));
-    let batch = RecordBatch::try_new(
-        schema.clone(),
-        vec![
-            Arc::new(Float64Array::from(vec![0.0, 1.0])),
-            Arc::new(Float64Array::from(vec![1.0, 2.0])),
-        ],
-    )
-    .unwrap();
-    let mut bytes = Vec::new();
-    let mut writer = ArrowWriter::try_new(&mut bytes, schema, None).unwrap();
-    writer.write(&batch).unwrap();
-    writer.close().unwrap();
-    UploadFile {
-        client_file_id: client_id.into(),
-        file_name: name.into(),
-        relative_path: Some(name.into()),
-        media_type: Some("application/vnd.apache.parquet".into()),
-        staged: app
-            .state
-            .artifact_service
-            .store()
-            .stage(Cursor::new(bytes), StageLimits::default())
             .unwrap(),
     }
 }
@@ -1767,7 +1732,6 @@ async fn ordinary_resource_can_feed_existing_analysis_pipeline_with_frozen_linea
                 alias: "source".into(),
             }],
             expected_outputs: vec!["result".into()],
-            initial_views: Default::default(),
             skill_refs: vec![],
         })
         .await
@@ -1820,63 +1784,6 @@ async fn ordinary_resource_can_feed_existing_analysis_pipeline_with_frozen_linea
         Some(resource.id.as_str())
     );
     assert_eq!(after_delete.lineage[0].content_hash, resource.content_hash);
-}
-
-#[tokio::test]
-async fn ordinary_resource_can_be_materialized_as_a_validated_view() {
-    let app = TestApp::spawn().await;
-    let user = common::test_user("alice@example.com");
-    let session_id = session(&app, &user, "resource-view").await;
-    let batch = app
-        .state
-        .upload_batch_service
-        .accept(
-            &user,
-            session_id,
-            "view-input".into(),
-            UploadSourceKind::Upload,
-            vec![numeric_parquet(&app, "view-source", "view-source.parquet")],
-        )
-        .await
-        .unwrap();
-    let candidate = &batch.candidates[0];
-    let decisions = vec![CandidateDecision {
-        candidate_id: candidate.id.clone(),
-        purpose: CandidatePurpose::DataResource,
-        selected: true,
-        table_name: None,
-        display_name: None,
-        alias: Some("view_source".into()),
-    }];
-    let published = app
-        .state
-        .data_resource_service
-        .publish_candidates(&user, batch.id.parse().unwrap(), decisions)
-        .await
-        .unwrap();
-    let resource = &published.resources[0];
-    let view = app
-        .state
-        .analysis_service
-        .create_resource_view(
-            &user,
-            &resource.id,
-            "负荷曲线".into(),
-            serde_json::json!({"kind":"line","x":"time","y":["value"]}),
-        )
-        .await
-        .unwrap();
-    let metadata = app
-        .state
-        .dataset_service
-        .metadata(&user, view.source_dataset_id)
-        .await
-        .unwrap();
-    assert_eq!(
-        metadata.lineage[0].source_resource_id.as_deref(),
-        Some(resource.id.as_str())
-    );
-    assert_eq!(metadata.lineage[0].content_hash, resource.content_hash);
 }
 
 #[tokio::test]

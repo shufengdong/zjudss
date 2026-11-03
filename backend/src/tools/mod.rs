@@ -7,7 +7,6 @@
 //! 收敛，以落实 AGENTS.md 的边界约束。
 
 pub mod compare_simulations;
-pub mod create_dataset_view;
 pub mod create_script;
 pub mod get_storage_usage;
 pub mod inspect_example;
@@ -299,7 +298,6 @@ define_tool_registry!(
     publish_model_version::PublishModelVersionTool,
     list_result_datasets::ListResultDatasetsTool,
     run_result_analysis::RunResultAnalysisTool,
-    create_dataset_view::CreateDatasetViewTool,
     compare_simulations::CompareSimulationsTool,
     list_simulation_history::ListSimulationHistoryTool,
     search_chat_history::SearchChatHistoryTool,

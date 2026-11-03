@@ -1,8 +1,8 @@
 {
-  "agentBundleVersion": "v4.3.0",
+  "agentBundleVersion": "v4.4.0",
   "engineContractVersion": "tensoreval-parquet-v3",
-  "systemSha256": "14ce4480d8f62c61a58cf8627e8fc09a231b303a5b207ebe81cf08381b47ebdc",
-  "skillIndexSha256": "0a4f82c75e8cabc6f3ce382acdb82fbcdebf805d116b1bb1f1d0596a44ff29fd",
+  "systemSha256": "e9d5b72c45ebd0ae38850883ab2845a699fb45433f08211c34a078ffb2e6a140",
+  "skillIndexSha256": "2debaac189700afaff40063c74c0ed7fd624388898fb963babc02eaaa9071af1",
   "allowedTools": [
     "inspect_workspace",
     "read_model_dataframe",
@@ -15,7 +15,6 @@
     "publish_model_version",
     "list_result_datasets",
     "run_result_analysis",
-    "create_dataset_view",
     "compare_simulations",
     "list_simulation_history",
     "search_chat_history",

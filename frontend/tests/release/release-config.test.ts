@@ -8,14 +8,15 @@ describe('release Playwright configuration', () => {
   test('repository release contract is V4-only', () => {
     const root = resolve(import.meta.dirname, '../../..')
     const manifest = JSON.parse(readFileSync(resolve(root, 'backend/resources/agent/v4/manifest.json'), 'utf8'))
-    expect(manifest.agentBundleVersion).toBe('v4.3.0')
-    expect(manifest.allowedTools).toHaveLength(24)
+    expect(manifest.agentBundleVersion).toBe('v4.4.0')
+    expect(manifest.allowedTools).toHaveLength(23)
     expect(manifest.allowedTools).toContain('publish_model_version')
     expect(manifest.allowedTools).toContain('search_study_facades')
     expect(manifest.allowedTools).toContain('prepare_study')
     expect(manifest.allowedTools).toContain('update_study_results')
     expect(manifest.allowedTools).not.toContain('plan_study')
     expect(manifest.allowedTools).not.toContain('create_script')
+    expect(manifest.allowedTools).not.toContain('create_dataset_view')
 
     const env = readFileSync(resolve(root, 'backend/.env.example'), 'utf8')
     expect(env).toContain('USER_ARTIFACT_LIMIT')

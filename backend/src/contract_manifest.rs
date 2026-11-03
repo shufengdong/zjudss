@@ -99,17 +99,8 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "analysis_staging_failed",
     "analysis_update_failed",
     "dataset_not_found",
-    "dataset_schema_invalid",
     "dataset_view_read_failed",
     "storage_unavailable",
-    "view_create_failed",
-    "view_materialization_failed",
-    "visualization_column_missing",
-    "visualization_dtype_invalid",
-    "visualization_kind_invalid",
-    "visualization_spec_invalid",
-    "visualization_too_large",
-    "visualization_unsafe",
     "comparison_event_failed",
     "invalid_model_patch",
     "comparison_incompatible",
@@ -205,7 +196,7 @@ pub struct ContractManifest {
 }
 
 pub fn contract_manifest() -> Result<ContractManifest, KnowledgeError> {
-    let knowledge = AgentKnowledge::load_embedded("v4.3.0")?;
+    let knowledge = AgentKnowledge::load_embedded("v4.4.0")?;
     let mut skill_ids = knowledge
         .skill_index()
         .map(|skill| skill.id.clone())

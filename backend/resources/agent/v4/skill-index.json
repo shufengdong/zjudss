@@ -1,5 +1,5 @@
 {
-  "bundleVersion": "v4.3.0",
+  "bundleVersion": "v4.4.0",
   "skills": [
     {
       "id": "model-intake",
@@ -59,16 +59,14 @@
     },
     {
       "id": "result-analysis",
-      "version": "1.0.0",
-      "description": "从 Parquet dataset 生成受控结果查询和视图",
+      "version": "1.1.0",
+      "description": "从 Parquet dataset 生成受控筛选、聚合和派生结果",
       "triggers": [
         "query-result",
-        "aggregate",
-        "visualize"
+        "aggregate"
       ],
       "requiredTools": [
-        "run_result_analysis",
-        "create_dataset_view"
+        "run_result_analysis"
       ],
       "engineContractVersion": "tensoreval-parquet-v3",
       "sources": [
@@ -76,11 +74,11 @@
         "docs/rsdss_function_reference.md"
       ],
       "path": "skills/result-analysis.md",
-      "sha256": "6bcd88ac847c5a40bf0d766fbfc3b3a097b8f64896f797761b7caa8ca9338423"
+      "sha256": "22fcc653394591f92ae8809acf840bac2c3a570a5a9a9a42bf472242f1932d02"
     },
     {
       "id": "comparison",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "按稳定键和单位比较两个仿真运行",
       "triggers": [
         "compare",
@@ -95,7 +93,7 @@
         "docs/validation_and_troubleshooting.md"
       ],
       "path": "skills/comparison.md",
-      "sha256": "2d135d581bb6c40f34a884fde44e0442859bdebac0796531b7f860793e3b276a"
+      "sha256": "8e7f815f62b73c0dc6b6228ea2dd0bc70f8a2a36489ff449d2ae7824c8d7c2df"
     },
     {
       "id": "troubleshooting",

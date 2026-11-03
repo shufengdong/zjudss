@@ -141,7 +141,7 @@ test('imports, scripts, runs, results, and deletion remain isolated between user
   expect((await alice.api.get(`/api/datasets/${dataset.id}`)).status()).toBe(200)
 })
 
-test('analysis, materialized views, and comparisons survive source-result deletion with tombstone lineage', async ({ appPage, control }) => {
+test('analysis, saved charts, and comparisons survive source-result deletion with tombstone lineage', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'dataframe-evidence@example.com' })
   const { sessionId } = await createReadySession(page, api, '派生结果血缘')
   const { run: baseline, card } = await uploadScriptAndRun({ page, api, control, sessionId, engine: {
@@ -175,16 +175,20 @@ test('analysis, materialized views, and comparisons survive source-result deleti
   const derivedId = analysisMessage.outputs[0].datasetId
   expect((await api.get(`/api/analysis-runs/${analysisMessage.analysisRunId}`)).status()).toBe(200)
 
-  await control.enqueueLlm({ id: 'v3-view', expectedPrompt: '创建持久折线视图', turns: [
-    { kind: 'tool_call', call_id: 'view', name: 'create_dataset_view', args: {
-      datasetId: Number(derivedId), name: '持久折线', spec: { kind: 'line', x: 'key', y: ['value'] },
-    } },
-    { kind: 'text', text: '视图已保存' },
-  ] })
-  await send(page, '创建持久折线视图')
-  await expect(page.getByText('视图已保存', { exact: true })).toBeVisible()
-  const derived = await (await api.get(`/api/datasets/${derivedId}`)).json()
-  const viewId = derived.views[0].id
+  const savedChart = await api.post(`/api/datasets/${derivedId}/views`, { data: {
+    clientOperationId: '1f6d0000-0000-4000-8000-000000000003', name: '持久折线',
+    config: {
+      version: 1, kind: 'line',
+      presentation: {
+        legend: { show: true, position: 'top', orientation: 'horizontal' }, palette: 'colorblind',
+        title: { show: true }, axis: { showGrid: true }, line: { width: 2, style: 'solid', showSymbol: false },
+      },
+      x: { column: 'key' }, xAxisMode: 'category', measures: [{ column: 'value' }],
+      order: 'source', aggregation: 'none', sampling: { mode: 'none' },
+    },
+  } })
+  expect(savedChart.status()).toBe(201)
+  const viewId = (await savedChart.json()).view.id
   expect((await api.get(`/api/dataset-views/${viewId}/data`)).status()).toBe(200)
 
   await control.enqueueEngine({ kind: 'success', data: [{ name: 'result', rows: [['x', 0.1]], valueUnit: 'pu' }] })

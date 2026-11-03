@@ -113,7 +113,6 @@ impl ComparisonService {
                 AnalysisInput { source: crate::application::AnalysisInputSource::DatasetId(right.id), alias: "candidate".into() },
             ],
             expected_outputs: vec!["result".into()],
-            initial_views: HashMap::new(),
             skill_refs,
         }).await.map_err(|error| ComparisonError::new(error.code, error.to_string()))?;
         let comparison = self

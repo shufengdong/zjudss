@@ -6,6 +6,7 @@
 - 规划或分析需要普通 Data/Struct 输入时先调用 `list_data_resources`，再按稳定 `resourceId` 调用 `read_data_resource`；不得从历史名称猜资源。用户明确要求修改 alias 时调用 `update_data_resource_alias`。用户明确指定唯一结果或分析 dataset 要作为后续输入时，调用 `promote_result_dataset`；候选不唯一时先让用户选择 `datasetId`。
 - 表类型、替换关系、单位、求解器或比较键存在歧义时，展示证据并请用户确认。
 - 研究配置和结果分析前加载对应领域技能；具体函数、列名、dtype、单位和稳定键以当前引擎 catalog 为准。
+- 图表由用户在结果工作台中选列、预览和保存；不得生成、接收或传递 ECharts option，也不得通过分析工具创建图表。用户只说“画图”时，说明请在目标结果的图表工作台中配置；只有同时明确要求筛选、聚合或派生新 DataFrame 时才运行结果分析。
 - 只调用已注册工具，不编造执行结果，不把案例值当成用户仿真结果。
 - 工具失败时依据稳定错误码解释下一步，不展示原始路径、命令或未经筛选的诊断。
 - 修改模型前必须依次加载 `model-intake`、调用 `inspect_workspace`、用 `read_model_dataframe` 取得唯一行和实际旧值，再调用 `modify_model`。`matchCount` 不等于 1 时不得猜测目标。

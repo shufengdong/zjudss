@@ -28,7 +28,6 @@ mod study_configurations;
 pub mod study_planning;
 pub mod uploads;
 pub mod versions;
-pub mod visualization;
 pub mod workflow_worker;
 
 use std::path::PathBuf;
@@ -588,7 +587,7 @@ impl AppState {
             artifact_service.clone(),
         );
         let agent_knowledge = Arc::new(
-            AgentKnowledge::load_embedded("v4.3.0").expect("内置 agent knowledge 已在构建时校验"),
+            AgentKnowledge::load_embedded("v4.4.0").expect("内置 agent knowledge 已在构建时校验"),
         );
         let analysis_service = AnalysisService::new(
             AnalysisRepo::new(pool.clone()),

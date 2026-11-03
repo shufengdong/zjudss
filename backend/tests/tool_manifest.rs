@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::io::Cursor;
 use std::sync::Arc;
 
+use diesel::RunQueryDsl;
 use rig::tool::{Tool, ToolContext};
 use tokio::sync::{Mutex, Semaphore};
 use zjudss::adapters::StubEngine;
@@ -170,11 +171,15 @@ async fn data_resource_tools_list_read_rename_and_promote_owned_session_resource
                 alias: "source".into(),
             }],
             expected_outputs: vec!["result".into()],
-            initial_views: Default::default(),
             skill_refs: vec![],
         })
         .await
         .unwrap();
+    let view_count = diesel::sql_query("SELECT count(*) count FROM dataset_views")
+        .get_result::<common::CountRow>(&mut app.pool.get().unwrap())
+        .unwrap()
+        .count;
+    assert_eq!(view_count, 0, "analysis must not create chart views");
     let promoted = tools::promote_result_dataset::PromoteResultDatasetTool::new(tool_services)
         .call(
             &mut context,
@@ -191,7 +196,7 @@ async fn data_resource_tools_list_read_rename_and_promote_owned_session_resource
 
 #[test]
 fn manifest_allowed_tools_equal_runtime_registry() {
-    let mut manifest = AgentKnowledge::load_embedded("v4.3.0")
+    let mut manifest = AgentKnowledge::load_embedded("v4.4.0")
         .unwrap()
         .manifest
         .allowed_tools;
@@ -204,17 +209,37 @@ fn manifest_allowed_tools_equal_runtime_registry() {
 
     assert_eq!(
         runtime.len(),
-        24,
-        "runtime registry must contain 24 unique tools"
+        23,
+        "runtime registry must contain 23 unique tools"
     );
     runtime.dedup();
-    assert_eq!(runtime.len(), 24, "runtime tool names must be unique");
+    assert_eq!(runtime.len(), 23, "runtime tool names must be unique");
+    assert!(!runtime.iter().any(|tool| tool == "create_dataset_view"));
     assert!(runtime.iter().any(|tool| tool == "publish_model_version"));
     assert!(runtime.iter().any(|tool| tool == "update_study_results"));
     assert!(!runtime.iter().any(|tool| tool == "create_script"));
     assert_eq!(
         manifest, runtime,
         "manifest and runtime tool registries must be bidirectionally equal"
+    );
+}
+
+#[tokio::test]
+async fn run_result_analysis_has_no_chart_creation_input() {
+    let app = TestApp::spawn().await;
+    let tool =
+        tools::run_result_analysis::RunResultAnalysisTool::new(services(&app, principal("alice")));
+    let parameters = tool.parameters();
+    assert!(parameters["properties"].get("initialViews").is_none());
+    assert!(
+        serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
+            "intent":{},
+            "script":"result = source",
+            "inputs":[],
+            "expectedOutputs":["result"],
+            "initialViews":{}
+        }))
+        .is_err()
     );
 }
 

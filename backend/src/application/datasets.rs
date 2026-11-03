@@ -113,17 +113,6 @@ pub struct DatasetDownload {
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DatasetViewData {
-    pub view_id: String,
-    pub dataset_id: String,
-    pub kind: String,
-    pub spec: Value,
-    pub columns: Vec<String>,
-    pub rows: Vec<Vec<Value>>,
-    pub diagnostics: BTreeMap<String, u64>,
-}
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct DeletedDatasetDto {
     pub dataset_id: String,
     pub tombstone: Value,
@@ -322,68 +311,6 @@ impl DatasetService {
         Ok(DeletedDatasetDto {
             dataset_id: deleted.dataset_id.to_string(),
             tombstone,
-        })
-    }
-    pub async fn view_data(
-        &self,
-        _p: &CurrentUser,
-        _view_id: i32,
-    ) -> Result<DatasetViewData, DatasetError> {
-        Err(DatasetError::NotFound)
-    }
-
-    #[cfg(any())]
-    pub async fn legacy_view_data(
-        &self,
-        p: &CurrentUser,
-        view_id: i32,
-    ) -> Result<DatasetViewData, DatasetError> {
-        let (view, d) = self.repo.find_view(&p.id, view_id).await?;
-        let spec: Value = serde_json::from_str(&view.spec_json)
-            .map_err(|e| DatasetError::Storage(e.to_string()))?;
-        let schema: Vec<DatasetColumn> = serde_json::from_str(&d.schema_json)
-            .map_err(|e| DatasetError::Storage(e.to_string()))?;
-        let (_, plan) =
-            crate::application::visualization::VisualizationValidator::parse_and_validate(
-                &schema,
-                d.row_count as u64,
-                &spec,
-                crate::application::visualization::VisualizationBudgets::default(),
-            )
-            .map_err(|e| DatasetError::InvalidPage(e.to_string()))?;
-        let file = self.file(p, &d).await?;
-        let batches =
-            ParquetInspector::projection_file(file, &plan.columns, 0, d.row_count as usize)
-                .map_err(|e| DatasetError::Storage(e.to_string()))?;
-        let names = batches
-            .first()
-            .map(|b| {
-                b.schema()
-                    .fields()
-                    .iter()
-                    .map(|f| f.name().clone())
-                    .collect()
-            })
-            .unwrap_or(plan.columns);
-        let mut rows = Vec::new();
-        let mut diagnostics = BTreeMap::new();
-        for batch in batches {
-            for row in 0..batch.num_rows() {
-                let mut values = Vec::new();
-                for array in batch.columns() {
-                    values.push(value(array.as_ref(), row, &mut diagnostics)?);
-                }
-                rows.push(values);
-            }
-        }
-        Ok(DatasetViewData {
-            view_id: view.id.to_string(),
-            dataset_id: d.id.to_string(),
-            kind: view.kind,
-            spec,
-            columns: names,
-            rows,
-            diagnostics,
         })
     }
 }

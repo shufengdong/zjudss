@@ -133,14 +133,14 @@ const allowedTools = new Set([
   'inspect_workspace', 'read_model_dataframe', 'search_study_facades', 'prepare_study', 'update_study_results',
   'search_examples', 'inspect_example', 'modify_model', 'publish_model_version',
   'list_result_datasets',
-  'run_result_analysis', 'create_dataset_view', 'compare_simulations',
+  'run_result_analysis', 'compare_simulations',
   'list_simulation_history', 'search_chat_history', 'read_chat_context', 'get_storage_usage',
   'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section',
   'list_data_resources', 'read_data_resource', 'update_data_resource_alias', 'promote_result_dataset',
 ])
 const sideEffectTools = new Set([
   'prepare_study', 'update_study_results', 'modify_model', 'publish_model_version', 'update_data_resource_alias', 'promote_result_dataset',
-  'run_result_analysis', 'create_dataset_view', 'compare_simulations',
+  'run_result_analysis', 'compare_simulations',
 ])
 
 function invariant(condition: unknown, message: string): asserts condition {
