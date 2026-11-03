@@ -620,10 +620,14 @@ fn frozen_model(row: &ChartViewRow, source_deleted: bool) -> Result<ChartModel, 
             x,
             x_axis_mode,
             measures,
+            order,
+            aggregation,
             ..
         } => ChartModel::Line {
             base,
             presentation,
+            order,
+            aggregation,
             x_axis: MixedAxis {
                 r#type: x_axis_mode,
                 name: x.display_name(),

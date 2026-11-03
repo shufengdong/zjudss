@@ -401,6 +401,8 @@ interface ChartModelBase {
 interface LineChartModel extends ChartModelBase {
   kind: 'line'
   presentation: LineChartPresentation
+  order: 'source' | 'xAsc' | 'xDesc'
+  aggregation: 'none' | 'mean' | 'min' | 'max' | 'sum'
   xAxis: {
     type: 'category' | 'value'
     name: string
@@ -476,6 +478,8 @@ type ChartModel =
 前端只把它作为类别标签，不转成 JS number；value 轴只接受能够无精度损失转成有限 `f64` 的数值，超出 JS 安全整数范围的
 Int64/UInt64 只能作为 category。所有数值在服务端过滤为有限 JSON number；
 line 的 `xAxis.type=category` 时 point.x 必须是 `CategoryValue`，`type=value` 时必须是普通有限 number；两种表示不得混用。
+line model 回显受控的 `order/aggregation`，使前端在不同 series 各自丢弃缺失值后，仍能区分未聚合的重复类别点和聚合后的
+单一类别，并按请求语义重建统一 category slots；它们不是任意 ECharts 排序或聚合配置。
 缺失值不会通过 `NaN` 或字符串伪装。bar/boxplot 的 `null` 仅表示某 series 在已确定 category 上没有值，ECharts 编译器显示为空，
 不补零。预览的 `viewId/name` 为 `null`；保存图表读取时二者为非空。前端编译器只能使用该联合中的字段。
 

@@ -12,10 +12,6 @@ export interface DatasetMetadata {
 export interface DatasetPage {
   datasetId:string; columns:string[]; rows:unknown[][]; nextCursor:string|null; diagnostics:Record<string,number>
 }
-export interface DatasetViewData {
-  viewId:string; datasetId:string; kind:VisualizationKind; spec:Record<string,unknown>
-  columns:string[]; rows:unknown[][]; diagnostics:Record<string,number>
-}
 export interface ResultOutputRef {
   datasetId:string; name:string; rowCount:number; columns:ResultColumn[]; previewRows?:unknown[][]
   previewTruncated:boolean; defaultViewId:string|null

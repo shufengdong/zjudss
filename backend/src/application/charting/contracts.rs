@@ -576,6 +576,8 @@ pub enum ChartModel {
         #[serde(flatten)]
         base: ChartModelBase,
         presentation: LineChartPresentation,
+        order: ChartOrder,
+        aggregation: Aggregation,
         x_axis: MixedAxis,
         y_axis: ValueAxis,
         series: Vec<LineSeries>,

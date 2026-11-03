@@ -1,5 +1,7 @@
 import type {
-  AnalysisRun, DatasetMetadata, DatasetPage, DatasetViewData, ExampleDetail, ExampleTreeNode,
+  AnalysisRun, DatasetMetadata, DatasetPage, ExampleDetail, ExampleTreeNode,
+  ChartCapabilities, ChartConfig, ChartModel, ChartViewMetadata, ChartViewPage,
+  CreateChartViewRequest, CreateChartViewResponse, DeleteChartViewResponse,
   CandidateDecision, DataResourceDeletionPreview, DataResourcePage, DataResourceRows, DataResourceView,
   DeletedDataResource, HistoryHit, Message, MessagePage, ModelVersion, ParseSettings, ReplacementAction,
   ManagedWorkflowView, RetryPreviewView, RunComparison, RunDeletionPreview, ScriptDetail,
@@ -109,7 +111,13 @@ export const listRunDatasets=async(id:string)=>(await request<{datasets:DatasetM
 export const createRun=(scriptId:string,clientRunId:string)=>request<{run:SimulationRun;replayed:boolean}>(`/api/scripts/${scriptId}/runs`,{method:'POST',body:JSON.stringify({clientRunId})})
 export const getDataset=(id:string)=>request<DatasetMetadata>(`/api/datasets/${id}`)
 export const getDatasetRows=(id:string,q:{cursor?:string;limit?:number;columns?:string}={})=>request<DatasetPage>(`/api/datasets/${id}/rows${params(q)}`)
-export const getDatasetView=(id:string)=>request<DatasetViewData>(`/api/dataset-views/${id}/data`)
+export const getChartCapabilities=(datasetId:string,signal?:AbortSignal)=>request<ChartCapabilities>(`/api/datasets/${datasetId}/chart-capabilities`,{signal})
+export const previewChart=(datasetId:string,config:ChartConfig,signal?:AbortSignal)=>request<ChartModel>(`/api/datasets/${datasetId}/chart-previews`,{method:'POST',body:JSON.stringify({config}),signal})
+export const createChartView=(datasetId:string,body:CreateChartViewRequest)=>request<CreateChartViewResponse>(`/api/datasets/${datasetId}/views`,{method:'POST',body:JSON.stringify(body)})
+export const getChartView=(id:string,signal?:AbortSignal)=>request<ChartViewMetadata>(`/api/dataset-views/${id}`,{signal})
+export const getChartViewData=(id:string,signal?:AbortSignal)=>request<ChartModel>(`/api/dataset-views/${id}/data`,{signal})
+export const listChartViews=(sessionId:string,q:{cursor?:string;limit?:number}={})=>request<ChartViewPage>(`/api/sessions/${sessionId}/dataset-views${params(q)}`)
+export const deleteChartView=(id:string)=>request<DeleteChartViewResponse>(`/api/dataset-views/${id}`,{method:'DELETE'})
 export const getAnalysis=(id:string)=>request<AnalysisRun>(`/api/analysis-runs/${id}`)
 export const getComparison=(id:string)=>request<RunComparison>(`/api/run-comparisons/${id}`)
 export const deleteDataset=(id:string)=>request<{datasetId:string;tombstone:unknown}>(`/api/datasets/${id}`,{method:'DELETE'})

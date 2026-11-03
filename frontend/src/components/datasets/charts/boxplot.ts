@@ -1,10 +1,21 @@
 import type { EChartsOption } from 'echarts'
-import type { DatasetViewData, ResultColumn } from '../../../types'
-import { base,indexOf,unitOf } from './shared'
-const quantile=(v:number[],p:number)=>{const i=(v.length-1)*p,l=Math.floor(i),d=i-l;return v[l]+(v[Math.min(l+1,v.length-1)]-v[l])*d}
-export function boxplotOption(data:DatasetViewData,schema:ResultColumn[]):EChartsOption{
-  const category=String(data.spec.category),value=String(data.spec.value),ci=indexOf(data,category),vi=indexOf(data,value)
-  const groups=new Map<string,number[]>();data.rows.forEach(r=>{const key=String(r[ci]),n=Number(r[vi]);if(Number.isFinite(n))groups.set(key,[...(groups.get(key)??[]),n])})
-  const values=[...groups.values()].map(v=>{v.sort((a,b)=>a-b);return[v[0],quantile(v,.25),quantile(v,.5),quantile(v,.75),v[v.length-1]]})
-  return{...base(data.spec.title),tooltip:{trigger:'item'},xAxis:{type:'category',name:category,data:[...groups.keys()]},yAxis:{type:'value',name:unitOf(schema,value)},series:[{type:'boxplot',data:values}]}
+import type { BoxplotChartModel } from '../../../types'
+import { base, categoryLabel, type ChartCompileContext, valueAxis } from './shared'
+
+export function boxplotOption(model: BoxplotChartModel, context: ChartCompileContext = {}): EChartsOption {
+  const boxplots = model.series.map(series => ({
+    name: series.name, type: 'boxplot' as const,
+    data: series.values.map(value => value ?? '-'),
+  }))
+  const outliers = model.series.filter(series => series.outliers.length > 0).map(series => ({
+    name: `${series.name} 离群点`, type: 'scatter' as const,
+    data: series.outliers.map(outlier => [outlier.categoryIndex, outlier.value]),
+  }))
+  return {
+    ...base(model, context), tooltip: { trigger: 'item' },
+    xAxis: { type: 'category', name: model.categoryAxis.name, data: model.categoryAxis.categories.map(categoryLabel) },
+    yAxis: valueAxis(model.valueAxis.name, model.valueAxis.unit, model.presentation.axis.showGrid),
+    // ECharts accepts '-' as an empty item, but its boxplot declaration omits that documented gap token.
+    series: [...boxplots, ...outliers] as unknown as EChartsOption['series'],
+  }
 }

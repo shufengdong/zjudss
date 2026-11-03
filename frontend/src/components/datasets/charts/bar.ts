@@ -1,8 +1,12 @@
 import type { EChartsOption } from 'echarts'
-import type { DatasetViewData, ResultColumn } from '../../../types'
-import { base,indexOf,unitOf } from './shared'
-export function barOption(data:DatasetViewData,schema:ResultColumn[]):EChartsOption{
-  const x=String(data.spec.x),ys=(data.spec.y as string[])??[];const xi=indexOf(data,x)
-  return{...base(data.spec.title),xAxis:{type:'category',name:x,data:data.rows.map(r=>String(r[xi]??''))},yAxis:{type:'value',name:ys.length===1?unitOf(schema,ys[0]):''},
-    legend:{data:ys},series:ys.map(name=>({name,type:'bar',data:data.rows.map(r=>Number(r[indexOf(data,name)]))}))}
+import type { BarChartModel } from '../../../types'
+import { axisName, base, categoryLabel, type ChartCompileContext, valueAxis } from './shared'
+
+export function barOption(model: BarChartModel, context: ChartCompileContext = {}): EChartsOption {
+  return {
+    ...base(model, context),
+    xAxis: { type: 'category', name: axisName(model.xAxis.name, model.xAxis.unit), data: model.categories.map(categoryLabel) },
+    yAxis: valueAxis(model.yAxis.name, model.yAxis.unit, model.presentation.axis.showGrid),
+    series: model.series.map(series => ({ name: series.name, type: 'bar', data: series.values })),
+  }
 }

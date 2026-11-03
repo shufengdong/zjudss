@@ -18,6 +18,6 @@ export default function DatasetWorkbench({datasetId,onClose,onDeleted}:{datasetI
   </header>{error&&<div role="alert" className="m-4 rounded bg-red-50 p-3 text-sm text-red-600">{error}。已加载数据仍可查看，可重试加载更多。</div>}{metadata&&<>
     <nav className="flex gap-1 border-b px-3 py-2"><button onClick={()=>setViewId(null)} className={`rounded px-3 py-1 text-xs ${!viewId?'bg-brand-50 text-brand-700':''}`}>数据表</button>
       {metadata.views.map(v=><button key={v.id} onClick={()=>setViewId(v.id)} className={`rounded px-3 py-1 text-xs ${viewId===v.id?'bg-brand-50 text-brand-700':''}`}>{v.name}</button>)}</nav>
-    <div className="flex-1 overflow-auto">{viewId?(view.error?<div className="m-4 rounded bg-amber-50 p-3 text-sm text-amber-700">{view.error}。可在对话中要求筛选或聚合。</div>:view.data&&<ChartRenderer data={view.data} schema={metadata.columns}/>):<DatasetTable metadata={metadata} page={page} loading={loading} onMore={loadMore}/>}</div>
+    <div className="flex-1 overflow-auto">{viewId?(view.error?<div className="m-4 rounded bg-amber-50 p-3 text-sm text-amber-700">{view.error}。可在对话中要求筛选或聚合。</div>:view.data&&<ChartRenderer model={view.data}/>):<DatasetTable metadata={metadata} page={page} loading={loading} onMore={loadMore}/>}</div>
   </>}</div>
 }

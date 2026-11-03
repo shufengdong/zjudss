@@ -565,6 +565,8 @@ fn compile_line(
     let model = ChartModel::Line {
         base,
         presentation,
+        order,
+        aggregation,
         x_axis: MixedAxis {
             r#type: x_axis_mode,
             name: x.display_name(),
@@ -1743,9 +1745,18 @@ mod tests {
         }));
 
         let compiled = ChartCompiler::compile(&chart_config, &source).unwrap();
-        let ChartModel::Line { series, y_axis, .. } = &compiled.model else {
+        let ChartModel::Line {
+            series,
+            y_axis,
+            order,
+            aggregation,
+            ..
+        } = &compiled.model
+        else {
             panic!("expected line model")
         };
+        assert_eq!(*order, ChartOrder::Source);
+        assert_eq!(*aggregation, Aggregation::None);
         assert_eq!(
             series
                 .iter()
