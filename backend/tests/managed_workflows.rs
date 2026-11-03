@@ -11,7 +11,7 @@ use zjudss::agent::{ScriptAuthor, ScriptGenerationRequest, ScriptRepairRequest};
 use zjudss::application::{
     CandidateDecision, CandidatePurpose, ConfirmStudyRequest, CreateRunRequest,
     LockedStudyContract, PrepareStudyRequest, ReplacementAction, SelectStudyResultsRequest,
-    UpdateStudyStructRequest, WorkflowInputSnapshot,
+    StorageLimits, UpdateStudyStructRequest, WorkflowInputSnapshot,
 };
 use zjudss::db::repositories::{ManagedWorkflowRepo, ManagedWorkflowRepoError};
 use zjudss::testing::{AuthorTurn, ScriptedAuthor};
@@ -1147,6 +1147,68 @@ async fn save_as_new_struct_keeps_the_facade_alias_for_engine_injection() {
         .downcast_ref::<UInt32Array>()
         .unwrap();
     assert_eq!(max_iter.value(0), 77);
+
+    let page = app
+        .state
+        .data_resource_service
+        .rows(&user, &latest_para.id, Some(1), None, Vec::new())
+        .await
+        .unwrap();
+    let mut drifted_values = page
+        .columns
+        .into_iter()
+        .zip(page.rows[0].clone())
+        .collect::<serde_json::Map<_, _>>();
+    drifted_values.insert("max_iter".into(), json!(88));
+    let preview = app
+        .state
+        .data_resource_service
+        .preview_structured_replacement(
+            &user,
+            &latest_para.id,
+            &latest_para.content_hash,
+            "frames.para",
+            Value::Object(drifted_values),
+        )
+        .await
+        .unwrap();
+    app.state
+        .data_resource_service
+        .confirm_structured_replacement(&user, &preview.preview_token, ReplacementAction::Replace)
+        .await
+        .unwrap();
+    let usage = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
+    app.state
+        .artifact_service
+        .set_limits(
+            user.storage_scope_id,
+            StorageLimits {
+                artifact_limit: usage.used_artifacts,
+                byte_limit: usage.used_bytes,
+                warning_ratio: usage.warning_ratio,
+            },
+        )
+        .await
+        .unwrap();
+    let replay = app
+        .state
+        .run_service
+        .create(
+            &user,
+            terminal.final_script_resource_id.unwrap(),
+            CreateRunRequest {
+                client_run_id: "save-as-new-rerun".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.run.id, rerun.run.id);
 }
 
 #[tokio::test]

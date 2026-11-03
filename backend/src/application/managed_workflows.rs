@@ -238,6 +238,25 @@ impl ManagedWorkflowService {
             .find(&user.id, script_id)
             .await
             .map_err(WorkflowError::Repository)?;
+        if let Some(aggregate) = self
+            .repo
+            .find_retry_replay(&user.id, script_id, client_retry_id)
+            .await
+            .map_err(map_repo_error)?
+        {
+            let workflow = view(aggregate);
+            self.publish(&workflow);
+            if self.auto_start {
+                self.worker
+                    .start(user.clone(), workflow.id, workflow.session_id);
+            }
+            return Ok(RetryPreviewView {
+                retry_preview_id: None,
+                changes: serde_json::json!([]),
+                expires_at: None,
+                workflow: Some(workflow),
+            });
+        }
         let contract: super::LockedStudyContract =
             serde_json::from_str(script.frozen_contract_json.as_deref().ok_or_else(|| {
                 WorkflowError::Invalid("retry_not_available", "该脚本不能重新尝试".into())

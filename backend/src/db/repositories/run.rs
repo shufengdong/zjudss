@@ -170,6 +170,45 @@ impl RunRepo {
         Self { pool }
     }
 
+    pub async fn find_create_replay(
+        &self,
+        user: &UserId,
+        session_id: i32,
+        script_id: i32,
+        client_run_id: &str,
+    ) -> Result<Option<CreatedRun>, RunRepoError> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        let client_run_id = client_run_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            let existing = schema::simulation_runs::table
+                .inner_join(
+                    schema::sessions::table
+                        .on(schema::sessions::id.eq(schema::simulation_runs::session_id)),
+                )
+                .filter(schema::simulation_runs::session_id.eq(session_id))
+                .filter(schema::simulation_runs::client_run_id.eq(client_run_id))
+                .filter(schema::sessions::user_id.eq(user))
+                .filter(schema::sessions::deletion_status.eq("live"))
+                .select(schema::simulation_runs::all_columns)
+                .first::<SimulationRun>(&mut conn)
+                .optional()?;
+            let Some(existing) = existing else {
+                return Ok(None);
+            };
+            if existing.script_resource_id != Some(script_id) {
+                return Err(RunRepoError::IdempotencyConflict);
+            }
+            Ok(Some(CreatedRun {
+                run: existing,
+                replayed: true,
+            }))
+        })
+        .await
+        .map_err(|error| RunRepoError::Repository(RepoError::Join(error)))?
+    }
+
     pub async fn struct_overlay_requests(
         &self,
         user: &UserId,

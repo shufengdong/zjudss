@@ -384,6 +384,65 @@ async fn changed_private_overlay_retry_combines_latest_parameters_with_frozen_re
         .downcast_ref::<UInt32Array>()
         .unwrap();
     assert_eq!(max_iter.value(0), 77);
+
+    let current_para = app
+        .state
+        .data_resource_service
+        .list(&user, session_id, None, 100)
+        .await
+        .unwrap()
+        .resources
+        .into_iter()
+        .find(|resource| resource.alias == "para")
+        .unwrap();
+    let page = app
+        .state
+        .data_resource_service
+        .rows(&user, &current_para.id, Some(1), None, Vec::new())
+        .await
+        .unwrap();
+    let mut values = page
+        .columns
+        .into_iter()
+        .zip(page.rows[0].clone())
+        .collect::<serde_json::Map<_, _>>();
+    values.insert("max_iter".into(), json!(88));
+    let replacement = app
+        .state
+        .data_resource_service
+        .preview_structured_replacement(
+            &user,
+            &current_para.id,
+            &current_para.content_hash,
+            "frames.para",
+            Value::Object(values),
+        )
+        .await
+        .unwrap();
+    app.state
+        .data_resource_service
+        .confirm_structured_replacement(
+            &user,
+            &replacement.preview_token,
+            zjudss::application::ReplacementAction::Replace,
+        )
+        .await
+        .unwrap();
+
+    let replay = app
+        .state
+        .managed_workflow_service
+        .preview_retry(
+            &user,
+            source_script_id,
+            RetryStudyRequest {
+                client_retry_id: "retry-changed-overlay".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(replay.retry_preview_id.is_none());
+    assert_eq!(replay.workflow.unwrap().id, retry.id);
 }
 
 #[tokio::test]

@@ -208,6 +208,22 @@ impl RunService {
             ));
         }
         let script = self.repo_for_script(user, script_id).await?;
+        if let Some(created) = self
+            .repo
+            .find_create_replay(
+                &user.id,
+                script.session_id,
+                script_id,
+                &request.client_run_id,
+            )
+            .await?
+        {
+            return Ok(RunSubmission {
+                run: created.run,
+                script_name: script.name,
+                replayed: true,
+            });
+        }
         let ticket = self
             .scheduler
             .try_admit(&user.id, script.session_id)

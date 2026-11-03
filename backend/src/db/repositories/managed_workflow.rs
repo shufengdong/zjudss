@@ -173,6 +173,50 @@ impl ManagedWorkflowRepo {
         Self { pool }
     }
 
+    pub async fn find_retry_replay(
+        &self,
+        user: &UserId,
+        script_id: i32,
+        client_retry_id: &str,
+    ) -> Result<Option<ManagedWorkflowAggregate>, ManagedWorkflowRepoError> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        let client_retry_id = client_retry_id.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            let script = schema::script_resources::table
+                .inner_join(
+                    schema::sessions::table
+                        .on(schema::sessions::id.eq(schema::script_resources::session_id)),
+                )
+                .filter(schema::script_resources::id.eq(script_id))
+                .filter(schema::sessions::user_id.eq(&user))
+                .filter(schema::sessions::deletion_status.eq("live"))
+                .select((
+                    schema::script_resources::session_id,
+                    schema::script_resources::managed_workflow_id,
+                ))
+                .first::<(i32, Option<i32>)>(&mut conn)
+                .optional()?
+                .ok_or(ManagedWorkflowRepoError::Repository(RepoError::NotFound))?;
+            let Some(source_workflow_id) = script.1 else {
+                return Ok(None);
+            };
+            let operation = format!("retry:{source_workflow_id}:{client_retry_id}");
+            let existing = schema::managed_workflows::table
+                .filter(schema::managed_workflows::session_id.eq(script.0))
+                .filter(schema::managed_workflows::client_operation_id.eq(Some(operation)))
+                .select(schema::managed_workflows::id)
+                .first::<i32>(&mut conn)
+                .optional()?;
+            existing
+                .map(|workflow_id| load_owned(&mut conn, &user, workflow_id))
+                .transpose()
+        })
+        .await
+        .map_err(|error| ManagedWorkflowRepoError::Repository(RepoError::Join(error)))?
+    }
+
     pub async fn find_confirmation_replay(
         &self,
         user: &UserId,
