@@ -141,6 +141,21 @@ pub struct WorkflowReplacementMaterial {
     pub source_model_version_id: Option<i32>,
 }
 
+#[derive(Debug, Clone)]
+pub struct WorkflowStructOverlayMaterial {
+    pub input_id: String,
+    pub source_resource_id: String,
+    pub source_artifact_id: i32,
+    pub source_content_hash: String,
+    pub source_schema_hash: String,
+    pub artifact_id: i32,
+    pub content_hash: String,
+    pub schema_ref: String,
+    pub effective_values_json: String,
+    pub overrides_json: String,
+    pub owns_artifact_reference: bool,
+}
+
 impl ManagedWorkflowRepo {
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -197,6 +212,7 @@ impl ManagedWorkflowRepo {
         user: &UserId,
         mut prepared: PreparedStudyConfirmation,
         replacements: Vec<WorkflowReplacementMaterial>,
+        overlays: Vec<WorkflowStructOverlayMaterial>,
         client_operation_id: String,
         correction_budget: i32,
         agent_bundle_version: String,
@@ -255,6 +271,9 @@ impl ManagedWorkflowRepo {
                 if prepared.replacement_actions.len() != replacements.len() {
                     return Err(ManagedWorkflowRepoError::ConfigurationStale);
                 }
+                if prepared.struct_overlays.len() != overlays.len() {
+                    return Err(ManagedWorkflowRepoError::ConfigurationStale);
+                }
                 if let Some(active_id) = schema::managed_workflows::table
                     .filter(schema::managed_workflows::session_id.eq(configuration.session_id))
                     .filter(schema::managed_workflows::status.eq_any([
@@ -283,8 +302,6 @@ impl ManagedWorkflowRepo {
                 )?;
                 let locked_json = serde_json::to_string(&prepared.locked)
                     .map_err(|error| RepoError::Storage(error.to_string()))?;
-                let inputs_json = serde_json::to_string(&prepared.inputs)
-                    .map_err(|error| RepoError::Storage(error.to_string()))?;
                 diesel::insert_into(schema::managed_workflows::table)
                     .values((
                         schema::managed_workflows::session_id.eq(configuration.session_id),
@@ -310,7 +327,9 @@ impl ManagedWorkflowRepo {
                     .execute(conn)?;
                 let workflow_id = last_id(conn)?;
 
-                freeze_inputs(conn, &user, workflow_id, &prepared, now_ms)?;
+                freeze_inputs(conn, &user, workflow_id, &mut prepared, &overlays, now_ms)?;
+                let inputs_json = serde_json::to_string(&prepared.inputs)
+                    .map_err(|error| RepoError::Storage(error.to_string()))?;
                 let engine_contract_version = schema::engine_resource_snapshots::table
                     .find(&prepared.expected_snapshot_id)
                     .select(schema::engine_resource_snapshots::engine_contract_version)
@@ -1353,7 +1372,8 @@ fn freeze_inputs(
     conn: &mut SqliteConnection,
     user: &str,
     workflow_id: i32,
-    prepared: &PreparedStudyConfirmation,
+    prepared: &mut PreparedStudyConfirmation,
+    overlays: &[WorkflowStructOverlayMaterial],
     now_ms: i64,
 ) -> Result<(), ManagedWorkflowRepoError> {
     if let Some(model) = &prepared.inputs.model {
@@ -1394,7 +1414,7 @@ fn freeze_inputs(
             )?;
         }
     }
-    for resource in &prepared.inputs.resources {
+    for resource in &mut prepared.inputs.resources {
         #[derive(QueryableByName)]
         struct Resource {
             #[diesel(sql_type = diesel::sql_types::Integer)]
@@ -1420,6 +1440,64 @@ fn freeze_inputs(
         {
             return Err(ManagedWorkflowRepoError::ConfigurationStale);
         }
+        let overlay = overlays
+            .iter()
+            .find(|overlay| overlay.input_id == resource.input_id);
+        let (artifact_id, content_hash, snapshot) = if let Some(overlay) = overlay {
+            let prepared_overlay = prepared
+                .struct_overlays
+                .iter()
+                .find(|prepared| prepared.input_id == resource.input_id)
+                .ok_or(ManagedWorkflowRepoError::ConfigurationStale)?;
+            let effective_values =
+                serde_json::from_str::<serde_json::Value>(&overlay.effective_values_json)
+                    .map_err(|error| RepoError::InvalidState(error.to_string()))?;
+            let overrides = serde_json::from_str::<serde_json::Value>(&overlay.overrides_json)
+                .map_err(|error| RepoError::InvalidState(error.to_string()))?;
+            if overlay.source_resource_id != resource.resource_id
+                || overlay.source_artifact_id != row.artifact_id
+                || overlay.source_content_hash != resource.content_hash
+                || overlay.source_schema_hash != resource.schema_hash
+                || overlay.schema_ref != resource.schema_ref
+                || effective_values != prepared_overlay.effective_values
+                || overrides != prepared_overlay.overrides
+            {
+                return Err(ManagedWorkflowRepoError::ConfigurationStale);
+            }
+            (
+                overlay.artifact_id,
+                overlay.content_hash.clone(),
+                json!({
+                    "inputId": resource.input_id,
+                    "alias": resource.alias,
+                    "resourceAlias": resource.resource_alias,
+                    "kind": resource.kind,
+                    "resourceId": resource.resource_id,
+                    "schemaRef": resource.schema_ref,
+                    "schemaHash": resource.schema_hash,
+                    "contentHash": overlay.content_hash,
+                    "source": {
+                        "resourceId": resource.resource_id,
+                        "resourceAlias": resource.resource_alias,
+                        "artifactId": row.artifact_id,
+                        "schemaRef": resource.schema_ref,
+                        "schemaHash": resource.schema_hash,
+                        "contentHash": resource.content_hash,
+                    },
+                    "effective": {
+                        "artifactId": overlay.artifact_id,
+                        "contentHash": overlay.content_hash,
+                        "overrides": overrides,
+                    }
+                }),
+            )
+        } else {
+            (
+                row.artifact_id,
+                resource.content_hash.clone(),
+                serde_json::to_value(&*resource).unwrap(),
+            )
+        };
         insert_input(
             conn,
             workflow_id,
@@ -1427,14 +1505,15 @@ fn freeze_inputs(
             &resource.kind,
             Some(&resource.resource_id),
             None,
-            row.artifact_id,
+            artifact_id,
             Some(&resource.alias),
             Some(&resource.schema_ref),
             Some(&resource.schema_hash),
-            &resource.content_hash,
-            serde_json::to_value(resource).unwrap(),
+            &content_hash,
+            snapshot,
             now_ms,
         )?;
+        resource.content_hash = content_hash;
     }
     Ok(())
 }

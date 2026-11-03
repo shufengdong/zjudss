@@ -928,17 +928,7 @@ impl StudyConfigurationService {
                         compatible,
                         &result_selector_fields(facade, input)?,
                     );
-                    let prior = if input.kind == FacadeInputKind::Struct {
-                        self.repo
-                            .latest_confirmed_resource(&user.id, session_id, &facade.id, &input.id)
-                            .await?
-                    } else {
-                        None
-                    };
-                    let has_live_prior = prior
-                        .as_deref()
-                        .is_some_and(|id| compatible.iter().any(|resource| resource.id == id));
-                    if compatible.len() == 1 && !has_live_prior {
+                    if compatible.len() == 1 {
                         let candidate_id = &compatible[0].id;
                         if input.kind == FacadeInputKind::Struct {
                             match self.struct_resource_values(user, candidate_id, input).await {
@@ -955,7 +945,7 @@ impl StudyConfigurationService {
                         } else {
                             resource_id = Some(candidate_id.clone());
                         }
-                    } else if compatible.len() > 1 || has_live_prior {
+                    } else if compatible.len() > 1 {
                         mapping_json =
                             Some(serde_json::json!({"selectionRequired":true}).to_string());
                     }
