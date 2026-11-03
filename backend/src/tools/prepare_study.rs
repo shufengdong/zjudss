@@ -16,6 +16,7 @@ pub struct Args {
     pub facade_id: String,
     pub intent: Value,
     pub derived_from_workflow_id: Option<i32>,
+    pub explanation: String,
 }
 
 pub struct PrepareStudyTool {
@@ -35,7 +36,7 @@ impl Tool for PrepareStudyTool {
     type Error = DomainToolError;
 
     fn description(&self) -> String {
-        "用已搜索并选定的目录门面创建持久化研究配置卡。只准备输入、Struct 参数和结果选择，不生成或运行脚本。调用前加载 study-planning skill。".into()
+        "用已搜索并选定的目录门面和模型生成的研究方案说明创建持久化研究配置卡。只准备输入、Struct 参数和结果选择，不生成或运行脚本。调用前加载 study-planning skill。".into()
     }
 
     fn parameters(&self) -> Value {
@@ -43,14 +44,22 @@ impl Tool for PrepareStudyTool {
             json!({
                 "facadeId":{"type":"string","minLength":1,"maxLength":256},
                 "intent":{"type":"object"},
-                "derivedFromWorkflowId":{"type":["integer","null"],"minimum":1}
+                "derivedFromWorkflowId":{"type":["integer","null"],"minimum":1},
+                "explanation":{"type":"string","minLength":1,"maxLength":4000}
             }),
-            &["facadeId", "intent"],
+            &["facadeId", "intent", "explanation"],
         )
     }
 
     async fn call(&self, _: &mut ToolContext, args: Args) -> Result<Value, Self::Error> {
         self.services.require_skill("study-planning").await?;
+        let explanation = args.explanation.trim().to_string();
+        if explanation.is_empty() || explanation.chars().count() > 4_000 {
+            return Err(DomainToolError::new(
+                "invalid_study_explanation",
+                "研究方案说明必须为 1 到 4000 个字符",
+            ));
+        }
         let configuration = self
             .services
             .study_configurations
@@ -69,8 +78,8 @@ impl Tool for PrepareStudyTool {
         self.services
             .writer
             .assistant(&format!(
-                "已为您创建“{}”研究配置卡（ID: {}），请在卡片中检查并确认输入、参数和结果。",
-                configuration.facade.title, configuration.id
+                "{explanation}\n\n已创建“{}”研究配置卡（ID: {}）。请在卡片中检查并确认输入、参数和结果；只有点击“确认并生成脚本”后才会开始执行。",
+                configuration.facade.title, configuration.id,
             ))
             .await
             .map_err(|error| {

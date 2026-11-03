@@ -1,6 +1,7 @@
 mod common;
 
 use common::TestApp;
+use diesel::{RunQueryDsl, sql_query, sql_types::Integer};
 use rig::tool::{Tool, ToolContext};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -476,6 +477,7 @@ async fn study_tools_search_explicit_functions_and_prepare_persisted_cards() {
         .await
         .unwrap();
     assert_eq!(search["enabled"][0]["id"], "static_power_flow_newton");
+    let explanation = "您希望使用牛顿-拉夫逊法计算当前模型的静态潮流。该方法按您指定的求解方式处理网络；请在卡片中核对模型输入、para 参数和计划输出 bus_voltage。";
     let prepared = tools::prepare_study::PrepareStudyTool::new(services)
         .call(
             &mut context,
@@ -483,6 +485,7 @@ async fn study_tools_search_explicit_functions_and_prepare_persisted_cards() {
                 facade_id: "static_power_flow_newton".into(),
                 intent: serde_json::json!({"request":"求解牛顿法潮流"}),
                 derived_from_workflow_id: None,
+                explanation: format!("  {explanation}  "),
             },
         )
         .await
@@ -509,15 +512,65 @@ async fn study_tools_search_explicit_functions_and_prepare_persisted_cards() {
             message.role == "assistant"
                 && message.content
                     == format!(
-                        "已为您创建“牛顿-拉夫逊潮流”研究配置卡（ID: {id}），请在卡片中检查并确认输入、参数和结果。"
+                        "{explanation}\n\n已创建“牛顿-拉夫逊潮流”研究配置卡（ID: {id}）。请在卡片中检查并确认输入、参数和结果；只有点击“确认并生成脚本”后才会开始执行。"
                     )
         })
-        .expect("deterministic acknowledgement");
+        .expect("model explanation with authoritative footer");
     let configuration = messages
         .iter()
         .position(|message| message.kind == "study-config")
         .expect("study configuration message");
     assert!(acknowledgement < configuration);
+    assert!(messages[acknowledgement].id < messages[configuration].id);
+}
+
+#[tokio::test]
+async fn prepare_study_rejects_invalid_explanation_before_creating_configuration() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "invalid study explanation", 1)
+        .await
+        .unwrap();
+    let services = tool_services_for_session(&app, user.clone(), session.id);
+    services
+        .loaded_skills
+        .lock()
+        .await
+        .insert("study-planning".into());
+    let mut context = ToolContext::new();
+
+    for explanation in [" \n\t".to_string(), "说".repeat(4_001)] {
+        let error = tools::prepare_study::PrepareStudyTool::new(services.clone())
+            .call(
+                &mut context,
+                tools::prepare_study::Args {
+                    facade_id: "static_power_flow_newton".into(),
+                    intent: serde_json::json!({"request":"求解牛顿法潮流"}),
+                    derived_from_workflow_id: None,
+                    explanation,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "invalid_study_explanation");
+    }
+
+    let messages = app
+        .state
+        .message_repo
+        .list_by_session(&user.id, session.id)
+        .await
+        .unwrap();
+    assert!(messages.is_empty());
+    let mut connection = app.pool.get().unwrap();
+    let count = sql_query("SELECT count(*) count FROM study_configurations WHERE session_id=?1")
+        .bind::<Integer, _>(session.id)
+        .get_result::<common::CountRow>(&mut connection)
+        .unwrap();
+    assert_eq!(count.count, 0);
 }
 
 async fn prepare_study_results_configuration(
