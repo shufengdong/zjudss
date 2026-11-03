@@ -9,18 +9,10 @@ use crate::db::DbPool;
 pub struct ResultViewRow {
     #[diesel(sql_type = Integer)]
     pub id: i32,
-    #[diesel(sql_type = Integer)]
-    pub source_dataset_id: i32,
-    #[diesel(sql_type = Integer)]
-    pub view_dataset_id: i32,
     #[diesel(sql_type = Text)]
     pub name: String,
     #[diesel(sql_type = Text)]
     pub kind: String,
-    #[diesel(sql_type = Text)]
-    pub spec_json: String,
-    #[diesel(sql_type = Bool)]
-    pub is_default: bool,
     #[diesel(sql_type = BigInt)]
     pub created_at_ms: i64,
 }
@@ -117,7 +109,7 @@ impl ResultRepo {
             if owned == 0 {
                 return Err(RepoError::NotFound);
             }
-            diesel::sql_query("SELECT d.* FROM result_datasets d WHERE d.analysis_run_id=?1 AND d.deleted_at_ms IS NULL AND d.artifact_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dataset_views v WHERE v.view_dataset_id=d.id) ORDER BY d.id")
+            diesel::sql_query("SELECT d.* FROM result_datasets d WHERE d.analysis_run_id=?1 AND d.deleted_at_ms IS NULL AND d.artifact_id IS NOT NULL ORDER BY d.id")
                 .bind::<Integer, _>(analysis_id)
                 .load(&mut conn)
                 .map_err(RepoError::from)
@@ -153,7 +145,7 @@ impl ResultRepo {
         let pool = self.pool.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            diesel::sql_query("SELECT id,source_dataset_id,view_dataset_id,name,kind,spec_json,is_default,created_at_ms FROM dataset_views WHERE source_dataset_id=?1 ORDER BY id")
+            diesel::sql_query("SELECT id,name,kind,created_at_ms FROM dataset_views WHERE source_dataset_id=?1 AND deleted_at_ms IS NULL ORDER BY id")
                 .bind::<Integer, _>(dataset_id)
                 .load(&mut conn)
                 .map_err(RepoError::from)
@@ -171,14 +163,14 @@ impl ResultRepo {
         let user = user.0.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            let view = diesel::sql_query("SELECT v.id,v.source_dataset_id,v.view_dataset_id,v.name,v.kind,v.spec_json,v.is_default,v.created_at_ms FROM dataset_views v JOIN result_datasets d ON d.id=v.view_dataset_id LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id JOIN sessions s ON s.id=COALESCE(r.session_id,a.session_id) WHERE v.id=?1 AND s.user_id=?2 AND s.deletion_status='live' AND d.deleted_at_ms IS NULL AND d.artifact_id IS NOT NULL")
+            let view = diesel::sql_query("SELECT v.id,v.name,v.kind,v.created_at_ms FROM dataset_views v JOIN sessions s ON s.id=v.session_id WHERE v.id=?1 AND s.user_id=?2 AND s.deletion_status='live' AND v.deleted_at_ms IS NULL")
                 .bind::<Integer, _>(view_id)
                 .bind::<Text, _>(&user)
                 .get_result::<ResultViewRow>(&mut conn)
                 .optional()?
                 .ok_or(RepoError::NotFound)?;
-            let dataset = diesel::sql_query("SELECT * FROM result_datasets WHERE id=?1 AND deleted_at_ms IS NULL AND artifact_id IS NOT NULL")
-                .bind::<Integer, _>(view.view_dataset_id)
+            let dataset = diesel::sql_query("SELECT d.* FROM result_datasets d JOIN dataset_views v ON v.source_dataset_id=d.id WHERE v.id=?1")
+                .bind::<Integer, _>(view.id)
                 .get_result::<RunDataset>(&mut conn)?;
             Ok((view, dataset))
         })

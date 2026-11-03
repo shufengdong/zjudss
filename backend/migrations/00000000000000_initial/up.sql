@@ -553,16 +553,39 @@ CREATE TABLE dataset_lineage_snapshots (
 );
 CREATE TABLE dataset_views (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
+ session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
  source_dataset_id INTEGER NOT NULL REFERENCES result_datasets(id) ON DELETE RESTRICT,
- view_dataset_id INTEGER NOT NULL UNIQUE REFERENCES result_datasets(id) ON DELETE RESTRICT,
+ artifact_id INTEGER REFERENCES artifacts(id),
+ client_operation_id TEXT NOT NULL,
+ request_hash TEXT NOT NULL,
  name TEXT NOT NULL,
  kind TEXT NOT NULL CHECK(kind IN ('line','bar','scatter','heatmap','boxplot','histogram')),
- spec_json TEXT NOT NULL,
- is_default BOOLEAN NOT NULL DEFAULT 0,
+ config_json TEXT NOT NULL,
+ config_hash TEXT NOT NULL,
+ chart_contract_version TEXT NOT NULL,
+ diagnostics_json TEXT NOT NULL,
+ plot_schema_json TEXT NOT NULL,
+ plot_schema_hash TEXT NOT NULL,
+ plot_content_hash TEXT NOT NULL,
+ row_count INTEGER NOT NULL CHECK(row_count>=0),
+ point_count INTEGER NOT NULL CHECK(point_count>=0),
+ size_bytes INTEGER NOT NULL CHECK(size_bytes>=0),
+ source_name TEXT NOT NULL,
+ source_schema_json TEXT NOT NULL,
+ source_schema_hash TEXT NOT NULL,
+ source_content_hash TEXT NOT NULL,
  created_at_ms INTEGER NOT NULL,
- UNIQUE(source_dataset_id,name)
+ deleted_at_ms INTEGER,
+ tombstone_json TEXT,
+ CHECK((deleted_at_ms IS NULL AND artifact_id IS NOT NULL AND tombstone_json IS NULL)
+    OR (deleted_at_ms IS NOT NULL AND artifact_id IS NULL AND tombstone_json IS NOT NULL))
 );
-CREATE INDEX idx_dataset_views_source ON dataset_views(source_dataset_id,id);
+CREATE UNIQUE INDEX uq_dataset_views_operation
+ ON dataset_views(source_dataset_id,client_operation_id);
+CREATE UNIQUE INDEX uq_dataset_views_live_name
+ ON dataset_views(source_dataset_id,name) WHERE deleted_at_ms IS NULL;
+CREATE INDEX idx_dataset_views_session_time
+ ON dataset_views(session_id,created_at_ms DESC,id DESC);
 CREATE TABLE run_comparisons (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,

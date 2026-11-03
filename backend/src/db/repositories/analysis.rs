@@ -3,8 +3,7 @@ use diesel::prelude::*;
 use super::{RepoError, RepoResult, RunDataset, StateTransition};
 use crate::auth::UserId;
 use crate::db::models::{
-    DatasetView, NewDatasetView, NewResultAnalysisRun, NewResultDataset, ResultAnalysisInput,
-    ResultAnalysisRun,
+    NewResultAnalysisRun, NewResultDataset, ResultAnalysisInput, ResultAnalysisRun,
 };
 use crate::db::{DbPool, schema};
 
@@ -130,34 +129,6 @@ impl AnalysisRepo {
         .map_err(RepoError::Join)?
     }
 
-    pub async fn attach_view(
-        &self,
-        user: &UserId,
-        source_dataset_id: i32,
-        view: NewDatasetView,
-    ) -> RepoResult<DatasetView> {
-        let pool = self.pool.clone();
-        let user = user.0.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(RepoError::Pool)?;
-            conn.immediate_transaction::<_, RepoError, _>(|conn| {
-                let session_id = dataset_session(conn, &user, source_dataset_id)?;
-                if dataset_session(conn, &user, view.view_dataset_id)? != session_id
-                    || view.source_dataset_id != source_dataset_id
-                {
-                    return Err(RepoError::NotFound);
-                }
-                diesel::insert_into(schema::dataset_views::table)
-                    .values(&view)
-                    .execute(conn)?;
-                let id = last_id(conn)?;
-                Ok(schema::dataset_views::table.find(id).first(conn)?)
-            })
-        })
-        .await
-        .map_err(RepoError::Join)?
-    }
-
     pub async fn fail(
         &self,
         user: &UserId,
@@ -256,6 +227,7 @@ fn owned_live_dataset(
     }
 }
 
+#[cfg(any())]
 fn dataset_session(conn: &mut SqliteConnection, user: &str, id: i32) -> RepoResult<i32> {
     #[derive(diesel::QueryableByName)]
     struct Row {

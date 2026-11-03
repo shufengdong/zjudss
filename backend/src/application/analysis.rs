@@ -10,15 +10,13 @@ use serde_json::{Value, json};
 
 use crate::adapters::{ENGINE_CONTRACT_VERSION, NamedInput, RunMode, RunSpec, SimEngine};
 use crate::agent::knowledge::AgentKnowledge;
-use crate::application::visualization::{VisualizationBudgets, VisualizationValidator};
 use crate::application::{
     ArtifactMetadata, ArtifactService, DatasetViewRef, EventBus, EventWriter, OperationKind,
     OperationRef, ResultOutputRef, Stage, StageStatus, VisualizationKind, now_ms,
 };
 use crate::auth::CurrentUser;
 use crate::db::models::{
-    DatasetView, NewDatasetView, NewResultAnalysisRun, NewResultDataset, ResultAnalysisInput,
-    ResultAnalysisRun,
+    ChartViewRow, NewResultAnalysisRun, NewResultDataset, ResultAnalysisInput, ResultAnalysisRun,
 };
 use crate::db::repositories::{
     AnalysisRepo, DataResourceRepo, MessageRepo, ResultRepo, RunDataset,
@@ -488,11 +486,25 @@ impl AnalysisService {
 
     pub async fn create_view(
         &self,
+        _principal: &CurrentUser,
+        _dataset_id: i32,
+        _name: String,
+        _spec: Value,
+    ) -> Result<ChartViewRow, AnalysisError> {
+        Err(AnalysisError::new(
+            "chart_workbench_required",
+            "图表请在结果工作台中创建",
+        ))
+    }
+
+    #[cfg(any())]
+    pub async fn legacy_create_view(
+        &self,
         principal: &CurrentUser,
         dataset_id: i32,
         name: String,
         spec: Value,
-    ) -> Result<DatasetView, AnalysisError> {
+    ) -> Result<ChartViewRow, AnalysisError> {
         let source = self
             .results
             .find_live(&principal.id, dataset_id)
@@ -614,7 +626,7 @@ impl AnalysisService {
             .attach_view(
                 &principal.id,
                 dataset_id,
-                NewDatasetView {
+                NewChartView {
                     source_dataset_id: dataset_id,
                     view_dataset_id: view_dataset.id,
                     name,
@@ -646,11 +658,25 @@ impl AnalysisService {
 
     pub async fn create_resource_view(
         &self,
+        _principal: &CurrentUser,
+        _resource_id: &str,
+        _name: String,
+        _spec: Value,
+    ) -> Result<ChartViewRow, AnalysisError> {
+        Err(AnalysisError::new(
+            "chart_workbench_required",
+            "图表请在结果工作台中创建",
+        ))
+    }
+
+    #[cfg(any())]
+    pub async fn legacy_create_resource_view(
+        &self,
         principal: &CurrentUser,
         resource_id: &str,
         name: String,
         spec: Value,
-    ) -> Result<DatasetView, AnalysisError> {
+    ) -> Result<ChartViewRow, AnalysisError> {
         let source = self
             .data_resources
             .find(&principal.id, resource_id, false)
@@ -882,10 +908,6 @@ impl AnalysisService {
             .await
             .map_err(|error| AnalysisError::new("dataset_view_read_failed", error.to_string()))?;
         let mut output = ResultOutputRef::from_dataset(dataset);
-        output.default_view_id = views
-            .iter()
-            .find(|view| view.is_default)
-            .map(|view| view.id.to_string());
         output.views = views
             .into_iter()
             .filter_map(|view| {
@@ -893,7 +915,7 @@ impl AnalysisService {
                     id: view.id.to_string(),
                     name: view.name,
                     kind,
-                    is_default: view.is_default,
+                    created_at: view.created_at_ms,
                 })
             })
             .collect();

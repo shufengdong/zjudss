@@ -375,15 +375,32 @@ pub struct NewResultDataset {
 #[derive(Queryable, Debug, Clone, serde::Serialize)]
 #[diesel(table_name = dataset_views)]
 #[serde(rename_all = "camelCase")]
-pub struct DatasetView {
+pub struct ChartViewRow {
     pub id: i32,
+    pub session_id: i32,
     pub source_dataset_id: i32,
-    pub view_dataset_id: i32,
+    pub artifact_id: Option<i32>,
+    pub client_operation_id: String,
+    pub request_hash: String,
     pub name: String,
     pub kind: String,
-    pub spec_json: String,
-    pub is_default: bool,
+    pub config_json: String,
+    pub config_hash: String,
+    pub chart_contract_version: String,
+    pub diagnostics_json: String,
+    pub plot_schema_json: String,
+    pub plot_schema_hash: String,
+    pub plot_content_hash: String,
+    pub row_count: i64,
+    pub point_count: i64,
+    pub size_bytes: i64,
+    pub source_name: String,
+    pub source_schema_json: String,
+    pub source_schema_hash: String,
+    pub source_content_hash: String,
     pub created_at_ms: i64,
+    pub deleted_at_ms: Option<i64>,
+    pub tombstone_json: Option<String>,
 }
 
 #[derive(Queryable, Debug, Clone)]
@@ -440,14 +457,31 @@ pub struct ResultAnalysisInput {
 
 #[derive(Insertable, Debug, Clone)]
 #[diesel(table_name = dataset_views)]
-pub struct NewDatasetView {
+pub struct NewChartView {
+    pub session_id: i32,
     pub source_dataset_id: i32,
-    pub view_dataset_id: i32,
+    pub artifact_id: Option<i32>,
+    pub client_operation_id: String,
+    pub request_hash: String,
     pub name: String,
     pub kind: String,
-    pub spec_json: String,
-    pub is_default: bool,
+    pub config_json: String,
+    pub config_hash: String,
+    pub chart_contract_version: String,
+    pub diagnostics_json: String,
+    pub plot_schema_json: String,
+    pub plot_schema_hash: String,
+    pub plot_content_hash: String,
+    pub row_count: i64,
+    pub point_count: i64,
+    pub size_bytes: i64,
+    pub source_name: String,
+    pub source_schema_json: String,
+    pub source_schema_hash: String,
+    pub source_content_hash: String,
     pub created_at_ms: i64,
+    pub deleted_at_ms: Option<i64>,
+    pub tombstone_json: Option<String>,
 }
 
 #[derive(Queryable, Debug, Clone, serde::Serialize)]

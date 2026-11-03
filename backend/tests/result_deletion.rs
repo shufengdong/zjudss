@@ -12,6 +12,7 @@ use zjudss::application::{
     AnalysisInput, AnalysisRequest, CandidateDecision, CandidatePurpose, CreateRunRequest,
     CreateScriptRequest, PublishDraftRequest, ScriptSource, UploadFile, UploadSourceKind,
 };
+use zjudss::db::repositories::{ArtifactDraft, ChartViewDraft, ChartViewRepo};
 use zjudss::storage::StageLimits;
 
 async fn create_completed_run(app: &TestApp) -> (zjudss::auth::CurrentUser, String, i32, i32) {
@@ -379,10 +380,6 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
             .bind::<diesel::sql_types::Text,_>(&source.schema_hash)
             .bind::<diesel::sql_types::Text,_>(json!({"runId":run_id.to_string()}).to_string())
             .execute(&mut conn).unwrap();
-        diesel::sql_query("INSERT INTO dataset_views(source_dataset_id,view_dataset_id,name,kind,spec_json,is_default,created_at_ms) VALUES(?1,?2,'materialized','line','{\"kind\":\"line\",\"x\":\"id\",\"y\":[\"value\"]}',1,1)")
-            .bind::<diesel::sql_types::Integer,_>(source_id)
-            .bind::<diesel::sql_types::Integer,_>(derived)
-            .execute(&mut conn).unwrap();
         derived
     };
 
@@ -408,8 +405,6 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
     assert_eq!(derived["lineage"][0]["deleted"], true);
     assert_eq!(derived["lineage"][0]["name"], source.name);
 
-    let view = request(&app, &cookie, "GET", "/api/dataset-views/1/data".into()).await;
-    assert_eq!(view.status(), StatusCode::OK);
     let new_analysis = app
         .state
         .analysis_service
@@ -501,18 +496,41 @@ async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outpu
     );
     assert!(!derived.lineage[0].deleted);
 
-    let view = app
-        .state
-        .analysis_service
-        .create_view(
-            &user,
-            source_id,
-            "source line".into(),
-            json!({"kind":"line","x":"id","y":["value"]}),
+    let chart_repo = ChartViewRepo::new(app.pool.clone());
+    let plot_hash = "6".repeat(64);
+    let view = chart_repo
+        .publish(
+            &user.id,
+            ChartViewDraft {
+                source_dataset_id: source_id,
+                client_operation_id: "source-line-op".into(),
+                request_hash: "request".into(),
+                name: "source line".into(),
+                kind: "line".into(),
+                config_json: "{}".into(),
+                config_hash: "7".repeat(64),
+                chart_contract_version: "chart-model-v1".into(),
+                diagnostics_json: "{}".into(),
+                plot_schema_json: "[]".into(),
+                plot_schema_hash: "8".repeat(64),
+                plot_content_hash: plot_hash.clone(),
+                row_count: 2,
+                point_count: 2,
+                size_bytes: 1,
+                created_at_ms: 1,
+                artifact: ArtifactDraft {
+                    sha256: plot_hash,
+                    size_bytes: 1,
+                    storage_path: "objects/chart-test".into(),
+                    format: "parquet".into(),
+                    media_type: Some("application/vnd.apache.parquet".into()),
+                    created_at_ms: 1,
+                },
+            },
+            |_| Ok(()),
         )
         .await
         .unwrap();
-    assert_ne!(view.source_dataset_id, view.view_dataset_id);
     assert_eq!(
         request(
             &app,
@@ -524,13 +542,13 @@ async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outpu
         .status(),
         StatusCode::OK
     );
-    let view_data = app
-        .state
-        .dataset_service
-        .view_data(&user, view.id)
-        .await
-        .unwrap();
-    assert_eq!(view_data.columns, ["id", "value"]);
+    assert!(
+        chart_repo
+            .find(&user.id, view.view.id)
+            .await
+            .unwrap()
+            .source_deleted
+    );
     let derived_after_delete = app
         .state
         .dataset_service

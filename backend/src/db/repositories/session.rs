@@ -17,6 +17,8 @@ pub struct SessionDeletionImpact {
     pub run_count: i64,
     pub result_count: i64,
     pub analysis_artifact_count: i64,
+    pub chart_count: i64,
+    pub chart_bytes: i64,
     pub logical_bytes: i64,
     upload_batch_count: i64,
     replacement_preview_count: i64,
@@ -37,6 +39,10 @@ struct SessionDeletionImpactRow {
     result_count: i64,
     #[diesel(sql_type = BigInt)]
     analysis_artifact_count: i64,
+    #[diesel(sql_type = BigInt)]
+    chart_count: i64,
+    #[diesel(sql_type = BigInt)]
+    chart_bytes: i64,
     #[diesel(sql_type = BigInt)]
     logical_bytes: i64,
     #[diesel(sql_type = BigInt)]
@@ -389,6 +395,9 @@ impl SessionRepo {
                        UNION ALL
                        SELECT script_artifact_id FROM result_analysis_runs WHERE session_id=?1
                        UNION ALL
+                       SELECT artifact_id FROM dataset_views
+                       WHERE session_id=?1 AND artifact_id IS NOT NULL
+                       UNION ALL
                        SELECT d.artifact_id
                        FROM result_datasets d
                        LEFT JOIN simulation_runs r ON r.id=d.run_id
@@ -421,14 +430,7 @@ impl SessionRepo {
                 diesel::sql_query("DELETE FROM run_comparisons WHERE session_id=?1")
                     .bind::<diesel::sql_types::Integer, _>(session_id)
                     .execute(conn)?;
-                diesel::sql_query(
-                    "DELETE FROM dataset_views WHERE source_dataset_id IN (
-                       SELECT d.id FROM result_datasets d
-                       LEFT JOIN simulation_runs r ON r.id=d.run_id
-                       LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id
-                       WHERE COALESCE(r.session_id,a.session_id)=?1
-                     )",
-                )
+                diesel::sql_query("DELETE FROM dataset_views WHERE session_id=?1")
                 .bind::<diesel::sql_types::Integer, _>(session_id)
                 .execute(conn)?;
                 diesel::sql_query(
@@ -572,6 +574,7 @@ fn session_deletion_impact(
           UNION SELECT a.stderr_audit_artifact_id FROM workflow_attempts a JOIN managed_workflows w ON w.id=a.workflow_id WHERE w.session_id=?1 AND a.stderr_audit_artifact_id IS NOT NULL
           UNION SELECT a.stdout_audit_artifact_id FROM workflow_attempts a JOIN managed_workflows w ON w.id=a.workflow_id WHERE w.session_id=?1 AND a.stdout_audit_artifact_id IS NOT NULL
           UNION SELECT script_artifact_id FROM result_analysis_runs WHERE session_id=?1
+          UNION SELECT artifact_id FROM dataset_views WHERE session_id=?1 AND artifact_id IS NOT NULL
           UNION SELECT d.artifact_id FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id WHERE COALESCE(r.session_id,a.session_id)=?1 AND d.artifact_id IS NOT NULL
         )
         SELECT
@@ -581,6 +584,8 @@ fn session_deletion_impact(
           (SELECT count(*) FROM simulation_runs WHERE session_id=?1 AND deleted_at_ms IS NULL) AS run_count,
           (SELECT count(*) FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id WHERE COALESCE(r.session_id,a.session_id)=?1 AND d.deleted_at_ms IS NULL) AS result_count,
           (SELECT count(*) FROM result_analysis_runs WHERE session_id=?1) AS analysis_artifact_count,
+          (SELECT count(*) FROM dataset_views WHERE session_id=?1 AND deleted_at_ms IS NULL) AS chart_count,
+          COALESCE((SELECT sum(size_bytes) FROM dataset_views WHERE session_id=?1 AND deleted_at_ms IS NULL),0) AS chart_bytes,
           COALESCE((SELECT sum(a.size_bytes) FROM artifacts a JOIN session_artifacts s ON s.artifact_id=a.id),0) AS logical_bytes,
           (SELECT count(*) FROM upload_batches WHERE session_id=?1) AS upload_batch_count,
           (SELECT count(*) FROM data_resource_replacement_previews p JOIN data_resources d ON d.id=p.old_resource_id WHERE d.session_id=?1) AS replacement_preview_count,
@@ -593,6 +598,7 @@ fn session_deletion_impact(
             UNION ALL SELECT 'run:'||id||':'||status||':'||COALESCE(script_artifact_id,-1)||':'||COALESCE(script_message_id,-1) FROM simulation_runs WHERE session_id=?1
             UNION ALL SELECT 'analysis:'||id||':'||status||':'||script_artifact_id FROM result_analysis_runs WHERE session_id=?1
             UNION ALL SELECT 'result:'||d.id||':'||COALESCE(d.artifact_id,-1)||':'||d.schema_hash||':'||COALESCE(d.deleted_at_ms,-1) FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id WHERE COALESCE(r.session_id,a.session_id)=?1
+            UNION ALL SELECT 'chart:'||id||':'||COALESCE(artifact_id,-1)||':'||plot_content_hash||':'||COALESCE(deleted_at_ms,-1) FROM dataset_views WHERE session_id=?1
             UNION ALL SELECT 'upload:'||id||':'||revision||':'||status||':'||model_publish_status||':'||resource_publish_status||':'||reserved_bytes FROM upload_batches WHERE session_id=?1
             UNION ALL SELECT 'candidate:'||c.id||':'||COALESCE(c.normalized_artifact_id,-1)||':'||COALESCE(c.purpose,'')||':'||c.selected||':'||COALESCE(c.schema_hash,'') FROM upload_candidates c JOIN upload_batches b ON b.id=c.batch_id WHERE b.session_id=?1
             UNION ALL SELECT 'file:'||f.id||':'||COALESCE(f.source_artifact_id,-1)||':'||f.sha256 FROM upload_files f JOIN upload_batches b ON b.id=f.batch_id WHERE b.session_id=?1
@@ -613,6 +619,8 @@ fn session_deletion_impact(
         run_count: row.run_count,
         result_count: row.result_count,
         analysis_artifact_count: row.analysis_artifact_count,
+        chart_count: row.chart_count,
+        chart_bytes: row.chart_bytes,
         logical_bytes: row.logical_bytes,
         upload_batch_count: row.upload_batch_count,
         replacement_preview_count: row.replacement_preview_count,

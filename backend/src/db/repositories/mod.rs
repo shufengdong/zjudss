@@ -1,6 +1,7 @@
 mod analysis;
 mod artifact;
 mod case_switch;
+mod chart_view;
 mod comparison;
 mod data_resource;
 mod engine_resource_snapshot;
@@ -20,6 +21,10 @@ mod version;
 
 pub use analysis::AnalysisRepo;
 pub use artifact::{ArtifactDraft, ArtifactRepo};
+pub use chart_view::{
+    ChartViewDraft, ChartViewRecord, ChartViewRepo, ChartViewSummaryRow, DeletedChartView,
+    PublishedChartView,
+};
 pub use comparison::ComparisonRepo;
 pub use data_resource::{
     DataResourceRepo, DeletedResource, DeletionImpactRow, DeletionPreviewInput,

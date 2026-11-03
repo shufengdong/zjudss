@@ -112,7 +112,7 @@ pub struct DatasetViewRef {
     pub id: String,
     pub name: String,
     pub kind: VisualizationKind,
-    pub is_default: bool,
+    pub created_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,7 +125,6 @@ pub struct ResultOutputRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview_rows: Option<Vec<Vec<serde_json::Value>>>,
     pub preview_truncated: bool,
-    pub default_view_id: Option<String>,
     pub views: Vec<DatasetViewRef>,
 }
 
@@ -148,7 +147,6 @@ impl ResultOutputRef {
                 .collect(),
             preview_rows: None,
             preview_truncated: dataset.row_count > 0,
-            default_view_id: None,
             views: Vec::new(),
         }
     }

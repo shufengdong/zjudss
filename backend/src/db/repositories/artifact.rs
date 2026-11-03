@@ -8,7 +8,7 @@ use crate::db::{DbPool, schema};
 
 use super::{RepoError, RepoResult};
 
-pub(super) fn release_refs(
+pub(crate) fn release_refs(
     conn: &mut SqliteConnection,
     scope_id: i32,
     artifact_ids: impl IntoIterator<Item = i32>,
@@ -402,7 +402,7 @@ impl ArtifactRepo {
     }
 }
 
-fn commit_draft_in_transaction<F>(
+pub(crate) fn commit_draft_in_transaction<F>(
     conn: &mut SqliteConnection,
     scope_id: i32,
     draft: &ArtifactDraft,

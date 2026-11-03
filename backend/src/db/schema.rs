@@ -308,13 +308,30 @@ diesel::table! {
 diesel::table! {
     dataset_views (id) {
         id -> Integer,
+        session_id -> Integer,
         source_dataset_id -> Integer,
-        view_dataset_id -> Integer,
+        artifact_id -> Nullable<Integer>,
+        client_operation_id -> Text,
+        request_hash -> Text,
         name -> Text,
         kind -> Text,
-        spec_json -> Text,
-        is_default -> Bool,
+        config_json -> Text,
+        config_hash -> Text,
+        chart_contract_version -> Text,
+        diagnostics_json -> Text,
+        plot_schema_json -> Text,
+        plot_schema_hash -> Text,
+        plot_content_hash -> Text,
+        row_count -> BigInt,
+        point_count -> BigInt,
+        size_bytes -> BigInt,
+        source_name -> Text,
+        source_schema_json -> Text,
+        source_schema_hash -> Text,
+        source_content_hash -> Text,
         created_at_ms -> BigInt,
+        deleted_at_ms -> Nullable<BigInt>,
+        tombstone_json -> Nullable<Text>,
     }
 }
 diesel::table! {
@@ -656,6 +673,9 @@ diesel::joinable!(storage_scope_artifacts -> artifacts (artifact_id));
 diesel::joinable!(storage_scope_artifacts -> storage_scopes (storage_scope_id));
 diesel::joinable!(result_analysis_runs -> sessions (session_id));
 diesel::joinable!(result_analysis_inputs -> result_analysis_runs (analysis_run_id));
+diesel::joinable!(dataset_views -> sessions (session_id));
+diesel::joinable!(dataset_views -> artifacts (artifact_id));
+diesel::joinable!(dataset_views -> result_datasets (source_dataset_id));
 diesel::joinable!(run_comparisons -> sessions (session_id));
 diesel::joinable!(chat_search_documents -> sessions (session_id));
 

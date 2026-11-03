@@ -72,7 +72,7 @@ impl Tool for CreateDatasetViewTool {
             }
         };
         Ok(
-            json!({"viewId":view.id.to_string(),"datasetId":view.source_dataset_id.to_string(),"viewDatasetId":view.view_dataset_id.to_string(),"kind":view.kind}),
+            json!({"viewId":view.id.to_string(),"datasetId":view.source_dataset_id.to_string(),"kind":view.kind}),
         )
     }
 }

@@ -4,8 +4,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::application::now_ms;
+use crate::auth::UserId;
 use crate::db::models::{Artifact, StorageScope};
 use crate::db::repositories::{ArtifactDraft, ArtifactRepo, RepoError, StorageScopeRepo};
+use crate::db::repositories::{ChartViewDraft, ChartViewRepo, PublishedChartView};
 use crate::storage::{ArtifactStore, StagedArtifact, StorageError};
 
 pub use crate::db::repositories::{StorageLimits, StorageUsage};
@@ -160,6 +162,40 @@ impl ArtifactService {
                 .await
                 .map(ArtifactRef::from)
                 .map_err(Into::into)
+        })
+        .await
+        .map_err(|error| ArtifactError::Repository(RepoError::Join(error)))?
+    }
+
+    pub async fn publish_chart_view(
+        &self,
+        repo: ChartViewRepo,
+        user: UserId,
+        mut draft: ChartViewDraft,
+        staged: StagedArtifact,
+    ) -> Result<PublishedChartView, ArtifactError> {
+        let size_bytes =
+            i64::try_from(staged.size_bytes).map_err(|_| ArtifactError::SizeOverflow)?;
+        draft.artifact = ArtifactDraft {
+            sha256: staged.sha256.clone(),
+            size_bytes,
+            storage_path: ArtifactStore::relative_path(&staged.sha256),
+            format: "parquet".into(),
+            media_type: Some("application/vnd.apache.parquet".into()),
+            created_at_ms: draft.created_at_ms,
+        };
+        let store = self.store.clone();
+        let access_gate = self.access_gate.clone();
+        let mut staged = staged;
+        tokio::spawn(async move {
+            let _guard = access_gate.read_owned().await;
+            repo.publish(&user, draft, move |path| {
+                store
+                    .publish(&mut staged, path)
+                    .map_err(|error| RepoError::Storage(error.to_string()))
+            })
+            .await
+            .map_err(Into::into)
         })
         .await
         .map_err(|error| ArtifactError::Repository(RepoError::Join(error)))?

@@ -7,13 +7,12 @@ use sha2::{Digest, Sha256};
 
 use crate::application::ArtifactService;
 use crate::application::dataframe_reader::{
-    DataFrameReadError, DataFrameReadSource, ParquetDataFrameReader, value,
+    DataFrameReadError, DataFrameReadSource, ParquetDataFrameReader,
 };
 use crate::auth::CurrentUser;
 use crate::db::repositories::{
     DeleteResultError, LineageRow, RepoError, ResultRepo, ResultViewRow, RunDataset,
 };
-use crate::storage::ParquetInspector;
 
 pub use crate::application::dataframe_reader::DataFrameColumn as DatasetColumn;
 
@@ -79,8 +78,7 @@ pub struct DatasetViewDto {
     pub id: String,
     pub name: String,
     pub kind: String,
-    pub spec: Value,
-    pub is_default: bool,
+    pub created_at: i64,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -218,6 +216,7 @@ impl DatasetService {
             lineage,
         })
     }
+    #[allow(dead_code)]
     async fn file(&self, p: &CurrentUser, d: &RunDataset) -> Result<File, DatasetError> {
         self.reader
             .open_owned(p, d.artifact_id.ok_or(DatasetError::NotFound)?)
@@ -324,6 +323,15 @@ impl DatasetService {
     }
     pub async fn view_data(
         &self,
+        _p: &CurrentUser,
+        _view_id: i32,
+    ) -> Result<DatasetViewData, DatasetError> {
+        Err(DatasetError::NotFound)
+    }
+
+    #[cfg(any())]
+    pub async fn legacy_view_data(
+        &self,
         p: &CurrentUser,
         view_id: i32,
     ) -> Result<DatasetViewData, DatasetError> {
@@ -381,8 +389,7 @@ fn view_dto(v: ResultViewRow) -> DatasetViewDto {
         id: v.id.to_string(),
         name: v.name,
         kind: v.kind,
-        spec: serde_json::from_str(&v.spec_json).unwrap_or(Value::Null),
-        is_default: v.is_default,
+        created_at: v.created_at_ms,
     }
 }
 fn lineage_dto(value: LineageRow) -> DatasetLineageDto {
