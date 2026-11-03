@@ -463,8 +463,8 @@ impl DataResourceService {
                     schema_ref: request.schema_ref.clone(),
                     schema_hash: contract.schema_hash.clone(),
                     effective_values_json: Value::Object(values).to_string(),
-                    user_overrides_json: "{}".into(),
-                    selector_overrides_json: "{}".into(),
+                    user_overrides_json: request.user_overrides.to_string(),
+                    selector_overrides_json: request.selector_overrides.to_string(),
                     overrides_json: request.overrides.to_string(),
                     owns_artifact_reference: stored.owns_artifact_reference,
                 })

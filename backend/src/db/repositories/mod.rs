@@ -7,6 +7,7 @@ mod engine_resource_snapshot;
 mod history;
 mod managed_workflow;
 mod message;
+mod resource_lineage;
 mod result;
 mod run;
 mod script;
@@ -34,6 +35,9 @@ pub use managed_workflow::{
     WorkflowStructOverlayMaterial,
 };
 pub use message::MessageRepo;
+pub(crate) use resource_lineage::{
+    ResolvedStructResource, frozen_struct_overrides, resolve_live_struct_successor,
+};
 pub use result::{DeleteResultError, DeletedResult, LineageRow, ResultRepo, ResultViewRow};
 pub(crate) use run::RunArtifactOutputs;
 pub use run::{

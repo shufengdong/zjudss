@@ -2,13 +2,14 @@ mod common;
 
 use std::sync::Arc;
 
-use arrow_array::{Array, StringArray, UInt32Array};
+use arrow_array::{Array, Float64Array, StringArray, UInt32Array};
 use diesel::prelude::*;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde_json::{Value, json};
 use zjudss::application::{
     ActivateVersionRequest, CandidateDecision, CandidatePurpose, ConfirmRetryRequest,
     ConfirmStudyRequest, PrepareStudyRequest, PublishDraftRequest, RetryStudyRequest,
+    StorageLimits, UpdateStudyStructRequest,
 };
 use zjudss::testing::{
     AuthorTurn, EngineScenario, IdDatasetFixture, ScenarioEngine, ScriptedAgentFactory,
@@ -125,6 +126,7 @@ async fn failed_source(
 async fn failed_overlay_source(
     app: &common::TestApp,
     user: &zjudss::auth::CurrentUser,
+    source_less: bool,
 ) -> zjudss::application::ManagedWorkflowView {
     let session = app
         .state
@@ -176,6 +178,35 @@ async fn failed_overlay_source(
         )
         .await
         .unwrap();
+    let para = app
+        .state
+        .data_resource_service
+        .list(user, session.id, None, 100)
+        .await
+        .unwrap()
+        .resources
+        .into_iter()
+        .find(|resource| resource.alias == "para")
+        .unwrap();
+    let page = app
+        .state
+        .data_resource_service
+        .rows(user, &para.id, Some(1), None, Vec::new())
+        .await
+        .unwrap();
+    let mut values = page
+        .columns
+        .into_iter()
+        .zip(page.rows.into_iter().next().unwrap())
+        .collect::<serde_json::Map<_, _>>();
+    values.insert("max_iter".into(), json!(37));
+    values.insert("tol".into(), json!(1e-7));
+    if source_less {
+        diesel::update(zjudss::db::schema::data_resources::table.find(&para.id))
+            .set(zjudss::db::schema::data_resources::status.eq("replaced"))
+            .execute(&mut app.pool.get().unwrap())
+            .unwrap();
+    }
     let configuration = app
         .state
         .study_configuration_service
@@ -190,6 +221,20 @@ async fn failed_overlay_source(
         )
         .await
         .unwrap();
+    let configuration = app
+        .state
+        .study_configuration_service
+        .update_struct(
+            user,
+            configuration.id,
+            "para",
+            UpdateStudyStructRequest {
+                expected_revision: configuration.revision,
+                values: Value::Object(values),
+            },
+        )
+        .await
+        .unwrap();
     let workflow = app
         .state
         .managed_workflow_service
@@ -198,7 +243,11 @@ async fn failed_overlay_source(
             configuration.id,
             ConfirmStudyRequest {
                 expected_revision: configuration.revision,
-                client_operation_id: "overlay-retry-source".into(),
+                client_operation_id: if source_less {
+                    "source-less-overlay-retry-source".into()
+                } else {
+                    "overlay-retry-source".into()
+                },
             },
         )
         .await
@@ -229,11 +278,47 @@ async fn failed_overlay_source(
         .unwrap()
 }
 
+fn publish_unrelated_para_with_lineage(
+    app: &common::TestApp,
+    source_resource_id: &str,
+    new_resource_id: &str,
+    lineage: Value,
+) {
+    use zjudss::db::models::DataResourceRecord;
+    use zjudss::db::schema::data_resources;
+
+    let mut conn = app.pool.get().unwrap();
+    let mut replacement = data_resources::table
+        .find(source_resource_id)
+        .first::<DataResourceRecord>(&mut conn)
+        .unwrap();
+    diesel::update(data_resources::table.find(source_resource_id))
+        .set((
+            data_resources::alias.eq(format!("{}_detached", replacement.alias)),
+            data_resources::normalized_alias
+                .eq(format!("{}_detached", replacement.normalized_alias)),
+            data_resources::status.eq("replaced"),
+            data_resources::replaced_by_resource_id.eq(Option::<String>::None),
+        ))
+        .execute(&mut conn)
+        .unwrap();
+    replacement.id = new_resource_id.into();
+    replacement.status = "live".into();
+    replacement.replaced_by_resource_id = None;
+    replacement.lineage_json = lineage.to_string();
+    replacement.created_at_ms += 1;
+    replacement.updated_at_ms += 1;
+    diesel::insert_into(data_resources::table)
+        .values(replacement)
+        .execute(&mut conn)
+        .unwrap();
+}
+
 #[tokio::test]
 async fn unchanged_private_overlay_retry_reuses_the_effective_artifact() {
     let app = common::TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
-    let source = failed_overlay_source(&app, &user).await;
+    let source = failed_overlay_source(&app, &user, false).await;
     let source_script_id = source.final_script_resource_id.unwrap();
     let source_artifact_id = zjudss::db::schema::workflow_input_snapshots::table
         .filter(zjudss::db::schema::workflow_input_snapshots::workflow_id.eq(source.id))
@@ -268,10 +353,10 @@ async fn unchanged_private_overlay_retry_reuses_the_effective_artifact() {
 }
 
 #[tokio::test]
-async fn changed_private_overlay_retry_combines_latest_parameters_with_frozen_results() {
+async fn retry_replays_user_and_selector_overrides_on_explicit_replacement_descendant() {
     let app = common::TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
-    let source = failed_overlay_source(&app, &user).await;
+    let source = failed_overlay_source(&app, &user, false).await;
     let source_script_id = source.final_script_resource_id.unwrap();
     let session_id = app
         .state
@@ -302,6 +387,49 @@ async fn changed_private_overlay_retry_combines_latest_parameters_with_frozen_re
         .zip(page.rows[0].clone())
         .collect::<serde_json::Map<_, _>>();
     values.insert("max_iter".into(), json!(77));
+    let replacement = app
+        .state
+        .data_resource_service
+        .preview_structured_replacement(
+            &user,
+            &para.id,
+            &para.content_hash,
+            "frames.para",
+            Value::Object(values),
+        )
+        .await
+        .unwrap();
+    app.state
+        .data_resource_service
+        .confirm_structured_replacement(
+            &user,
+            &replacement.preview_token,
+            zjudss::application::ReplacementAction::Replace,
+        )
+        .await
+        .unwrap();
+    let para = app
+        .state
+        .data_resource_service
+        .list(&user, session_id, None, 100)
+        .await
+        .unwrap()
+        .resources
+        .into_iter()
+        .find(|resource| resource.alias == "para")
+        .unwrap();
+    let page = app
+        .state
+        .data_resource_service
+        .rows(&user, &para.id, Some(1), None, Vec::new())
+        .await
+        .unwrap();
+    let mut values = page
+        .columns
+        .into_iter()
+        .zip(page.rows.into_iter().next().unwrap())
+        .collect::<serde_json::Map<_, _>>();
+    values.insert("tol".into(), json!(0.02));
     let replacement = app
         .state
         .data_resource_service
@@ -383,7 +511,13 @@ async fn changed_private_overlay_retry_combines_latest_parameters_with_frozen_re
         .as_any()
         .downcast_ref::<UInt32Array>()
         .unwrap();
-    assert_eq!(max_iter.value(0), 77);
+    assert_eq!(max_iter.value(0), 37);
+    let tol = batch
+        .column(batch.schema().index_of("tol").unwrap())
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
+    assert_eq!(tol.value(0), 1e-7);
 
     let current_para = app
         .state
@@ -428,6 +562,24 @@ async fn changed_private_overlay_retry_combines_latest_parameters_with_frozen_re
         )
         .await
         .unwrap();
+    let usage = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
+    app.state
+        .artifact_service
+        .set_limits(
+            user.storage_scope_id,
+            StorageLimits {
+                artifact_limit: usage.used_artifacts,
+                byte_limit: usage.used_bytes,
+                warning_ratio: usage.warning_ratio,
+            },
+        )
+        .await
+        .unwrap();
 
     let replay = app
         .state
@@ -441,8 +593,272 @@ async fn changed_private_overlay_retry_combines_latest_parameters_with_frozen_re
         )
         .await
         .unwrap();
+    app.state
+        .artifact_service
+        .set_limits(
+            user.storage_scope_id,
+            StorageLimits {
+                artifact_limit: i64::MAX,
+                byte_limit: i64::MAX,
+                warning_ratio: usage.warning_ratio,
+            },
+        )
+        .await
+        .unwrap();
     assert!(replay.retry_preview_id.is_none());
     assert_eq!(replay.workflow.unwrap().id, retry.id);
+}
+
+#[tokio::test]
+async fn retry_rejects_same_alias_resource_without_replacement_lineage() {
+    let app = common::TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let source = failed_overlay_source(&app, &user, false).await;
+    let source_resource_id = zjudss::db::schema::workflow_input_snapshots::table
+        .filter(zjudss::db::schema::workflow_input_snapshots::workflow_id.eq(source.id))
+        .filter(zjudss::db::schema::workflow_input_snapshots::input_name.eq("para"))
+        .select(zjudss::db::schema::workflow_input_snapshots::resource_id)
+        .first::<Option<String>>(&mut app.pool.get().unwrap())
+        .unwrap()
+        .unwrap();
+    publish_unrelated_para_with_lineage(
+        &app,
+        &source_resource_id,
+        "dr_unrelated_same_alias",
+        json!({}),
+    );
+
+    let error = app
+        .state
+        .managed_workflow_service
+        .preview_retry(
+            &user,
+            source.final_script_resource_id.unwrap(),
+            RetryStudyRequest {
+                client_retry_id: "retry-unrelated-same-alias".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "configuration_stale");
+}
+
+#[tokio::test]
+async fn source_less_overlay_retry_reuses_frozen_effective_input() {
+    let app = common::TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let source = failed_overlay_source(&app, &user, true).await;
+    let source_artifact_id = zjudss::db::schema::workflow_input_snapshots::table
+        .filter(zjudss::db::schema::workflow_input_snapshots::workflow_id.eq(source.id))
+        .filter(zjudss::db::schema::workflow_input_snapshots::input_name.eq("para"))
+        .select(zjudss::db::schema::workflow_input_snapshots::artifact_id)
+        .first::<Option<i32>>(&mut app.pool.get().unwrap())
+        .unwrap()
+        .unwrap();
+
+    let preview = app
+        .state
+        .managed_workflow_service
+        .preview_retry(
+            &user,
+            source.final_script_resource_id.unwrap(),
+            RetryStudyRequest {
+                client_retry_id: "retry-source-less-overlay".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let retry = preview.workflow.unwrap();
+    let retry_input = zjudss::db::schema::workflow_input_snapshots::table
+        .filter(zjudss::db::schema::workflow_input_snapshots::workflow_id.eq(retry.id))
+        .filter(zjudss::db::schema::workflow_input_snapshots::input_name.eq("para"))
+        .select((
+            zjudss::db::schema::workflow_input_snapshots::resource_id,
+            zjudss::db::schema::workflow_input_snapshots::artifact_id,
+        ))
+        .first::<(Option<String>, Option<i32>)>(&mut app.pool.get().unwrap())
+        .unwrap();
+    assert!(retry_input.0.is_none());
+    assert_eq!(retry_input.1, Some(source_artifact_id));
+}
+
+#[tokio::test]
+async fn legacy_overlay_snapshot_retries_with_merged_overrides() {
+    let app = common::TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let source = failed_overlay_source(&app, &user, false).await;
+    let mut conn = app.pool.get().unwrap();
+    let raw = zjudss::db::schema::workflow_input_snapshots::table
+        .filter(zjudss::db::schema::workflow_input_snapshots::workflow_id.eq(source.id))
+        .filter(zjudss::db::schema::workflow_input_snapshots::input_name.eq("para"))
+        .select(zjudss::db::schema::workflow_input_snapshots::snapshot_json)
+        .first::<String>(&mut conn)
+        .unwrap();
+    let mut snapshot: Value = serde_json::from_str(&raw).unwrap();
+    let effective = snapshot["effective"].as_object_mut().unwrap();
+    effective.remove("userOverrides");
+    effective.remove("selectorOverrides");
+    diesel::sql_query("DROP TRIGGER immutable_workflow_inputs")
+        .execute(&mut conn)
+        .unwrap();
+    diesel::update(
+        zjudss::db::schema::workflow_input_snapshots::table
+            .filter(zjudss::db::schema::workflow_input_snapshots::workflow_id.eq(source.id))
+            .filter(zjudss::db::schema::workflow_input_snapshots::input_name.eq("para")),
+    )
+    .set(zjudss::db::schema::workflow_input_snapshots::snapshot_json.eq(snapshot.to_string()))
+    .execute(&mut conn)
+    .unwrap();
+    drop(conn);
+
+    let session_id = app
+        .state
+        .run_service
+        .find(&user, source.run_id)
+        .await
+        .unwrap()
+        .session_id;
+    let para = app
+        .state
+        .data_resource_service
+        .list(&user, session_id, None, 100)
+        .await
+        .unwrap()
+        .resources
+        .into_iter()
+        .find(|resource| resource.alias == "para")
+        .unwrap();
+    let page = app
+        .state
+        .data_resource_service
+        .rows(&user, &para.id, Some(1), None, Vec::new())
+        .await
+        .unwrap();
+    let mut values = page
+        .columns
+        .into_iter()
+        .zip(page.rows.into_iter().next().unwrap())
+        .collect::<serde_json::Map<_, _>>();
+    values.insert("max_iter".into(), json!(99));
+    let replacement = app
+        .state
+        .data_resource_service
+        .preview_structured_replacement(
+            &user,
+            &para.id,
+            &para.content_hash,
+            "frames.para",
+            Value::Object(values),
+        )
+        .await
+        .unwrap();
+    app.state
+        .data_resource_service
+        .confirm_structured_replacement(
+            &user,
+            &replacement.preview_token,
+            zjudss::application::ReplacementAction::Replace,
+        )
+        .await
+        .unwrap();
+
+    let preview = app
+        .state
+        .managed_workflow_service
+        .preview_retry(
+            &user,
+            source.final_script_resource_id.unwrap(),
+            RetryStudyRequest {
+                client_retry_id: "retry-legacy-overlay".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let retry = app
+        .state
+        .managed_workflow_service
+        .confirm_retry(
+            &user,
+            &preview.retry_preview_id.unwrap(),
+            ConfirmRetryRequest { confirmed: true },
+        )
+        .await
+        .unwrap();
+    let artifact_id = zjudss::db::schema::workflow_input_snapshots::table
+        .filter(zjudss::db::schema::workflow_input_snapshots::workflow_id.eq(retry.id))
+        .filter(zjudss::db::schema::workflow_input_snapshots::input_name.eq("para"))
+        .select(zjudss::db::schema::workflow_input_snapshots::artifact_id)
+        .first::<Option<i32>>(&mut app.pool.get().unwrap())
+        .unwrap()
+        .unwrap();
+    let file = app
+        .state
+        .artifact_service
+        .open_owned(user.storage_scope_id, artifact_id)
+        .await
+        .unwrap();
+    let mut reader = ParquetRecordBatchReaderBuilder::try_new(file)
+        .unwrap()
+        .build()
+        .unwrap();
+    let batch = reader.next().unwrap().unwrap();
+    let max_iter = batch
+        .column(batch.schema().index_of("max_iter").unwrap())
+        .as_any()
+        .downcast_ref::<UInt32Array>()
+        .unwrap();
+    assert_eq!(max_iter.value(0), 37);
+}
+
+#[tokio::test]
+async fn retry_rejects_cyclic_replacement_lineage() {
+    let app = common::TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let source = failed_overlay_source(&app, &user, false).await;
+    let source_resource_id = zjudss::db::schema::workflow_input_snapshots::table
+        .filter(zjudss::db::schema::workflow_input_snapshots::workflow_id.eq(source.id))
+        .filter(zjudss::db::schema::workflow_input_snapshots::input_name.eq("para"))
+        .select(zjudss::db::schema::workflow_input_snapshots::resource_id)
+        .first::<Option<String>>(&mut app.pool.get().unwrap())
+        .unwrap()
+        .unwrap();
+    publish_unrelated_para_with_lineage(
+        &app,
+        &source_resource_id,
+        "dr_cyclic_para",
+        json!({"replacesResourceId":source_resource_id}),
+    );
+    let mut conn = app.pool.get().unwrap();
+    diesel::update(zjudss::db::schema::data_resources::table.find(&source_resource_id))
+        .set(
+            zjudss::db::schema::data_resources::replaced_by_resource_id
+                .eq(Some("dr_cyclic_para".to_string())),
+        )
+        .execute(&mut conn)
+        .unwrap();
+    diesel::update(zjudss::db::schema::data_resources::table.find("dr_cyclic_para"))
+        .set((
+            zjudss::db::schema::data_resources::status.eq("replaced"),
+            zjudss::db::schema::data_resources::replaced_by_resource_id
+                .eq(Some(source_resource_id.clone())),
+        ))
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
+
+    let error = app
+        .state
+        .managed_workflow_service
+        .preview_retry(
+            &user,
+            source.final_script_resource_id.unwrap(),
+            RetryStudyRequest {
+                client_retry_id: "retry-cyclic-lineage".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "configuration_stale");
 }
 
 #[tokio::test]

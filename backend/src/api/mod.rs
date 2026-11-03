@@ -323,6 +323,12 @@ impl From<RunError> for ApiError {
                 code: "script_model_incompatible",
                 details: Some(serde_json::json!({"missingAliases":missing})),
             },
+            RunError::ConfigurationStale => Self {
+                status: StatusCode::CONFLICT,
+                message: error.to_string(),
+                code: "configuration_stale",
+                details: None,
+            },
             RunError::IdempotencyConflict => Self {
                 status: StatusCode::CONFLICT,
                 message: error.to_string(),

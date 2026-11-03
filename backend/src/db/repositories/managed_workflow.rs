@@ -9,7 +9,10 @@ use crate::db::models::{
 };
 use crate::db::{DbPool, schema};
 
-use super::{ArtifactDraft, ArtifactRepo, NewRunDataset, RepoError, RepoResult};
+use super::{
+    ArtifactDraft, ArtifactRepo, NewRunDataset, RepoError, RepoResult, ResolvedStructResource,
+    frozen_struct_overrides, resolve_live_struct_successor,
+};
 
 #[derive(Debug, Clone)]
 pub struct ManagedWorkflowAggregate {
@@ -150,6 +153,8 @@ pub struct RetryStructOverlayRequest {
     pub source_content_hash: String,
     pub source_schema_hash: String,
     pub schema_ref: String,
+    pub user_overrides: serde_json::Value,
+    pub selector_overrides: serde_json::Value,
     pub overrides: serde_json::Value,
 }
 
@@ -1664,38 +1669,94 @@ fn retry_material(
                 .ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?;
             let frozen_snapshot: serde_json::Value = serde_json::from_str(&frozen.snapshot_json)
                 .map_err(|error| RepoError::Storage(error.to_string()))?;
-            let resource_alias = frozen_snapshot
-                .get("resourceAlias")
-                .or_else(|| frozen_snapshot.get("resource_alias"))
-                .and_then(serde_json::Value::as_str)
-                .ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?;
-            #[derive(QueryableByName)]
-            struct Resource {
-                #[diesel(sql_type=diesel::sql_types::Text)]
-                id: String,
-                #[diesel(sql_type=diesel::sql_types::Integer)]
-                artifact_id: i32,
-                #[diesel(sql_type=diesel::sql_types::Text)]
-                schema_hash: String,
-                #[diesel(sql_type=diesel::sql_types::Text)]
-                content_hash: String,
-                #[diesel(sql_type=diesel::sql_types::Nullable<diesel::sql_types::Text>)]
-                schema_ref: Option<String>,
-                #[diesel(sql_type=diesel::sql_types::Text)]
-                source_kind: String,
-                #[diesel(sql_type=diesel::sql_types::Text)]
-                lineage_json: String,
-            }
-            let resource = diesel::sql_query("SELECT d.id,d.normalized_artifact_id artifact_id,d.schema_hash,a.sha256 content_hash,d.declared_schema_ref schema_ref,d.source_kind,d.lineage_json FROM data_resources d JOIN artifacts a ON a.id=d.normalized_artifact_id WHERE d.session_id=?1 AND lower(d.alias)=lower(?2) AND d.status='live'")
-                .bind::<diesel::sql_types::Integer,_>(source.workflow.session_id).bind::<diesel::sql_types::Text,_>(resource_alias).get_result::<Resource>(conn).optional()?.ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?;
-            if resource.schema_ref.as_deref() != frozen.schema_ref.as_deref() {
-                return Err(ManagedWorkflowRepoError::RetryInputUnavailable);
-            }
             let frozen_source = frozen_snapshot.get("source").unwrap_or(&frozen_snapshot);
             let frozen_resource_id = frozen_source
                 .get("resourceId")
                 .and_then(serde_json::Value::as_str)
                 .or(frozen.resource_id.as_deref());
+            if frozen_resource_id.is_none() {
+                if !frozen_snapshot
+                    .get("source")
+                    .is_some_and(serde_json::Value::is_null)
+                    && frozen.resource_id.is_some()
+                {
+                    return Err(ManagedWorkflowRepoError::ConfigurationStale);
+                }
+                inputs.push(RetryFrozenInput {
+                    input_name: frozen.input_name.clone(),
+                    input_kind: frozen.input_kind.clone(),
+                    resource_id: None,
+                    model_version_id: None,
+                    artifact_id: frozen
+                        .artifact_id
+                        .ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?,
+                    input_alias: input_alias.into(),
+                    resource_alias: Some(input_alias.into()),
+                    schema_ref: frozen.schema_ref.clone(),
+                    schema_hash: frozen.schema_hash.clone(),
+                    content_hash: frozen
+                        .content_hash
+                        .clone()
+                        .ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?,
+                    snapshot: frozen_snapshot,
+                });
+                continue;
+            }
+            let resource_alias = frozen_source
+                .get("resourceAlias")
+                .or_else(|| frozen_snapshot.get("resourceAlias"))
+                .or_else(|| frozen_snapshot.get("resource_alias"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(input_alias);
+            let expected_schema_ref = frozen
+                .schema_ref
+                .as_deref()
+                .ok_or(ManagedWorkflowRepoError::ConfigurationStale)?;
+            let resource = if frozen_snapshot.get("effective").is_some()
+                || frozen.input_kind == "struct"
+            {
+                resolve_live_struct_successor(
+                    conn,
+                    source.workflow.session_id,
+                    frozen_resource_id.expect("checked resource id"),
+                    resource_alias,
+                    expected_schema_ref,
+                )
+                .map_err(|error| match error {
+                    RepoError::InvalidState(_) => ManagedWorkflowRepoError::ConfigurationStale,
+                    error => ManagedWorkflowRepoError::Repository(error),
+                })?
+                .ok_or(ManagedWorkflowRepoError::ConfigurationStale)?
+            } else {
+                #[derive(QueryableByName)]
+                struct Resource {
+                    #[diesel(sql_type=diesel::sql_types::Text)]
+                    id: String,
+                    #[diesel(sql_type=diesel::sql_types::Integer)]
+                    artifact_id: i32,
+                    #[diesel(sql_type=diesel::sql_types::Text)]
+                    alias: String,
+                    #[diesel(sql_type=diesel::sql_types::Text)]
+                    schema_ref: String,
+                    #[diesel(sql_type=diesel::sql_types::Text)]
+                    schema_hash: String,
+                    #[diesel(sql_type=diesel::sql_types::Text)]
+                    content_hash: String,
+                }
+                let current = diesel::sql_query("SELECT d.id,d.normalized_artifact_id artifact_id,d.alias,d.declared_schema_ref schema_ref,d.schema_hash,a.sha256 content_hash FROM data_resources d JOIN artifacts a ON a.id=d.normalized_artifact_id WHERE d.session_id=?1 AND lower(d.alias)=lower(?2) AND d.status='live'")
+                    .bind::<diesel::sql_types::Integer,_>(source.workflow.session_id).bind::<diesel::sql_types::Text,_>(resource_alias).get_result::<Resource>(conn).optional()?.ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?;
+                if current.schema_ref != expected_schema_ref {
+                    return Err(ManagedWorkflowRepoError::RetryInputUnavailable);
+                }
+                ResolvedStructResource {
+                    id: current.id,
+                    artifact_id: current.artifact_id,
+                    alias: current.alias,
+                    schema_ref: current.schema_ref,
+                    schema_hash: current.schema_hash,
+                    content_hash: current.content_hash,
+                }
+            };
             let frozen_source_hash = frozen_source
                 .get("contentHash")
                 .and_then(serde_json::Value::as_str)
@@ -1709,14 +1770,11 @@ fn retry_material(
                 || frozen_schema_hash != Some(&resource.schema_hash);
             if changed {
                 changes.push(json!({"input":frozen.input_name,"kind":frozen.input_kind,"before":{"resourceId":frozen_resource_id,"contentHash":frozen_source_hash,"schemaHash":frozen_schema_hash},"after":{"resourceId":resource.id,"contentHash":resource.content_hash,"schemaHash":resource.schema_hash}}));
-                if let Some(overrides) = frozen_snapshot
-                    .get("effective")
-                    .and_then(|effective| effective.get("overrides"))
-                    .filter(|overrides| {
-                        overrides
-                            .as_object()
-                            .is_some_and(|values| !values.is_empty())
-                    })
+                if let Some(overrides) =
+                    frozen_struct_overrides(&frozen_snapshot).map_err(|error| match error {
+                        RepoError::InvalidState(_) => ManagedWorkflowRepoError::ConfigurationStale,
+                        error => ManagedWorkflowRepoError::Repository(error),
+                    })?
                 {
                     pending_overlays.push(RetryStructOverlayRequest {
                         input_id: frozen.input_name.clone(),
@@ -1724,11 +1782,10 @@ fn retry_material(
                         source_artifact_id: resource.artifact_id,
                         source_content_hash: resource.content_hash.clone(),
                         source_schema_hash: resource.schema_hash.clone(),
-                        schema_ref: resource
-                            .schema_ref
-                            .clone()
-                            .ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?,
-                        overrides: overrides.clone(),
+                        schema_ref: resource.schema_ref.clone(),
+                        user_overrides: overrides.user,
+                        selector_overrides: overrides.selector,
+                        overrides: overrides.merged,
                     });
                 }
             }
@@ -1743,7 +1800,7 @@ fn retry_material(
                         .ok_or(ManagedWorkflowRepoError::RetryInputUnavailable)?,
                     input_alias: input_alias.into(),
                     resource_alias: Some(resource_alias.into()),
-                    schema_ref: resource.schema_ref.clone(),
+                    schema_ref: Some(resource.schema_ref.clone()),
                     schema_hash: Some(resource.schema_hash.clone()),
                     content_hash: frozen
                         .content_hash
@@ -1752,7 +1809,7 @@ fn retry_material(
                     snapshot: frozen_snapshot,
                 });
             } else {
-                inputs.push(RetryFrozenInput { input_name: frozen.input_name.clone(), input_kind: frozen.input_kind.clone(), resource_id: Some(resource.id.clone()), model_version_id: None, artifact_id: resource.artifact_id, input_alias: input_alias.into(), resource_alias: Some(resource_alias.into()), schema_ref: resource.schema_ref.clone(), schema_hash: Some(resource.schema_hash.clone()), content_hash: resource.content_hash.clone(), snapshot: json!({"resourceId":resource.id,"alias":input_alias,"resourceAlias":resource_alias,"schemaRef":resource.schema_ref,"schemaHash":resource.schema_hash,"contentHash":resource.content_hash,"sourceKind":resource.source_kind,"lineage":serde_json::from_str::<serde_json::Value>(&resource.lineage_json).unwrap_or(serde_json::Value::Null)}) });
+                inputs.push(RetryFrozenInput { input_name: frozen.input_name.clone(), input_kind: frozen.input_kind.clone(), resource_id: Some(resource.id.clone()), model_version_id: None, artifact_id: resource.artifact_id, input_alias: input_alias.into(), resource_alias: Some(resource.alias.clone()), schema_ref: Some(resource.schema_ref.clone()), schema_hash: Some(resource.schema_hash.clone()), content_hash: resource.content_hash.clone(), snapshot: json!({"resourceId":resource.id,"alias":input_alias,"resourceAlias":resource.alias,"schemaRef":resource.schema_ref,"schemaHash":resource.schema_hash,"contentHash":resource.content_hash}) });
             }
         }
     }

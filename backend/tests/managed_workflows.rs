@@ -623,6 +623,50 @@ async fn source_less_struct_confirmation_owns_a_private_artifact() {
     assert!(run_para["resourceId"].is_null());
     assert_eq!(run_para["contentHash"], frozen.content_hash);
 
+    let candidate = app
+        .state
+        .managed_workflow_service
+        .record_candidate_script(
+            &user,
+            workflow.id,
+            "generation",
+            None,
+            "bus_voltage = ds_newton_raphson_pf(bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para);",
+            Some("test".into()),
+        )
+        .await
+        .unwrap();
+    let terminal = app
+        .state
+        .managed_workflow_service
+        .finalize_with_script(&user, workflow.id, candidate.attempts[0].id, true, None)
+        .await
+        .unwrap();
+    let rerun = app
+        .state
+        .run_service
+        .create(
+            &user,
+            terminal.final_script_resource_id.unwrap(),
+            CreateRunRequest {
+                client_run_id: "source-less-private-rerun".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let rerun_inputs: Value = serde_json::from_str(&rerun.run.input_snapshot_json).unwrap();
+    let rerun_para = rerun_inputs["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|input| input["alias"] == "para")
+        .unwrap();
+    assert!(rerun_para["resourceId"].is_null());
+    assert_eq!(
+        rerun_para["artifactId"].as_i64(),
+        Some(i64::from(frozen.artifact_id))
+    );
+
     app.state
         .session_repo
         .delete(&user.id, session.id)
@@ -1240,6 +1284,57 @@ async fn private_struct_override_keeps_the_facade_alias_for_engine_injection() {
         .finalize_with_script(&user, workflow.id, candidate.attempts[0].id, true, None)
         .await
         .unwrap();
+    let mut conn = app.pool.get().unwrap();
+    let mut unrelated = zjudss::db::schema::data_resources::table
+        .find(&aliases.resource_id)
+        .first::<zjudss::db::models::DataResourceRecord>(&mut conn)
+        .unwrap();
+    diesel::update(zjudss::db::schema::data_resources::table.find(&aliases.resource_id))
+        .set((
+            zjudss::db::schema::data_resources::alias.eq("para_detached"),
+            zjudss::db::schema::data_resources::normalized_alias.eq("para_detached"),
+            zjudss::db::schema::data_resources::status.eq("replaced"),
+        ))
+        .execute(&mut conn)
+        .unwrap();
+    unrelated.id = "dr_unrelated_rerun_para".into();
+    unrelated.status = "live".into();
+    unrelated.replaced_by_resource_id = None;
+    unrelated.lineage_json = json!({}).to_string();
+    diesel::insert_into(zjudss::db::schema::data_resources::table)
+        .values(unrelated)
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
+    let unrelated_error = app
+        .state
+        .run_service
+        .create(
+            &user,
+            terminal.final_script_resource_id.unwrap(),
+            CreateRunRequest {
+                client_run_id: "unrelated-same-alias-rerun".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        unrelated_error,
+        zjudss::application::RunError::ConfigurationStale
+    ));
+    let mut conn = app.pool.get().unwrap();
+    diesel::delete(zjudss::db::schema::data_resources::table.find("dr_unrelated_rerun_para"))
+        .execute(&mut conn)
+        .unwrap();
+    diesel::update(zjudss::db::schema::data_resources::table.find(&aliases.resource_id))
+        .set((
+            zjudss::db::schema::data_resources::alias.eq("para"),
+            zjudss::db::schema::data_resources::normalized_alias.eq("para"),
+            zjudss::db::schema::data_resources::status.eq("live"),
+        ))
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
     let current_para = app
         .state
         .data_resource_service
@@ -1387,6 +1482,196 @@ async fn private_struct_override_keeps_the_facade_alias_for_engine_injection() {
         .unwrap();
     assert!(replay.replayed);
     assert_eq!(replay.run.id, rerun.run.id);
+}
+
+#[tokio::test]
+async fn legacy_private_overlay_snapshot_reruns_with_merged_overrides() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "legacy private rerun", 1)
+        .await
+        .unwrap();
+    let configuration = ready_study(&app, &user, session.id).await;
+    let para = configuration
+        .inputs
+        .iter()
+        .find(|input| input.input_id == "para")
+        .unwrap();
+    let source_id = para.binding.resource_id.clone().unwrap();
+    let mut values = para.struct_card.as_ref().unwrap().values.clone();
+    let expected_line_model = if values["line_model"]
+        .as_str()
+        .unwrap_or("exact")
+        .eq_ignore_ascii_case("exact")
+    {
+        "modified"
+    } else {
+        "exact"
+    };
+    values["line_model"] = json!(expected_line_model);
+    let edited = app
+        .state
+        .study_configuration_service
+        .update_struct(
+            &user,
+            configuration.id,
+            "para",
+            UpdateStudyStructRequest {
+                expected_revision: configuration.revision,
+                values,
+            },
+        )
+        .await
+        .unwrap();
+    let workflow = app
+        .state
+        .managed_workflow_service
+        .confirm_configuration_and_start(
+            &user,
+            edited.id,
+            ConfirmStudyRequest {
+                expected_revision: edited.revision,
+                client_operation_id: "legacy-private-rerun-source".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let candidate = app
+        .state
+        .managed_workflow_service
+        .record_candidate_script(
+            &user,
+            workflow.id,
+            "generation",
+            None,
+            "bus_voltage = ds_newton_raphson_pf(bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para);",
+            Some("test".into()),
+        )
+        .await
+        .unwrap();
+    let terminal = app
+        .state
+        .managed_workflow_service
+        .finalize_with_script(&user, workflow.id, candidate.attempts[0].id, true, None)
+        .await
+        .unwrap();
+
+    let mut conn = app.pool.get().unwrap();
+    let raw = zjudss::db::schema::workflow_input_snapshots::table
+        .filter(zjudss::db::schema::workflow_input_snapshots::workflow_id.eq(workflow.id))
+        .filter(zjudss::db::schema::workflow_input_snapshots::input_name.eq("para"))
+        .select(zjudss::db::schema::workflow_input_snapshots::snapshot_json)
+        .first::<String>(&mut conn)
+        .unwrap();
+    let mut snapshot: Value = serde_json::from_str(&raw).unwrap();
+    snapshot["effective"]
+        .as_object_mut()
+        .unwrap()
+        .remove("userOverrides");
+    snapshot["effective"]
+        .as_object_mut()
+        .unwrap()
+        .remove("selectorOverrides");
+    diesel::sql_query("DROP TRIGGER immutable_workflow_inputs")
+        .execute(&mut conn)
+        .unwrap();
+    diesel::update(
+        zjudss::db::schema::workflow_input_snapshots::table
+            .filter(zjudss::db::schema::workflow_input_snapshots::workflow_id.eq(workflow.id))
+            .filter(zjudss::db::schema::workflow_input_snapshots::input_name.eq("para")),
+    )
+    .set(zjudss::db::schema::workflow_input_snapshots::snapshot_json.eq(snapshot.to_string()))
+    .execute(&mut conn)
+    .unwrap();
+    drop(conn);
+
+    let source = app
+        .state
+        .data_resource_service
+        .get(&user, &source_id)
+        .await
+        .unwrap();
+    let page = app
+        .state
+        .data_resource_service
+        .rows(&user, &source_id, Some(1), None, Vec::new())
+        .await
+        .unwrap();
+    let mut source_values = page
+        .columns
+        .into_iter()
+        .zip(page.rows.into_iter().next().unwrap())
+        .collect::<serde_json::Map<_, _>>();
+    source_values.insert("max_iter".into(), json!(77));
+    let replacement = app
+        .state
+        .data_resource_service
+        .preview_structured_replacement(
+            &user,
+            &source_id,
+            &source.content_hash,
+            "frames.para",
+            Value::Object(source_values),
+        )
+        .await
+        .unwrap();
+    app.state
+        .data_resource_service
+        .confirm_structured_replacement(
+            &user,
+            &replacement.preview_token,
+            ReplacementAction::Replace,
+        )
+        .await
+        .unwrap();
+    let rerun = app
+        .state
+        .run_service
+        .create(
+            &user,
+            terminal.final_script_resource_id.unwrap(),
+            CreateRunRequest {
+                client_run_id: "legacy-private-rerun".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let frozen: Value = serde_json::from_str(&rerun.run.input_snapshot_json).unwrap();
+    let para = frozen["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|resource| resource["alias"] == "para")
+        .unwrap();
+    let file = app
+        .state
+        .artifact_service
+        .open_owned(
+            user.storage_scope_id,
+            para["artifactId"].as_i64().unwrap() as i32,
+        )
+        .await
+        .unwrap();
+    let mut reader = ParquetRecordBatchReaderBuilder::try_new(file)
+        .unwrap()
+        .build()
+        .unwrap();
+    let batch = reader.next().unwrap().unwrap();
+    let line_model = batch
+        .column(batch.schema().index_of("line_model").unwrap())
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+    assert_eq!(line_model.value(0), expected_line_model);
+    let result = batch
+        .column(batch.schema().index_of("result").unwrap())
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap();
+    assert_eq!(result.value(0), "bus_voltage");
 }
 
 #[tokio::test]
