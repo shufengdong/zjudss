@@ -331,7 +331,7 @@ async fn imported_case_binds_exact_active_tables_and_independent_para_resource()
 }
 
 #[tokio::test]
-async fn result_selector_fields_are_server_owned_and_prepare_private_overlay() {
+async fn selector_values_are_server_owned_while_user_overrides_remain_private() {
     let app = TestApp::spawn().await;
     let (user, session_id) = session(&app, "server-owned-result-selector").await;
     import_case(&app, &user, session_id, "server-owned-result-selector-case").await;
@@ -360,6 +360,8 @@ async fn result_selector_fields_are_server_owned_and_prepare_private_overlay() {
     let baseline_result = card.values.get("result").cloned();
     let mut forged = card.values.clone();
     forged["result"] = json!("forged_result");
+    let next_max_iter = forged["max_iter"].as_i64().unwrap() + 1;
+    forged["max_iter"] = json!(next_max_iter);
 
     let updated = app
         .state
@@ -371,7 +373,6 @@ async fn result_selector_fields_are_server_owned_and_prepare_private_overlay() {
             UpdateStudyStructRequest {
                 expected_revision: configuration.revision,
                 values: forged,
-                replacement_action: None,
             },
         )
         .await
@@ -399,8 +400,16 @@ async fn result_selector_fields_are_server_owned_and_prepare_private_overlay() {
     assert_eq!(prepared.struct_overlays.len(), 1);
     assert_eq!(prepared.struct_overlays[0].input_id, "para");
     assert_eq!(
-        prepared.struct_overlays[0].overrides,
+        prepared.struct_overlays[0].user_overrides,
+        json!({"max_iter":next_max_iter})
+    );
+    assert_eq!(
+        prepared.struct_overlays[0].selector_overrides,
         json!({"result":"bus_voltage"})
+    );
+    assert_eq!(
+        prepared.struct_overlays[0].overrides,
+        json!({"max_iter":next_max_iter,"result":"bus_voltage"})
     );
     assert_eq!(
         prepared.struct_overlays[0].effective_values["result"],
@@ -519,7 +528,7 @@ async fn facade_without_result_selector_keeps_struct_fields_user_managed() {
 }
 
 #[tokio::test]
-async fn struct_edits_require_a_replacement_choice_and_revision_is_optimistic() {
+async fn struct_edits_are_run_private_without_replacement_choice() {
     let app = TestApp::spawn().await;
     let (user, session_id) = session(&app, "edit-study").await;
     import_case(&app, &user, session_id, "edit-case").await;
@@ -530,7 +539,7 @@ async fn struct_edits_require_a_replacement_choice_and_revision_is_optimistic() 
             &user,
             session_id,
             PrepareStudyRequest {
-                facade_id: "static_power_flow_radial".into(),
+                facade_id: "static_power_flow_newton".into(),
                 intent: json!({"request":"计算潮流"}),
                 derived_from_workflow_id: None,
             },
@@ -547,12 +556,10 @@ async fn struct_edits_require_a_replacement_choice_and_revision_is_optimistic() 
         .unwrap()
         .values
         .clone();
-    let previous = values["line_model"].as_str().unwrap_or("modified");
-    values["line_model"] = json!(if previous.eq_ignore_ascii_case("exact") {
-        "modified"
-    } else {
-        "exact"
-    });
+    let next_max_iter = values["max_iter"].as_i64().unwrap() + 7;
+    let next_tol = 1e-7;
+    values["max_iter"] = json!(next_max_iter);
+    values["tol"] = json!(next_tol);
     let edited = app
         .state
         .study_configuration_service
@@ -563,12 +570,11 @@ async fn struct_edits_require_a_replacement_choice_and_revision_is_optimistic() 
             UpdateStudyStructRequest {
                 expected_revision: configuration.revision,
                 values: values.clone(),
-                replacement_action: None,
             },
         )
         .await
         .unwrap();
-    assert_eq!(edited.status, StudyConfigurationState::CollectingInputs);
+    assert_eq!(edited.status, StudyConfigurationState::ReadyToConfirm);
     let stale = app
         .state
         .study_configuration_service
@@ -583,7 +589,82 @@ async fn struct_edits_require_a_replacement_choice_and_revision_is_optimistic() 
         .await
         .unwrap_err();
     assert_eq!(stale.code(), "configuration_stale");
-    let resolved = app
+    let prepared = app
+        .state
+        .study_configuration_service
+        .prepare_confirmation(&user, edited.id, edited.revision)
+        .await
+        .unwrap();
+    assert!(prepared.replacement_actions.is_empty());
+    assert_eq!(prepared.struct_overlays.len(), 1);
+    assert_eq!(
+        prepared.struct_overlays[0].user_overrides,
+        json!({"max_iter":next_max_iter,"tol":next_tol})
+    );
+}
+
+#[tokio::test]
+async fn struct_without_resource_prepares_private_values_from_defaults() {
+    let app = TestApp::spawn().await;
+    let (user, session_id) = session(&app, "source-less-struct").await;
+    import_case(&app, &user, session_id, "source-less-struct-case").await;
+    let source = app
+        .state
+        .data_resource_service
+        .list(&user, session_id, None, 100)
+        .await
+        .unwrap()
+        .resources
+        .into_iter()
+        .find(|resource| resource.alias == "para")
+        .unwrap();
+    let page = app
+        .state
+        .data_resource_service
+        .rows(&user, &source.id, Some(1), None, Vec::new())
+        .await
+        .unwrap();
+    let source_values = serde_json::Value::Object(
+        page.columns
+            .into_iter()
+            .zip(page.rows.into_iter().next().unwrap())
+            .collect(),
+    );
+    diesel::update(
+        zjudss::db::schema::data_resources::table
+            .filter(zjudss::db::schema::data_resources::session_id.eq(session_id))
+            .filter(zjudss::db::schema::data_resources::normalized_alias.eq("para")),
+    )
+    .set(zjudss::db::schema::data_resources::status.eq("replaced"))
+    .execute(&mut app.pool.get().unwrap())
+    .unwrap();
+
+    let configuration = app
+        .state
+        .study_configuration_service
+        .prepare(
+            &user,
+            session_id,
+            PrepareStudyRequest {
+                facade_id: "static_power_flow_newton".into(),
+                intent: json!({"request":"使用默认参数计算径向潮流"}),
+                derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let para = configuration
+        .inputs
+        .iter()
+        .find(|input| input.input_id == "para")
+        .unwrap();
+    assert!(para.binding.resource_id.is_none());
+    assert!(para.resource_options.is_empty());
+    assert_eq!(
+        configuration.status,
+        StudyConfigurationState::CollectingInputs
+    );
+    let completed = app
         .state
         .study_configuration_service
         .update_struct(
@@ -591,23 +672,30 @@ async fn struct_edits_require_a_replacement_choice_and_revision_is_optimistic() 
             configuration.id,
             "para",
             UpdateStudyStructRequest {
-                expected_revision: edited.revision,
-                values,
-                replacement_action: Some(zjudss::application::ReplacementAction::Replace),
+                expected_revision: configuration.revision,
+                values: source_values,
             },
         )
         .await
         .unwrap();
-    assert_eq!(resolved.status, StudyConfigurationState::ReadyToConfirm);
+    assert_eq!(completed.status, StudyConfigurationState::ReadyToConfirm);
+
     let prepared = app
         .state
         .study_configuration_service
-        .prepare_confirmation(&user, resolved.id, resolved.revision)
+        .prepare_confirmation(&user, completed.id, completed.revision)
         .await
         .unwrap();
-    assert_eq!(prepared.replacement_actions.len(), 1);
-    assert_eq!(prepared.replacement_actions[0].action, "replace");
-    assert!(!prepared.replacement_actions[0].differences.is_empty());
+    assert!(prepared.replacement_actions.is_empty());
+    assert_eq!(prepared.struct_overlays.len(), 1);
+    assert!(prepared.struct_overlays[0].source_resource_id.is_none());
+    assert!(
+        !prepared.struct_overlays[0]
+            .effective_values
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]

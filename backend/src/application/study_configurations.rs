@@ -20,7 +20,7 @@ use crate::engine_resources::{
 
 use super::now_ms;
 use super::{ColumnMapping, CreateMappedResourceRequest, DataMappingService};
-use super::{DataResourceError, DataResourceService, ReplacementAction};
+use super::{DataResourceError, DataResourceService};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -84,7 +84,6 @@ pub struct BindStudyResourceRequest {
 pub struct UpdateStudyStructRequest {
     pub expected_revision: i64,
     pub values: Value,
-    pub replacement_action: Option<ReplacementAction>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -246,6 +245,8 @@ pub struct PreparedStructOverlay {
     pub source_resource_id: Option<String>,
     pub schema_ref: String,
     pub effective_values: Value,
+    pub user_overrides: Value,
+    pub selector_overrides: Value,
     pub overrides: Value,
 }
 
@@ -460,7 +461,7 @@ impl StudyConfigurationService {
                 .find(|value| value.input_name == input_id)
                 .expect("struct inputs always have values")
                 .values_json = values.to_string();
-            binding.mapping_json = Some(struct_metadata(&values, None).to_string());
+            binding.mapping_json = Some(struct_metadata(&values).to_string());
         }
         let status = configuration_status(
             &facade,
@@ -521,36 +522,8 @@ impl StudyConfigurationService {
             &selector_fields,
         )?;
         validate_struct_values(Some(self.schema(&input.schema_ref)?), &values)?;
-        let changed = baseline
-            .as_ref()
-            .is_none_or(|value| !struct_values_equivalent(value, &values, &selector_fields));
-        if !changed && request.replacement_action.is_some() {
-            return Err(Self::invalid(
-                "replacement_action_invalid",
-                "参数未变化时不能选择覆盖或另存",
-            ));
-        }
-        if binding.resource_id.is_none()
-            && matches!(request.replacement_action, Some(ReplacementAction::Replace))
-        {
-            return Err(Self::invalid(
-                "replacement_action_invalid",
-                "没有来源资源时只能创建新资源",
-            ));
-        }
-        if request.replacement_action == Some(ReplacementAction::Cancel) {
-            return Err(Self::invalid(
-                "replacement_action_invalid",
-                "取消应保留当前卡片，不作为参数保存动作",
-            ));
-        }
-        binding.mapping_json = Some(
-            struct_metadata(
-                baseline.as_ref().unwrap_or(&stored_values),
-                request.replacement_action,
-            )
-            .to_string(),
-        );
+        binding.mapping_json =
+            Some(struct_metadata(baseline.as_ref().unwrap_or(&stored_values)).to_string());
         aggregate
             .structs
             .iter_mut()
@@ -747,7 +720,7 @@ impl StudyConfigurationService {
         };
         let mut frozen_resources = Vec::new();
         let mut structs = Vec::new();
-        let mut replacements = Vec::new();
+        let replacements = Vec::new();
         let mut struct_overlays = Vec::new();
         let selected_result_names = aggregate
             .results
@@ -792,18 +765,43 @@ impl StudyConfigurationService {
                     serde_json::from_str(&value.values_json).map_err(|_| {
                         Self::invalid("configuration_stale", "Struct 参数持久化内容无效")
                     })?;
+                let selector_fields = result_selector_fields(&facade, input)?;
+                let baseline = binding
+                    .mapping_json
+                    .as_deref()
+                    .and_then(|value| serde_json::from_str::<Value>(value).ok())
+                    .and_then(|value| value.get("baselineValues").cloned())
+                    .unwrap_or_else(|| resource_fields.clone());
+                let user_overrides =
+                    struct_user_overrides(&baseline, &resource_fields, &selector_fields)?;
                 let mut effective_fields = resource_fields.clone();
-                let overrides = apply_result_selector_overrides(
+                let selector_overrides = apply_result_selector_overrides(
                     &facade,
                     input,
                     &mut effective_fields,
                     &selected_result_names,
                 )?;
+                let mut merged_overrides = user_overrides
+                    .as_object()
+                    .cloned()
+                    .ok_or_else(|| Self::invalid("configuration_stale", "Struct 用户覆盖无效"))?;
+                for (field, value) in selector_overrides
+                    .as_object()
+                    .ok_or_else(|| Self::invalid("configuration_stale", "Struct 结果覆盖无效"))?
+                {
+                    if merged_overrides.contains_key(field) {
+                        return Err(Self::invalid(
+                            "configuration_stale",
+                            "Struct 用户覆盖与结果覆盖冲突",
+                        ));
+                    }
+                    merged_overrides.insert(field.clone(), value.clone());
+                }
+                let overrides = Value::Object(merged_overrides);
                 validate_struct_values(Some(self.schema(&input.schema_ref)?), &effective_fields)?;
                 let frozen = frozen_resources
                     .iter()
                     .find(|resource| resource.input_id == input.id);
-                let selector_fields = result_selector_fields(&facade, input)?;
                 structs.push(CanonicalStructValue {
                     input_id: input.id.clone(),
                     schema_ref: input.schema_ref.clone(),
@@ -812,23 +810,10 @@ impl StudyConfigurationService {
                     resource_content_hash: frozen.map(|resource| resource.content_hash.clone()),
                     resource_diff: struct_differences(binding, &resource_fields, &selector_fields),
                 });
-                let action = struct_action(binding);
-                if frozen.is_none() || action.is_some() {
-                    replacements.push(PreparedResourceReplacement {
-                        input_id: input.id.clone(),
-                        input_alias: input.alias.clone(),
-                        source_resource_id: frozen.map(|resource| resource.resource_id.clone()),
-                        action: action.unwrap_or("create_new").into(),
-                        values: resource_fields,
-                        differences: match &structs.last().expect("just pushed").resource_diff {
-                            Value::Array(values) => values.clone(),
-                            _ => Vec::new(),
-                        },
-                    });
-                }
-                if overrides
-                    .as_object()
-                    .is_some_and(|values| !values.is_empty())
+                if frozen.is_none()
+                    || overrides
+                        .as_object()
+                        .is_some_and(|values| !values.is_empty())
                 {
                     struct_overlays.push(PreparedStructOverlay {
                         input_id: input.id.clone(),
@@ -836,6 +821,8 @@ impl StudyConfigurationService {
                         source_resource_id: frozen.map(|resource| resource.resource_id.clone()),
                         schema_ref: input.schema_ref.clone(),
                         effective_values: effective_fields,
+                        user_overrides,
+                        selector_overrides,
                         overrides,
                     });
                 }
@@ -970,7 +957,7 @@ impl StudyConfigurationService {
                         self.struct_resource_values(user, selected, input).await?
                     };
                     if let Some(binding) = bindings.last_mut() {
-                        binding.mapping_json = Some(struct_metadata(&values, None).to_string());
+                        binding.mapping_json = Some(struct_metadata(&values).to_string());
                     }
                 }
                 structs.push(StudyStructValueRecord {
@@ -1266,28 +1253,10 @@ fn map_struct_resource_error(error: DataResourceError) -> StudyConfigurationErro
     }
 }
 
-fn struct_metadata(baseline: &Value, action: Option<ReplacementAction>) -> Value {
+fn struct_metadata(baseline: &Value) -> Value {
     serde_json::json!({
-        "baselineValues": baseline,
-        "replacementAction": action.map(|value| match value {
-            ReplacementAction::Replace => "replace",
-            ReplacementAction::SaveAsNew => "save_as_new",
-            ReplacementAction::Cancel => "cancel",
-        })
+        "baselineValues": baseline
     })
-}
-
-fn struct_action(binding: &StudyInputBindingRecord) -> Option<&str> {
-    binding
-        .mapping_json
-        .as_deref()
-        .and_then(|value| serde_json::from_str::<Value>(value).ok())
-        .and_then(|value| value.get("replacementAction")?.as_str().map(str::to_string))
-        .and_then(|value| match value.as_str() {
-            "replace" => Some("replace"),
-            "save_as_new" => Some("save_as_new"),
-            _ => None,
-        })
 }
 
 fn struct_differences(
@@ -1322,21 +1291,33 @@ fn struct_differences(
     )
 }
 
-fn struct_values_equivalent(left: &Value, right: &Value, ignored_fields: &[String]) -> bool {
-    let Some((left, right)) = left.as_object().zip(right.as_object()) else {
-        return left == right;
-    };
-    let fields = left
+fn struct_user_overrides(
+    baseline: &Value,
+    current: &Value,
+    ignored_fields: &[String],
+) -> Result<Value, StudyConfigurationError> {
+    let baseline = baseline.as_object().ok_or_else(|| {
+        StudyConfigurationService::invalid("configuration_stale", "Struct 参数基线无效")
+    })?;
+    let current = current.as_object().ok_or_else(|| {
+        StudyConfigurationService::invalid("struct_values_invalid", "Struct 参数必须是对象")
+    })?;
+    let fields = baseline
         .keys()
-        .chain(right.keys())
-        .collect::<std::collections::BTreeSet<_>>();
-    fields.into_iter().all(|field| {
-        ignored_fields.iter().any(|ignored| ignored == field)
-            || json_values_equivalent(
-                left.get(field).unwrap_or(&Value::Null),
-                right.get(field).unwrap_or(&Value::Null),
-            )
-    })
+        .chain(current.keys())
+        .collect::<BTreeSet<_>>();
+    let mut overrides = serde_json::Map::new();
+    for field in fields {
+        if ignored_fields.iter().any(|ignored| ignored == field) {
+            continue;
+        }
+        let before = baseline.get(field).unwrap_or(&Value::Null);
+        let after = current.get(field).unwrap_or(&Value::Null);
+        if !json_values_equivalent(before, after) {
+            overrides.insert(field.clone(), after.clone());
+        }
+    }
+    Ok(Value::Object(overrides))
 }
 
 fn json_values_equivalent(left: &Value, right: &Value) -> bool {
@@ -1527,13 +1508,20 @@ fn configuration_status(
             FacadeInputKind::Model => binding.model_table_name.is_some(),
             FacadeInputKind::Data => binding.resource_id.is_some() || !input.required,
             FacadeInputKind::Struct => {
-                let selector_fields = result_selector_fields(facade, input)?;
                 let values = structs
                     .iter()
                     .find(|value| value.input_name == input.id)
                     .and_then(|value| serde_json::from_str::<Value>(&value.values_json).ok());
-                let values_valid = values.is_some_and(|values| {
-                    validate_struct_values(service.schema(&input.schema_ref).ok(), &values).is_ok()
+                let selected_results = results
+                    .iter()
+                    .map(|result| result.result_name.clone())
+                    .collect::<Vec<_>>();
+                let values_valid = values.is_some_and(|mut values| {
+                    apply_result_selector_overrides(facade, input, &mut values, &selected_results)
+                        .and_then(|_| {
+                            validate_struct_values(service.schema(&input.schema_ref).ok(), &values)
+                        })
+                        .is_ok()
                 });
                 let selection_resolved = !binding
                     .mapping_json
@@ -1541,23 +1529,7 @@ fn configuration_status(
                     .and_then(|value| serde_json::from_str::<Value>(value).ok())
                     .and_then(|value| value.get("selectionRequired").and_then(Value::as_bool))
                     .unwrap_or(false);
-                let replacement_selected = binding.resource_id.is_none()
-                    || struct_differences(
-                        binding,
-                        &serde_json::from_str::<Value>(
-                            &structs
-                                .iter()
-                                .find(|value| value.input_name == input.id)
-                                .expect("struct input has values")
-                                .values_json,
-                        )
-                        .unwrap_or(Value::Null),
-                        &selector_fields,
-                    )
-                    .as_array()
-                    .is_none_or(Vec::is_empty)
-                    || struct_action(binding).is_some();
-                values_valid && selection_resolved && replacement_selected
+                values_valid && selection_resolved
             }
         };
         if input.required && !complete {
@@ -1738,6 +1710,15 @@ mod tests {
         assert_eq!(
             struct_differences(&binding, &serde_json::json!({"base_frequency_hz":50}), &[],),
             serde_json::json!([])
+        );
+        assert_eq!(
+            struct_user_overrides(
+                &serde_json::json!({"base_frequency_hz":50.0,"optional":null}),
+                &serde_json::json!({"base_frequency_hz":50}),
+                &[],
+            )
+            .unwrap(),
+            serde_json::json!({})
         );
     }
 }
