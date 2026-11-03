@@ -499,6 +499,7 @@
     - "error:resource_alias_invalid"
     - "error:resource_alias_reserved"
     - "error:resource_stale"
+    - "error:replacement_action_invalid"
     - "error:structured_schema_mismatch"
     - "error:structured_values_invalid"
 
@@ -796,6 +797,18 @@
       name: renders bool, semantic number, enum, string, date and unit fields and preserves typed values
     - runner: vitest
       file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: describes bound template edits as run overrides and omits server-owned selectors
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: explains that source-less Struct values stay private to the study
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: keeps pending run-private Struct overrides visible after the configuration is reloaded
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: labels Struct differences as run overrides in the final summary
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
       name: refreshes a stale configuration and shows the server error without confirming
     - runner: vitest
       file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
@@ -838,10 +851,13 @@
       name: imported_case_binds_exact_active_tables_and_independent_para_resource
     - runner: rust
       file: backend/tests/study_configurations.rs
-      name: struct_edits_require_a_replacement_choice_and_revision_is_optimistic
+      name: struct_edits_are_run_private_without_replacement_choice
     - runner: rust
       file: backend/tests/study_configurations.rs
-      name: result_selector_fields_are_server_owned_and_prepare_private_overlay
+      name: selector_values_are_server_owned_while_user_overrides_remain_private
+    - runner: rust
+      file: backend/tests/study_configurations.rs
+      name: struct_without_resource_prepares_private_values_from_defaults
     - runner: rust
       file: backend/tests/study_configurations.rs
       name: result_selector_only_resource_does_not_create_ambiguity
@@ -875,7 +891,7 @@
     - runner: rust
       file: backend/tests/scripted_agent.rs
       name: natural_language_result_selection_updates_the_durable_card_without_starting_work
-  assertions: [explicit functions are never topology-rewritten, prepare_study requires a bounded nonblank model explanation and persists it before the durable configuration card, model inputs come only from active tables declared by the selected facade, para remains an independent Struct resource, exactly one compatible resource binds automatically while real ambiguity requires user selection, result selector fields are server-owned and hidden from Struct editing, ordinary Struct changes require replacement intent, selector-only legacy children fold only with a valid live source, resolved inputs render compactly without redundant confirmation, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, mutable cards start expanded and remember their collapsed state per configuration in the current browser session while mutation errors force them open, terminal cards stay compact, ready-to-confirm cards keep result editing beside the final confirmation gate, natural-language result updates require the planning skill and exact current card revision, result updates revise the same durable card without creating scripts workflows or runs, final confirmation remains a fixed UI action]
+  assertions: [explicit functions are never topology-rewritten, prepare_study requires a bounded nonblank model explanation and persists it before the durable configuration card, model inputs come only from active tables declared by the selected facade, para remains an independent Struct template, exactly one compatible resource binds automatically while real ambiguity requires user selection, result selector fields are server-owned and hidden from Struct editing, all editable Struct changes are run-private and need no replacement action, source-less Struct values come from catalog defaults, selector-only legacy children fold only with a valid live source, resolved inputs render compactly without redundant confirmation, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, mutable cards start expanded and remember their collapsed state per configuration in the current browser session while mutation errors force them open, terminal cards stay compact, ready-to-confirm cards label Struct differences as run overrides and keep result editing beside the final confirmation gate, natural-language result updates require the planning skill and exact current card revision, result updates revise the same durable card without creating scripts workflows or runs, final confirmation remains a fixed UI action]
   fixtures: [current engine facade catalog, imported active model plus independent para resource, ambiguous compatible resources]
   contracts:
     - "route:GET /api/study-configurations/{id}"
@@ -901,7 +917,6 @@
     - "error:study_mapping_incompatible"
     - "error:study_schema_unavailable"
     - "error:struct_values_invalid"
-    - "error:replacement_action_invalid"
 
 - id: MANAGED-STUDY-WORKFLOW-001
   source: docs/api-design.md#managed-study-workflows
@@ -962,13 +977,13 @@
       name: restart_recovery_finishes_workflow_attempt_and_provisional_run
     - runner: rust
       file: backend/tests/managed_workflows.rs
-      name: confirmation_atomically_replaces_struct_resource_and_freezes_new_artifact
+      name: ordinary_struct_overrides_freeze_without_publishing_a_resource
     - runner: rust
       file: backend/tests/managed_workflows.rs
-      name: private_struct_overlay_freezes_selected_results_without_publishing_a_resource
+      name: source_less_struct_confirmation_owns_a_private_artifact
     - runner: rust
       file: backend/tests/managed_workflows.rs
-      name: private_struct_overlay_reuses_a_byte_identical_source_artifact
+      name: byte_identical_private_values_reuse_the_source_artifact
     - runner: rust
       file: backend/tests/managed_workflows.rs
       name: private_struct_overlay_rejects_a_stale_source_hash
@@ -978,7 +993,7 @@
     - runner: rust
       file: backend/tests/managed_workflows.rs
       name: scripted_author_sequences_generation_and_repair
-  assertions: [confirmation and frozen inputs commit atomically, result selectors freeze in private source/effective Struct overlays without publishing or aliasing a data resource, byte-identical overlays reuse the source artifact and stale source hashes are rejected without leaks, one session has at most one nonterminal workflow, operation IDs are idempotent, a managed run may remain scriptless until the first candidate exists, candidate artifacts and parent attempts are immutable, successful workflows visually group the exact managed script before run results while preserving the durable script message anchor, failure cards show sanitized logs and bounded evidence-citing analysis while repair history stays collapsed, cancellation and restart converge deterministically, resources and workflows are user scoped]
+  assertions: [confirmation and frozen inputs commit atomically, user parameters and result selectors freeze as categorized private source/effective Struct overlays without publishing or aliasing a data resource, source-less Struct inputs own a private artifact, byte-identical overlays reuse the source artifact and stale source hashes are rejected without leaks, one session has at most one nonterminal workflow, operation IDs are idempotent before materialization, a managed run may remain scriptless until the first candidate exists, candidate artifacts and parent attempts are immutable, successful workflows visually group the exact managed script before run results while preserving the durable script message anchor, failure cards show sanitized logs and bounded evidence-citing analysis while repair history stays collapsed, cancellation and restart converge deterministically, resources and workflows are user scoped]
   fixtures: [ready study configuration, imported active model and para resource, temporary V4 database]
   contracts:
     - "route:POST /api/study-configurations/{id}/confirm"
@@ -1198,10 +1213,25 @@
       name: unchanged_private_overlay_retry_reuses_the_effective_artifact
     - runner: rust
       file: backend/tests/workflow_retries.rs
-      name: changed_private_overlay_retry_combines_latest_parameters_with_frozen_results
+      name: retry_replays_user_and_selector_overrides_on_explicit_replacement_descendant
+    - runner: rust
+      file: backend/tests/workflow_retries.rs
+      name: retry_rejects_same_alias_resource_without_replacement_lineage
+    - runner: rust
+      file: backend/tests/workflow_retries.rs
+      name: source_less_overlay_retry_reuses_frozen_effective_input
+    - runner: rust
+      file: backend/tests/workflow_retries.rs
+      name: legacy_overlay_snapshot_retries_with_merged_overrides
+    - runner: rust
+      file: backend/tests/workflow_retries.rs
+      name: retry_rejects_cyclic_replacement_lineage
     - runner: rust
       file: backend/tests/managed_workflows.rs
-      name: save_as_new_struct_keeps_the_facade_alias_for_engine_injection
+      name: private_struct_override_keeps_the_facade_alias_for_engine_injection
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
+      name: legacy_private_overlay_snapshot_reruns_with_merged_overrides
     - runner: rust
       file: backend/tests/result_deletion.rs
       name: terminal_run_deletion_requires_preview_and_tombstones_all_direct_results
@@ -1256,7 +1286,7 @@
     - runner: vitest
       file: frontend/src/hooks/useRunFailureDiagnosis.test.tsx
       name: ignores_stale_detail_responses_and_clears_polling_on_unmount
-  assertions: [run binds an immutable script and canonical message anchor while freezing the latest required active model and live resources, resource-only manual scripts run without an active model, successful Agent scripts execute once without repair, retry and generated-script rerun preserve frozen selector overrides while combining them with the latest ordinary Struct fields, unchanged retries reuse the effective artifact, existing clientRetryId and clientRunId operations replay before mutable resource reads or overlay materialization, failed Agent scripts retry through a derived workflow with a fresh correction budget and explicit confirmation when inputs changed, run and result lists remain readable, successful run progress has no running stage, failed run progress shows bounded sanitized multiline tensoreval logs and analysis inline and survives refresh, analyzer failure timeout and restart never hide stored logs, workflow and run progress share one diagnosis panel while polling only pending analysis, terminal run deletion requires a fresh impact token and atomically tombstones all direct results, scripts never auto-run]
+  assertions: [run binds an immutable script and canonical message anchor while freezing the latest required active model and live resources, resource-only manual scripts run without an active model, successful Agent scripts execute once without repair, retry and generated-script rerun preserve frozen user and selector overrides only across explicit replacement descendants, same-alias resources without lineage are rejected, source-less and legacy snapshots remain replayable, cyclic or over-depth lineage fails as configuration stale, unchanged retries reuse the effective artifact, existing clientRetryId and clientRunId operations replay before mutable resource reads or overlay materialization, failed Agent scripts retry through a derived workflow with a fresh correction budget and explicit confirmation when inputs changed, run and result lists remain readable, successful run progress has no running stage, failed run progress shows bounded sanitized multiline tensoreval logs and analysis inline and survives refresh, analyzer failure timeout and restart never hide stored logs, workflow and run progress share one diagnosis panel while polling only pending analysis, terminal run deletion requires a fresh impact token and atomically tombstones all direct results, scripts never auto-run]
   fixtures: [published model, valid RSS script, successful and failed runs, multi-result run]
   contracts:
     - "route:POST /api/scripts/{id}/runs"

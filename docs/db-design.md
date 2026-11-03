@@ -104,23 +104,24 @@ normalized/source artifact 和 replacement/lineage。`live|needs_rename` 参与�
 `data_resource_replacement_previews` 保存尚未发布的规范 artifact、待用资源 ID、Struct schema/values、expected hash、
 影响摘要和过期 token；preview 本身不写 `data_resources`。确认才建立新资源并执行 Replace/SaveAsNew，Cancel 释放
 待用 artifact；同一用户、同一资源的新 preview 会删除并释放被取代 preview 的 artifact；服务启动及每分钟后台任务
-批量删除过期 preview 并按用户 storage scope 释放 artifact，过期确认也会同步回收。重新上传的 Replace
-与参数卡 Replace 都使引用旧资源的未确认研究配置失效，并在新资源 lineage 中记录 action、源资源 ID、被替换资源 ID
+批量删除过期 preview 并按用户 storage scope 释放 artifact，过期确认也会同步回收。重新上传和独立 Struct 资源工作台的 Replace
+都会使引用旧资源的未确认研究配置失效，并在新资源 lineage 中记录 action、源资源 ID、被替换资源 ID
 及原 schema/content hash。`result_analysis_inputs` 和 `dataset_lineage_snapshots` 使用 dataset/resource 二选一来源，始终保存
 来源 schema hash 与 content hash，源资源后续替换或删除不会改变既有派生血缘。
 
 `study_configurations` 保存门面 ID/hash、engine snapshot、状态、单调 revision、原始意图和可选来源 workflow；
-`study_input_bindings` 只保存门面声明的 model table 或普通资源 ID，Struct 草稿的 baseline/replacement action 和 Data
-mapping 摘要放在受控 `mapping_json`；`study_struct_values` 保存按规范 schema 校验后的字段；
+`study_input_bindings` 只保存门面声明的 model table 或可空普通资源 ID，Struct 草稿的 `baselineValues` 和 Data mapping 摘要放在
+受控 `mapping_json`；研究配置不保存 replacement action。`study_struct_values` 保存按规范 schema 校验后的字段；
 `study_result_selections` 以 ordinal 保存有序唯一结果。仓储每次查询都通过 session 校验用户，编辑使用 immediate
 transaction 比较 revision 并整体替换三个子表。资源替换/删除会把引用它的非终态配置置为 `invalidated`；已确认
-工作流只读自己的冻结 input snapshot。门面结果规则管理的 Struct selector 不写成新的长期资源；冻结 snapshot 的
-`resource_id` 与 `source` 对象标识长期来源，顶层 `artifact_id/content_hash` 与 `effective` 对象标识实际执行的不可变
-Snappy Parquet，并记录精确 overrides。私有 artifact 由 workflow/run 引用计数持有，不进入资源 alias 或候选查询。
+工作流只读自己的冻结 input snapshot。Struct 用户参数与门面结果 selector 都不写成新的长期资源；冻结 snapshot 的可空
+`resource_id` 与可空 `source` 对象标识长期模板，顶层 `artifact_id/content_hash` 与 `effective` 对象标识实际执行的不可变
+Snappy Parquet。`effective` 同时记录完整 `values`、`userOverrides`、`selectorOverrides` 和合并 `overrides`；无模板输入的
+`resource_id/source` 为 `NULL/null`。私有 artifact 由 workflow/run 引用计数持有，不进入资源 alias 或候选查询。
 
 列映射先按目标 schema 在应用层生成 Snappy Parquet，再通过统一上传候选事务发布新 `data_resources` 行；发布时即
 写入 `source_kind=mapping` 和源资源/目标 schema/列映射血缘，避免发布后修改不可变 payload。配置确认事务重新校验
-revision/snapshot/hash，在同一事务内发布 Struct replacement、确认配置、新增 workflow/provisional run、逐项冻结输入
+revision/snapshot/hash，在同一事务内确认配置、新增 workflow/provisional run、逐项冻结私有 Struct 输入
 artifact 并建立持久进度消息。`client_operation_id` 在会话内唯一，确保重复确认不重复工作；partial unique index 保证
 每会话只有一个非终态 workflow。
 
@@ -147,9 +148,11 @@ ID/alias/schema/hash；创建事务为脚本和全部输入 artifact 增加独�
 单向写入 `complete|unavailable`，不能改写日志或终态；启动恢复把遗留 pending 收敛为 unavailable。`run_deletion_previews` 保存短期 token hash 和完整影响 hash；确认删除复核终态、直接结果集合与
 busy consumer，释放脚本、输入和直接结果引用后写 run/result 墓碑，派生和提升资源保留冻结生产者/schema/hash 血缘。
 
-`retry_previews` 以来源 workflow 保存当前 active/资源差异和待重建 selector overlay 的影响 hash；资源比较使用
-snapshot `source.contentHash`，不能把 `effective.contentHash` 误判成长期资源变化。输入未变化时直接复用有效 artifact 并创建
-`source_workflow_id` 指向来源的派生 workflow；输入变化时应用层先将原 overrides 覆盖到最新 Struct 值，确认事务复核
+`retry_previews` 以来源 workflow 保存当前 active/资源差异和待重建 Struct overlay 的影响 hash；资源比较使用
+snapshot `source.contentHash`，不能把 `effective.contentHash` 误判成长期模板变化。输入未变化时直接复用有效 artifact 并创建
+`source_workflow_id` 指向来源的派生 workflow；模板变化时只接受原资源或 `lineage.replacesResourceId` 显式 replacement 后代，
+拒绝仅同 alias 的资源、循环和超过 64 层的血缘，再按 user/selector 分类覆盖重建；历史记录缺少分类字段时回退到合并
+`effective.overrides`。无来源 Struct 不查询 alias，直接复用冻结有效 artifact。确认事务复核
 来源 ID/artifact/schema/content hash 后冻结新的私有 artifact。成功 Agent 脚本重新运行使用同一重建规则；run 创建事务
 复核来源并持有有效 artifact。应用层在读取可变输入前先按 session/用户和 `clientRetryId`/`clientRunId` 查询既有不可变
 workflow/run，仓储事务仍保留同一幂等检查以关闭竞争窗口；失败会释放未消费的暂存引用。派生脚本通过

@@ -49,7 +49,7 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 | PUT | `/api/study-configurations/{id}/facade` | 以 revision 更换目录门面并重建输入/结果卡 |
 | PUT | `/api/study-configurations/{id}/bindings/{inputId}` | 选择或清除兼容的普通数据资源 |
 | POST | `/api/study-configurations/{id}/bindings/{inputId}/mapping` | 受控列选择/重命名/类型转换并发布不可变派生资源后绑定 |
-| PUT | `/api/study-configurations/{id}/structs/{inputId}` | 更新 Struct 卡草稿并声明 Replace/SaveAsNew 意图 |
+| PUT | `/api/study-configurations/{id}/structs/{inputId}` | 以 `{expectedRevision,values}` 更新本次研究的 Struct 参数草稿 |
 | PUT | `/api/study-configurations/{id}/results` | 提交有序且唯一的结果集合 |
 | GET | `/api/workflows/{id}` | 查询受管执行、attempt、脚本锚点和结果数据集 |
 | POST | `/api/workflows/{id}/cancel` | 幂等取消非终态受管执行 |
@@ -119,7 +119,7 @@ engine snapshot 中 manifest v2 绑定的 projection profile 动态执行，`pro
 作为 `run_result_analysis` 和 `create_dataset_view` 的稳定 `resourceId` 来源，派生血缘冻结资源 ID、schema hash 和
 content hash。
 
-重新上传与 Struct 参数卡覆盖都创建新 artifact。重新上传确认必须显式提交 Replace、SaveAsNew 或 Cancel；Replace
+重新上传与独立 Struct 资源工作台覆盖会创建新 artifact。重新上传确认必须显式提交 Replace、SaveAsNew 或 Cancel；Replace
 原子转移当前 alias、使依赖旧资源的未确认研究配置失效，并把旧资源保留为历史 replacement；
 SaveAsNew 在默认 alias 冲突时分配 `data_<shortId>`，显式冲突仍返回错误；Cancel 不发布。Struct preview 校验当前
 schemaRef、规范字段和 expected content hash，确认前不创建资源，内容变化或其他路径已替换原资源时返回
@@ -140,9 +140,10 @@ schemaRef、规范字段和 expected content hash，确认前不创建资源，�
 模型输入只按门面声明从 active 版本的实际表名动态绑定；`para` 等 Struct 只绑定普通数据资源。兼容资源唯一时自动
 绑定，多个兼容资源才要求用户选择；同门面的历史 Struct 只返回复用建议，不能在存在歧义时静默沿用。Struct 卡由规范 schema
 生成字段类型、单位、范围和枚举，并通过可向后兼容的 `resultSelectorFields:string[]` 标记当前门面由结果选择管理的字段。
-这些字段不接受 Struct 更新请求中的伪造值、不计入普通资源差异，也不要求 Replace/SaveAsNew；普通字段修改已绑定资源时仍
-必须选择 Replace 或 SaveAsNew，没有来源时只生成新资源命令。卡片保存只记录草稿和受控 replacement command，不提前覆盖资源。
-Struct 差异按 JSON 数值语义比较，`50` 与 `50.0` 不产生虚假的资源修改。旧的 selector-only `struct_edit` 只有在来源资源仍
+这些字段不接受 Struct 更新请求中的伪造值，也不会进入用户覆盖。所有可编辑普通字段都只形成当前研究的私有覆盖：已绑定资源
+只作为只读参数模板，未绑定资源则从目录默认值建立有效值；两者都不要求 Replace/SaveAsNew，也不创建、替换、重命名或发布
+`data_resources`。Struct 更新请求固定为 `{expectedRevision,values}`，服务端按 schema 过滤 selector 字段并保存草稿。
+Struct 差异按 JSON 数值语义比较，`50` 与 `50.0` 不产生虚假的用户覆盖。旧的 selector-only `struct_edit` 只有在来源资源仍
 存活、同 session/schema 且 lineage 合法时才折叠出候选集；否则仍作为真实候选参与消歧。
 
 Data 输入的 mapping 只接受源列到目标列的受控映射。服务端按目标 schema 转换为 Snappy Parquet，经统一上传发布
@@ -160,10 +161,11 @@ Data 输入的 mapping 只接受源列到目标列的受控映射。服务端按
 
 `POST /api/study-configurations/{id}/confirm` 只接受
 `{expectedRevision, clientOperationId}`。服务在一个 immediate transaction 中重新校验配置、当前引擎快照、active
-模型、资源 ID/hash/schema 和结果合同；普通 Struct 参数变化时发布新的普通 Data 资源并执行 Replace 或
-SaveAsNew；结果 selector 则只在本次工作流私有的单行 Snappy Parquet artifact 中覆盖，不创建 `data_resources` 行。
-工作流输入继续以 `resourceId` 指向长期来源资源，以 `artifactId/contentHash` 指向实际执行文件，并在 snapshot 的
-`source`/`effective` 中冻结来源、有效值和 overrides。随后确认配置、创建 managed workflow、持久进度消息和 provisional run。相同操作
+模型、资源 ID/hash/schema 和结果合同。所有 Struct 用户参数和结果 selector 都合成为本次工作流私有的单行 Snappy Parquet
+artifact，不创建或修改 `data_resources` 行；有效值与模板字节一致时可复用模板 artifact。工作流输入以可空 `resourceId`
+和 `source` 标识长期模板：有模板时冻结其 ID/alias/artifact/schema/content hash，无模板时两者为 `null`；顶层
+`artifactId/contentHash` 与 `effective` 指向实际执行文件，并冻结 `values`、`userOverrides`、`selectorOverrides` 以及兼容旧记录的
+合并 `overrides`。随后确认配置、创建 managed workflow、持久进度消息和 provisional run。相同操作
 ID 幂等返回同一 workflow/run；同一操作 ID 配合不同请求返回 `idempotency_conflict`。按钮固定为“确认并生成脚本”。
 
 `GET /api/workflows/{id}` 返回工作流、修正预算、run、可空脚本消息锚点和脱敏 attempt 摘要。每个 attempt 还返回
@@ -236,8 +238,10 @@ manifest、角色化文件哈希和验证诊断。两个工具只读，Agent 无
 不使用 zjudss RSS 静态语法校验器；语法和运行可行性以用户点击运行后 tensoreval 的退出码、stderr 和结果为准。
 脚本详情返回全文；列表和消息只返回有界预览。V4 受管研究已提供确认、workflow 查询与取消接口；生成、执行和自动
 修正循环由受管工作流执行。普通运行请求为 `{clientRunId}`，前端不提交模型版本。后端在创建 run 的事务中按脚本类型
-解析并冻结当前输入：成功 Agent 脚本只读取冻结门面实际需要的当前 active 表和同 alias 的 live Data resource，并把原工作流
-冻结的 selector overrides 重新覆盖到最新 Struct 普通字段；
+解析并冻结当前输入：成功 Agent 脚本只读取冻结门面实际需要的当前 active 表；Struct 模板只接受原资源本身或
+`lineage.replacesResourceId` 显式指向它的最多 64 层 replacement 后代，拒绝仅同 alias 的案例切换/重新上传资源、循环和超深血缘，
+并按用户覆盖后 selector 覆盖的顺序重建私有参数。无来源 Struct 直接复用冻结的有效 artifact；旧 snapshot 缺少分类字段时回退到
+`effective.overrides`；
 manual/upload 脚本读取存在时的全部 active 表和全部 live Data resource，没有 active 仍可执行。Agent 没有普通运行、
 历史版本激活或删除工具；当前草稿发布只通过上述受控工具。
 
