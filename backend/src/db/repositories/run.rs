@@ -418,10 +418,13 @@ impl RunRepo {
                                 let input_name = row.input_name.as_deref().unwrap_or_default();
                                 let overlay = overlays.iter().find(|overlay| overlay.input_id == input_name)
                                     .ok_or_else(|| RunRepoError::ScriptIncompatible(vec![input_name.into()]))?;
-                                if overlay.source_resource_id != row.resource_id
-                                    || overlay.source_artifact_id != row.artifact_id
-                                    || overlay.source_content_hash != row.content_hash
-                                    || overlay.source_schema_hash != row.schema_hash
+                                if overlay.source_resource_id.as_deref()
+                                    != Some(row.resource_id.as_str())
+                                    || overlay.source_artifact_id != Some(row.artifact_id)
+                                    || overlay.source_content_hash.as_deref()
+                                        != Some(row.content_hash.as_str())
+                                    || overlay.source_schema_hash.as_deref()
+                                        != Some(row.schema_hash.as_str())
                                     || overlay.schema_ref.as_str() != row.current_schema_ref.as_deref().unwrap_or_default()
                                 {
                                     return Err(RunRepoError::ScriptIncompatible(vec![input_name.into()]));

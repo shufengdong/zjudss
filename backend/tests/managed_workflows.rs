@@ -1,6 +1,6 @@
 mod common;
 
-use arrow_array::{Array, StringArray, UInt32Array};
+use arrow_array::{Array, Float64Array, StringArray, UInt32Array};
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use diesel::prelude::*;
@@ -112,10 +112,40 @@ async fn confirmation_is_idempotent_and_creates_one_provisional_run() {
         .confirm_configuration_and_start(&user, configuration.id, request.clone())
         .await
         .unwrap();
+    let usage = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
+    app.state
+        .artifact_service
+        .set_limits(
+            user.storage_scope_id,
+            StorageLimits {
+                artifact_limit: usage.used_artifacts,
+                byte_limit: usage.used_bytes,
+                warning_ratio: usage.warning_ratio,
+            },
+        )
+        .await
+        .unwrap();
     let replay = app
         .state
         .managed_workflow_service
         .confirm_configuration_and_start(&user, configuration.id, request)
+        .await
+        .unwrap();
+    app.state
+        .artifact_service
+        .set_limits(
+            user.storage_scope_id,
+            StorageLimits {
+                artifact_limit: i64::MAX,
+                byte_limit: i64::MAX,
+                warning_ratio: usage.warning_ratio,
+            },
+        )
         .await
         .unwrap();
 
@@ -208,7 +238,7 @@ async fn confirmation_is_idempotent_and_creates_one_provisional_run() {
 }
 
 #[tokio::test]
-async fn private_struct_overlay_freezes_selected_results_without_publishing_a_resource() {
+async fn ordinary_struct_overrides_freeze_without_publishing_a_resource() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
     let session = app
@@ -231,14 +261,31 @@ async fn private_struct_overlay_freezes_selected_results_without_publishing_a_re
         .await
         .unwrap()
         .resources;
+    let mut values = para.struct_card.as_ref().unwrap().values.clone();
+    values["max_iter"] = json!(37);
+    values["tol"] = json!(1e-7);
+    let edited = app
+        .state
+        .study_configuration_service
+        .update_struct(
+            &user,
+            configuration.id,
+            "para",
+            UpdateStudyStructRequest {
+                expected_revision: configuration.revision,
+                values,
+            },
+        )
+        .await
+        .unwrap();
     let selected = app
         .state
         .study_configuration_service
         .select_results(
             &user,
-            configuration.id,
+            edited.id,
             SelectStudyResultsRequest {
-                expected_revision: configuration.revision,
+                expected_revision: edited.revision,
                 results: vec!["bus_voltage".into(), "load_state".into()],
             },
         )
@@ -293,10 +340,17 @@ async fn private_struct_overlay_freezes_selected_results_without_publishing_a_re
     assert_eq!(frozen.resource_id, source_resource_id);
     let snapshot: Value = serde_json::from_str(&frozen.snapshot_json).unwrap();
     assert_eq!(snapshot["source"]["resourceId"], source_resource_id);
+    assert_eq!(snapshot["effective"]["userOverrides"]["max_iter"], 37);
+    assert_eq!(snapshot["effective"]["userOverrides"]["tol"], 1e-7);
+    assert_eq!(
+        snapshot["effective"]["selectorOverrides"]["result"],
+        "bus_voltage,load_state"
+    );
     assert_eq!(
         snapshot["effective"]["overrides"]["result"],
         "bus_voltage,load_state"
     );
+    assert_eq!(snapshot["effective"]["values"]["max_iter"], 37);
 
     let file = app
         .state
@@ -317,6 +371,18 @@ async fn private_struct_overlay_freezes_selected_results_without_publishing_a_re
         .unwrap();
     assert!(!result.is_null(0));
     assert_eq!(result.value(0), "bus_voltage,load_state");
+    let max_iter = batch
+        .column(batch.schema().index_of("max_iter").unwrap())
+        .as_any()
+        .downcast_ref::<UInt32Array>()
+        .unwrap();
+    assert_eq!(max_iter.value(0), 37);
+    let tol = batch
+        .column(batch.schema().index_of("tol").unwrap())
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .unwrap();
+    assert_eq!(tol.value(0), 1e-7);
 
     let next = app
         .state
@@ -345,7 +411,7 @@ async fn private_struct_overlay_freezes_selected_results_without_publishing_a_re
 }
 
 #[tokio::test]
-async fn private_struct_overlay_reuses_a_byte_identical_source_artifact() {
+async fn byte_identical_private_values_reuse_the_source_artifact() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
     let session = app
@@ -445,6 +511,135 @@ async fn private_struct_overlay_reuses_a_byte_identical_source_artifact() {
 }
 
 #[tokio::test]
+async fn source_less_struct_confirmation_owns_a_private_artifact() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "source-less private struct", 1)
+        .await
+        .unwrap();
+    let initial = ready_study(&app, &user, session.id).await;
+    let para = initial
+        .inputs
+        .iter()
+        .find(|input| input.input_id == "para")
+        .unwrap();
+    let source_id = para.binding.resource_id.clone().unwrap();
+    let source_page = app
+        .state
+        .data_resource_service
+        .rows(&user, &source_id, Some(1), None, Vec::new())
+        .await
+        .unwrap();
+    let source_values = Value::Object(
+        source_page
+            .columns
+            .into_iter()
+            .zip(source_page.rows.into_iter().next().unwrap())
+            .collect(),
+    );
+    diesel::update(zjudss::db::schema::data_resources::table.find(&source_id))
+        .set(zjudss::db::schema::data_resources::status.eq("replaced"))
+        .execute(&mut app.pool.get().unwrap())
+        .unwrap();
+
+    let configuration = app
+        .state
+        .study_configuration_service
+        .prepare(
+            &user,
+            session.id,
+            PrepareStudyRequest {
+                facade_id: "static_power_flow_newton".into(),
+                intent: json!({"request":"使用私有参数求解潮流"}),
+                derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let completed = app
+        .state
+        .study_configuration_service
+        .update_struct(
+            &user,
+            configuration.id,
+            "para",
+            UpdateStudyStructRequest {
+                expected_revision: configuration.revision,
+                values: source_values,
+            },
+        )
+        .await
+        .unwrap();
+    let workflow = app
+        .state
+        .managed_workflow_service
+        .confirm_configuration_and_start(
+            &user,
+            completed.id,
+            ConfirmStudyRequest {
+                expected_revision: completed.revision,
+                client_operation_id: "source-less-private-confirm".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    #[derive(QueryableByName)]
+    struct Frozen {
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+        resource_id: Option<String>,
+        #[diesel(sql_type = diesel::sql_types::Integer)]
+        artifact_id: i32,
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        content_hash: String,
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        snapshot_json: String,
+    }
+    let frozen = diesel::sql_query(
+        "SELECT resource_id,artifact_id,content_hash,snapshot_json FROM workflow_input_snapshots WHERE workflow_id=?1 AND input_name='para'",
+    )
+    .bind::<diesel::sql_types::Integer, _>(workflow.id)
+    .get_result::<Frozen>(&mut app.pool.get().unwrap())
+    .unwrap();
+    assert!(frozen.resource_id.is_none());
+    let snapshot: Value = serde_json::from_str(&frozen.snapshot_json).unwrap();
+    assert!(snapshot["source"].is_null());
+    assert!(snapshot["effective"]["values"].is_object());
+    let run_snapshot_json = zjudss::db::schema::simulation_runs::table
+        .filter(zjudss::db::schema::simulation_runs::managed_workflow_id.eq(workflow.id))
+        .select(zjudss::db::schema::simulation_runs::input_snapshot_json)
+        .first::<String>(&mut app.pool.get().unwrap())
+        .unwrap();
+    let run_snapshot: Value = serde_json::from_str(&run_snapshot_json).unwrap();
+    let run_para = run_snapshot["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|input| input["inputId"] == "para")
+        .unwrap();
+    assert!(run_para["resourceId"].is_null());
+    assert_eq!(run_para["contentHash"], frozen.content_hash);
+
+    app.state
+        .session_repo
+        .delete(&user.id, session.id)
+        .await
+        .unwrap();
+    let remaining = zjudss::db::schema::storage_scope_artifacts::table
+        .filter(
+            zjudss::db::schema::storage_scope_artifacts::storage_scope_id.eq(user.storage_scope_id),
+        )
+        .filter(zjudss::db::schema::storage_scope_artifacts::artifact_id.eq(frozen.artifact_id))
+        .count()
+        .get_result::<i64>(&mut app.pool.get().unwrap())
+        .unwrap();
+    assert_eq!(remaining, 0);
+}
+
+#[tokio::test]
 async fn confirmation_transaction_rejects_an_active_model_changed_after_preparation() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
@@ -461,16 +656,10 @@ async fn confirmation_transaction_rejects_an_active_model_changed_after_preparat
         .prepare_confirmation(&user, configuration.id, configuration.revision)
         .await
         .unwrap();
-    let replacements = app
-        .state
-        .data_resource_service
-        .materialize_study_replacements(&user, &prepared)
-        .await
-        .unwrap();
     let overlays = app
         .state
         .data_resource_service
-        .materialize_study_struct_overlays(&user, &prepared, &replacements)
+        .materialize_study_struct_overlays(&user, &prepared)
         .await
         .unwrap();
     let overlay_artifact_ids = overlays
@@ -478,7 +667,6 @@ async fn confirmation_transaction_rejects_an_active_model_changed_after_preparat
         .filter(|overlay| overlay.owns_artifact_reference)
         .map(|overlay| overlay.artifact_id)
         .collect::<Vec<_>>();
-    assert!(prepared.replacement_actions.is_empty());
     assert_eq!(prepared.struct_overlays.len(), 1);
     let mut conn = app.pool.get().unwrap();
     diesel::sql_query("UPDATE workspaces SET active_version_id=NULL WHERE session_id=?1")
@@ -491,7 +679,6 @@ async fn confirmation_transaction_rejects_an_active_model_changed_after_preparat
         .confirm_and_start(
             &user.id,
             prepared,
-            replacements,
             overlays,
             "active-race".into(),
             3,
@@ -531,16 +718,10 @@ async fn private_struct_overlay_rejects_a_stale_source_hash() {
         .prepare_confirmation(&user, configuration.id, configuration.revision)
         .await
         .unwrap();
-    let replacements = app
-        .state
-        .data_resource_service
-        .materialize_study_replacements(&user, &prepared)
-        .await
-        .unwrap();
     let mut overlays = app
         .state
         .data_resource_service
-        .materialize_study_struct_overlays(&user, &prepared, &replacements)
+        .materialize_study_struct_overlays(&user, &prepared)
         .await
         .unwrap();
     let overlay_artifact_ids = overlays
@@ -548,13 +729,12 @@ async fn private_struct_overlay_rejects_a_stale_source_hash() {
         .filter(|overlay| overlay.owns_artifact_reference)
         .map(|overlay| overlay.artifact_id)
         .collect::<Vec<_>>();
-    overlays[0].source_content_hash = "0".repeat(64);
+    overlays[0].source_content_hash = Some("0".repeat(64));
 
     let error = ManagedWorkflowRepo::new(app.pool.clone())
         .confirm_and_start(
             &user.id,
             prepared,
-            replacements,
             overlays,
             "stale-private-overlay".into(),
             3,
@@ -898,7 +1078,7 @@ async fn restart_recovery_skips_workflows_owned_by_a_deleting_session() {
 }
 
 #[tokio::test]
-async fn confirmation_atomically_replaces_struct_resource_and_freezes_new_artifact() {
+async fn ordinary_struct_override_keeps_the_source_resource_live() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
     let session = app
@@ -931,7 +1111,6 @@ async fn confirmation_atomically_replaces_struct_resource_and_freezes_new_artifa
             UpdateStudyStructRequest {
                 expected_revision: configuration.revision,
                 values,
-                replacement_action: Some(ReplacementAction::Replace),
             },
         )
         .await
@@ -964,12 +1143,12 @@ async fn confirmation_atomically_replaces_struct_resource_and_freezes_new_artifa
     .bind::<diesel::sql_types::Text, _>(&old_id)
     .get_result::<FrozenResource>(&mut conn)
     .unwrap();
-    assert_ne!(frozen.resource_id, old_id);
-    assert_eq!(frozen.old_status, "replaced");
+    assert_eq!(frozen.resource_id, old_id);
+    assert_eq!(frozen.old_status, "live");
 }
 
 #[tokio::test]
-async fn save_as_new_struct_keeps_the_facade_alias_for_engine_injection() {
+async fn private_struct_override_keeps_the_facade_alias_for_engine_injection() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
     let session = app
@@ -1001,7 +1180,6 @@ async fn save_as_new_struct_keeps_the_facade_alias_for_engine_injection() {
             UpdateStudyStructRequest {
                 expected_revision: configuration.revision,
                 values,
-                replacement_action: Some(ReplacementAction::SaveAsNew),
             },
         )
         .await
@@ -1039,7 +1217,7 @@ async fn save_as_new_struct_keeps_the_facade_alias_for_engine_injection() {
     .get_result::<FrozenAliases>(&mut conn)
     .unwrap();
     assert_eq!(aliases.input_alias, "para");
-    assert_ne!(aliases.resource_alias, aliases.input_alias);
+    assert_eq!(aliases.resource_alias, aliases.input_alias);
     assert_eq!(aliases.selected_results, "bus_voltage");
     drop(conn);
 
@@ -1212,7 +1390,7 @@ async fn save_as_new_struct_keeps_the_facade_alias_for_engine_injection() {
 }
 
 #[tokio::test]
-async fn concurrent_confirmation_replay_releases_unconsumed_replacement_artifact_reference() {
+async fn concurrent_confirmation_replay_releases_unconsumed_private_artifact_reference() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
     let session = app
@@ -1244,7 +1422,6 @@ async fn concurrent_confirmation_replay_releases_unconsumed_replacement_artifact
             UpdateStudyStructRequest {
                 expected_revision: configuration.revision,
                 values,
-                replacement_action: Some(ReplacementAction::Replace),
             },
         )
         .await
@@ -1255,28 +1432,16 @@ async fn concurrent_confirmation_replay_releases_unconsumed_replacement_artifact
         .prepare_confirmation(&user, edited.id, edited.revision)
         .await
         .unwrap();
-    let first_materials = app
-        .state
-        .data_resource_service
-        .materialize_study_replacements(&user, &prepared)
-        .await
-        .unwrap();
-    let replay_materials = app
-        .state
-        .data_resource_service
-        .materialize_study_replacements(&user, &prepared)
-        .await
-        .unwrap();
     let first_overlays = app
         .state
         .data_resource_service
-        .materialize_study_struct_overlays(&user, &prepared, &first_materials)
+        .materialize_study_struct_overlays(&user, &prepared)
         .await
         .unwrap();
     let replay_overlays = app
         .state
         .data_resource_service
-        .materialize_study_struct_overlays(&user, &prepared, &replay_materials)
+        .materialize_study_struct_overlays(&user, &prepared)
         .await
         .unwrap();
     let first_overlay_artifact_ids = first_overlays
@@ -1289,16 +1454,11 @@ async fn concurrent_confirmation_replay_releases_unconsumed_replacement_artifact
         .filter(|material| material.owns_artifact_reference)
         .map(|material| material.artifact_id)
         .collect::<Vec<_>>();
-    let replay_artifact_ids = replay_materials
-        .iter()
-        .map(|material| material.artifact_id)
-        .collect::<Vec<_>>();
     let repo = ManagedWorkflowRepo::new(app.pool.clone());
     let first = repo
         .confirm_and_start(
             &user.id,
             prepared.clone(),
-            first_materials,
             first_overlays,
             "replacement-replay".into(),
             3,
@@ -1312,7 +1472,6 @@ async fn concurrent_confirmation_replay_releases_unconsumed_replacement_artifact
         .confirm_and_start(
             &user.id,
             prepared,
-            replay_materials,
             replay_overlays,
             "replacement-replay".into(),
             3,
@@ -1322,16 +1481,9 @@ async fn concurrent_confirmation_replay_releases_unconsumed_replacement_artifact
         )
         .await
         .unwrap();
-    assert!(first.replacements_consumed);
-    assert!(!replay.replacements_consumed);
+    assert!(first.created);
+    assert!(!replay.created);
     assert_eq!(first.aggregate.workflow.id, replay.aggregate.workflow.id);
-    for artifact_id in replay_artifact_ids {
-        app.state
-            .artifact_service
-            .release(user.storage_scope_id, artifact_id)
-            .await
-            .unwrap();
-    }
     for artifact_id in first_overlay_artifact_ids
         .into_iter()
         .chain(replay_overlay_artifact_ids)

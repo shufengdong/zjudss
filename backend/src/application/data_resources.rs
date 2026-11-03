@@ -21,7 +21,7 @@ use crate::catalog::{DataFrameContractKind, DataFrameSchemaContract, DataTypeCon
 use crate::db::repositories::{
     DataResourceRepo, DeletionImpactRow, DeletionPreviewInput, PromoteDatasetInput, RepoError,
     ResourcePageRow, ResourcePublishInput, RetryStructOverlayRequest,
-    StructuredPreviewConfirmation, StructuredPreviewInput, UploadRepo, WorkflowReplacementMaterial,
+    StructuredPreviewConfirmation, StructuredPreviewInput, UploadRepo,
     WorkflowStructOverlayMaterial,
 };
 use crate::engine_resources::{EngineResourceSnapshot, FacadeInputKind};
@@ -299,38 +299,10 @@ pub struct DataResourceService {
 
 impl DataResourceService {
     #[doc(hidden)]
-    pub async fn materialize_study_replacements(
-        &self,
-        user: &CurrentUser,
-        prepared: &crate::application::PreparedStudyConfirmation,
-    ) -> Result<Vec<WorkflowReplacementMaterial>, DataResourceError> {
-        let mut materials = Vec::new();
-        for replacement in &prepared.replacement_actions {
-            let result = self
-                .materialize_study_replacement(user, prepared, replacement)
-                .await;
-            match result {
-                Ok(material) => materials.push(material),
-                Err(error) => {
-                    for material in &materials {
-                        let _ = self
-                            .artifacts
-                            .release(user.storage_scope_id, material.artifact_id)
-                            .await;
-                    }
-                    return Err(error);
-                }
-            }
-        }
-        Ok(materials)
-    }
-
-    #[doc(hidden)]
     pub async fn materialize_study_struct_overlays(
         &self,
         user: &CurrentUser,
         prepared: &crate::application::PreparedStudyConfirmation,
-        replacements: &[WorkflowReplacementMaterial],
     ) -> Result<Vec<WorkflowStructOverlayMaterial>, DataResourceError> {
         let mut materials: Vec<WorkflowStructOverlayMaterial> = Vec::new();
         for overlay in &prepared.struct_overlays {
@@ -349,70 +321,53 @@ impl DataResourceService {
                 let values = overlay.effective_values.as_object().ok_or_else(|| {
                     Self::invalid("structured_values_invalid", "Struct 参数必须是对象")
                 })?;
-                let (
-                    source_resource_id,
-                    source_artifact_id,
-                    source_content_hash,
-                    source_schema_ref,
-                    source_schema_hash,
-                ) = if let Some(replacement) = replacements
-                    .iter()
-                    .find(|replacement| replacement.input_id == overlay.input_id)
-                {
-                    if replacement.source_resource_id != overlay.source_resource_id {
+                let source = if let Some(source_id) = overlay.source_resource_id.as_deref() {
+                    let source = self.repo.find(&user.id, source_id, false).await?;
+                    let artifact_id = source.resource.normalized_artifact_id.ok_or_else(|| {
+                        Self::invalid("configuration_stale", "Struct 来源缺少 artifact")
+                    })?;
+                    let schema_ref = source.resource.declared_schema_ref.ok_or_else(|| {
+                        Self::invalid("configuration_stale", "Struct 来源缺少 schema")
+                    })?;
+                    if source.resource.status != "live" || schema_ref != overlay.schema_ref {
                         return Err(Self::invalid(
                             "configuration_stale",
                             "Struct overlay 来源已经变化",
                         ));
                     }
-                    (
-                        replacement.resource_id.clone(),
-                        replacement.artifact_id,
-                        replacement.content_hash.clone(),
-                        replacement.schema_ref.clone(),
-                        replacement.schema_hash.clone(),
-                    )
-                } else {
-                    let source_id = overlay.source_resource_id.as_deref().ok_or_else(|| {
-                        Self::invalid("configuration_stale", "Struct overlay 缺少来源资源")
-                    })?;
-                    let source = self.repo.find(&user.id, source_id, false).await?;
-                    (
+                    Some((
                         source.resource.id,
-                        source.resource.normalized_artifact_id.ok_or_else(|| {
-                            Self::invalid("configuration_stale", "Struct 来源缺少 artifact")
-                        })?,
+                        artifact_id,
                         source.normalized_sha256,
-                        source.resource.declared_schema_ref.ok_or_else(|| {
-                            Self::invalid("configuration_stale", "Struct 来源缺少 schema")
-                        })?,
                         source.resource.schema_hash,
-                    )
+                    ))
+                } else {
+                    None
                 };
-                if source_schema_ref != overlay.schema_ref {
-                    return Err(Self::invalid(
-                        "configuration_stale",
-                        "Struct overlay schema 已变化",
-                    ));
-                }
+                let reusable_source = source
+                    .as_ref()
+                    .map(|(_, artifact_id, content_hash, _)| (*artifact_id, content_hash.as_str()));
                 let stored = materialize_struct_overlay(
                     &self.artifacts,
                     user.storage_scope_id,
                     contract,
                     values,
-                    Some((source_artifact_id, &source_content_hash)),
+                    reusable_source,
                 )
                 .await?;
                 Ok(WorkflowStructOverlayMaterial {
                     input_id: overlay.input_id.clone(),
-                    source_resource_id,
-                    source_artifact_id,
-                    source_content_hash,
-                    source_schema_hash,
+                    source_resource_id: source.as_ref().map(|value| value.0.clone()),
+                    source_artifact_id: source.as_ref().map(|value| value.1),
+                    source_content_hash: source.as_ref().map(|value| value.2.clone()),
+                    source_schema_hash: source.as_ref().map(|value| value.3.clone()),
                     artifact_id: stored.artifact_id,
                     content_hash: stored.content_hash,
                     schema_ref: overlay.schema_ref.clone(),
+                    schema_hash: contract.schema_hash.clone(),
                     effective_values_json: overlay.effective_values.to_string(),
+                    user_overrides_json: overlay.user_overrides.to_string(),
+                    selector_overrides_json: overlay.selector_overrides.to_string(),
                     overrides_json: overlay.overrides.to_string(),
                     owns_artifact_reference: stored.owns_artifact_reference,
                 })
@@ -499,14 +454,17 @@ impl DataResourceService {
                 .await?;
                 Ok(WorkflowStructOverlayMaterial {
                     input_id: request.input_id.clone(),
-                    source_resource_id: request.source_resource_id.clone(),
-                    source_artifact_id: request.source_artifact_id,
-                    source_content_hash: request.source_content_hash.clone(),
-                    source_schema_hash: request.source_schema_hash.clone(),
+                    source_resource_id: Some(request.source_resource_id.clone()),
+                    source_artifact_id: Some(request.source_artifact_id),
+                    source_content_hash: Some(request.source_content_hash.clone()),
+                    source_schema_hash: Some(request.source_schema_hash.clone()),
                     artifact_id: stored.artifact_id,
                     content_hash: stored.content_hash,
                     schema_ref: request.schema_ref.clone(),
+                    schema_hash: contract.schema_hash.clone(),
                     effective_values_json: Value::Object(values).to_string(),
+                    user_overrides_json: "{}".into(),
+                    selector_overrides_json: "{}".into(),
                     overrides_json: request.overrides.to_string(),
                     owns_artifact_reference: stored.owns_artifact_reference,
                 })
@@ -528,106 +486,6 @@ impl DataResourceService {
             }
         }
         Ok(materials)
-    }
-
-    async fn materialize_study_replacement(
-        &self,
-        user: &CurrentUser,
-        prepared: &crate::application::PreparedStudyConfirmation,
-        replacement: &crate::application::PreparedResourceReplacement,
-    ) -> Result<WorkflowReplacementMaterial, DataResourceError> {
-        let structured = prepared
-            .locked
-            .structs
-            .iter()
-            .find(|value| value.input_id == replacement.input_id)
-            .ok_or_else(|| Self::invalid("configuration_stale", "Struct 输入合同已经变化"))?;
-        let contract = self
-            .snapshot
-            .schemas
-            .resolve(&structured.schema_ref)
-            .map_err(|error| Self::invalid("configuration_stale", &error.to_string()))?;
-        if contract.kind != DataFrameContractKind::Struct {
-            return Err(Self::invalid(
-                "configuration_stale",
-                "研究参数 schema 不再是 Struct",
-            ));
-        }
-        let object = replacement
-            .values
-            .as_object()
-            .ok_or_else(|| Self::invalid("structured_values_invalid", "Struct 参数必须是对象"))?;
-        let parquet = struct_parquet(contract, object)?;
-        let staged = self
-            .artifacts
-            .store()
-            .stage(std::io::Cursor::new(parquet), StageLimits::default())
-            .map_err(ArtifactError::from)?;
-        let artifact = self
-            .artifacts
-            .commit(user.storage_scope_id, staged, ArtifactMetadata::parquet())
-            .await?;
-        let material = async {
-            let source = if let Some(id) = replacement.source_resource_id.as_deref() {
-                Some(self.get(user, id).await?)
-            } else {
-                None
-            };
-            let columns = contract
-                .fields
-                .iter()
-                .map(|field| super::dataframe_reader::DataFrameColumn {
-                    name: field.name.clone(),
-                    dtype: dtype_label(&field.dtype),
-                    nullable: field.nullable,
-                    unit: Some(field.unit.0.clone()),
-                })
-                .collect::<Vec<_>>();
-            let resource_id = format!(
-                "dr_{}",
-                &hex::encode(Sha256::digest(
-                    format!(
-                        "workflow:{}:{}:{}",
-                        prepared.configuration_id, replacement.input_id, artifact.sha256
-                    )
-                    .as_bytes()
-                ))[..24]
-            );
-            Ok::<_, DataResourceError>(WorkflowReplacementMaterial {
-                input_id: replacement.input_id.clone(),
-                source_resource_id: replacement.source_resource_id.clone(),
-                action: replacement.action.clone(),
-                artifact_id: artifact.id,
-                content_hash: artifact.sha256.clone(),
-                resource_id,
-                schema_ref: structured.schema_ref.clone(),
-                schema_json: serde_json::to_string(&columns).map_err(|error| {
-                    Self::invalid("structured_values_invalid", &error.to_string())
-                })?,
-                schema_hash: contract.schema_hash.clone(),
-                values_json: replacement.values.to_string(),
-                differences_json: Value::Array(replacement.differences.clone()).to_string(),
-                display_name: source
-                    .as_ref()
-                    .map(|resource| resource.display_name.clone())
-                    .unwrap_or_else(|| replacement.input_id.clone()),
-                proposed_alias: source
-                    .as_ref()
-                    .map(|resource| resource.alias.clone())
-                    .unwrap_or_else(|| replacement.input_id.clone()),
-                source_model_version_id: source
-                    .and_then(|resource| resource.source_model_version_id)
-                    .and_then(|id| id.parse().ok()),
-            })
-        }
-        .await;
-        if material.is_err() {
-            let _ = self
-                .artifacts
-                .release(user.storage_scope_id, artifact.id)
-                .await;
-        }
-        material
     }
 
     pub(crate) fn artifact_store(&self) -> &crate::storage::ArtifactStore {

@@ -213,7 +213,7 @@ pub struct FrozenStudyInput {
     pub alias: String,
     pub resource_alias: String,
     pub kind: String,
-    pub resource_id: String,
+    pub resource_id: Option<String>,
     pub schema_ref: String,
     pub schema_hash: String,
     pub content_hash: String,
@@ -224,17 +224,6 @@ pub struct FrozenStudyInput {
 pub struct WorkflowInputSnapshot {
     pub model: Option<FrozenModelInput>,
     pub resources: Vec<FrozenStudyInput>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreparedResourceReplacement {
-    pub input_id: String,
-    pub input_alias: String,
-    pub source_resource_id: Option<String>,
-    pub action: String,
-    pub values: Value,
-    pub differences: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -256,7 +245,6 @@ pub struct PreparedStudyConfirmation {
     pub configuration_id: i32,
     pub expected_revision: i64,
     pub expected_snapshot_id: String,
-    pub replacement_actions: Vec<PreparedResourceReplacement>,
     pub struct_overlays: Vec<PreparedStructOverlay>,
     pub locked: LockedStudyContract,
     pub inputs: WorkflowInputSnapshot,
@@ -720,7 +708,6 @@ impl StudyConfigurationService {
         };
         let mut frozen_resources = Vec::new();
         let mut structs = Vec::new();
-        let replacements = Vec::new();
         let mut struct_overlays = Vec::new();
         let selected_result_names = aggregate
             .results
@@ -749,7 +736,7 @@ impl StudyConfigurationService {
                     alias: input.alias.clone(),
                     resource_alias: resource.resource.alias,
                     kind: kind_name(input.kind).into(),
-                    resource_id: resource.resource.id,
+                    resource_id: Some(resource.resource.id),
                     schema_ref: input.schema_ref.clone(),
                     schema_hash: resource.resource.schema_hash,
                     content_hash: resource.normalized_sha256.clone(),
@@ -806,7 +793,7 @@ impl StudyConfigurationService {
                     input_id: input.id.clone(),
                     schema_ref: input.schema_ref.clone(),
                     fields: effective_fields.clone(),
-                    resource_id: frozen.map(|resource| resource.resource_id.clone()),
+                    resource_id: frozen.and_then(|resource| resource.resource_id.clone()),
                     resource_content_hash: frozen.map(|resource| resource.content_hash.clone()),
                     resource_diff: struct_differences(binding, &resource_fields, &selector_fields),
                 });
@@ -818,7 +805,8 @@ impl StudyConfigurationService {
                     struct_overlays.push(PreparedStructOverlay {
                         input_id: input.id.clone(),
                         input_alias: input.alias.clone(),
-                        source_resource_id: frozen.map(|resource| resource.resource_id.clone()),
+                        source_resource_id: frozen
+                            .and_then(|resource| resource.resource_id.clone()),
                         schema_ref: input.schema_ref.clone(),
                         effective_values: effective_fields,
                         user_overrides,
@@ -847,7 +835,6 @@ impl StudyConfigurationService {
             configuration_id,
             expected_revision,
             expected_snapshot_id: self.snapshot.id.clone(),
-            replacement_actions: replacements,
             struct_overlays,
             locked: LockedStudyContract {
                 configuration_id,

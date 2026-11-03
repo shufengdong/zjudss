@@ -24,7 +24,7 @@ pub struct ManagedWorkflowAggregate {
 #[derive(Debug)]
 pub struct ConfirmStartOutcome {
     pub aggregate: ManagedWorkflowAggregate,
-    pub replacements_consumed: bool,
+    pub created: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -124,34 +124,19 @@ pub struct PendingRunDataset {
 }
 
 #[derive(Debug, Clone)]
-pub struct WorkflowReplacementMaterial {
-    pub input_id: String,
-    pub source_resource_id: Option<String>,
-    pub action: String,
-    pub artifact_id: i32,
-    pub content_hash: String,
-    pub resource_id: String,
-    pub schema_ref: String,
-    pub schema_json: String,
-    pub schema_hash: String,
-    pub values_json: String,
-    pub differences_json: String,
-    pub display_name: String,
-    pub proposed_alias: String,
-    pub source_model_version_id: Option<i32>,
-}
-
-#[derive(Debug, Clone)]
 pub struct WorkflowStructOverlayMaterial {
     pub input_id: String,
-    pub source_resource_id: String,
-    pub source_artifact_id: i32,
-    pub source_content_hash: String,
-    pub source_schema_hash: String,
+    pub source_resource_id: Option<String>,
+    pub source_artifact_id: Option<i32>,
+    pub source_content_hash: Option<String>,
+    pub source_schema_hash: Option<String>,
     pub artifact_id: i32,
     pub content_hash: String,
     pub schema_ref: String,
+    pub schema_hash: String,
     pub effective_values_json: String,
+    pub user_overrides_json: String,
+    pub selector_overrides_json: String,
     pub overrides_json: String,
     pub owns_artifact_reference: bool,
 }
@@ -267,7 +252,6 @@ impl ManagedWorkflowRepo {
         &self,
         user: &UserId,
         mut prepared: PreparedStudyConfirmation,
-        replacements: Vec<WorkflowReplacementMaterial>,
         overlays: Vec<WorkflowStructOverlayMaterial>,
         client_operation_id: String,
         correction_budget: i32,
@@ -312,7 +296,7 @@ impl ManagedWorkflowRepo {
                     return load_owned(conn, &user, existing.id).map(|aggregate| {
                         ConfirmStartOutcome {
                             aggregate,
-                            replacements_consumed: false,
+                            created: false,
                         }
                     });
                 }
@@ -322,9 +306,6 @@ impl ManagedWorkflowRepo {
                     || configuration.engine_snapshot_id != prepared.expected_snapshot_id
                     || configuration.facade_hash != prepared.locked.facade_contract_hash
                 {
-                    return Err(ManagedWorkflowRepoError::ConfigurationStale);
-                }
-                if prepared.replacement_actions.len() != replacements.len() {
                     return Err(ManagedWorkflowRepoError::ConfigurationStale);
                 }
                 if prepared.struct_overlays.len() != overlays.len() {
@@ -347,15 +328,6 @@ impl ManagedWorkflowRepo {
 
                 validate_active_model(conn, &user, configuration.session_id, &prepared)?;
 
-                publish_replacements(
-                    conn,
-                    &user,
-                    configuration.session_id,
-                    configuration.id,
-                    &mut prepared,
-                    replacements,
-                    now_ms,
-                )?;
                 let locked_json = serde_json::to_string(&prepared.locked)
                     .map_err(|error| RepoError::Storage(error.to_string()))?;
                 diesel::insert_into(schema::managed_workflows::table)
@@ -474,7 +446,7 @@ impl ManagedWorkflowRepo {
                 }
                 load_owned(conn, &user, workflow_id).map(|aggregate| ConfirmStartOutcome {
                     aggregate,
-                    replacements_consumed: true,
+                    created: true,
                 })
             })
         })
@@ -1307,181 +1279,6 @@ pub(crate) fn recover_interrupted_workflows(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn publish_replacements(
-    conn: &mut SqliteConnection,
-    user: &str,
-    session_id: i32,
-    configuration_id: i32,
-    prepared: &mut PreparedStudyConfirmation,
-    replacements: Vec<WorkflowReplacementMaterial>,
-    now_ms: i64,
-) -> Result<(), ManagedWorkflowRepoError> {
-    for material in replacements {
-        let action = prepared
-            .replacement_actions
-            .iter()
-            .find(|replacement| replacement.input_id == material.input_id)
-            .ok_or(ManagedWorkflowRepoError::ConfigurationStale)?;
-        let material_values = serde_json::from_str::<serde_json::Value>(&material.values_json)
-            .map_err(|error| RepoError::InvalidState(error.to_string()))?;
-        if action.source_resource_id != material.source_resource_id
-            || action.action != material.action
-            || action.values != material_values
-        {
-            return Err(ManagedWorkflowRepoError::ConfigurationStale);
-        }
-        let old = if let Some(source_id) = material.source_resource_id.as_deref() {
-            Some(
-                schema::data_resources::table
-                    .inner_join(
-                        schema::sessions::table
-                            .on(schema::sessions::id.eq(schema::data_resources::session_id)),
-                    )
-                    .filter(schema::data_resources::id.eq(source_id))
-                    .filter(schema::sessions::user_id.eq(user))
-                    .filter(schema::sessions::deletion_status.eq("live"))
-                    .filter(schema::data_resources::status.eq_any(["live", "needs_rename"]))
-                    .select(schema::data_resources::all_columns)
-                    .first::<crate::db::models::DataResourceRecord>(conn)
-                    .optional()?
-                    .ok_or(ManagedWorkflowRepoError::ConfigurationStale)?,
-            )
-        } else {
-            None
-        };
-        if old
-            .as_ref()
-            .is_some_and(|resource| resource.session_id != session_id)
-        {
-            return Err(ManagedWorkflowRepoError::ConfigurationStale);
-        }
-        let mut alias = material.proposed_alias.clone();
-        let mut normalized_alias = alias.to_ascii_lowercase();
-        if material.action == "replace" {
-            let old = old
-                .as_ref()
-                .ok_or(ManagedWorkflowRepoError::ConfigurationStale)?;
-            alias = old.alias.clone();
-            normalized_alias = old.normalized_alias.clone();
-            let backup = format!("data_{}", &old.id[old.id.len().saturating_sub(8)..]);
-            diesel::update(schema::data_resources::table.find(&old.id))
-                .set((
-                    schema::data_resources::alias.eq(&backup),
-                    schema::data_resources::normalized_alias.eq(&backup),
-                    schema::data_resources::status.eq("replaced"),
-                    schema::data_resources::updated_at_ms.eq(now_ms),
-                ))
-                .execute(conn)?;
-            diesel::sql_query("UPDATE study_configurations SET status='invalidated',updated_at_ms=?1 WHERE id IN(SELECT configuration_id FROM study_input_bindings WHERE resource_id=?2) AND id<>?3 AND status IN ('choosing_facade','collecting_inputs','ready_to_confirm')")
-                .bind::<diesel::sql_types::BigInt,_>(now_ms)
-                .bind::<diesel::sql_types::Text,_>(&old.id)
-                .bind::<diesel::sql_types::Integer,_>(configuration_id)
-                .execute(conn)?;
-        } else {
-            let conflict = schema::data_resources::table
-                .filter(schema::data_resources::session_id.eq(session_id))
-                .filter(schema::data_resources::normalized_alias.eq(&normalized_alias))
-                .filter(schema::data_resources::status.eq_any(["live", "needs_rename"]))
-                .select(schema::data_resources::id)
-                .first::<String>(conn)
-                .optional()?
-                .is_some();
-            if conflict {
-                alias = format!(
-                    "{}_{}",
-                    material.input_id,
-                    &material.resource_id[material.resource_id.len().saturating_sub(8)..]
-                );
-                normalized_alias = alias.to_ascii_lowercase();
-            }
-        }
-        diesel::insert_into(schema::data_resources::table)
-            .values(crate::db::models::DataResourceRecord {
-                id: material.resource_id.clone(),
-                session_id,
-                display_name: material.display_name,
-                alias: alias.clone(),
-                normalized_alias,
-                status: "live".into(),
-                declared_schema_ref: Some(material.schema_ref.clone()),
-                source_kind: "struct_edit".into(),
-                normalized_artifact_id: Some(material.artifact_id),
-                source_artifact_id: None,
-                schema_json: material.schema_json,
-                schema_hash: material.schema_hash.clone(),
-                row_count: 1,
-                source_batch_id: None,
-                source_model_version_id: material.source_model_version_id,
-                replaced_by_resource_id: None,
-                lineage_json: json!({
-                    "replacesResourceId": material.source_resource_id,
-                    "replacementAction": material.action,
-                    "values": serde_json::from_str::<serde_json::Value>(&material.values_json).unwrap_or_default(),
-                    "diff": serde_json::from_str::<serde_json::Value>(&material.differences_json).unwrap_or_default(),
-                })
-                .to_string(),
-                created_at_ms: now_ms,
-                updated_at_ms: now_ms,
-                deleted_at_ms: None,
-                tombstone_json: None,
-            })
-            .execute(conn)?;
-        if material.action == "replace" {
-            let old_id = material
-                .source_resource_id
-                .as_deref()
-                .ok_or(ManagedWorkflowRepoError::ConfigurationStale)?;
-            diesel::update(schema::data_resources::table.find(old_id))
-                .set(
-                    schema::data_resources::replaced_by_resource_id
-                        .eq(Some(material.resource_id.clone())),
-                )
-                .execute(conn)?;
-        }
-        diesel::update(
-            schema::study_input_bindings::table.find((configuration_id, &material.input_id)),
-        )
-        .set(schema::study_input_bindings::resource_id.eq(Some(material.resource_id.clone())))
-        .execute(conn)?;
-        if let Some(input) = prepared
-            .inputs
-            .resources
-            .iter_mut()
-            .find(|input| input.input_id == material.input_id)
-        {
-            input.resource_id = material.resource_id.clone();
-            input.resource_alias = alias.clone();
-            input.schema_ref = material.schema_ref.clone();
-            input.schema_hash = material.schema_hash.clone();
-            input.content_hash = material.content_hash.clone();
-        } else {
-            prepared
-                .inputs
-                .resources
-                .push(crate::application::FrozenStudyInput {
-                    input_id: material.input_id.clone(),
-                    alias: action.input_alias.clone(),
-                    resource_alias: alias.clone(),
-                    kind: "struct".into(),
-                    resource_id: material.resource_id.clone(),
-                    schema_ref: material.schema_ref.clone(),
-                    schema_hash: material.schema_hash.clone(),
-                    content_hash: material.content_hash.clone(),
-                });
-        }
-        let struct_value = prepared
-            .locked
-            .structs
-            .iter_mut()
-            .find(|value| value.input_id == material.input_id)
-            .ok_or(ManagedWorkflowRepoError::ConfigurationStale)?;
-        struct_value.resource_id = Some(material.resource_id);
-        struct_value.resource_content_hash = Some(material.content_hash);
-    }
-    Ok(())
-}
-
 fn freeze_inputs(
     conn: &mut SqliteConnection,
     user: &str,
@@ -1490,6 +1287,19 @@ fn freeze_inputs(
     overlays: &[WorkflowStructOverlayMaterial],
     now_ms: i64,
 ) -> Result<(), ManagedWorkflowRepoError> {
+    for prepared_overlay in &prepared.struct_overlays {
+        let mut matching = overlays
+            .iter()
+            .filter(|overlay| overlay.input_id == prepared_overlay.input_id);
+        let Some(material) = matching.next() else {
+            return Err(ManagedWorkflowRepoError::ConfigurationStale);
+        };
+        if matching.next().is_some()
+            || material.source_resource_id != prepared_overlay.source_resource_id
+        {
+            return Err(ManagedWorkflowRepoError::ConfigurationStale);
+        }
+    }
     if let Some(model) = &prepared.inputs.model {
         #[derive(QueryableByName)]
         struct ModelFrame {
@@ -1529,6 +1339,10 @@ fn freeze_inputs(
         }
     }
     for resource in &mut prepared.inputs.resources {
+        let resource_id = resource
+            .resource_id
+            .as_deref()
+            .ok_or(ManagedWorkflowRepoError::ConfigurationStale)?;
         #[derive(QueryableByName)]
         struct Resource {
             #[diesel(sql_type = diesel::sql_types::Integer)]
@@ -1543,7 +1357,7 @@ fn freeze_inputs(
         let row = diesel::sql_query(
             "SELECT d.normalized_artifact_id artifact_id,d.alias,d.schema_hash,a.sha256 FROM data_resources d JOIN sessions s ON s.id=d.session_id JOIN artifacts a ON a.id=d.normalized_artifact_id WHERE d.id=?1 AND s.user_id=?2 AND s.deletion_status='live' AND d.status IN ('live','needs_rename')",
         )
-        .bind::<diesel::sql_types::Text, _>(&resource.resource_id)
+        .bind::<diesel::sql_types::Text, _>(resource_id)
         .bind::<diesel::sql_types::Text, _>(user)
         .get_result::<Resource>(conn)
         .optional()?
@@ -1566,14 +1380,22 @@ fn freeze_inputs(
             let effective_values =
                 serde_json::from_str::<serde_json::Value>(&overlay.effective_values_json)
                     .map_err(|error| RepoError::InvalidState(error.to_string()))?;
+            let user_overrides =
+                serde_json::from_str::<serde_json::Value>(&overlay.user_overrides_json)
+                    .map_err(|error| RepoError::InvalidState(error.to_string()))?;
+            let selector_overrides =
+                serde_json::from_str::<serde_json::Value>(&overlay.selector_overrides_json)
+                    .map_err(|error| RepoError::InvalidState(error.to_string()))?;
             let overrides = serde_json::from_str::<serde_json::Value>(&overlay.overrides_json)
                 .map_err(|error| RepoError::InvalidState(error.to_string()))?;
-            if overlay.source_resource_id != resource.resource_id
-                || overlay.source_artifact_id != row.artifact_id
-                || overlay.source_content_hash != resource.content_hash
-                || overlay.source_schema_hash != resource.schema_hash
+            if overlay.source_resource_id.as_deref() != Some(resource_id)
+                || overlay.source_artifact_id != Some(row.artifact_id)
+                || overlay.source_content_hash.as_deref() != Some(resource.content_hash.as_str())
+                || overlay.source_schema_hash.as_deref() != Some(resource.schema_hash.as_str())
                 || overlay.schema_ref != resource.schema_ref
                 || effective_values != prepared_overlay.effective_values
+                || user_overrides != prepared_overlay.user_overrides
+                || selector_overrides != prepared_overlay.selector_overrides
                 || overrides != prepared_overlay.overrides
             {
                 return Err(ManagedWorkflowRepoError::ConfigurationStale);
@@ -1601,6 +1423,9 @@ fn freeze_inputs(
                     "effective": {
                         "artifactId": overlay.artifact_id,
                         "contentHash": overlay.content_hash,
+                        "values": effective_values,
+                        "userOverrides": user_overrides,
+                        "selectorOverrides": selector_overrides,
                         "overrides": overrides,
                     }
                 }),
@@ -1617,7 +1442,7 @@ fn freeze_inputs(
             workflow_id,
             &resource.input_id,
             &resource.kind,
-            Some(&resource.resource_id),
+            Some(resource_id),
             None,
             artifact_id,
             Some(&resource.alias),
@@ -1628,6 +1453,92 @@ fn freeze_inputs(
             now_ms,
         )?;
         resource.content_hash = content_hash;
+    }
+    for overlay in overlays
+        .iter()
+        .filter(|overlay| overlay.source_resource_id.is_none())
+    {
+        let prepared_overlay = prepared
+            .struct_overlays
+            .iter()
+            .find(|prepared| prepared.input_id == overlay.input_id)
+            .ok_or(ManagedWorkflowRepoError::ConfigurationStale)?;
+        if prepared_overlay.source_resource_id.is_some()
+            || prepared
+                .inputs
+                .resources
+                .iter()
+                .any(|resource| resource.input_id == overlay.input_id)
+            || overlay.source_artifact_id.is_some()
+            || overlay.source_content_hash.is_some()
+            || overlay.source_schema_hash.is_some()
+            || overlay.schema_ref != prepared_overlay.schema_ref
+        {
+            return Err(ManagedWorkflowRepoError::ConfigurationStale);
+        }
+        let effective_values =
+            serde_json::from_str::<serde_json::Value>(&overlay.effective_values_json)
+                .map_err(|error| RepoError::InvalidState(error.to_string()))?;
+        let user_overrides =
+            serde_json::from_str::<serde_json::Value>(&overlay.user_overrides_json)
+                .map_err(|error| RepoError::InvalidState(error.to_string()))?;
+        let selector_overrides =
+            serde_json::from_str::<serde_json::Value>(&overlay.selector_overrides_json)
+                .map_err(|error| RepoError::InvalidState(error.to_string()))?;
+        let overrides = serde_json::from_str::<serde_json::Value>(&overlay.overrides_json)
+            .map_err(|error| RepoError::InvalidState(error.to_string()))?;
+        if effective_values != prepared_overlay.effective_values
+            || user_overrides != prepared_overlay.user_overrides
+            || selector_overrides != prepared_overlay.selector_overrides
+            || overrides != prepared_overlay.overrides
+        {
+            return Err(ManagedWorkflowRepoError::ConfigurationStale);
+        }
+        insert_input(
+            conn,
+            workflow_id,
+            &overlay.input_id,
+            "struct",
+            None,
+            None,
+            overlay.artifact_id,
+            Some(&prepared_overlay.input_alias),
+            Some(&overlay.schema_ref),
+            Some(&overlay.schema_hash),
+            &overlay.content_hash,
+            json!({
+                "inputId": overlay.input_id,
+                "alias": prepared_overlay.input_alias,
+                "kind": "struct",
+                "resourceId": null,
+                "schemaRef": overlay.schema_ref,
+                "schemaHash": overlay.schema_hash,
+                "contentHash": overlay.content_hash,
+                "source": null,
+                "effective": {
+                    "artifactId": overlay.artifact_id,
+                    "contentHash": overlay.content_hash,
+                    "values": effective_values,
+                    "userOverrides": user_overrides,
+                    "selectorOverrides": selector_overrides,
+                    "overrides": overrides,
+                }
+            }),
+            now_ms,
+        )?;
+        prepared
+            .inputs
+            .resources
+            .push(crate::application::FrozenStudyInput {
+                input_id: overlay.input_id.clone(),
+                alias: prepared_overlay.input_alias.clone(),
+                resource_alias: prepared_overlay.input_alias.clone(),
+                kind: "struct".into(),
+                resource_id: None,
+                schema_ref: overlay.schema_ref.clone(),
+                schema_hash: overlay.schema_hash.clone(),
+                content_hash: overlay.content_hash.clone(),
+            });
     }
     Ok(())
 }
@@ -1899,10 +1810,10 @@ fn apply_retry_overlays(
             .iter()
             .find(|overlay| overlay.input_id == request.input_id)
             .ok_or(ManagedWorkflowRepoError::RetryImpactChanged)?;
-        if overlay.source_resource_id != request.source_resource_id
-            || overlay.source_artifact_id != request.source_artifact_id
-            || overlay.source_content_hash != request.source_content_hash
-            || overlay.source_schema_hash != request.source_schema_hash
+        if overlay.source_resource_id.as_deref() != Some(request.source_resource_id.as_str())
+            || overlay.source_artifact_id != Some(request.source_artifact_id)
+            || overlay.source_content_hash.as_deref() != Some(request.source_content_hash.as_str())
+            || overlay.source_schema_hash.as_deref() != Some(request.source_schema_hash.as_str())
             || overlay.schema_ref != request.schema_ref
             || serde_json::from_str::<serde_json::Value>(&overlay.overrides_json)
                 .ok()
@@ -1938,6 +1849,10 @@ fn apply_retry_overlays(
                 "artifactId": overlay.artifact_id,
                 "contentHash": overlay.content_hash,
                 "values": serde_json::from_str::<serde_json::Value>(&overlay.effective_values_json)
+                    .map_err(|error| RepoError::Storage(error.to_string()))?,
+                "userOverrides": serde_json::from_str::<serde_json::Value>(&overlay.user_overrides_json)
+                    .map_err(|error| RepoError::Storage(error.to_string()))?,
+                "selectorOverrides": serde_json::from_str::<serde_json::Value>(&overlay.selector_overrides_json)
                     .map_err(|error| RepoError::Storage(error.to_string()))?,
                 "overrides": request.overrides,
             },

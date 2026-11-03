@@ -326,7 +326,6 @@ async fn imported_case_binds_exact_active_tables_and_independent_para_resource()
     assert_eq!(prepared.locked.function, "ds_newton_raphson_pf");
     assert_eq!(prepared.inputs.model.unwrap().tables.len(), 20);
     assert_eq!(prepared.locked.structs[0].resource_diff, json!([]));
-    assert!(prepared.replacement_actions.is_empty());
     assert_eq!(prepared.struct_overlays.len(), 1);
 }
 
@@ -396,7 +395,6 @@ async fn selector_values_are_server_owned_while_user_overrides_remain_private() 
         .prepare_confirmation(&user, updated.id, updated.revision)
         .await
         .unwrap();
-    assert!(prepared.replacement_actions.is_empty());
     assert_eq!(prepared.struct_overlays.len(), 1);
     assert_eq!(prepared.struct_overlays[0].input_id, "para");
     assert_eq!(
@@ -595,7 +593,6 @@ async fn struct_edits_are_run_private_without_replacement_choice() {
         .prepare_confirmation(&user, edited.id, edited.revision)
         .await
         .unwrap();
-    assert!(prepared.replacement_actions.is_empty());
     assert_eq!(prepared.struct_overlays.len(), 1);
     assert_eq!(
         prepared.struct_overlays[0].user_overrides,
@@ -686,7 +683,6 @@ async fn struct_without_resource_prepares_private_values_from_defaults() {
         .prepare_confirmation(&user, completed.id, completed.revision)
         .await
         .unwrap();
-    assert!(prepared.replacement_actions.is_empty());
     assert_eq!(prepared.struct_overlays.len(), 1);
     assert!(prepared.struct_overlays[0].source_resource_id.is_none());
     assert!(

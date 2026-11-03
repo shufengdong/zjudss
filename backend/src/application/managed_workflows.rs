@@ -432,31 +432,11 @@ impl ManagedWorkflowService {
             .configurations
             .prepare_confirmation(user, configuration_id, request.expected_revision)
             .await?;
-        let replacements = self
+        let overlays = self
             .data_resources
-            .materialize_study_replacements(user, &prepared)
+            .materialize_study_struct_overlays(user, &prepared)
             .await
             .map_err(|error| WorkflowError::Invalid(error.code(), error.to_string()))?;
-        let replacement_artifact_ids = replacements
-            .iter()
-            .map(|replacement| replacement.artifact_id)
-            .collect::<Vec<_>>();
-        let overlays = match self
-            .data_resources
-            .materialize_study_struct_overlays(user, &prepared, &replacements)
-            .await
-        {
-            Ok(overlays) => overlays,
-            Err(error) => {
-                for artifact_id in replacement_artifact_ids {
-                    let _ = self
-                        .artifacts
-                        .release(user.storage_scope_id, artifact_id)
-                        .await;
-                }
-                return Err(WorkflowError::Invalid(error.code(), error.to_string()));
-            }
-        };
         let overlay_artifact_ids = overlays
             .iter()
             .filter(|overlay| overlay.owns_artifact_reference)
@@ -467,7 +447,6 @@ impl ManagedWorkflowService {
             .confirm_and_start(
                 &user.id,
                 prepared,
-                replacements,
                 overlays,
                 operation.to_string(),
                 self.correction_budget,
@@ -478,27 +457,16 @@ impl ManagedWorkflowService {
             .await;
         let (aggregate, should_start) = match result {
             Ok(outcome) => {
-                if !outcome.replacements_consumed {
-                    for artifact_id in replacement_artifact_ids {
-                        let _ = self
-                            .artifacts
-                            .release(user.storage_scope_id, artifact_id)
-                            .await;
-                    }
-                }
                 for artifact_id in overlay_artifact_ids {
                     let _ = self
                         .artifacts
                         .release(user.storage_scope_id, artifact_id)
                         .await;
                 }
-                (outcome.aggregate, outcome.replacements_consumed)
+                (outcome.aggregate, outcome.created)
             }
             Err(error) => {
-                for artifact_id in replacement_artifact_ids
-                    .into_iter()
-                    .chain(overlay_artifact_ids)
-                {
+                for artifact_id in overlay_artifact_ids {
                     let _ = self
                         .artifacts
                         .release(user.storage_scope_id, artifact_id)
