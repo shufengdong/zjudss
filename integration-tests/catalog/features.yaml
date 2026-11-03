@@ -1227,8 +1227,14 @@
       file: backend/tests/workflow_retries.rs
       name: retry_rejects_cyclic_replacement_lineage
     - runner: rust
+      file: backend/tests/workflow_retries.rs
+      name: retry_rejects_replacement_lineage_deeper_than_limit
+    - runner: rust
       file: backend/tests/managed_workflows.rs
       name: private_struct_override_keeps_the_facade_alias_for_engine_injection
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
+      name: rerun_rejects_same_alias_resource_for_struct_snapshot_without_effective_overlay
     - runner: rust
       file: backend/tests/managed_workflows.rs
       name: legacy_private_overlay_snapshot_reruns_with_merged_overrides

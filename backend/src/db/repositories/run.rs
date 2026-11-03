@@ -461,7 +461,9 @@ impl RunRepo {
                     let input_name = row.input_name.clone().ok_or(RunRepoError::ConfigurationStale)?;
                     let snapshot: serde_json::Value = serde_json::from_str(row.snapshot_json.as_deref().ok_or(RunRepoError::ConfigurationStale)?)
                         .map_err(|error| RunRepoError::Repository(RepoError::Storage(error.to_string())))?;
-                    if snapshot.get("effective").is_none() {
+                    if snapshot.get("effective").is_none()
+                        && row.input_kind.as_deref() != Some("struct")
+                    {
                         if row.expected_schema_ref != row.current_schema_ref { return Err(RunRepoError::ScriptIncompatible(vec![input_name])); }
                         resources.push(FrozenRunResource { input_name: row.input_name, input_kind: row.input_kind, resource_id: row.resource_id, alias: row.alias, artifact_id: row.artifact_id.ok_or(RunRepoError::ConfigurationStale)?, schema_ref: row.current_schema_ref, schema_hash: row.schema_hash.ok_or(RunRepoError::ConfigurationStale)?, content_hash: row.content_hash.ok_or(RunRepoError::ConfigurationStale)?, source_kind: row.source_kind.unwrap_or_default(), lineage: row.lineage_json.as_deref().and_then(|value|serde_json::from_str(value).ok()).unwrap_or(serde_json::Value::Null) });
                         continue;

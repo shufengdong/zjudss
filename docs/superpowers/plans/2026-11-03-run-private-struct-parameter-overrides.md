@@ -336,7 +336,9 @@ Progress: formatting/static checks and the full deterministic suite are intentio
 
 Run `git diff --check`, inspect every task commit, and verify no pre-existing charting file or hunk was staged. Confirm no study confirmation path writes a Struct data resource and all private artifacts have consume/release coverage.
 
-Result: scoped `git diff --check` passed; Tasks 1–4 contain only their intended backend/frontend files, no charting file is staged, and the remaining charting compiler edit is an unrelated unstaged change owned by another process. Full static and deterministic verification remains deferred as noted above.
+Result: scoped `git diff --check` passed; Tasks 1–4 contain only their intended backend/frontend files, no charting file was staged, and all concurrent chart-workbench edits remain outside this task. Full static and deterministic verification remains deferred as noted above.
+
+Independent review found and the implementation now fixes two replay edges: Struct snapshots without an `effective` overlay also require explicit replacement lineage, and stale retry-overlay materialization reports `configuration_stale` instead of `invalid_run`. The same-alias/no-overlay regression passed its red-green run; mapping and >64-depth tests were added. Their focused execution is pending because concurrent chart-schema edits currently leave unrelated `DatasetView` imports uncompilable. Follow-up read-only review reports no remaining critical, important, or minor findings.
 
 - [x] **Step 6: Commit documentation and traceability only**
 

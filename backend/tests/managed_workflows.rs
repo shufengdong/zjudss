@@ -1192,6 +1192,117 @@ async fn ordinary_struct_override_keeps_the_source_resource_live() {
 }
 
 #[tokio::test]
+async fn rerun_rejects_same_alias_resource_for_struct_snapshot_without_effective_overlay() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "unchanged para rerun", 1)
+        .await
+        .unwrap();
+    let configuration = ready_study(&app, &user, session.id).await;
+    let workflow = app
+        .state
+        .managed_workflow_service
+        .confirm_configuration_and_start(
+            &user,
+            configuration.id,
+            ConfirmStudyRequest {
+                expected_revision: configuration.revision,
+                client_operation_id: "unchanged-para-confirm".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let candidate = app
+        .state
+        .managed_workflow_service
+        .record_candidate_script(
+            &user,
+            workflow.id,
+            "generation",
+            None,
+            "bus_voltage = ds_newton_raphson_pf(bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para);",
+            Some("test".into()),
+        )
+        .await
+        .unwrap();
+    let terminal = app
+        .state
+        .managed_workflow_service
+        .finalize_with_script(&user, workflow.id, candidate.attempts[0].id, true, None)
+        .await
+        .unwrap();
+
+    let mut conn = app.pool.get().unwrap();
+    let frozen = zjudss::db::schema::workflow_input_snapshots::table
+        .filter(zjudss::db::schema::workflow_input_snapshots::workflow_id.eq(workflow.id))
+        .filter(zjudss::db::schema::workflow_input_snapshots::input_name.eq("para"))
+        .first::<zjudss::db::models::WorkflowInputSnapshotRecord>(&mut conn)
+        .unwrap();
+    let snapshot: Value = serde_json::from_str(&frozen.snapshot_json).unwrap();
+    let source = snapshot["source"].clone();
+    let source_resource_id = source["resourceId"].as_str().unwrap().to_string();
+    let source_artifact_id = source["artifactId"].as_i64().unwrap() as i32;
+    let source_content_hash = source["contentHash"].as_str().unwrap().to_string();
+    diesel::sql_query("DROP TRIGGER immutable_workflow_inputs")
+        .execute(&mut conn)
+        .unwrap();
+    diesel::update(zjudss::db::schema::workflow_input_snapshots::table.find(frozen.id))
+        .set((
+            zjudss::db::schema::workflow_input_snapshots::artifact_id.eq(source_artifact_id),
+            zjudss::db::schema::workflow_input_snapshots::content_hash.eq(source_content_hash),
+            zjudss::db::schema::workflow_input_snapshots::snapshot_json.eq(source.to_string()),
+        ))
+        .execute(&mut conn)
+        .unwrap();
+    diesel::sql_query("CREATE TRIGGER immutable_workflow_inputs BEFORE UPDATE ON workflow_input_snapshots BEGIN SELECT RAISE(ABORT,'workflow inputs are immutable'); END")
+        .execute(&mut conn)
+        .unwrap();
+
+    let mut unrelated = zjudss::db::schema::data_resources::table
+        .find(&source_resource_id)
+        .first::<zjudss::db::models::DataResourceRecord>(&mut conn)
+        .unwrap();
+    diesel::update(zjudss::db::schema::data_resources::table.find(&source_resource_id))
+        .set((
+            zjudss::db::schema::data_resources::alias.eq("para_detached"),
+            zjudss::db::schema::data_resources::normalized_alias.eq("para_detached"),
+            zjudss::db::schema::data_resources::status.eq("replaced"),
+            zjudss::db::schema::data_resources::replaced_by_resource_id.eq(Option::<String>::None),
+        ))
+        .execute(&mut conn)
+        .unwrap();
+    unrelated.id = "dr_unrelated_unchanged_para".into();
+    unrelated.status = "live".into();
+    unrelated.replaced_by_resource_id = None;
+    unrelated.lineage_json = json!({}).to_string();
+    diesel::insert_into(zjudss::db::schema::data_resources::table)
+        .values(unrelated)
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
+
+    let error = app
+        .state
+        .run_service
+        .create(
+            &user,
+            terminal.final_script_resource_id.unwrap(),
+            CreateRunRequest {
+                client_run_id: "unrelated-unchanged-para-rerun".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        zjudss::application::RunError::ConfigurationStale
+    ));
+}
+
+#[tokio::test]
 async fn private_struct_override_keeps_the_facade_alias_for_engine_injection() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");

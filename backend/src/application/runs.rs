@@ -21,8 +21,9 @@ use super::diagnostics::{
     sanitize_adapter_stdout,
 };
 use super::{
-    ArtifactError, ArtifactService, EventBus, EventWriter, MessageRepo, OperationKind,
-    OperationRef, ResultOutputRef, RunScheduler, Stage, StageStatus, ms_to_iso, now_ms,
+    ArtifactError, ArtifactService, DataResourceError, EventBus, EventWriter, MessageRepo,
+    OperationKind, OperationRef, ResultOutputRef, RunScheduler, Stage, StageStatus, ms_to_iso,
+    now_ms,
 };
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -239,7 +240,7 @@ impl RunService {
             .data_resources
             .materialize_retry_struct_overlays(user, &overlay_requests)
             .await
-            .map_err(|error| RunError::Invalid(error.to_string()))?;
+            .map_err(map_rerun_overlay_error)?;
         let overlay_artifact_ids = overlays
             .iter()
             .filter(|overlay| overlay.owns_artifact_reference)
@@ -797,6 +798,25 @@ fn public_failure_reason(error: &RunError) -> &'static str {
     }
 }
 
+fn map_rerun_overlay_error(error: DataResourceError) -> RunError {
+    if matches!(
+        error.code(),
+        "configuration_stale"
+            | "not_found"
+            | "resource_stale"
+            | "structured_schema_mismatch"
+            | "structured_values_invalid"
+    ) {
+        return RunError::ConfigurationStale;
+    }
+    match error {
+        DataResourceError::Repository(error) => RunError::Repository(error),
+        DataResourceError::Artifact(error) => RunError::Artifact(error),
+        DataResourceError::Io(error) => RunError::Io(error),
+        error => RunError::Invalid(error.to_string()),
+    }
+}
+
 fn map_engine_run_error(error: crate::adapters::AdapterError) -> RunError {
     match error.code.as_str() {
         "result_empty" => {
@@ -929,4 +949,24 @@ fn run_failed_stages(active: &str) -> Vec<Stage> {
 
 fn run_output_ref(dataset: &RunDataset) -> ResultOutputRef {
     ResultOutputRef::from_dataset(dataset)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rerun_overlay_errors_report_configuration_stale() {
+        for error in [
+            DataResourceError::NotFound,
+            DataResourceError::Invalid("configuration_stale", "stale".into()),
+            DataResourceError::Invalid("structured_schema_mismatch", "schema".into()),
+            DataResourceError::Invalid("structured_values_invalid", "values".into()),
+        ] {
+            assert!(matches!(
+                map_rerun_overlay_error(error),
+                RunError::ConfigurationStale
+            ));
+        }
+    }
 }

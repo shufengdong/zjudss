@@ -862,6 +862,52 @@ async fn retry_rejects_cyclic_replacement_lineage() {
 }
 
 #[tokio::test]
+async fn retry_rejects_replacement_lineage_deeper_than_limit() {
+    let app = common::TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let source = failed_overlay_source(&app, &user, false).await;
+    let source_resource_id = zjudss::db::schema::workflow_input_snapshots::table
+        .filter(zjudss::db::schema::workflow_input_snapshots::workflow_id.eq(source.id))
+        .filter(zjudss::db::schema::workflow_input_snapshots::input_name.eq("para"))
+        .select(zjudss::db::schema::workflow_input_snapshots::resource_id)
+        .first::<Option<String>>(&mut app.pool.get().unwrap())
+        .unwrap()
+        .unwrap();
+    let mut parent_id = source_resource_id;
+    for index in 0..65 {
+        let child_id = format!("dr_deep_para_{index}");
+        publish_unrelated_para_with_lineage(
+            &app,
+            &parent_id,
+            &child_id,
+            json!({"replacesResourceId":parent_id.clone()}),
+        );
+        diesel::update(zjudss::db::schema::data_resources::table.find(&parent_id))
+            .set(
+                zjudss::db::schema::data_resources::replaced_by_resource_id
+                    .eq(Some(child_id.clone())),
+            )
+            .execute(&mut app.pool.get().unwrap())
+            .unwrap();
+        parent_id = child_id;
+    }
+
+    let error = app
+        .state
+        .managed_workflow_service
+        .preview_retry(
+            &user,
+            source.final_script_resource_id.unwrap(),
+            RetryStudyRequest {
+                client_retry_id: "retry-over-depth-lineage".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "configuration_stale");
+}
+
+#[tokio::test]
 async fn unchanged_failed_agent_script_starts_a_derived_retry_with_a_fresh_budget() {
     let author = Arc::new(ScriptedAuthor::default());
     let engine = Arc::new(ScenarioEngine::default());
