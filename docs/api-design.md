@@ -137,11 +137,13 @@ schemaRef、规范字段和 expected content hash，确认前不创建资源，�
 `expectedRevision`。跨用户和不存在配置统一 404，revision、资源或 snapshot 竞争返回
 `configuration_stale`。
 
-模型输入只按门面声明从 active 版本的实际表名动态绑定；`para` 等 Struct 只绑定普通数据资源。兼容资源唯一时可
-预选，多个兼容资源必须由用户选择；同门面的历史 Struct 只返回复用建议，不能静默沿用。Struct 卡由规范 schema
-生成字段类型、单位、范围和枚举；修改已绑定资源时必须选择 Replace 或 SaveAsNew，没有来源时只生成新资源命令。
-卡片保存只记录草稿和受控 replacement command，不提前覆盖资源。Struct 差异按 JSON 数值语义比较，`50` 与
-`50.0` 不产生虚假的资源修改。
+模型输入只按门面声明从 active 版本的实际表名动态绑定；`para` 等 Struct 只绑定普通数据资源。兼容资源唯一时自动
+绑定，多个兼容资源才要求用户选择；同门面的历史 Struct 只返回复用建议，不能在存在歧义时静默沿用。Struct 卡由规范 schema
+生成字段类型、单位、范围和枚举，并通过可向后兼容的 `resultSelectorFields:string[]` 标记当前门面由结果选择管理的字段。
+这些字段不接受 Struct 更新请求中的伪造值、不计入普通资源差异，也不要求 Replace/SaveAsNew；普通字段修改已绑定资源时仍
+必须选择 Replace 或 SaveAsNew，没有来源时只生成新资源命令。卡片保存只记录草稿和受控 replacement command，不提前覆盖资源。
+Struct 差异按 JSON 数值语义比较，`50` 与 `50.0` 不产生虚假的资源修改。旧的 selector-only `struct_edit` 只有在来源资源仍
+存活、同 session/schema 且 lineage 合法时才折叠出候选集；否则仍作为真实候选参与消歧。
 
 Data 输入的 mapping 只接受源列到目标列的受控映射。服务端按目标 schema 转换为 Snappy Parquet，经统一上传发布
 事务创建 `sourceKind=mapping` 的新普通资源，并冻结源资源 ID、目标 schema 和映射血缘；不会修改源资源。结果集合
@@ -158,8 +160,10 @@ Data 输入的 mapping 只接受源列到目标列的受控映射。服务端按
 
 `POST /api/study-configurations/{id}/confirm` 只接受
 `{expectedRevision, clientOperationId}`。服务在一个 immediate transaction 中重新校验配置、当前引擎快照、active
-模型、资源 ID/hash/schema 和结果合同；需要修改 Struct 参数时，同时发布新的普通 Data 资源并执行 Replace 或
-SaveAsNew；随后确认配置、冻结逐项输入 artifact、创建 managed workflow、持久进度消息和 provisional run。相同操作
+模型、资源 ID/hash/schema 和结果合同；普通 Struct 参数变化时发布新的普通 Data 资源并执行 Replace 或
+SaveAsNew；结果 selector 则只在本次工作流私有的单行 Snappy Parquet artifact 中覆盖，不创建 `data_resources` 行。
+工作流输入继续以 `resourceId` 指向长期来源资源，以 `artifactId/contentHash` 指向实际执行文件，并在 snapshot 的
+`source`/`effective` 中冻结来源、有效值和 overrides。随后确认配置、创建 managed workflow、持久进度消息和 provisional run。相同操作
 ID 幂等返回同一 workflow/run；同一操作 ID 配合不同请求返回 `idempotency_conflict`。按钮固定为“确认并生成脚本”。
 
 `GET /api/workflows/{id}` 返回工作流、修正预算、run、可空脚本消息锚点和脱敏 attempt 摘要。每个 attempt 还返回
@@ -232,7 +236,8 @@ manifest、角色化文件哈希和验证诊断。两个工具只读，Agent 无
 不使用 zjudss RSS 静态语法校验器；语法和运行可行性以用户点击运行后 tensoreval 的退出码、stderr 和结果为准。
 脚本详情返回全文；列表和消息只返回有界预览。V4 受管研究已提供确认、workflow 查询与取消接口；生成、执行和自动
 修正循环由受管工作流执行。普通运行请求为 `{clientRunId}`，前端不提交模型版本。后端在创建 run 的事务中按脚本类型
-解析并冻结当前输入：成功 Agent 脚本只读取冻结门面实际需要的当前 active 表和同 alias 的 live Data resource；
+解析并冻结当前输入：成功 Agent 脚本只读取冻结门面实际需要的当前 active 表和同 alias 的 live Data resource，并把原工作流
+冻结的 selector overrides 重新覆盖到最新 Struct 普通字段；
 manual/upload 脚本读取存在时的全部 active 表和全部 live Data resource，没有 active 仍可执行。Agent 没有普通运行、
 历史版本激活或删除工具；当前草稿发布只通过上述受控工具。
 
@@ -249,7 +254,10 @@ tensoreval 以非零状态退出时保留实际退出码。原始有界 stderr �
 名称合法且唯一的 Snappy Parquet；成功 Agent 脚本再次运行沿用冻结的结果名称和 schema 合同，合同漂移以
 `result_contract_invalid` 失败且不修正。`POST /api/scripts/{id}/retry-previews` 只面向失败的受管 Agent 脚本：当前输入
 未变化时直接创建带完整新修正预算的派生 workflow，变化时返回持久差异；用户通过
-`POST /api/retry-previews/{id}/confirm` 确认后冻结最新输入，门面 hash 变化返回 `study_contract_changed`。
+`POST /api/retry-previews/{id}/confirm` 确认后冻结最新输入。重试比较长期来源 hash 而不是私有有效 artifact hash；来源变化时
+用最新普通字段重新物化原 selector overrides，来源未变时复用原有效 artifact。相同 `clientRetryId` 或 `clientRunId` 的
+已创建操作在调度、读取当前资源和物化 overlay 之前直接返回原 workflow/run；事务内仍二次检查以处理并发。门面 hash
+变化返回 `study_contract_changed`。
 
 终态运行通过 `POST /api/runs/{id}/deletion-preview` 获取短期影响 token，再用
 `DELETE /api/runs/{id}?impactToken=...` 原子 tombstone run 和全部存活直接结果并释放其 artifact 引用。排队/运行中返回

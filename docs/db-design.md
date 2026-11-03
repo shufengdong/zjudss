@@ -114,7 +114,9 @@ normalized/source artifact 和 replacement/lineage。`live|needs_rename` 参与�
 mapping 摘要放在受控 `mapping_json`；`study_struct_values` 保存按规范 schema 校验后的字段；
 `study_result_selections` 以 ordinal 保存有序唯一结果。仓储每次查询都通过 session 校验用户，编辑使用 immediate
 transaction 比较 revision 并整体替换三个子表。资源替换/删除会把引用它的非终态配置置为 `invalidated`；已确认
-工作流只读自己的冻结 input snapshot。
+工作流只读自己的冻结 input snapshot。门面结果规则管理的 Struct selector 不写成新的长期资源；冻结 snapshot 的
+`resource_id` 与 `source` 对象标识长期来源，顶层 `artifact_id/content_hash` 与 `effective` 对象标识实际执行的不可变
+Snappy Parquet，并记录精确 overrides。私有 artifact 由 workflow/run 引用计数持有，不进入资源 alias 或候选查询。
 
 列映射先按目标 schema 在应用层生成 Snappy Parquet，再通过统一上传候选事务发布新 `data_resources` 行；发布时即
 写入 `source_kind=mapping` 和源资源/目标 schema/列映射血缘，避免发布后修改不可变 payload。配置确认事务重新校验
@@ -145,8 +147,12 @@ ID/alias/schema/hash；创建事务为脚本和全部输入 artifact 增加独�
 单向写入 `complete|unavailable`，不能改写日志或终态；启动恢复把遗留 pending 收敛为 unavailable。`run_deletion_previews` 保存短期 token hash 和完整影响 hash；确认删除复核终态、直接结果集合与
 busy consumer，释放脚本、输入和直接结果引用后写 run/result 墓碑，派生和提升资源保留冻结生产者/schema/hash 血缘。
 
-`retry_previews` 以来源 workflow 保存当前 active/资源差异的影响 hash。输入未变化时直接创建
-`source_workflow_id` 指向来源的派生 workflow；输入变化时确认事务重新计算影响并冻结最新 artifact。派生脚本通过
+`retry_previews` 以来源 workflow 保存当前 active/资源差异和待重建 selector overlay 的影响 hash；资源比较使用
+snapshot `source.contentHash`，不能把 `effective.contentHash` 误判成长期资源变化。输入未变化时直接复用有效 artifact 并创建
+`source_workflow_id` 指向来源的派生 workflow；输入变化时应用层先将原 overrides 覆盖到最新 Struct 值，确认事务复核
+来源 ID/artifact/schema/content hash 后冻结新的私有 artifact。成功 Agent 脚本重新运行使用同一重建规则；run 创建事务
+复核来源并持有有效 artifact。应用层在读取可变输入前先按 session/用户和 `clientRetryId`/`clientRunId` 查询既有不可变
+workflow/run，仓储事务仍保留同一幂等检查以关闭竞争窗口；失败会释放未消费的暂存引用。派生脚本通过
 `source_script_resource_id` 指向原失败脚本，两个脚本及各自 run/message anchor 都保持不可变。
 
 ## Search and recovery

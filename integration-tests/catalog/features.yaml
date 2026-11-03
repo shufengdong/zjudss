@@ -815,6 +815,21 @@
     - runner: vitest
       file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
       name: keeps terminal configuration cards compact without a collapse control
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: hides server-managed result selector fields from Struct editing
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: asks for an ambiguous Struct resource before showing its parameter editor
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: renders resolved non-Struct inputs as compact ready rows
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: reserves column mapping for an unresolved Data input
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: keeps durable Struct cards without resultSelectorFields renderable
     - runner: rust
       file: backend/tests/study_configurations.rs
       name: explicit_facade_creates_catalog_driven_cards_without_a_model
@@ -824,6 +839,15 @@
     - runner: rust
       file: backend/tests/study_configurations.rs
       name: struct_edits_require_a_replacement_choice_and_revision_is_optimistic
+    - runner: rust
+      file: backend/tests/study_configurations.rs
+      name: result_selector_fields_are_server_owned_and_prepare_private_overlay
+    - runner: rust
+      file: backend/tests/study_configurations.rs
+      name: result_selector_only_resource_does_not_create_ambiguity
+    - runner: rust
+      file: backend/tests/study_configurations.rs
+      name: result_selector_only_resource_with_non_live_source_remains_a_candidate
     - runner: rust
       file: backend/tests/study_configurations.rs
       name: protection_configuration_uses_only_catalog_declared_model_inputs
@@ -851,7 +875,7 @@
     - runner: rust
       file: backend/tests/scripted_agent.rs
       name: natural_language_result_selection_updates_the_durable_card_without_starting_work
-  assertions: [explicit functions are never topology-rewritten, prepare_study requires a bounded nonblank model explanation and persists it before the durable configuration card, model inputs come only from active tables declared by the selected facade, para remains an independent Struct resource, multiple resources require user selection, Struct changes require replacement intent, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, mutable cards start expanded and remember their collapsed state per configuration in the current browser session while mutation errors force them open, terminal cards stay compact, ready-to-confirm cards keep result editing beside the final confirmation gate, natural-language result updates require the planning skill and exact current card revision, result updates revise the same durable card without creating scripts workflows or runs, final confirmation remains a fixed UI action]
+  assertions: [explicit functions are never topology-rewritten, prepare_study requires a bounded nonblank model explanation and persists it before the durable configuration card, model inputs come only from active tables declared by the selected facade, para remains an independent Struct resource, exactly one compatible resource binds automatically while real ambiguity requires user selection, result selector fields are server-owned and hidden from Struct editing, ordinary Struct changes require replacement intent, selector-only legacy children fold only with a valid live source, resolved inputs render compactly without redundant confirmation, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, mutable cards start expanded and remember their collapsed state per configuration in the current browser session while mutation errors force them open, terminal cards stay compact, ready-to-confirm cards keep result editing beside the final confirmation gate, natural-language result updates require the planning skill and exact current card revision, result updates revise the same durable card without creating scripts workflows or runs, final confirmation remains a fixed UI action]
   fixtures: [current engine facade catalog, imported active model plus independent para resource, ambiguous compatible resources]
   contracts:
     - "route:GET /api/study-configurations/{id}"
@@ -941,11 +965,20 @@
       name: confirmation_atomically_replaces_struct_resource_and_freezes_new_artifact
     - runner: rust
       file: backend/tests/managed_workflows.rs
+      name: private_struct_overlay_freezes_selected_results_without_publishing_a_resource
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
+      name: private_struct_overlay_reuses_a_byte_identical_source_artifact
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
+      name: private_struct_overlay_rejects_a_stale_source_hash
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
       name: deleting_session_prevents_terminal_script_publication
     - runner: rust
       file: backend/tests/managed_workflows.rs
       name: scripted_author_sequences_generation_and_repair
-  assertions: [confirmation and frozen inputs commit atomically, one session has at most one nonterminal workflow, operation IDs are idempotent, a managed run may remain scriptless until the first candidate exists, candidate artifacts and parent attempts are immutable, successful workflows visually group the exact managed script before run results while preserving the durable script message anchor, failure cards show sanitized logs and bounded evidence-citing analysis while repair history stays collapsed, cancellation and restart converge deterministically, resources and workflows are user scoped]
+  assertions: [confirmation and frozen inputs commit atomically, result selectors freeze in private source/effective Struct overlays without publishing or aliasing a data resource, byte-identical overlays reuse the source artifact and stale source hashes are rejected without leaks, one session has at most one nonterminal workflow, operation IDs are idempotent, a managed run may remain scriptless until the first candidate exists, candidate artifacts and parent attempts are immutable, successful workflows visually group the exact managed script before run results while preserving the durable script message anchor, failure cards show sanitized logs and bounded evidence-citing analysis while repair history stays collapsed, cancellation and restart converge deterministically, resources and workflows are user scoped]
   fixtures: [ready study configuration, imported active model and para resource, temporary V4 database]
   contracts:
     - "route:POST /api/study-configurations/{id}/confirm"
@@ -1161,6 +1194,15 @@
       file: backend/tests/workflow_retries.rs
       name: changed_inputs_require_confirmation_and_freeze_the_new_active_model
     - runner: rust
+      file: backend/tests/workflow_retries.rs
+      name: unchanged_private_overlay_retry_reuses_the_effective_artifact
+    - runner: rust
+      file: backend/tests/workflow_retries.rs
+      name: changed_private_overlay_retry_combines_latest_parameters_with_frozen_results
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
+      name: save_as_new_struct_keeps_the_facade_alias_for_engine_injection
+    - runner: rust
       file: backend/tests/result_deletion.rs
       name: terminal_run_deletion_requires_preview_and_tombstones_all_direct_results
     - runner: vitest
@@ -1214,7 +1256,7 @@
     - runner: vitest
       file: frontend/src/hooks/useRunFailureDiagnosis.test.tsx
       name: ignores_stale_detail_responses_and_clears_polling_on_unmount
-  assertions: [run binds an immutable script and canonical message anchor while freezing the latest required active model and live resources, resource-only manual scripts run without an active model, successful Agent scripts execute once without repair, failed Agent scripts retry through a derived workflow with a fresh correction budget and explicit confirmation when inputs changed, run and result lists remain readable, successful run progress has no running stage, failed run progress shows bounded sanitized multiline tensoreval logs and analysis inline and survives refresh, analyzer failure timeout and restart never hide stored logs, workflow and run progress share one diagnosis panel while polling only pending analysis, terminal run deletion requires a fresh impact token and atomically tombstones all direct results, scripts never auto-run]
+  assertions: [run binds an immutable script and canonical message anchor while freezing the latest required active model and live resources, resource-only manual scripts run without an active model, successful Agent scripts execute once without repair, retry and generated-script rerun preserve frozen selector overrides while combining them with the latest ordinary Struct fields, unchanged retries reuse the effective artifact, existing clientRetryId and clientRunId operations replay before mutable resource reads or overlay materialization, failed Agent scripts retry through a derived workflow with a fresh correction budget and explicit confirmation when inputs changed, run and result lists remain readable, successful run progress has no running stage, failed run progress shows bounded sanitized multiline tensoreval logs and analysis inline and survives refresh, analyzer failure timeout and restart never hide stored logs, workflow and run progress share one diagnosis panel while polling only pending analysis, terminal run deletion requires a fresh impact token and atomically tombstones all direct results, scripts never auto-run]
   fixtures: [published model, valid RSS script, successful and failed runs, multi-result run]
   contracts:
     - "route:POST /api/scripts/{id}/runs"

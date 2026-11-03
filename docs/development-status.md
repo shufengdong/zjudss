@@ -19,14 +19,14 @@
 | Task 3：统一 tensoreval 进程边界 | complete | 双流有界捕获/完整 hash、运行中结果监控、进程组超时与取消、最终严格扫描、无部分结果 |
 | Task 4：统一上传、解析设置与用途确认 | complete | upload batch API、24h 可配置 TTL、并发 reservation、CSV/Excel/Parquet/DSS/案例候选、20+para 拆分、动态 catalog 表头推断 |
 | Task 5：独立数据资源发布与管理 | complete | model/resource 双子事务、普通 Data/Struct 资源、替换/删除/提升、资源分析与物化视图、4 个 Agent 工具 |
-| Task 6：目录驱动研究配置 | complete | revision 状态机、动态 model/Data/Struct/结果卡、复用建议、多资源消歧、受控列映射、待确认结果可继续编辑、最终确认准备合同、3 个 Agent 工具 |
-| Task 9：受管工作流状态机 | complete | 原子确认、Struct 资源发布、冻结输入、provisional run、专用 ScriptAuthor、candidate/父 attempt、查询/取消 API、启动恢复 |
+| Task 6：目录驱动研究配置 | complete | revision 状态机、动态 model/Data/Struct/结果卡、唯一资源自动绑定与真实多资源消歧、server-owned 结果 selector、受控列映射、待确认结果可继续编辑、最终确认准备合同、3 个 Agent 工具 |
+| Task 9：受管工作流状态机 | complete | 原子确认、普通 Struct 资源发布、结果 selector 私有 overlay 与 source/effective 冻结输入、provisional run、专用 ScriptAuthor、candidate/父 attempt、查询/取消 API、启动恢复 |
 | Task 10：脚本生成、执行与自动修正 | complete | 结构合同检查、冻结输入树、共享调度与会话取消、tensoreval 立即执行、3 次修正/4 次执行上限、64 KiB 脱敏 stdout/stderr、带日志引用的结构化失败分析、无实质修改识别、精确结果合同、独占原子结果发布与崩溃孤儿回收 |
-| Task 11：脚本重跑、失败重试与运行删除 | complete | 最新所需输入冻结、开放/精确结果合同、派生 retry workflow、输入差异确认、普通 run 持久失败日志/智能分析、run/result 原子 tombstone、artifact 引用释放 |
+| Task 11：脚本重跑、失败重试与运行删除 | complete | 最新所需输入冻结、结果 selector overlay 跨 retry/rerun 重建、开放/精确结果合同、派生 retry workflow、输入差异确认、普通 run 持久失败日志/智能分析、run/result 原子 tombstone、artifact 引用释放 |
 | Task 7：durable 消息、历史锚定与会话删除 | complete | 3 种 revisioned 操作卡、`messageId:revision` SSE、连续 around window、影响 token 删除与统一取消 |
 | Task 8：V4 Agent bundle 与受控工具 | complete | `v4.3.0`、5 个按需 skills（`study-planning@1.5.0`）、24 个对话工具；研究配置包含模型生成的详细说明和服务端权威页脚；明确自然语言可发布精确草稿并自动激活，也可按当前卡片精确 revision 修改结果；无聊天脚本创建、自动确认或旧规划权限 |
 | Task 12：统一上传与数据文件工作台 | complete | 旧模型导入前端已移除、durable batch 摘要恢复、用途/隐藏 sheet/双子事务确认；案例完整卡归入模型工作区，普通上传完整卡归入数据文件页；资源分页预览/下载/删除/replacement、模型版本描述 |
-| Task 13：研究确认与受管执行前端 | complete | 对话内上传摘要与可按配置记忆收起状态的完整研究配置卡、错误自动展开、目录类型参数、revision stale 刷新、attempt/取消/失败重试、精确脚本定位、run 删除影响确认 |
+| Task 13：研究确认与受管执行前端 | complete | 对话内上传摘要与可按配置记忆收起状态的研究配置卡、只呈现待处理输入、server-owned selector 隐藏、错误自动展开、目录类型参数、revision stale 刷新、attempt/取消/失败重试、精确脚本定位、run 删除影响确认 |
 | Task 14：确定性全链路测试与功能追溯 | complete | 30 条 Playwright 旅程；337/337 功能证据、284/284 公共合同、PR 覆盖 100% |
 | Task 15：文档、真实依赖门禁与发布切换 | complete | V4 当前文档与空库部署合同；动态真实引擎门禁；固定用户登录、真实 LLM 规划、受管执行/重跑、分析、比较和删除语义旅程 |
 
@@ -67,7 +67,7 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
   作为普通 Data resource 候选。其他模型表完全由当前 engine snapshot 的有效 model schema 和实际表头推断。
 - 研究配置：`search_study_facades` 按当前 snapshot 返回目录门面、方法差异和禁用诊断，显式函数不会被拓扑改写；
   `prepare_study` 要求 1..=4000 个 Unicode 字符的模型说明，持久化“详细说明 + 服务端实际标题/配置 ID 页脚”后再持久化 revisioned 配置卡。model 输入仅绑定 active 的实际门面表，Struct/Data 绑定普通资源，
-  多资源必须选择，列映射发布带血缘的新 Parquet 资源。结果集合按 fixed/minimum/conditional 目录约束校验；
+  唯一资源自动绑定且只有真实多资源才要求选择，列映射发布带血缘的新 Parquet 资源。结果集合按 fixed/minimum/conditional 目录约束校验；selector 字段不修改长期 Struct 资源，而是在 workflow 私有 Snappy Parquet 中冻结；
   `ready_to_confirm` 卡仍可从 UI 或 skill-gated `update_study_results` 修改结果，二者都只递增 revision，最终确认仍只由固定按钮完成。
   `prepare_confirmation` 重新检查 revision、snapshot、门面 hash、active 模型和资源内容，生成 Task 9 原子事务使用的
   locked contract/input snapshot/replacement commands；confirm 公共路由原子创建受管 workflow 与 provisional run，并由无工具 ScriptAuthor 生成候选。候选先经过只证明冻结函数、alias 顺序和结果绑定未变化的结构合同检查，再通过统一 adapter 调用 tensoreval。非零退出或可修正的结果限制/合同错误最多修正 3 次；超时、监控、路径、配额和基础设施错误立即失败。成功仅在全部结果名称、列顺序、逻辑 dtype、实际非空值和可用 unit 元数据满足 Snappy Parquet 结果合同时原子发布。
