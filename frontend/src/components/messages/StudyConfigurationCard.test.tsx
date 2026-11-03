@@ -166,6 +166,84 @@ describe('StudyConfigurationCard', () => {
     expect(confirm).toBeEnabled()
   })
 
+  it('hides server-managed result selector fields from Struct editing', () => {
+    const current = configuration({
+      status: 'collecting_inputs', inputs: [{
+        inputId: 'para', alias: 'para', kind: 'struct', schemaRef: 'frames.para', required: true, position: 1,
+        binding: { resourceId: 'resource-7' }, resourceOptions: [],
+        structCard: {
+          schemaRef: 'frames.para',
+          fields: [card({ name: 'max_iter', dtype: { kind: 'primitive', name: 'u32' } }), card({ name: 'result', required: true })],
+          values: { max_iter: 20, result: 'bus_voltage' },
+          resultSelectorFields: ['result'],
+        },
+      }],
+    })
+    render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
+
+    expect(screen.getByLabelText(/max_iter/)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/^result/)).not.toBeInTheDocument()
+    expect(screen.getByText('结果字段由结果选择自动写入')).toBeInTheDocument()
+    expect(screen.getByText('当前值来自已选择的参数资源')).toBeInTheDocument()
+  })
+
+  it('asks for an ambiguous Struct resource before showing its parameter editor', () => {
+    const current = configuration({
+      status: 'collecting_inputs', inputs: [{
+        inputId: 'para', alias: 'para', kind: 'struct', schemaRef: 'frames.para', required: true, position: 1,
+        binding: { resourceId: null, mapping: { selectionRequired: true } },
+        resourceOptions: [
+          { resourceId: 'resource-1', displayName: '参数一', alias: 'para_one', contentHash: 'a', rowCount: 1 },
+          { resourceId: 'resource-2', displayName: '参数二', alias: 'para_two', contentHash: 'b', rowCount: 1 },
+        ],
+        structCard: { schemaRef: 'frames.para', fields: [card({ name: 'max_iter' })], values: { max_iter: 20 }, resultSelectorFields: [] },
+      }],
+    })
+    render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
+
+    expect(screen.getByRole('button', { name: '确认文件' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '确认参数' })).not.toBeInTheDocument()
+  })
+
+  it('renders resolved non-Struct inputs as compact ready rows', () => {
+    const current = configuration({
+      status: 'collecting_inputs', inputs: [{
+        inputId: 'load_profile', alias: 'load_profile', kind: 'data', schemaRef: 'frames.load_profile', required: true, position: 1,
+        binding: { resourceId: 'resource-7' },
+        resourceOptions: [{ resourceId: 'resource-7', displayName: '负荷曲线', alias: 'load_profile', contentHash: 'a', rowCount: 24 }],
+      }],
+    })
+    render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
+
+    expect(screen.getByText('已就绪')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '确认文件' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '生成映射资源' })).not.toBeInTheDocument()
+  })
+
+  it('reserves column mapping for an unresolved Data input', () => {
+    const current = configuration({
+      status: 'collecting_inputs', inputs: [{
+        inputId: 'load_profile', alias: 'load_profile', kind: 'data', schemaRef: 'frames.load_profile', required: true, position: 1,
+        binding: { resourceId: null }, resourceOptions: [],
+      }],
+    })
+    render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
+    expect(screen.getByRole('button', { name: '生成映射资源' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '确认文件' })).not.toBeInTheDocument()
+  })
+
+  it('keeps durable Struct cards without resultSelectorFields renderable', () => {
+    const current = configuration({
+      status: 'collecting_inputs', inputs: [{
+        inputId: 'para', alias: 'para', kind: 'struct', schemaRef: 'frames.para', required: true, position: 1,
+        binding: { resourceId: 'resource-7' }, resourceOptions: [],
+        structCard: { schemaRef: 'frames.para', fields: [card({ name: 'result' })], values: { result: 'bus_voltage' } },
+      }],
+    })
+    render(<StudyConfigurationCard message={message(current)} notify={vi.fn()} />)
+    expect(screen.getByLabelText(/^result/)).toHaveValue('bus_voltage')
+  })
+
   it('keeps a pending Struct replacement visible after the configuration is reloaded', async () => {
     const current = configuration({
       status: 'collecting_inputs', inputs: [{

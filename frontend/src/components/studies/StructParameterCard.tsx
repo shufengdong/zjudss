@@ -43,7 +43,9 @@ export default function StructParameterCard({ input, busy, onSave }: {
   onSave: (values: Record<string, unknown>, action?: ReplacementAction) => void
 }) {
   const card = input.structCard!
-  const defaults = useMemo(() => defaultValues(card.fields), [card.fields])
+  const selectorFields = useMemo(() => new Set(card.resultSelectorFields ?? []), [card.resultSelectorFields])
+  const editableFields = useMemo(() => card.fields.filter((field) => !selectorFields.has(field.name)), [card.fields, selectorFields])
+  const defaults = useMemo(() => defaultValues(editableFields), [editableFields])
   const baseline = replacementBaseline(input)
   const [values, setValues] = useState<Record<string, unknown>>(card.values)
   const [action, setAction] = useState<ReplacementAction>(input.binding.resourceId ? 'replace' : 'save_as_new')
@@ -56,21 +58,26 @@ export default function StructParameterCard({ input, busy, onSave }: {
     }
     return { ...current, [name]: value }
   })
-  const changedFields = card.fields.filter((field) => JSON.stringify(values[field.name]) !== JSON.stringify(baseline[field.name])).map((field) => field.name)
+  const changedFields = editableFields.filter((field) => JSON.stringify(values[field.name]) !== JSON.stringify(baseline[field.name])).map((field) => field.name)
   const replacementAction = input.binding.resourceId && changedFields.length > 0 ? action : undefined
-  const missingRequired = card.fields.some((field) => field.required
+  const missingRequired = editableFields.some((field) => field.required
     && (values[field.name] === undefined || values[field.name] === null || values[field.name] === ''))
+  const restoreDefaults = () => setValues((current) => ({
+    ...Object.fromEntries([...selectorFields].filter((field) => field in current).map((field) => [field, current[field]])),
+    ...defaults,
+  }))
 
   return <section className="rounded-lg border p-3 text-xs">
     <h3 className="font-semibold">参数：{input.alias}</h3>
     <p className="mt-1 text-slate-500">
-      {card.schemaRef}{input.binding.resourceId ? ` · 当前资源 #${input.binding.resourceId}` : ' · 将创建普通资源'}
+      {card.schemaRef}{input.binding.resourceId ? ` · 当前参数资源 #${input.binding.resourceId}` : ' · 将创建参数资源'}
     </p>
     {input.binding.resourceId && <p className={`mt-2 rounded p-2 ${changedFields.length ? 'bg-amber-50 text-amber-800' : 'bg-slate-50 text-slate-600'}`}>
-      {changedFields.length ? `已修改：${changedFields.join('、')}` : '当前值来自已选择的普通资源'}
+      {changedFields.length ? `已修改：${changedFields.join('、')}` : '当前值来自已选择的参数资源'}
     </p>}
+    {selectorFields.size > 0 && <p className="mt-2 rounded bg-blue-50 p-2 text-blue-700">结果字段由结果选择自动写入</p>}
     <div className="mt-3 grid gap-3 sm:grid-cols-2">
-      {card.fields.filter((field) => field.card?.visibleWhen.state !== 'never').map((field) => {
+      {editableFields.filter((field) => field.card?.visibleWhen.state !== 'never').map((field) => {
         const name = typeName(field)
         const enumValues = field.card?.enum.values ?? []
         const value = values[field.name] ?? ''
@@ -98,7 +105,7 @@ export default function StructParameterCard({ input, busy, onSave }: {
         <option value="replace">覆盖当前资源</option>
         <option value="save_as_new">另存为新资源</option>
       </select>}
-      <button type="button" disabled={busy} onClick={() => setValues(defaults)} className="rounded border px-2 py-1.5">恢复默认</button>
+      <button type="button" disabled={busy} onClick={restoreDefaults} className="rounded border px-2 py-1.5">恢复默认</button>
       <button type="button" disabled={busy || missingRequired} onClick={() => onSave(values, replacementAction)} className="ml-auto rounded bg-brand-500 px-3 py-1.5 text-white disabled:opacity-40">确认参数</button>
     </div>
   </section>
