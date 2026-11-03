@@ -49,6 +49,40 @@ pub(crate) struct DataFrameDownload {
 }
 
 #[derive(Debug)]
+pub(crate) struct BoundedBatchCollector {
+    max_rows: usize,
+    rows: usize,
+    batches: Vec<RecordBatch>,
+}
+
+impl BoundedBatchCollector {
+    pub(crate) fn new(max_rows: usize) -> Self {
+        Self {
+            max_rows,
+            rows: 0,
+            batches: Vec::new(),
+        }
+    }
+
+    pub(crate) fn push(&mut self, batch: RecordBatch) -> Result<(), DataFrameReadError> {
+        let rows = self.rows.saturating_add(batch.num_rows());
+        if rows > self.max_rows {
+            return Err(DataFrameReadError::Storage(format!(
+                "DataFrame 扫描行数超过限制 {}",
+                self.max_rows
+            )));
+        }
+        self.rows = rows;
+        self.batches.push(batch);
+        Ok(())
+    }
+
+    pub(crate) fn into_batches(self) -> Vec<RecordBatch> {
+        self.batches
+    }
+}
+
+#[derive(Debug)]
 pub(crate) enum DataFrameReadError {
     NotFound,
     InvalidCursor,
@@ -214,6 +248,25 @@ impl ParquetDataFrameReader {
         })
         .await
         .map_err(|error| DataFrameReadError::Storage(error.to_string()))?
+    }
+
+    #[allow(dead_code)] // Wired into the chart service after its API boundary is added.
+    pub(crate) async fn collect_projected_batches(
+        &self,
+        principal: &CurrentUser,
+        source: &DataFrameReadSource,
+        columns: &[String],
+        max_rows: usize,
+    ) -> Result<Vec<RecordBatch>, DataFrameReadError> {
+        self.scan_projected(
+            principal,
+            source,
+            columns,
+            BoundedBatchCollector::new(max_rows),
+            |batch, collector| collector.push(batch.clone()),
+        )
+        .await
+        .map(BoundedBatchCollector::into_batches)
     }
 
     pub(crate) async fn download(
@@ -493,6 +546,7 @@ fn list_value(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     use arrow_array::types::Float64Type;
     use arrow_array::{LargeListArray, StringViewArray};
@@ -547,6 +601,21 @@ mod tests {
         assert!(validate_projection(&available, &["id".into(), "id".into()], 100).is_err());
         assert!(validate_projection(&available, &[], 0).is_err());
         assert!(validate_projection(&available, &[], 501).is_err());
+    }
+
+    #[test]
+    fn bounded_batch_collector_rejects_scans_beyond_the_row_budget() {
+        let batch = RecordBatch::try_from_iter(vec![(
+            "value",
+            Arc::new(Float64Array::from(vec![1.0, 2.0])) as ArrayRef,
+        )])
+        .unwrap();
+        let mut collector = BoundedBatchCollector::new(1);
+
+        let error = collector.push(batch).unwrap_err();
+
+        assert!(error.to_string().contains("1"));
+        assert!(collector.into_batches().is_empty());
     }
 
     #[test]
