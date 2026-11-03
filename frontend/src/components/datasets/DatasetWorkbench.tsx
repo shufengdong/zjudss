@@ -1,9 +1,9 @@
 import{useEffect,useState}from'react';import{downloadDataset}from'../../api/client';import{useDataset}from'../../hooks/useDataset';import{useDatasetView}from'../../hooks/useDatasetView'
-import DatasetTable from'./DatasetTable';import ChartRenderer from'./ChartRenderer'
-export default function DatasetWorkbench({datasetId,onClose,onDeleted}:{datasetId:string;onClose:()=>void;onDeleted?:()=>void}){
+import DatasetTable from'./DatasetTable';import ChartRenderer from'./ChartRenderer';import ChartBuilder from'./ChartBuilder'
+export default function DatasetWorkbench({datasetId,onClose,onDeleted,notify=()=>{}}:{datasetId:string;onClose:()=>void;onDeleted?:()=>void;notify?:(text:string)=>void}){
   const[selectedColumns,setSelectedColumns]=useState<string[]|null>(null)
-  const{metadata,page,loading,error,loadMore,remove}=useDataset(datasetId,selectedColumns??undefined),[viewId,setViewId]=useState<string|null>(null),view=useDatasetView(viewId)
-  useEffect(()=>{setSelectedColumns(null);setViewId(null)},[datasetId])
+  const{metadata,page,loading,error,loadMore,remove,reload}=useDataset(datasetId,selectedColumns??undefined),[viewId,setViewId]=useState<string|null>(null),[builder,setBuilder]=useState(false),view=useDatasetView(viewId)
+  useEffect(()=>{setSelectedColumns(null);setViewId(null);setBuilder(false)},[datasetId])
   const toggleColumn=(name:string)=>{if(!metadata)return;const all=metadata.columns.map(column=>column.name),current=selectedColumns??all
     const next=current.includes(name)?current.filter(column=>column!==name):all.filter(column=>column===name||current.includes(column))
     if(next.length>0)setSelectedColumns(next.length===all.length?null:next)
@@ -16,8 +16,8 @@ export default function DatasetWorkbench({datasetId,onClose,onDeleted}:{datasetI
     </div></details>}
     <button onClick={()=>void download()} className="rounded border px-2 py-1 text-xs">下载 Parquet</button><button onClick={()=>void discard()} className="rounded border border-red-200 px-2 py-1 text-xs text-red-600">删除结果</button><button aria-label="关闭数据集" onClick={onClose}>×</button>
   </header>{error&&<div role="alert" className="m-4 rounded bg-red-50 p-3 text-sm text-red-600">{error}。已加载数据仍可查看，可重试加载更多。</div>}{metadata&&<>
-    <nav className="flex gap-1 border-b px-3 py-2"><button onClick={()=>setViewId(null)} className={`rounded px-3 py-1 text-xs ${!viewId?'bg-brand-50 text-brand-700':''}`}>数据表</button>
-      {metadata.views.map(v=><button key={v.id} onClick={()=>setViewId(v.id)} className={`rounded px-3 py-1 text-xs ${viewId===v.id?'bg-brand-50 text-brand-700':''}`}>{v.name}</button>)}</nav>
-    <div className="flex-1 overflow-auto">{viewId?(view.error?<div className="m-4 rounded bg-amber-50 p-3 text-sm text-amber-700">{view.error}。可在对话中要求筛选或聚合。</div>:view.data&&<ChartRenderer model={view.data}/>):<DatasetTable metadata={metadata} page={page} loading={loading} onMore={loadMore}/>}</div>
+    <nav className="flex gap-1 border-b px-3 py-2"><button onClick={()=>{setBuilder(false);setViewId(null)}} className={`rounded px-3 py-1 text-xs ${!viewId&&!builder?'bg-brand-50 text-brand-700':''}`}>数据表</button><button onClick={()=>{setBuilder(true);setViewId(null)}} className={`rounded px-3 py-1 text-xs ${builder?'bg-brand-50 text-brand-700':''}`}>新建图表</button>
+      {metadata.views.map(v=><button key={v.id} onClick={()=>{setBuilder(false);setViewId(v.id)}} className={`rounded px-3 py-1 text-xs ${viewId===v.id?'bg-brand-50 text-brand-700':''}`}>{v.name}</button>)}</nav>
+    <div className="flex-1 overflow-auto">{builder?<ChartBuilder datasetId={datasetId} sourceName={metadata.name} notify={notify} onSaved={id=>{reload();setBuilder(false);setViewId(id)}}/>:viewId?(view.error?<div className="m-4 rounded bg-amber-50 p-3 text-sm text-amber-700">{view.error}。可在对话中要求筛选或聚合。</div>:view.data&&<ChartRenderer model={view.data}/>):<DatasetTable metadata={metadata} page={page} loading={loading} onMore={loadMore}/>}</div>
   </>}</div>
 }

@@ -12,6 +12,7 @@ export function useDataset(id: string | null, columns?: string[]) {
   const [page, setPage] = useState<DatasetPage | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [revision, setRevision] = useState(0)
   const generation = useRef(0)
   const inFlight = useRef<string | null>(null)
   const projection = columns?.join(',') || undefined
@@ -36,7 +37,7 @@ export function useDataset(id: string | null, columns?: string[]) {
       .finally(() => {
         if (generation.current === request) setLoading(false)
       })
-  }, [id, projection])
+  }, [id, projection, revision])
 
   const loadMore = useCallback(async () => {
     if (!id || !page?.nextCursor || inFlight.current === id) return
@@ -57,5 +58,6 @@ export function useDataset(id: string | null, columns?: string[]) {
 
   const remove = useCallback(async()=>{if(!id)return;await deleteDataset(id);setMetadata(null);setPage(null)},[id])
 
-  return { metadata, page, loading, error, loadMore, remove }
+  const reload = useCallback(() => setRevision(value => value + 1), [])
+  return { metadata, page, loading, error, loadMore, remove, reload }
 }
