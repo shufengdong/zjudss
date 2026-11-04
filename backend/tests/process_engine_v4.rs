@@ -322,6 +322,26 @@ fn output_validation_rejects_format_names_corruption_duplicates_and_limits() {
         validate_outputs(root.path(), limits).unwrap_err().code
     }
     let defaults = OutputLimits::default();
+    let ordered_root = tempfile::tempdir().unwrap();
+    write_parquet(
+        &ordered_root.path().join("zeta.parquet"),
+        1,
+        Compression::SNAPPY,
+    );
+    write_parquet(
+        &ordered_root.path().join("alpha.parquet"),
+        1,
+        Compression::SNAPPY,
+    );
+    assert_eq!(
+        validate_outputs(ordered_root.path(), defaults)
+            .unwrap()
+            .datasets
+            .into_iter()
+            .map(|dataset| dataset.name)
+            .collect::<Vec<_>>(),
+        ["alpha", "zeta"]
+    );
     assert_eq!(
         error_for(
             |root| {

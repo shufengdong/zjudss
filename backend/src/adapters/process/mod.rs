@@ -3,6 +3,7 @@ mod command;
 mod control;
 mod monitor;
 mod output;
+mod result_scan;
 
 use std::path::PathBuf;
 use std::time::Duration;

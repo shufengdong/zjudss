@@ -1,12 +1,10 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::adapters::{
-    AdapterError, CapturedStream, EngineDatasetOutput, EngineRunOutput, ErrorCategory,
-};
+use crate::adapters::{AdapterError, CapturedStream, EngineDatasetOutput, EngineRunOutput};
 use crate::storage::ParquetInspector;
 
-use super::monitor::{limit_error, scan_result_limits};
+use super::result_scan::{ScanPhase, output_error, scan_result_dir};
 
 #[derive(Debug, Clone, Copy)]
 pub struct OutputLimits {
@@ -28,43 +26,11 @@ pub fn validate_outputs(
     result_dir: &Path,
     limits: OutputLimits,
 ) -> Result<EngineRunOutput, AdapterError> {
-    scan_result_limits(result_dir, limits, false)?;
-    let root = result_dir
-        .canonicalize()
-        .map_err(|error| output_error("result_dir_invalid", error.to_string()))?;
-    let mut entries: Vec<_> = std::fs::read_dir(&root)
-        .map_err(|error| output_error("result_dir_invalid", error.to_string()))?
-        .collect::<Result<_, _>>()
-        .map_err(|error| output_error("result_dir_invalid", error.to_string()))?;
-    entries.sort_by_key(|entry| entry.file_name());
-    if entries.len() > limits.max_files {
-        return Err(limit_error(
-            "result_file_limit",
-            "结果文件数超限",
-            entries.len() as u64,
-            limits.max_files as u64,
-        ));
-    }
-    let mut total = 0_u64;
+    let scanned = scan_result_dir(result_dir, limits, ScanPhase::Final)?;
     let mut names = HashSet::new();
     let mut datasets = Vec::new();
-    for entry in entries {
-        let file_type = entry
-            .file_type()
-            .map_err(|error| output_error("result_file_invalid", error.to_string()))?;
-        if file_type.is_symlink() {
-            return Err(output_error(
-                "result_symlink_rejected",
-                "结果目录禁止符号链接",
-            ));
-        }
-        if !file_type.is_file() {
-            return Err(output_error(
-                "result_file_invalid",
-                "结果目录只允许普通 Parquet 文件",
-            ));
-        }
-        let path = entry.path();
+    for file in scanned.files {
+        let path = file.path;
         if path.extension().and_then(|value| value.to_str()) != Some("parquet") {
             return Err(output_error(
                 "result_format_invalid",
@@ -83,39 +49,14 @@ pub fn validate_outputs(
             ));
         }
         register_name(&mut names, &name)?;
-        let canonical = path
-            .canonicalize()
-            .map_err(|error| output_error("result_file_invalid", error.to_string()))?;
-        if !canonical.starts_with(&root) {
-            return Err(output_error(
-                "result_path_escape",
-                "结果文件逃逸 result-dir",
-            ));
-        }
-        let size = std::fs::metadata(&canonical)
-            .map_err(|error| output_error("result_file_invalid", error.to_string()))?
-            .len();
-        if size > limits.max_file_bytes {
-            return Err(limit_error(
-                "result_file_too_large",
-                "结果文件超过单文件限制",
-                size,
-                limits.max_file_bytes,
-            ));
-        }
-        total = total
-            .checked_add(size)
-            .ok_or_else(|| output_error("result_total_too_large", "结果总大小溢出"))?;
-        if total > limits.max_total_bytes {
-            return Err(limit_error(
-                "result_total_too_large",
-                "结果总大小超限",
-                total,
-                limits.max_total_bytes,
-            ));
-        }
-        let metadata = ParquetInspector::metadata(&canonical)
+        let metadata = ParquetInspector::metadata(&path)
             .map_err(|error| output_error(error.code(), error.to_string()))?;
+        if metadata.size_bytes != file.size {
+            return Err(output_error(
+                "result_file_invalid",
+                format!("{name} 在最终扫描后发生变化"),
+            ));
+        }
         if !metadata.snappy {
             return Err(output_error(
                 "result_compression_invalid",
@@ -124,7 +65,7 @@ pub fn validate_outputs(
         }
         datasets.push(EngineDatasetOutput {
             name,
-            path: canonical,
+            path,
             metadata,
         });
     }
@@ -159,10 +100,6 @@ fn register_name(names: &mut HashSet<String>, name: &str) -> Result<(), AdapterE
         ))
     }
 }
-fn output_error(code: impl Into<String>, message: impl Into<String>) -> AdapterError {
-    AdapterError::new(code, ErrorCategory::Io, message)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
