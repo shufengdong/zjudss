@@ -2,7 +2,7 @@
 
 **日期：** 2026-11-04  
 **阶段：** 仓库整理路线 8.4  
-**状态：** 设计收敛，待实施
+**状态：** 已实施，最终全仓门禁待统一验证
 
 ## 1. 背景
 
@@ -56,7 +56,7 @@ V4 已经具备上传批次解析、候选用途确认、模型草稿发布、�
 | 模型版本 token 已使用 OS 随机字节 | 复用统一 token 模块 | 消除格式与哈希重复 |
 | `DataResourceService` 中的研究 overlay | 保留到 8.5 | 避免跨阶段扩大修改面 |
 | 现有 REST DTO 与前端组件 | 复用 | 当前行为测试完整，没有证据要求公共契约变化 |
-| `DataResourceRepo::list` 重复 session filter | 删除 | 无行为价值的重复代码 |
+| `DataResourceRepo::list` 的 session 约束 | 保留一次资源筛选，并保留独立的用户会话所有权检查 | 当前实现不存在重复 query predicate；两处检查职责不同 |
 
 ## 5. 方案比较
 
@@ -289,3 +289,23 @@ cd ..
 7. public DTO、稳定错误码与 schema 兼容；
 8. 格式、静态检查、后端测试、前端测试/构建与功能覆盖门禁给出可复现结果；
 9. 未触碰 8.5 以后子系统的业务语义。
+
+## 11. 实施记录与设计偏差
+
+实现保持了本设计的公共兼容边界，并形成以下实际文件所有权：
+
+- `UploadConfirmationService` 是唯一确认编排者；为避免复制既有错误映射，`UploadConfirmationError` 使用
+  `DataResourceError` 的公开类型别名，稳定 code 和 HTTP 映射不变。
+- `UploadConfirmationRepo` 拥有确认锁与事务入口；低层模型候选/资源发布函数位于其私有
+  `upload_confirmation_transactions.rs` 子模块，案例切换复用同一函数来源。
+- `UploadProcessor` 只持有上传 repository、artifact service、engine adapter、snapshot、数据目录和归档限制；案例切换基线通过
+  延迟 future 在原处理时点读取，不把 confirmation repository 变成处理器依赖。
+- `DataResourceService` 继续是唯一公共 facade，replacement/deletion/Parquet codec 通过物理子模块实现且不放宽 service 字段可见性；
+  repository 仍是一个 `DataResourceRepo`。`VersionRepo` 继续独立拥有发布，删除实现位于 `version_deletion.rs`。
+- 设计中提到的 `DataResourceRepo::list` 重复 session filter 在实施基线中不存在：当前只有一个资源 `session_id` 谓词，另一个
+  `ensure_session` 是必要的用户所有权验证，因此没有删除任一检查。
+
+定向验证已覆盖上传解析/确认、案例切换、数据资源替换/删除、研究 overlay、受管工作流和版本删除；新增特征测试明确区分
+“不支持的解析设置保持旧候选”与“实际重新解析失败清理旧 artifact”，并覆盖版本 busy、无效/过期 token 和 artifact 释放。
+本阶段没有公共路由、消息类型、工具、skill、上传格式、视图、稳定错误码或数据库 schema 变化，因此
+`integration-tests/catalog/features.yaml` 和 `docs/frontend-design.md` 不需要修改。完整仓库验证及既有真实 eig-rs 外部门禁状态由最终验证阶段记录。

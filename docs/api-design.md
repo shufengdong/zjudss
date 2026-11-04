@@ -113,6 +113,12 @@ engine snapshot 中 manifest v2 绑定的 projection profile 动态执行，`pro
 候选决定写入、输入冻结标记和执行锁在一个事务完成。提交 `expectedDraft` 时必须与当前草稿 ID/revision 一致，否则模型子事务返回
 `draft_revision_conflict` 诊断。
 
+内部所有权不改变上述公共协议：`UploadConfirmationService` 是确认编排的唯一入口，集中完成 operation claim/replay、候选冻结、
+原文件提交、发布策略选择、失败诊断和 receipt 读取；`UploadBatchService` 只负责接收、解析触发、恢复、过期和放弃。
+普通上传选择 `OrdinaryUpload`，继续先应用模型候选到草稿、再发布资源，并允许两个子事务独立成功；`sourceKind=case` 选择
+`CaseSwitch`，继续使用下文的单事务整体切换。alias、候选状态和确认 token 的后端校验集中后，路由、请求/响应字段、HTTP 状态和
+稳定错误码均保持兼容，客户端仍不得提交服务器路径、SQL、命令或任意 ECharts option。
+
 ## Independent data resources
 
 资源 ID 为 opaque 字符串，alias 在会话内按大小写归一后唯一。默认 alias 冲突时服务端生成 `data_<shortId>`；

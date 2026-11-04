@@ -109,10 +109,19 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
   loader 不再消费虚假的 binary feature 集合，启动仍保持 capability probe → load → publish 的独立失败关闭顺序；
 - 删除 `STATIC_MODEL_TABLES` V3 过渡常量和 `EngineExecution` 类型别名，模型 20 表与含 `para` 的 21 个 import 输出分别使用
   `MODEL_TABLE_OUTPUTS`、`STATIC_IMPORT_OUTPUTS`，运行结果结构直接命名为 `EngineRunOutput`。
+- 上传确认由 `UploadConfirmationService` 单一编排，`UploadConfirmationRepo` 单一拥有 claim/执行锁、子发布、案例切换和
+  batch 收尾；普通上传与案例整体切换只在 `PublicationStrategy` 选择一次，前者保持模型/资源双子事务，后者保持单事务切换。
+- 上传生命周期与格式处理已拆分，`UploadProcessor` 独占 DSS/案例/归档/CSV/Excel/Parquet 处理；alias、opaque token 和候选状态
+  分别由 `resource_alias.rs`、`opaque_token.rs`、`upload_candidate_policy.rs` 提供唯一应用层策略。
+- 数据资源 facade 继续保持不变，但 structured replacement、deletion 和 Struct Parquet codec 已拆为内部子模块；repository 仍只有
+  一个 `DataResourceRepo`，替换和删除事务分文件实现。版本发布/激活保持在 `VersionRepo` 主体，版本删除事务独立在
+  `version_deletion.rs`，没有与上传模型候选应用或发布 receipt 合并。
 
 领域错误类型仍保留在 adapter、repository 和各 application service 内，避免把不同边界的稳定错误码合并成
 一个含糊的全局错误。旧的 application 构造变体、测试 `spawn_with_*` 分支、前端手写下载分支和重复本地 DTO builder
 已经移除。上述两阶段整理不改变 REST/SSE、数据库 schema、Agent 工具或引擎合同。
+本轮上传/模型版本/数据资源所有权整理同样不改变 HTTP 路由、JSON DTO、稳定错误码、数据库 schema 或前端交互；
+`frontend-design.md` 和功能目录因此无需行为性修改。
 
 ## Hard boundaries
 
@@ -202,3 +211,9 @@ tombstone 边界保持不变。本阶段通过后端格式与全 feature 零警�
 才能声明 144 个案例的自然语言全链路通过。
 
 案例库确认已切换为当前会话案例整体替换：单事务发布/激活模型版本与配套资源，普通上传仍保持双子事务；确认卡展示影响并保护准备后的并发变更。旧协议的部分发布案例批次需重新准备，不自动补齐为案例切换。验证以本次 case_import、data_resources、workspace_versions 和浏览器案例旅程为准。
+
+2026-11-04 的上传、模型版本与数据资源所有权维护阶段已通过后端格式、全 target/all feature 零警告 Clippy，以及
+`upload_batches`、`case_import`、`model_imports`、`data_resources`、`study_configurations`、`managed_workflows`、
+`version_deletion`、`model_versions` 和 `workspace_versions` 定向行为测试。新增回归锁定重新解析失败后的 artifact 清理、
+不受支持解析设置不破坏旧候选、版本 busy/无效或过期 token 和版本 artifact 释放。完整仓库门禁在最终验证阶段执行；
+候选发布仍受上文同一真实 eig-rs 资源树断言及 7 个外部 `case_projection_invalid` 阻塞，本阶段未放宽该合同。

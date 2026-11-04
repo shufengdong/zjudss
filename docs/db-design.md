@@ -112,6 +112,13 @@ artifact 和规范 artifact；Skip 候选立即回收，成功侧立即结算 re
 确认响应分别返回两个
 可空 receipt，幂等重放复用已持久化内容。
 
+上传确认事务由 `UploadConfirmationRepo` 单一拥有：claim/begin/end 锁、普通模型候选应用、普通资源发布、案例整体切换、子事务失败
+记录和 `finish_batch` 都从该 repository 进入。普通上传仍以两个 immediate transaction 独立提交，案例切换仍由一个事务完成模型
+草稿应用、版本发布/激活和配套资源替换；二者复用同一组上传确认事务 helper，但不与 `VersionRepo` 的一般版本发布 receipt 合并。
+`DataResourceRepo` 只保留资源查询、promotion、structured replacement 和 deletion；后两类事务只是物理拆到同一 repository 类型的
+子模块。`VersionRepo` 的删除 impact/preview/delete 同样拆为子模块，workspace、草稿发布、内容 hash、激活和发布幂等语义仍在主体。
+这些边界调整不新增 migration，也不改变表、约束、token hash 或 artifact 引用时机。
+
 `data_resources` 保存 opaque ID、会话唯一 normalized alias、可选 schemaRef、来源、schema/hash/行数、不可变
 normalized/source artifact 和 replacement/lineage。`live|needs_rename` 参与当前 alias 唯一索引；`replaced` 只供
 历史血缘按 ID 读取；`deleted` tombstone 的两个 artifact 外键必须为空。删除事务先使未确认研究配置失效，再清空
