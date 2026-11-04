@@ -18,6 +18,11 @@ const ref = (key:string, options:ReturnType<typeof chartFieldOptions>, preserved
   return preserved.find(original=>fieldIdentity(original)===fieldIdentity(field))??field
 }
 const fieldKey=(field:ChartFieldRef,options:ReturnType<typeof chartFieldOptions>)=>options.find(option=>option.field.column===field.column&&JSON.stringify(option.field.path??[])===JSON.stringify(field.path??[]))?.key??''
+const fieldName=(field:ChartFieldRef)=>`${field.column}${field.path?.map(index=>`[${index}]`).join('')??''}`
+const configMeasures=(config:ChartConfig|undefined):ChartFieldRef[]=>{if(!config)return[]
+  if(config.kind==='line'||config.kind==='bar'||config.kind==='scatter')return config.measures
+  return[config.value]
+}
 
 export default function ChartBuilder({datasetId,sourceName,onSaved,notify,initialConfig,initialName}:{datasetId:string;sourceName:string;onSaved:(viewId:string)=>void;notify:(text:string)=>void;initialConfig?:ChartConfig;initialName?:string}) {
   const capabilities=useChartCapabilities(datasetId),preview=useChartPreview(datasetId)
@@ -27,7 +32,7 @@ export default function ChartBuilder({datasetId,sourceName,onSaved,notify,initia
   const [order,setOrder]=useState<'source'|'xAsc'|'xDesc'>('source'),[aggregation,setAggregation]=useState<'none'|'mean'|'min'|'max'|'sum'|'count'>('none')
   const [palette,setPalette]=useState<ChartPalette>('colorblind'),[legend,setLegend]=useState(true),[legendPosition,setLegendPosition]=useState<'auto'|'top'|'bottom'|'right'>('auto'),[legendOrientation,setLegendOrientation]=useState<'auto'|'horizontal'|'vertical'>('auto'),[grid,setGrid]=useState(true)
   const [lineWidth,setLineWidth]=useState<1|2|3|4>(2),[lineStyle,setLineStyle]=useState<'solid'|'dashed'|'dotted'>('solid'),[showSymbol,setShowSymbol]=useState(false)
-  const [bins,setBins]=useState(20),[showOutliers,setShowOutliers]=useState(true),[saving,setSaving]=useState(false)
+  const [bins,setBins]=useState(20),[showOutliers,setShowOutliers]=useState(true),[saving,setSaving]=useState(false),[measureLabels,setMeasureLabels]=useState<Record<string,string>>({})
   const categories=useMemo(()=>capabilities.data?chartFieldOptions(capabilities.data,'category'):[],[capabilities.data])
   const measures=useMemo(()=>capabilities.data?chartFieldOptions(capabilities.data,'measure'):[],[capabilities.data])
   const measureLimit=Math.min(16,capabilities.data?.limits.maxSeries??16)
@@ -42,12 +47,13 @@ export default function ChartBuilder({datasetId,sourceName,onSaved,notify,initia
         else if(initialConfig.kind==='heatmap'){setX(fieldKey(initialConfig.x,categories));setSecondCategory(fieldKey(initialConfig.y,categories));setY([fieldKey(initialConfig.value,measures)].filter(Boolean));setAggregation(initialConfig.aggregation)}
         else if(initialConfig.kind==='boxplot'){setX(fieldKey(initialConfig.category,categories));setY([fieldKey(initialConfig.value,measures)].filter(Boolean));setShowOutliers(initialConfig.showOutliers)}
         else{setY([fieldKey(initialConfig.value,measures)].filter(Boolean));setBins(initialConfig.bins)}
+        setMeasureLabels(Object.fromEntries(configMeasures(initialConfig).map(field=>[fieldKey(field,measures),field.label??'']).filter(([key])=>Boolean(key))))
         preview.clear()}return}
     const unit=first?capabilities.data.fields.find(field=>field.column===first.field.column)?.unit:null
     const preferred=first?enabled.filter(option=>option.field.column===first.field.column||capabilities.data!.fields.find(field=>field.column===option.field.column)?.unit===unit):[]
     const numeric=preferred.slice(0,measureLimit).map(option=>option.key), enabledKind=capabilities.data.templates.find(template=>template.enabled)?.kind??'line'
     if(!capabilities.data.templates.find(template=>template.kind===kind)?.enabled)setKind(enabledKind)
-    setX(category||first?.key||'');setNumericX(first?.key??'');setSecondCategory(category);setY(numeric);if(!category)setXAxisMode('value');preview.clear()
+    setX(category||first?.key||'');setNumericX(first?.key??'');setSecondCategory(category);setY(numeric);setMeasureLabels({});if(!category)setXAxisMode('value');preview.clear()
   },[capabilities.data,datasetId]) // preview.clear is stable; resetting is intentional per capability generation
   const config=useMemo<ChartConfig|null>(()=>{if(!capabilities.data||y.length===0)return null
     if(!capabilities.data.templates.find(template=>template.kind===kind)?.enabled)return null
@@ -55,20 +61,24 @@ export default function ChartBuilder({datasetId,sourceName,onSaved,notify,initia
     if(kind!=='scatter'&&kind!=='histogram'&&!x)return null
     const base=presentation(titleShow);base.palette=palette;base.legend={show:legend,position:legendPosition,orientation:legendOrientation};base.axis.showGrid=grid
     const scalarAggregation=aggregation==='count'?'mean':aggregation
+    const measure=(key:string,preserved:ChartFieldRef[]=[]):ChartFieldRef=>{const field=ref(key,measures,preserved)
+      if(!Object.prototype.hasOwnProperty.call(measureLabels,key))return field
+      const label=measureLabels[key].trim();return label?{...field,label}:{column:field.column,...(field.path?{path:field.path}:{})}}
     const splitBy=initialConfig?.kind===kind&&'splitBy'in initialConfig&&initialConfig.splitBy?{splitBy:initialConfig.splitBy}:{}
-    if(kind==='line'){const seed=initialConfig?.kind==='line'?initialConfig:null;return{version:1,kind,title:title||undefined,presentation:{...base,line:{width:lineWidth,style:lineStyle,showSymbol}},x:xAxisMode==='value'?ref(x,measures,seed?[seed.x]:[]):ref(x,categories,seed?[seed.x]:[]),xAxisMode,measures:y.map(key=>ref(key,measures,seed?.measures)),...splitBy,order,aggregation:scalarAggregation,sampling:sampling&&xAxisMode==='value'?{mode:'lttb',maxPointsPerSeries:samplePoints}:{mode:'none'}}}
-    if(kind==='bar'){const seed=initialConfig?.kind==='bar'?initialConfig:null;return{version:1,kind,title:title||undefined,presentation:base,x:ref(x,categories,seed?[seed.x]:[]),measures:y.map(key=>ref(key,measures,seed?.measures)),...splitBy,order,aggregation:scalarAggregation}}
-    if(kind==='scatter'){const seed=initialConfig?.kind==='scatter'?initialConfig:null;return{version:1,kind,title:title||undefined,presentation:base,x:ref(numericX,measures,seed?[seed.x]:[]),measures:y.map(key=>ref(key,measures,seed?.measures)),...splitBy}}
-    if(kind==='heatmap'){const seed=initialConfig?.kind==='heatmap'?initialConfig:null;return{version:1,kind,title:title||undefined,presentation:base,x:ref(x,categories,seed?[seed.x]:[]),y:ref(secondCategory||x,categories,seed?[seed.y]:[]),value:ref(y[0],measures,seed?[seed.value]:[]),aggregation:aggregation==='none'?'mean':aggregation}}
-    if(kind==='boxplot'){const seed=initialConfig?.kind==='boxplot'?initialConfig:null;return{version:1,kind,title:title||undefined,presentation:base,category:ref(x,categories,seed?[seed.category]:[]),value:ref(y[0],measures,seed?[seed.value]:[]),...splitBy,showOutliers}}
-    const seed=initialConfig?.kind==='histogram'?initialConfig:null;return{version:1,kind:'histogram',title:title||undefined,presentation:base,value:ref(y[0],measures,seed?[seed.value]:[]),bins}
-  },[capabilities.data,kind,title,titleShow,palette,legend,legendPosition,legendOrientation,grid,x,numericX,y,secondCategory,xAxisMode,sampling,samplePoints,order,aggregation,lineWidth,lineStyle,showSymbol,bins,showOutliers,categories,measures,initialConfig])
+    if(kind==='line'){const seed=initialConfig?.kind==='line'?initialConfig:null;return{version:1,kind,title:title||undefined,presentation:{...base,line:{width:lineWidth,style:lineStyle,showSymbol}},x:xAxisMode==='value'?ref(x,measures,seed?[seed.x]:[]):ref(x,categories,seed?[seed.x]:[]),xAxisMode,measures:y.map(key=>measure(key,seed?.measures)),...splitBy,order,aggregation:scalarAggregation,sampling:sampling&&xAxisMode==='value'?{mode:'lttb',maxPointsPerSeries:samplePoints}:{mode:'none'}}}
+    if(kind==='bar'){const seed=initialConfig?.kind==='bar'?initialConfig:null;return{version:1,kind,title:title||undefined,presentation:base,x:ref(x,categories,seed?[seed.x]:[]),measures:y.map(key=>measure(key,seed?.measures)),...splitBy,order,aggregation:scalarAggregation}}
+    if(kind==='scatter'){const seed=initialConfig?.kind==='scatter'?initialConfig:null;return{version:1,kind,title:title||undefined,presentation:base,x:ref(numericX,measures,seed?[seed.x]:[]),measures:y.map(key=>measure(key,seed?.measures)),...splitBy}}
+    if(kind==='heatmap'){const seed=initialConfig?.kind==='heatmap'?initialConfig:null;return{version:1,kind,title:title||undefined,presentation:base,x:ref(x,categories,seed?[seed.x]:[]),y:ref(secondCategory||x,categories,seed?[seed.y]:[]),value:measure(y[0],seed?[seed.value]:[]),aggregation:aggregation==='none'?'mean':aggregation}}
+    if(kind==='boxplot'){const seed=initialConfig?.kind==='boxplot'?initialConfig:null;return{version:1,kind,title:title||undefined,presentation:base,category:ref(x,categories,seed?[seed.category]:[]),value:measure(y[0],seed?[seed.value]:[]),...splitBy,showOutliers}}
+    const seed=initialConfig?.kind==='histogram'?initialConfig:null;return{version:1,kind:'histogram',title:title||undefined,presentation:base,value:measure(y[0],seed?[seed.value]:[]),bins}
+  },[capabilities.data,kind,title,titleShow,palette,legend,legendPosition,legendOrientation,grid,x,numericX,y,secondCategory,xAxisMode,sampling,samplePoints,order,aggregation,lineWidth,lineStyle,showSymbol,bins,showOutliers,categories,measures,initialConfig,measureLabels])
   const fingerprint=config?chartConfigFingerprint(config):null, fresh=Boolean(fingerprint&&preview.previewHash===fingerprint&&preview.model)
   const save=async()=>{if(!config||!fresh||!fingerprint)return;const requestKey=JSON.stringify({name,fingerprint});if(operation.current?.requestKey!==requestKey)operation.current={requestKey,id:crypto.randomUUID()};setSaving(true);try{const response=await createChartView(datasetId,{clientOperationId:operation.current.id,name,config});notify('图表已保存');onSaved(response.view.id)}catch(value){notify(value instanceof Error?value.message:'图表保存失败')}finally{setSaving(false)}}
   if(capabilities.loading)return <p className="p-4 text-sm text-slate-500">正在读取可视化字段…</p>
   if(capabilities.error)return <div role="alert" className="m-4 text-sm text-red-600">{capabilities.error}<button onClick={capabilities.reload}>重试</button></div>
   if(!capabilities.data)return null
   const template=capabilities.data.templates.find(item=>item.kind===kind)
+  const displayedMeasureKeys=kind==='line'||kind==='bar'||kind==='scatter'?y:y.slice(0,1)
   const reasonLabel=(reason:string|null|undefined)=>reason==='no_category_field'?'缺少分类字段':reason==='no_numeric_field'?'缺少数值字段':reason==='capability_truncated'?'字段分量过多':'当前数据不兼容'
   return <div className="grid gap-4 p-4 lg:grid-cols-[minmax(280px,360px)_minmax(420px,1fr)]"><fieldset disabled={saving} className="contents"><section className="grid content-start gap-3">
     <label className="grid gap-1 text-sm">图表类型<select aria-label="图表类型" value={kind} onChange={event=>{const next=event.target.value as ChartKind;setKind(next);if(next==='heatmap'&&aggregation==='none')setAggregation('mean');if(next!=='heatmap'&&aggregation==='count')setAggregation('mean');if(next!=='histogram'&&next!=='scatter')setX(categories.find(option=>!option.disabled)?.key??'');preview.clear()}} className="rounded border p-2">{kinds.map(item=>{const status=capabilities.data!.templates.find(template=>template.kind===item.value);return<option key={item.value} value={item.value} disabled={!status?.enabled}>{item.label}{status?.enabled?'':'（不可用）'}</option>})}</select></label>
@@ -77,6 +87,7 @@ export default function ChartBuilder({datasetId,sourceName,onSaved,notify,initia
     {kind==='scatter'?<ChartFieldSelect label="X 数值" options={measures} value={numericX} onChange={value=>setNumericX(value as string)}/>:kind==='histogram'?null:<ChartFieldSelect label={kind==='boxplot'?'分类':'X 轴'} options={kind==='line'&&xAxisMode==='value'?measures:categories} value={x} onChange={value=>setX(value as string)}/>}
     {kind==='heatmap'&&<ChartFieldSelect label="Y 轴" options={categories} value={secondCategory} onChange={value=>setSecondCategory(value as string)}/>}
     <ChartFieldSelect label={kind==='line'||kind==='bar'||kind==='scatter'?'数值列（可多选）':'数值列'} options={measures} value={kind==='line'||kind==='bar'||kind==='scatter'?y:(y[0]??'')} multiple={kind==='line'||kind==='bar'||kind==='scatter'} onChange={value=>setY((Array.isArray(value)?value:[value]).slice(0,measureLimit))}/>
+    <div className="grid gap-2">{displayedMeasureKeys.map(key=>{const option=measures.find(item=>item.key===key);if(!option)return null;const preserved=configMeasures(initialConfig),field=ref(key,measures,preserved),physical=fieldName(field);return <label key={key} className="grid gap-1 text-sm">{physical} 展示名<input aria-label={`${physical} 展示名`} value={measureLabels[key]??field.label??physical} maxLength={64} onChange={event=>setMeasureLabels(current=>({...current,[key]:event.target.value}))} className="rounded border p-2"/></label>})}</div>
     {kind==='histogram'&&<label className="text-sm">分箱数<input aria-label="分箱数" type="number" min={1} max={200} value={bins} onChange={event=>setBins(Number(event.target.value))}/></label>}
     {kind==='boxplot'&&<label className="text-sm"><input type="checkbox" checked={showOutliers} onChange={event=>setShowOutliers(event.target.checked)}/> 显示离群点</label>}
     <details><summary className="cursor-pointer text-sm">高级设置</summary>{(kind==='line'||kind==='bar'||kind==='heatmap')&&<div className="grid gap-2 py-2">{kind==='line'&&<label>X 轴模式<select aria-label="X 轴模式" value={xAxisMode} onChange={event=>{const mode=event.target.value as typeof xAxisMode;setXAxisMode(mode);setX((mode==='value'?measures:categories).find(option=>!option.disabled)?.key??'')}}><option value="category">分类</option><option value="value">数值</option></select></label>}<label>聚合<select aria-label="聚合" value={aggregation} onChange={event=>setAggregation(event.target.value as typeof aggregation)}>{kind!=='heatmap'&&<option value="none">不聚合</option>}<option value="mean">平均</option><option value="min">最小</option><option value="max">最大</option><option value="sum">求和</option>{kind==='heatmap'&&<option value="count">计数</option>}</select></label>{kind!=='heatmap'&&<label>顺序<select aria-label="顺序" value={order} onChange={event=>setOrder(event.target.value as typeof order)}><option value="source">源顺序</option><option value="xAsc">X 升序</option><option value="xDesc">X 降序</option></select></label>}{kind==='line'&&xAxisMode==='value'&&<><label><input type="checkbox" checked={sampling} onChange={event=>setSampling(event.target.checked)}/> LTTB 采样</label>{sampling&&<label>每系列点数<input aria-label="每系列点数" type="number" min={100} max={10000} value={samplePoints} onChange={event=>setSamplePoints(Number(event.target.value))}/></label>}</>}</div>}</details>

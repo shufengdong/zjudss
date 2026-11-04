@@ -78,8 +78,14 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 | GET/DELETE | `/api/datasets/{id}` | 元数据/删除单个结果 |
 | GET | `/api/datasets/{id}/rows` | cursor 分页投影 |
 | GET | `/api/datasets/{id}/download` | 下载 Parquet |
+| GET | `/api/datasets/{id}/chart-capabilities` | 返回可用字段、List 分量和图表预算 |
+| POST | `/api/datasets/{id}/chart-previews` | 校验受控配置并返回非持久化 `ChartModel` 预览 |
+| POST | `/api/datasets/{id}/views` | 以幂等操作 ID 保存不可变图表与 Plot Data |
 | GET | `/api/analysis-runs/{id}` | 分析记录与结果 |
-| GET | `/api/dataset-views/{id}/data` | 物化视图数据 |
+| GET | `/api/dataset-views/{id}` | 已保存图表元数据、冻结配置和 `ChartModel` |
+| GET | `/api/dataset-views/{id}/data` | 已保存图表的物化 Plot Data |
+| DELETE | `/api/dataset-views/{id}` | tombstone 图表并释放自身 artifact |
+| GET | `/api/sessions/{id}/dataset-views` | 会话内存活图表，含已删除来源的图表 |
 | GET | `/api/run-comparisons/{id}` | 运行比较及派生结果 |
 
 ## Upload batches and draft
@@ -116,8 +122,8 @@ engine snapshot 中 manifest v2 绑定的 projection profile 动态执行，`pro
 
 上传资源同时保存原文件和 Snappy Parquet；多个 worksheet 可共享原文件 artifact。结果或分析提升的资源复用
 既有规范 artifact，没有原文件入口。`rows` 只接受 limit/cursor/columns；下载不返回服务器路径。普通资源可直接
-作为 `run_result_analysis` 和 `create_dataset_view` 的稳定 `resourceId` 来源，派生血缘冻结资源 ID、schema hash 和
-content hash。
+作为 `run_result_analysis` 的稳定 `resourceId` 来源，派生血缘冻结资源 ID、schema hash 和 content hash。用户配置图表
+只接受仿真或分析结果的稳定 dataset ID，不接受数据资源、服务器路径、SQL 或任意 ECharts option。
 
 重新上传与独立 Struct 资源工作台覆盖会创建新 artifact。重新上传确认必须显式提交 Replace、SaveAsNew 或 Cancel；Replace
 原子转移当前 alias、使依赖旧资源的未确认研究配置失效，并把旧资源保留为历史 replacement；
@@ -127,6 +133,34 @@ schemaRef、规范字段和 expected content hash，确认前不创建资源，�
 删除先生成 impact token，并统计未确认配置、冻结工作流、分析输入及数据集血缘引用；
 确认后资源立即从普通读取隐藏、使未确认配置失效、清空 tombstone 行的 artifact 外键并释放直接引用。冻结工作流和
 已物化派生结果持有自己的引用或快照，因此删除不破坏历史；重复 DELETE 不重复释放。
+
+## User-configured charts
+
+图表由固定 HTTP API 和确定性编译器生成，不经过对话 Agent。`chart-capabilities` 最多扫描 10,000 行来发现字段与
+最多四层的数值 List 分量，并返回服务端预算；`chart-previews` 和保存接口仍读取完整所需投影并重新校验，预览不产生
+数据库或 artifact 写入。请求只能提交六类受控 `ChartConfig`（line、bar、scatter、heatmap、boxplot、histogram），
+包括模板、字段/分量、顺序、聚合、采样、自定义系列名，以及标题、图例、调色板、网格线、折线线型和数据点设置。
+名称去除首尾空白后为 1..=100 个字符，标题最多 200 个字符，系列展示名为 1..=64 个字符；多 measure 折线、柱图和
+散点图必须具有同一 unit。LTTB 只适用于数值横轴折线，单系列目标点数为 100..=10,000。
+
+服务端响应的 `ChartModel` 是稳定的 `chart-model-v1` 数据与表现合同，不是 ECharts JSON。前端只把它映射为本地
+ECharts option，不执行后端 formatter、JavaScript 或任意 option。默认预算为最多扫描 1,000,000 行、256 列、
+32 个引用列、16 个 measure、500,000 个原始数值、100 个 series、50,000 个输出点、5,000 个类别、
+100,000 个热力格和 10 MiB 响应；每个 List 最多发现
+64 个分量路径，capability 响应最多 1 MiB。超限或不兼容不会截断成误导图表，而是返回稳定错误。
+
+保存请求携带 UUID `clientOperationId`；同一来源、同一操作和相同规范请求幂等返回原图表，不同 payload 返回
+`chart_operation_conflict`，遗留不完整操作返回 `chart_operation_gone`。成功保存冻结规范配置、配置 hash、诊断、
+来源名称/schema/content 快照和物化的 Snappy Parquet Plot Data；元数据及 Plot Data 发布后不可修改。来源结果删除后，
+图表仍可从会话“图表”页发现、打开和删除，并标记来源已删除；复制为新图表必须在来源仍存活时重新预览并保存。
+删除图表只 tombstone 图表并释放自己的 Plot Data artifact，不恢复来源，也不删除其他图表。
+
+七条图表路由均显式按 `UserId` 校验，跨用户和不存在资源统一返回 404。稳定图表错误为
+`chart_config_invalid`、`chart_capabilities_too_large`、`chart_column_missing`、
+`chart_column_incompatible`、`chart_component_invalid`、`chart_unit_conflict`、
+`chart_series_name_conflict`、`chart_duplicate_requires_aggregation`、`chart_no_data`、
+`chart_too_large`、`chart_name_conflict`、`chart_operation_conflict`、`chart_operation_gone`、
+`chart_source_deleted`、`chart_materialization_failed`、`chart_not_found` 和 `chart_cursor_invalid`。
 
 ## Managed study configurations
 

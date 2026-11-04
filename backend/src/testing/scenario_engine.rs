@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use arrow_array::builder::{Float64Builder, ListBuilder};
-use arrow_array::{ArrayRef, Float64Array, RecordBatch, StringArray};
+use arrow_array::builder::{Float64Builder, LargeListBuilder, ListBuilder};
+use arrow_array::{ArrayRef, Float64Array, RecordBatch, StringArray, StringViewArray};
 use arrow_schema::{DataType, Field, Schema};
 use async_trait::async_trait;
 use parquet::arrow::ArrowWriter;
@@ -42,6 +42,7 @@ pub enum EngineScenario {
     Success(Vec<DatasetFixture>),
     IdSuccess(Vec<IdDatasetFixture>),
     BusVoltageSuccess,
+    ChartWorkbenchSuccess,
     InspectFailure,
     RunFailure,
     Failure {
@@ -227,6 +228,18 @@ impl ScenarioEngine {
             }
             EngineScenario::BusVoltageSuccess => {
                 write_bus_voltage_fixture(&spec.result_dir)?;
+                validate_outputs(&spec.result_dir, self.inner.limits)
+            }
+            EngineScenario::ChartWorkbenchSuccess => {
+                write_fixture(
+                    &spec.result_dir,
+                    &DatasetFixture {
+                        name: "a_summary".into(),
+                        rows: vec![("total".into(), 1.0)],
+                        value_unit: None,
+                    },
+                )?;
+                write_chart_bus_voltage_fixture(&spec.result_dir)?;
                 validate_outputs(&spec.result_dir, self.inner.limits)
             }
             EngineScenario::InspectFailure => Err(failure(
@@ -512,6 +525,50 @@ fn write_bus_voltage_fixture(result_dir: &std::path::Path) -> Result<(), Adapter
     Ok(())
 }
 
+fn write_chart_bus_voltage_fixture(result_dir: &std::path::Path) -> Result<(), AdapterError> {
+    let mut value_metadata = HashMap::new();
+    value_metadata.insert("unit".to_string(), "V".to_string());
+    let element = Arc::new(Field::new("element", DataType::Float64, false));
+    let list_type = DataType::LargeList(element.clone());
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("bus", DataType::Utf8View, true),
+        Field::new("v_mag", list_type.clone(), false).with_metadata(value_metadata.clone()),
+        Field::new("v_ang", list_type, false).with_metadata(value_metadata),
+    ]));
+    let mut magnitudes = LargeListBuilder::new(Float64Builder::new()).with_field(element.clone());
+    for values in [[1.0, 0.99, 1.01], [0.98, 0.97, 0.99]] {
+        magnitudes.values().append_slice(&values);
+        magnitudes.append(true);
+    }
+    let mut angles = LargeListBuilder::new(Float64Builder::new()).with_field(element);
+    for values in [[0.0, -120.0, 120.0], [1.0, -119.0, 121.0]] {
+        angles.values().append_slice(&values);
+        angles.append(true);
+    }
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(StringViewArray::from(vec![Some("source"), Some("load")])) as ArrayRef,
+            Arc::new(magnitudes.finish()) as ArrayRef,
+            Arc::new(angles.finish()) as ArrayRef,
+        ],
+    )
+    .map_err(|error| failure("scenario_schema_failed", error.to_string()))?;
+    let file = std::fs::File::create(result_dir.join("bus_voltage.parquet"))
+        .map_err(|error| io_failure("scenario_write_failed", error))?;
+    let properties = WriterProperties::builder()
+        .set_compression(Compression::SNAPPY)
+        .set_created_by("scenario-engine-v1".to_string())
+        .build();
+    let mut writer = ArrowWriter::try_new(file, schema, Some(properties))
+        .map_err(|error| failure("scenario_write_failed", error.to_string()))?;
+    writer
+        .write(&batch)
+        .and_then(|_| writer.close())
+        .map_err(|error| failure("scenario_write_failed", error.to_string()))?;
+    Ok(())
+}
+
 fn validate_fixture_name(name: &str) -> Result<(), AdapterError> {
     if name.is_empty()
         || !name.chars().enumerate().all(|(index, value)| {
@@ -537,6 +594,7 @@ fn scenario_name(scenario: &EngineScenario) -> &'static str {
         EngineScenario::Success(_) => "success",
         EngineScenario::IdSuccess(_) => "id_success",
         EngineScenario::BusVoltageSuccess => "bus_voltage_success",
+        EngineScenario::ChartWorkbenchSuccess => "chart_workbench_success",
         EngineScenario::InspectFailure => "inspect_failure",
         EngineScenario::RunFailure => "run_failure",
         EngineScenario::Failure { .. } => "failure",

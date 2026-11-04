@@ -100,6 +100,7 @@ it('copies a frozen config as a new name and requires a new preview and operatio
   render(<ChartBuilder datasetId="7" sourceName="result" initialConfig={config} initialName="原图 副本" onSaved={vi.fn()} notify={vi.fn()}/>)
   expect(await screen.findByDisplayValue('原图 副本')).toBeInTheDocument()
   expect(screen.getByRole('button',{name:'保存图表'})).toBeDisabled()
+  await waitFor(()=>expect(screen.getByRole('button',{name:'生成预览'})).toBeEnabled())
   fireEvent.click(screen.getByRole('button',{name:'生成预览'}))
   await waitFor(()=>expect(screen.getByRole('button',{name:'保存图表'})).toBeEnabled())
   fireEvent.click(screen.getByRole('button',{name:'保存图表'}))
@@ -118,6 +119,29 @@ it('copies a frozen config as a new name and requires a new preview and operatio
   expect(requests[2].clientOperationId).not.toBe(requests[0].clientOperationId)
 })
 
+it('removes a frozen custom label when the copied label input is cleared',async()=>{
+  const config:ChartConfig={version:1,kind:'histogram',presentation:{legend:{show:true,position:'auto',orientation:'auto'},palette:'colorblind',title:{show:false},axis:{showGrid:true}},value:{column:'v_mag',path:[0],label:'旧标签'},bins:12}
+  render(<ChartBuilder datasetId="7" sourceName="result" initialConfig={config} initialName="副本" onSaved={vi.fn()} notify={vi.fn()}/>)
+  const label=await screen.findByLabelText('v_mag[0] 展示名')
+  fireEvent.change(label,{target:{value:''}})
+  await waitFor(()=>expect(screen.getByRole('button',{name:'生成预览'})).toBeEnabled())
+  fireEvent.click(screen.getByRole('button',{name:'生成预览'}))
+  await waitFor(()=>expect(previewChart).toHaveBeenCalled())
+  const calls=vi.mocked(previewChart).mock.calls
+  const request=calls[calls.length-1]?.[1]
+  expect(request).toMatchObject({kind:'histogram',value:{column:'v_mag',path:[0]}})
+  expect((request as Extract<ChartConfig,{kind:'histogram'}>).value).not.toHaveProperty('label')
+})
+
+it('shows only the effective measure label after switching to a single-measure kind',async()=>{
+  render(<ChartBuilder datasetId="7" sourceName="result" onSaved={vi.fn()} notify={vi.fn()}/>)
+  await screen.findByLabelText('v_mag[2] 展示名')
+  fireEvent.change(screen.getByLabelText('图表类型'),{target:{value:'histogram'}})
+  expect(screen.getByLabelText('v_mag[0] 展示名')).toBeInTheDocument()
+  expect(screen.queryByLabelText('v_mag[1] 展示名')).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('v_mag[2] 展示名')).not.toBeInTheDocument()
+})
+
 it('keeps distinct frozen labels when scatter axes reference the same field',async()=>{
   const config: ChartConfig={version:1,kind:'scatter',presentation:{legend:{show:true,position:'auto',orientation:'auto'},palette:'colorblind',title:{show:false},axis:{showGrid:true}},x:{column:'v_mag',path:[0],label:'横轴'},measures:[{column:'v_mag',path:[0],label:'纵轴'}]}
   render(<ChartBuilder datasetId="7" sourceName="result" initialConfig={config} initialName="散点副本" onSaved={vi.fn()} notify={vi.fn()}/>)
@@ -128,4 +152,20 @@ it('keeps distinct frozen labels when scatter axes reference the same field',asy
   await waitFor(()=>expect(createChartView).toHaveBeenCalled())
   const calls=vi.mocked(createChartView).mock.calls
   expect(calls[calls.length-1]?.[1].config).toMatchObject({x:{label:'横轴'},measures:[{label:'纵轴'}]})
+})
+
+it('edits selected measure display names without changing physical field references',async()=>{
+  render(<ChartBuilder datasetId="7" sourceName="result" onSaved={vi.fn()} notify={vi.fn()}/>)
+  await screen.findByRole('option',{name:'v_mag[0] · A'})
+  fireEvent.change(await screen.findByLabelText('v_mag[0] 展示名'),{target:{value:'A相'}})
+  fireEvent.change(screen.getByLabelText('v_mag[1] 展示名'),{target:{value:'B相'}})
+  fireEvent.change(screen.getByLabelText('v_mag[2] 展示名'),{target:{value:'C相'}})
+  fireEvent.click(screen.getByRole('button',{name:'生成预览'}))
+  await waitFor(()=>expect(screen.getByRole('button',{name:'保存图表'})).toBeEnabled())
+  fireEvent.click(screen.getByRole('button',{name:'保存图表'}))
+  await waitFor(()=>expect(createChartView).toHaveBeenCalled())
+  const calls=vi.mocked(createChartView).mock.calls
+  expect(calls[calls.length-1]?.[1].config).toMatchObject({measures:[
+    {column:'v_mag',path:[0],label:'A相'},{column:'v_mag',path:[1],label:'B相'},{column:'v_mag',path:[2],label:'C相'},
+  ]})
 })

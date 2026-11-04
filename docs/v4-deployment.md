@@ -8,7 +8,8 @@
 V4 不迁移或兼容任何旧数据库。切换前停止服务，备份后同时移走旧 SQLite 文件和整个 `DATA_DIR`，再从空目录
 执行唯一 initial migration；只删除其中一项会留下无法解释的 artifact 或元数据，禁止启动。确认新版本稳定前保留备份，
 但不能把旧库或旧 artifact 混入 V4 目录。`backend/resources/init_users.csv` 必须为 `ID,NAME`；初始密码等于 ID。
-种子 SHA-256 变化会让已有库启动失败，此时也必须再次同时重置数据库和 `DATA_DIR`。
+种子 SHA-256 变化会让已有库启动失败，此时也必须再次同时重置数据库和 `DATA_DIR`。v4.4.0 的用户配置图表工作台改变
+唯一 initial schema；从更早的开发库切换时同样必须执行这套空库重置，不能只替换二进制或只清空其中一侧。
 
 ## Required configuration
 
@@ -27,7 +28,7 @@ checkout、pull、reset、clean、构建或改写配置的 eig-rs 工作树。
 | `DATABASE_URL` | `sqlite://backend.db` |
 | `DATA_DIR` | `data` |
 | `LLM_PROVIDER` / `LLM_MODEL` | `deepseek` / `deepseek-v4-pro` |
-| `AGENT_BUNDLE_VERSION` | `v4.3.0` |
+| `AGENT_BUNDLE_VERSION` | `v4.4.0` |
 | `SESSION_TTL_DAYS` / `SESSION_COOKIE_SECURE` | `30` / `false` |
 | `AGENT_MAX_CONCURRENT_RUNS` / `AGENT_MAX_USER_RUNS` / `AGENT_QUEUE_CAPACITY` | `8` / `2` / `32` |
 | `TENSOREVAL_TIMEOUT_MS` / `AGENT_MODEL_RETRY_MAX` | `120000` / `2` |

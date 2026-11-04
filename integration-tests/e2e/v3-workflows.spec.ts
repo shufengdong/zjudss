@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import AxeBuilder from '@axe-core/playwright'
 import { test, expect } from './fixtures'
 import { createReadySession, send, uploadScriptAndRun } from './helpers/journeys'
 import { confirmLatestUpload, openMutableDraft } from './helpers/uploads'
@@ -87,6 +88,114 @@ test('one result can be deleted without deleting its run or sibling result', asy
   expect(after.map((dataset: any) => dataset.name)).toEqual(['keep'])
 })
 
+test('user-configured charts survive source deletion', async ({ loginAs, control }) => {
+  const alice = await loginAs('alice@example.com')
+  const bob = await loginAs('bob@example.com')
+  await alice.page.setViewportSize({ width: 1280, height: 900 })
+  const { sessionId } = await createReadySession(alice.page, alice.api, '用户配置图表')
+  const { run } = await uploadScriptAndRun({ page: alice.page, api: alice.api, control, sessionId,
+    engine: { kind: 'chart_workbench_success' } })
+  const datasets = (await (await alice.api.get(`/api/runs/${run.id}/datasets`)).json()).datasets
+  expect(datasets.map((dataset: any) => dataset.name)).toEqual(['a_summary', 'bus_voltage'])
+  const source = datasets[1]
+
+  await alice.page.getByRole('button', { name: '运行记录' }).click()
+  const runCard = alice.page.getByRole('button', { name: /replacement\.rss.*成功/ }).locator('xpath=ancestor::article[1]')
+  await runCard.getByRole('button', { name: '展开运行详情' }).click()
+  await runCard.getByRole('button', { name: '查看 bus_voltage' }).click()
+  await expect(alice.page.getByRole('columnheader', { name: /^bus/ })).toBeVisible()
+  await alice.page.getByRole('button', { name: '新建图表' }).click()
+
+  const measures = alice.page.getByLabel('数值列（可多选）')
+  const threePhaseOptions = measures.locator('option').filter({ hasText: /^v_mag\[/ })
+  await expect(threePhaseOptions).toHaveCount(3)
+  const threePhaseValues = await threePhaseOptions.evaluateAll(options => options.map(option => (option as HTMLOptionElement).value))
+  await measures.selectOption(threePhaseValues)
+  await alice.page.getByLabel('v_mag[0] 展示名').fill('A相')
+  await alice.page.getByLabel('v_mag[1] 展示名').fill('B相')
+  await alice.page.getByLabel('v_mag[2] 展示名').fill('C相')
+  await alice.page.getByLabel('图表名称').fill('三相电压')
+  await alice.page.getByText('显示设置', { exact: true }).click()
+  await alice.page.getByLabel('调色板').selectOption('colorblind')
+  await alice.page.getByLabel('图例位置').selectOption('right')
+  await alice.page.getByLabel('图例方向').selectOption('vertical')
+  await alice.page.getByLabel('线型').selectOption('dashed')
+  await alice.page.getByLabel('显示数据点').check()
+  await alice.page.getByRole('button', { name: '生成预览' }).click()
+  await expect(alice.page.getByLabel(/line 图表.*3 个系列.*A相.*B相.*C相.*图例右侧/)).toBeVisible()
+  await alice.page.getByRole('button', { name: '保存图表' }).click()
+  await expect(alice.page.getByRole('heading', { name: '三相电压' })).toBeVisible()
+
+  await alice.page.reload()
+  await alice.page.getByRole('button', { name: '图表', exact: true }).click()
+  await alice.page.getByRole('button', { name: '打开 三相电压', exact: true }).click()
+  await expect(alice.page.getByLabel(/line 图表.*3 个系列.*A相.*B相.*C相.*图例右侧/)).toBeVisible()
+  await alice.page.getByRole('button', { name: '基于此图表新建' }).click()
+  await expect(alice.page.getByLabel('图表名称')).toHaveValue('三相电压 副本')
+  await alice.page.getByText('显示设置', { exact: true }).click()
+  await alice.page.getByLabel('调色板').selectOption('highContrast')
+  await alice.page.getByRole('button', { name: '生成预览' }).click()
+  await expect(alice.page.getByRole('button', { name: '保存图表' })).toBeEnabled()
+  await alice.page.getByRole('button', { name: '保存图表' }).click()
+  await expect(alice.page.getByRole('heading', { name: '三相电压 副本' })).toBeVisible()
+
+  const saved = (await (await alice.api.get(`/api/sessions/${sessionId}/dataset-views`)).json()).views
+  expect(saved.map((view: any) => view.name).sort()).toEqual(['三相电压', '三相电压 副本'])
+  const original = saved.find((view: any) => view.name === '三相电压')
+  const copy = saved.find((view: any) => view.name === '三相电压 副本')
+  const metadata = await (await alice.api.get(`/api/dataset-views/${original.id}`)).json()
+  expect(metadata.config).toMatchObject({ kind: 'line', measures: [
+    { column: 'v_mag', path: [0], label: 'A相' },
+    { column: 'v_mag', path: [1], label: 'B相' },
+    { column: 'v_mag', path: [2], label: 'C相' },
+  ], presentation: { palette: 'colorblind', legend: { position: 'right', orientation: 'vertical' }, line: { style: 'dashed', showSymbol: true } } })
+  const copyMetadata = await (await alice.api.get(`/api/dataset-views/${copy.id}`)).json()
+  expect(copyMetadata.config.presentation.palette).toBe('highContrast')
+  const foreignChecks = [
+    bob.api.get(`/api/datasets/${source.id}/chart-capabilities`),
+    bob.api.post(`/api/datasets/${source.id}/chart-previews`, { data: { config: metadata.config } }),
+    bob.api.post(`/api/datasets/${source.id}/views`, { data: { clientOperationId: '70eb0000-0000-4000-8000-000000000011', name: '越权图表', config: metadata.config } }),
+    bob.api.get(`/api/dataset-views/${original.id}`),
+    bob.api.get(`/api/dataset-views/${original.id}/data`),
+    bob.api.delete(`/api/dataset-views/${original.id}`),
+    bob.api.get(`/api/sessions/${sessionId}/dataset-views`),
+  ]
+  for (const response of await Promise.all(foreignChecks)) expect(response.status()).toBe(404)
+
+  await alice.page.getByRole('button', { name: '关闭图表' }).click()
+  await alice.page.getByRole('button', { name: '运行记录' }).click()
+  await runCard.getByRole('button', { name: '展开运行详情' }).click()
+  await runCard.getByRole('button', { name: '查看 bus_voltage' }).click()
+  alice.page.once('dialog', dialog => void dialog.accept())
+  await alice.page.getByRole('button', { name: '删除结果' }).click()
+  await expect.poll(async () => (await alice.api.get(`/api/datasets/${source.id}`)).status()).toBe(404)
+
+  await alice.page.setViewportSize({ width: 390, height: 844 })
+  await alice.page.reload()
+  await alice.page.getByRole('button', { name: '展开结果面板' }).click()
+  await alice.page.getByRole('button', { name: '图表', exact: true }).click()
+  await expect(alice.page.getByText('来源已删除').first()).toBeVisible()
+  await alice.page.getByRole('button', { name: '打开 三相电压', exact: true }).click()
+  await expect(alice.page.getByLabel(/line 图表.*3 个系列.*A相.*B相.*C相.*图例底部/)).toBeVisible()
+  expect(await alice.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  const axe = await new AxeBuilder({ page: alice.page }).analyze()
+  expect(axe.violations.filter(violation => violation.impact === 'serious' || violation.impact === 'critical')).toEqual([])
+
+  const beforeDelete = await (await alice.api.get('/api/storage-usage')).json()
+  alice.page.once('dialog', dialog => void dialog.accept())
+  await alice.page.getByRole('button', { name: '删除图表' }).click()
+  await expect(alice.page.getByRole('button', { name: '打开 三相电压', exact: true })).toHaveCount(0)
+  const afterFirstDelete = await (await alice.api.get('/api/storage-usage')).json()
+  expect(afterFirstDelete.artifactCount).toBe(beforeDelete.artifactCount)
+  expect(afterFirstDelete.logicalBytes).toBe(beforeDelete.logicalBytes)
+  alice.page.once('dialog', dialog => void dialog.accept())
+  await alice.page.getByRole('button', { name: '删除 三相电压 副本' }).click()
+  await expect(alice.page.getByText('暂无已保存图表')).toBeVisible()
+  const afterDelete = await (await alice.api.get('/api/storage-usage')).json()
+  expect(afterDelete.artifactCount).toBe(beforeDelete.artifactCount - 1)
+  expect(afterDelete.logicalBytes).toBeLessThan(beforeDelete.logicalBytes)
+})
+
 test('failed run progress shows persistent sanitized tensoreval output without requesting datasets', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'studies@example.com' })
   const { sessionId } = await createReadySession(page, api, '失败运行详情')
@@ -141,7 +250,7 @@ test('imports, scripts, runs, results, and deletion remain isolated between user
   expect((await alice.api.get(`/api/datasets/${dataset.id}`)).status()).toBe(200)
 })
 
-test('analysis, saved charts, and comparisons survive source-result deletion with tombstone lineage', async ({ appPage, control }) => {
+test('analysis and comparisons survive source-result deletion with tombstone lineage', async ({ appPage, control }) => {
   const { page, api } = await appPage({ subject: 'dataframe-evidence@example.com' })
   const { sessionId } = await createReadySession(page, api, '派生结果血缘')
   const { run: baseline, card } = await uploadScriptAndRun({ page, api, control, sessionId, engine: {
@@ -175,22 +284,6 @@ test('analysis, saved charts, and comparisons survive source-result deletion wit
   const derivedId = analysisMessage.outputs[0].datasetId
   expect((await api.get(`/api/analysis-runs/${analysisMessage.analysisRunId}`)).status()).toBe(200)
 
-  const savedChart = await api.post(`/api/datasets/${derivedId}/views`, { data: {
-    clientOperationId: '1f6d0000-0000-4000-8000-000000000003', name: '持久折线',
-    config: {
-      version: 1, kind: 'line',
-      presentation: {
-        legend: { show: true, position: 'top', orientation: 'horizontal' }, palette: 'colorblind',
-        title: { show: true }, axis: { showGrid: true }, line: { width: 2, style: 'solid', showSymbol: false },
-      },
-      x: { column: 'key' }, xAxisMode: 'category', measures: [{ column: 'value' }],
-      order: 'source', aggregation: 'none', sampling: { mode: 'none' },
-    },
-  } })
-  expect(savedChart.status()).toBe(201)
-  const viewId = (await savedChart.json()).view.id
-  expect((await api.get(`/api/dataset-views/${viewId}/data`)).status()).toBe(200)
-
   await control.enqueueEngine({ kind: 'success', data: [{ name: 'result', rows: [['x', 0.1]], valueUnit: 'pu' }] })
   await control.enqueueLlm({ id: 'v3-comparison', expectedPrompt: '比较两次运行', turns: [
     { kind: 'tool_call', call_id: 'comparison-skill', name: 'load_agent_skill', args: { skill_id: 'comparison' } },
@@ -210,7 +303,6 @@ test('analysis, saved charts, and comparisons survive source-result deletion wit
 
   expect((await api.delete(`/api/datasets/${source.id}`)).status()).toBe(200)
   expect((await api.get(`/api/datasets/${source.id}/rows`)).status()).toBe(404)
-  expect((await api.get(`/api/dataset-views/${viewId}/data`)).status()).toBe(200)
   expect((await api.get(`/api/run-comparisons/${comparisonMessage.comparisonId}`)).status()).toBe(200)
   const lineage = await (await api.get(`/api/datasets/${derivedId}`)).json()
   expect(lineage.lineage[0].deleted).toBe(true)

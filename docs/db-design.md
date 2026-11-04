@@ -51,8 +51,14 @@ scope 引用的内容寻址 artifact；数据库保存所有权、状态、hash�
 脚本消息锚点只能由服务写入同一 session 的 script 消息且设置后不可更换。结果只能有 run 或 analysis 一个生产者。
 
 删除结果时 `artifact_id` 置空且同时写 `deleted_at_ms/tombstone_json`；存活结果则反之。派生结果的
-`dataset_lineage_snapshots` 保存来源 ID、名称、schema/hash 和生产者摘要。`dataset_views.view_dataset_id` 指向
-独立物化结果，因此来源 tombstone 不影响读取。
+`dataset_lineage_snapshots` 保存来源 ID、名称、schema/hash 和生产者摘要。
+
+`dataset_views` 是用户保存的不可变图表，而不是另一条 `result_datasets`。每行绑定同 session 的
+`source_dataset_id`，并冻结受控配置及 hash、`chart-model-v1` 合同版本、诊断、Plot Data schema/hash/行数/点数/字节数
+以及来源名称/schema/content 快照。`artifact_id` 指向独立物化的 Snappy Parquet Plot Data；来源结果 tombstone 后该引用与
+快照仍可读取。`(source_dataset_id, client_operation_id)` 保证保存幂等，同一存活来源内 `name` 唯一。存活图表必须有
+artifact 且没有 tombstone；删除时原子清空 artifact、写 `deleted_at_ms/tombstone_json` 并释放自己的引用，不改写来源和
+其他图表。图表没有可变 update 路径，复制通过新的预览与保存操作创建新行。
 
 ## Ownership and queries
 

@@ -18,17 +18,18 @@
 | Task 2：动态 DataFrame 研究门面 | complete | 独立 catalog 版本、动态门面真实目录门禁、隔离诊断、传递 schema/hash、current snapshot 事务 |
 | Task 3：统一 tensoreval 进程边界 | complete | 双流有界捕获/完整 hash、运行中结果监控、进程组超时与取消、最终严格扫描、无部分结果 |
 | Task 4：统一上传、解析设置与用途确认 | complete | upload batch API、24h 可配置 TTL、并发 reservation、CSV/Excel/Parquet/DSS/案例候选、20+para 拆分、动态 catalog 表头推断 |
-| Task 5：独立数据资源发布与管理 | complete | model/resource 双子事务、普通 Data/Struct 资源、替换/删除/提升、资源分析与物化视图、4 个 Agent 工具 |
+| Task 5：独立数据资源发布与管理 | complete | model/resource 双子事务、普通 Data/Struct 资源、替换/删除/提升、资源分析、4 个 Agent 工具 |
 | Task 6：目录驱动研究配置 | complete | revision 状态机、动态 model/Data/Struct/结果卡、唯一资源自动绑定与真实多资源消歧、server-owned 结果 selector、受控列映射、待确认结果可继续编辑、最终确认准备合同、3 个 Agent 工具 |
 | Task 9：受管工作流状态机 | complete | 原子确认、用户参数与结果 selector 私有 overlay、可空 source/effective 冻结输入且不发布 Struct 资源、provisional run、专用 ScriptAuthor、candidate/父 attempt、查询/取消 API、启动恢复 |
 | Task 10：脚本生成、执行与自动修正 | complete | 结构合同检查、冻结输入树、共享调度与会话取消、tensoreval 立即执行、3 次修正/4 次执行上限、64 KiB 脱敏 stdout/stderr、带日志引用的结构化失败分析、无实质修改识别、精确结果合同、独占原子结果发布与崩溃孤儿回收 |
 | Task 11：脚本重跑、失败重试与运行删除 | complete | 最新所需输入冻结、用户/selector overlay 按显式 replacement 血缘跨 retry/rerun 重建、source-less 与旧 snapshot 兼容、开放/精确结果合同、派生 retry workflow、输入差异确认、普通 run 持久失败日志/智能分析、run/result 原子 tombstone、artifact 引用释放 |
 | Task 7：durable 消息、历史锚定与会话删除 | complete | 3 种 revisioned 操作卡、`messageId:revision` SSE、连续 around window、影响 token 删除与统一取消 |
-| Task 8：V4 Agent bundle 与受控工具 | complete | `v4.3.0`、5 个按需 skills（`study-planning@1.5.0`）、24 个对话工具；研究配置包含模型生成的详细说明和服务端权威页脚；明确自然语言可发布精确草稿并自动激活，也可按当前卡片精确 revision 修改结果；无聊天脚本创建、自动确认或旧规划权限 |
+| Task 8：V4 Agent bundle 与受控工具 | complete | `v4.4.0`、5 个按需 skills（`study-planning@1.5.0`）、23 个对话工具；研究配置包含模型生成的详细说明和服务端权威页脚；明确自然语言可发布精确草稿并自动激活，也可按当前卡片精确 revision 修改结果；无聊天脚本创建、图表创建、自动确认或旧规划权限 |
 | Task 12：统一上传与数据文件工作台 | complete | 旧模型导入前端已移除、durable batch 摘要恢复、用途/隐藏 sheet/双子事务确认；案例完整卡归入模型工作区，普通上传完整卡归入数据文件页；资源分页预览/下载/删除/replacement、模型版本描述 |
 | Task 13：研究确认与受管执行前端 | complete | 对话内上传摘要与可按配置记忆收起状态的研究配置卡、只呈现待处理输入、参数模板只读与运行覆盖提示、server-owned selector 隐藏、错误自动展开、目录类型参数、revision stale 刷新、attempt/取消/失败重试、精确脚本定位、run 删除影响确认 |
-| Task 14：确定性全链路测试与功能追溯 | complete | 30 条 Playwright 旅程；337/337 功能证据、284/284 公共合同、PR 覆盖 100% |
+| Task 14：确定性全链路测试与功能追溯 | complete | 31 条 Playwright 旅程；350/350 功能证据、297/297 公共合同、PR 覆盖 100% |
 | Task 15：文档、真实依赖门禁与发布切换 | complete | V4 当前文档与空库部署合同；动态真实引擎门禁；固定用户登录、真实 LLM 规划、受管执行/重跑、分析、比较和删除语义旅程 |
+| 用户配置图表工作台 | complete | 六类受控配置、capability/预览/保存/会话发现/删除七条 API、不可变 Snappy Parquet Plot Data、来源删除后恢复、390px 与跨用户浏览器旅程；不授予 LLM 图表权限 |
 
 旧模型导入前端协议和旧确认界面已经移除，不提供兼容层。Playwright 已统一使用 V4 upload batch、
 数据资源和受管研究全链路旅程。
@@ -42,27 +43,27 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 |---|---|---|
 | 固定用户与隔离 | complete | Argon2id、HttpOnly Cookie、跨用户 404、SSE 撤销 |
 | 统一上传 | complete | DSS/ZIP/CSV/Excel/Parquet/案例的可恢复候选、解析设置/用途确认、model/resource 双发布、部分成功重试与确认幂等 |
-| 独立数据资源 | complete | 会话唯一 alias、原文件/规范 Parquet、Struct 覆盖预览、重新上传替换、删除影响、结果提升、分析/物化视图输入 |
+| 独立数据资源 | complete | 会话唯一 alias、原文件/规范 Parquet、Struct 覆盖预览、重新上传替换、删除影响、结果提升和分析输入 |
 | 草稿与版本 | complete | expected revision、整表覆盖、显式发布/激活、影响预览删除 |
 | 案例库 | complete | schema v2 manifest 与 projection profile 严格匹配；当前 144/144 案例通过受控 projector 转成目录声明的 Model/Data/Struct 候选，diagnostic 不进入输入；目录树、详情/搜索、无效叶诊断和窄屏浏览完整 |
 | 脚本与运行 | complete | 受管 Agent 脚本已实现候选持久化、直接执行、自动修正和冻结结果合同；普通运行与工作流共用脱敏日志/失败分析器，失败进度卡可恢复展示诊断；成功脚本单次运行读取最新所需输入，失败脚本可比较输入后派生“重新尝试”，手写/上传脚本开放结果合同且不修正；终态 run 支持影响预览和原子删除 |
-| 结果与派生 | complete | 单结果删除、分析、物化视图、比较、tombstone 血缘 |
-| 前端 | complete | 三列/窄屏、模型详细说明先于研究配置卡、配置卡按浏览器会话记忆收起状态且错误自动展开、Struct 参数显示只读模板身份与本次运行覆盖、运行摘要与失败原因/耗时/全结果选择、普通运行与研究工作流共用失败诊断面板、成功研究的脚本/运行结果成果归组与脚本锚定、pending-only 轮询、结果数据表/图表、active/draft/历史模型表只读工作台、登录用户菜单 |
-| Agent bundle | complete | V4 `v4.3.0`、`study-planning@1.5.0`、24 个受控工具；DeepSeek/百炼 provider；`publish_model_version` 只响应明确发布意图并发布精确草稿 revision；`search_study_facades`/`prepare_study` 要求模型详细说明，并以服务端权威页脚先于配置卡完成准备；`update_study_results` 只修改当前未确认卡片结果，对话 Agent 无通用脚本创建或最终确认权限 |
+| 结果与派生 | complete | 单结果删除、分析、用户配置图表、比较、tombstone 血缘；图表冻结来源快照与自己的 Plot Data，来源删除后仍可发现和读取 |
+| 前端 | complete | 三列/窄屏、模型详细说明先于研究配置卡、配置卡按浏览器会话记忆收起状态且错误自动展开、Struct 参数显示只读模板身份与本次运行覆盖、运行摘要与失败原因/耗时/全结果选择、普通运行与研究工作流共用失败诊断面板、成功研究的脚本/运行结果成果归组与脚本锚定、pending-only 轮询、结果数据表、用户配置图表工作台、active/draft/历史模型表只读工作台、登录用户菜单 |
+| Agent bundle | complete | V4 `v4.4.0`、`study-planning@1.5.0`、23 个受控工具；DeepSeek/百炼 provider；`publish_model_version` 只响应明确发布意图并发布精确草稿 revision；`search_study_facades`/`prepare_study` 要求模型详细说明，并以服务端权威页脚先于配置卡完成准备；`update_study_results` 只修改当前未确认卡片结果，对话 Agent 无通用脚本、图表创建或最终确认权限 |
 | 发布门禁 | complete | deterministic Rust/Vitest/build/Playwright/coverage；真实 eig-rs/tensoreval 与所选 LLM provider 候选门禁 |
 
 ## Runtime contracts
 
 - 后端 Cargo package 与 library crate 均为 `zjudss`；`backend/` 只是仓库目录名，Rust 调用点使用
   `zjudss::`。
-- Agent bundle：`v4.3.0`，目录 `backend/resources/agent/v4`；研究规划 skill 为 `study-planning@1.5.0`。
+- Agent bundle：`v4.4.0`，目录 `backend/resources/agent/v4`；研究规划 skill 为 `study-planning@1.5.0`。
 - LLM provider：缺省为 DeepSeek；也可通过 `LLM_PROVIDER=bailian`、显式模型、同地域 API Key 和 OpenAI-compatible endpoint 使用百炼。两者共用同一 Agent、工具和 ScriptAuthor 合同。
 - Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `SPARROWZZ_DIR` 动态发现并验证
   `dss/docs/catalog`（含 case projection schema v2）与 `dss/rssbundle` manifest schema v2，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
 - 每次 tensoreval 调用均由统一 adapter 流式排空 stdout/stderr；每流按 `ENGINE_PROCESS_OUTPUT_MAX_BYTES` 保留等额首尾并
   记录完整 hash/总字节数。运行中和退出后都检查结果数量、单文件/总量、普通文件和路径边界；失败、超时或取消会
   终止整个进程组并清理未发布目录。
-- 公共合同：75 条路由、12 类消息、24 个工具、5 个 skills、8 个上传来源、6 类视图。
+- 公共合同：81 条唯一 method/path 路由、12 类消息、23 个工具、5 个 skills、8 个上传来源、6 类图表。
 - 静态 DSS adapter profile 固定输出 21 张规范 DataFrame；统一上传把其中 20 张网络表作为模型候选，把 `para`
   作为普通 Data resource 候选。其他模型表完全由当前 engine snapshot 的有效 model schema 和实际表头推断。
 - 研究配置：`search_study_facades` 按当前 snapshot 返回目录门面、方法差异和禁用诊断，显式函数不会被拓扑改写；
@@ -73,6 +74,9 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
   locked contract/input snapshot/private Struct overlays；confirm 公共路由原子创建受管 workflow 与 provisional run，并由无工具 ScriptAuthor 生成候选。retry/rerun 只跟随最多 64 层显式 replacement 血缘，拒绝同 alias 冒充、循环和超深链；source-less 输入复用冻结 artifact，旧 snapshot 回退到合并 overrides。候选先经过只证明冻结函数、alias 顺序和结果绑定未变化的结构合同检查，再通过统一 adapter 调用 tensoreval。非零退出或可修正的结果限制/合同错误最多修正 3 次；超时、监控、路径、配额和基础设施错误立即失败。成功仅在全部结果名称、列顺序、逻辑 dtype、实际非空值和可用 unit 元数据满足 Snappy Parquet 结果合同时原子发布。
 - 模型表读取：active、准确 draft revision 和历史版本均支持元数据、分页投影与 Parquet 下载；Agent 可通过
   有界等值查询读取实际行后再修改，读取不改变模型生命周期。
+- 用户配置图表：固定 API 从仿真/分析 DataFrame 发现标量及最多四层数值 List 分量，服务端校验六类受控配置并编译
+  `chart-model-v1`；前端只做确定性 ECharts 映射。预览不写入，保存冻结配置、诊断、来源快照与 Snappy Parquet Plot Data；
+  来源 tombstone 后仍可从会话图表页恢复。对话 Agent 没有图表工具，也不产生 ECharts JSON。
 
 ## Backend dependency baseline
 
@@ -118,8 +122,8 @@ DataFrame 命名输入的 `managed.rss`，当前为 6 个代表。当前 profile
 
 ## Reset and operation
 
-`init_users.csv` 是编译输入，密码初始等于 ID。CSV 字节变化后启动会返回
-`user_seed_mismatch_reset_required`；必须同时重置 SQLite 与 DATA_DIR。公网可访问配置见
+`init_users.csv` 是编译输入，密码初始等于 ID。CSV 字节变化或从 v4.4.0 之前的开发 schema 切换后启动会返回或要求
+空库重建；必须同时重置 SQLite 与 `DATA_DIR`，不能复用其中任一侧。公网可访问配置见
 `docs/v4-deployment.md`，当前用户密码策略是已接受的试用风险。
 
 ## Verification
@@ -132,9 +136,9 @@ Vite/Axum/SQLite/CAS 的身份、导入、分层案例目录与窄屏详情、�
 研究配置合同由 `backend/tests/study_configurations.rs` 覆盖：显式 Newton、目录动态模型输入、保护模型范围、独立
 `para`、多资源不猜选、Struct 私有用户/selector 覆盖、source-less 默认值、revision/用户隔离、无提前 confirm 路由及受控列映射发布。
 
-当前确定性基线通过 `cargo fmt --all -- --check`、`cargo clippy --all-targets --all-features -- -D warnings`、
-`cargo test --features e2e-test`、221 条 Vitest、生产构建、30 条 Playwright 旅程及 337/337 功能证据、284/284 公共合同、
-100% PR 功能追溯；候选门禁另以真实
+当前代码确定性基线（不含下述真实相邻 eig-rs 资源树断言）通过 `cargo fmt --all -- --check`、
+`cargo clippy --all-targets --all-features -- -D warnings`、后端全量测试、258 条 Vitest、生产构建、31 条 Playwright 旅程及
+350/350 功能证据、297/297 公共合同、100% PR 功能追溯；候选门禁另以真实
 所选真实 LLM provider、当前 eig-rs/tensoreval、动态门面与案例快照完成规划、执行、分析、比较和删除全旅程。
 候选门禁中的 tensoreval 固定以 `--no-default-features --features tensoreval-cli,with_dsa_mumps` 构建，不使用
 eig-rs 默认 features。
@@ -142,6 +146,11 @@ eig-rs 默认 features。
 2026-11-03 的运行私有 Struct 参数变更已通过后端聚焦测试（study configuration、managed workflow、retry/rerun、run lifecycle）
 和前端 `StudyConfigurationCard` 20/20 聚焦用例。因同一工作区存在并行修改，本轮全量 Rust/Vitest/build/Playwright/coverage
 验证按用户要求暂缓，以上“当前确定性基线”不作为这批未完成全量验证的新增证据。
+
+2026-11-04 的用户配置图表工作台已通过 `cargo fmt`、全 feature 零警告 Clippy、49 文件/258 条 Vitest、生产构建、
+31 条 Playwright 旅程和 350/350 PR 功能覆盖。后端全量测试中的代码与临时 e2e-server 测试通过；真实相邻 eig-rs
+资源树门禁当前单独报告 7 个 `case_projection_invalid` 案例（四个 DistanceRelays、GFL IEEE123、InductionMachine 和
+59NRelayDemo），因此在外部资源合同修复并重跑前，不能把本次变更声明为候选发布全绿，也不能通过修改 zjudss 放宽该门禁。
 
 独立的 `./scripts/test-manual-case-journeys` 可由测试人员显式选择运行当前 snapshot 的全部可导入案例，或以
 `CASE_JOURNEY_EXAMPLE_ID`、`CASE_JOURNEY_FACADE`、`CASE_JOURNEY_RESUME_REPORT` 聚焦/续跑。它逐案例验证导入确认、

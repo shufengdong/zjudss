@@ -20,13 +20,20 @@ export function compileView(model: ChartModel, context: ChartCompileContext = {}
   }
 }
 
+export function chartAriaLabel(model:ChartModel,narrow:boolean){
+  const option=compileView(model,{narrow}),legend=option.legend as {show?:boolean;bottom?:number;right?:number}|undefined
+  const names='series'in model?model.series.map(series=>series.name):[model.value.name]
+  const legendText=legend?.show===false?'图例隐藏':legend?.bottom===0?'图例底部':legend?.right!==undefined?'图例右侧':'图例顶部'
+  return`${model.kind} 图表，${names.length} 个系列：${names.join('、')}，${legendText}`
+}
+
 export default function ChartRenderer({ model }: { model: ChartModel }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!ref.current) return
     const chart = echarts.init(ref.current)
     const media = window.matchMedia('(max-width: 639px)')
-    const render = () => chart.setOption(compileView(model, { narrow: media.matches }), { notMerge: true })
+    const render = () => {chart.setOption(compileView(model, { narrow: media.matches }), { notMerge: true });ref.current?.setAttribute('aria-label',chartAriaLabel(model,media.matches))}
     const resize = () => { chart.resize(); render() }
     render()
     media.addEventListener('change', render)

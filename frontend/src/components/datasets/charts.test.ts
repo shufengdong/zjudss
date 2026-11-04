@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChartModel, ChartPalette, LineChartModel } from '../../types'
-import { compileView } from './ChartRenderer'
+import { chartAriaLabel, compileView } from './ChartRenderer'
 import { CHART_PALETTES } from './charts/shared'
 
 const diagnostics = { inputRows: 4, candidatePoints: 4, outputPoints: 4, droppedMissing: 0,
@@ -123,6 +123,12 @@ describe('typed controlled ECharts builders', () => {
   it('downgrades a right vertical legend on a 390px viewport without hiding it', () => {
     const legend = compileView(models[0], { narrow: true }).legend
     expect(legend).toMatchObject({ show: true, left: 'center', bottom: 0, orient: 'horizontal' })
+  })
+
+  it('describes rendered series and the resolved responsive legend position', () => {
+    const model={...models[0],series:['A相','B相','C相'].map((name,index)=>({name,points:[{x:{kind:'string' as const,value:'bus'},y:index+1,ordinal:0}]}))} as LineChartModel
+    expect(chartAriaLabel(model,false)).toBe('line 图表，3 个系列：A相、B相、C相，图例右侧')
+    expect(chartAriaLabel(model,true)).toBe('line 图表，3 个系列：A相、B相、C相，图例底部')
   })
 
   it('does not render a disabled legend, hidden title or grid', () => {

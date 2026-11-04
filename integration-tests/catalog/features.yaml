@@ -1336,7 +1336,7 @@
   tests:
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
-      name: analysis, saved charts, and comparisons survive source-result deletion with tombstone lineage
+      name: analysis and comparisons survive source-result deletion with tombstone lineage
   assertions: [analysis is readable after source deletion, lineage retains tombstones]
   fixtures: [completed run, scripted analysis]
   contracts:
@@ -1351,17 +1351,49 @@
   tests:
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
-      name: analysis, saved charts, and comparisons survive source-result deletion with tombstone lineage
-  assertions: [saved chart survives source deletion, all controlled kinds are public]
-  fixtures: [saved chart]
+      name: user-configured charts survive source deletion
+    - runner: rust
+      file: backend/tests/chart_views.rs
+      name: chart_routes_compile_persist_replay_survive_source_delete_and_enforce_scope
+    - runner: rust
+      file: backend/tests/chart_views.rs
+      name: chart_errors_have_stable_status_and_code
+    - runner: rust
+      file: backend/tests/chart_view_repository.rs
+      name: publish_replay_delete_and_source_tombstone_are_user_scoped_and_atomic
+  assertions: [user chooses a bounded config rather than arbitrary ECharts JSON, preview and save materialize narrow Plot Data, copied charts allocate a new operation, source deletion leaves saved charts discoverable, all seven routes are user scoped, a 390px viewport downgrades right legend to bottom without overflow, all controlled kinds and stable chart errors are public]
+  fixtures: [Utf8View bus, LargeList Float64 three-phase values, saved chart with deleted source]
   contracts:
+    - "route:GET /api/datasets/{id}/chart-capabilities"
+    - "route:POST /api/datasets/{id}/chart-previews"
+    - "route:POST /api/datasets/{id}/views"
+    - "route:GET /api/dataset-views/{id}"
     - "route:GET /api/dataset-views/{id}/data"
+    - "route:DELETE /api/dataset-views/{id}"
+    - "route:GET /api/sessions/{id}/dataset-views"
     - "view:line"
     - "view:bar"
     - "view:scatter"
     - "view:heatmap"
     - "view:boxplot"
     - "view:histogram"
+    - "error:chart_config_invalid"
+    - "error:chart_capabilities_too_large"
+    - "error:chart_column_missing"
+    - "error:chart_column_incompatible"
+    - "error:chart_component_invalid"
+    - "error:chart_unit_conflict"
+    - "error:chart_series_name_conflict"
+    - "error:chart_duplicate_requires_aggregation"
+    - "error:chart_no_data"
+    - "error:chart_too_large"
+    - "error:chart_name_conflict"
+    - "error:chart_operation_conflict"
+    - "error:chart_operation_gone"
+    - "error:chart_source_deleted"
+    - "error:chart_materialization_failed"
+    - "error:chart_not_found"
+    - "error:chart_cursor_invalid"
 
 - id: COMPARE-001
   source: docs/integration-testing-design.md#coverage-matrix
@@ -1371,7 +1403,7 @@
   tests:
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
-      name: analysis, saved charts, and comparisons survive source-result deletion with tombstone lineage
+      name: analysis and comparisons survive source-result deletion with tombstone lineage
   assertions: [comparison remains readable after source deletion]
   fixtures: [two compatible runs]
   contracts:
@@ -1447,7 +1479,7 @@
       name: a blocked managed workflow can be cancelled, recovered after refresh, and remains user scoped
     - runner: playwright
       file: integration-tests/e2e/resilience.spec.ts
-      name: committed sessions, results, and views survive restart while a running script converges and FTS fails locally
+      name: committed sessions and results survive restart while a running script converges and FTS fails locally
   assertions: [committed resources survive restart, local search failure does not corrupt other reads]
   fixtures: [restartable E2E server]
 

@@ -2,7 +2,7 @@
 
 ## Bundle
 
-生产 bundle 位于 `backend/resources/agent/v4/`，版本 `v4.3.0`。manifest 固定 system prompt、skill index、
+生产 bundle 位于 `backend/resources/agent/v4/`，版本 `v4.4.0`。manifest 固定 system prompt、skill index、
 engine contract、允许工具和文件 SHA-256；启动时完整验证。Agent prompt 只常驻策略，不常驻整套引擎文档。
 
 ## Skills
@@ -17,14 +17,14 @@ schema 再执行分析时，Agent 必须在读取后继续调用 `run_result_ana
 
 ## Tool authority
 
-当前运行时允许工具共 24 个：
+当前运行时允许工具共 23 个：
 
 ```text
 inspect_workspace       read_model_dataframe     search_study_facades
 prepare_study           update_study_results     search_examples
 inspect_example
 modify_model            publish_model_version    list_result_datasets
-run_result_analysis     create_dataset_view      compare_simulations
+run_result_analysis     compare_simulations
 list_simulation_history search_chat_history      read_chat_context
 get_storage_usage       load_agent_skill         search_engine_docs
 read_engine_doc_section
@@ -33,7 +33,8 @@ promote_result_dataset
 ```
 
 Agent 可以检查工作区、查询普通数据资源、按用户明确要求修改 alias、把用户明确选定的结果提升为普通资源、修改
-draft、读取运行/结果并创建派生分析或比较。规划或分析普通 Data/Struct 输入前必须先列出资源，再按稳定
+draft、读取运行/结果并创建派生分析或比较。图表不是模型权限：对话 Agent 没有创建、修改、复制或删除图表的工具，
+也不生成 ECharts JSON；图表只由用户在结果工作台选择受控配置并通过固定 API 预览、保存。规划或分析普通 Data/Struct 输入前必须先列出资源，再按稳定
 `resourceId` 读取，不能从历史名称猜测。提升候选不唯一时必须让用户选择 `datasetId`。只有用户当前消息明确要求发布或
 生成当前模型版本时，Agent 才能在加载 `model-intake` 并调用 `inspect_workspace` 后，以精确 `expectedDraft` 调用
 `publish_model_version`；成功会沿用版本服务的去重、描述规则并自动激活。导入完成、模型修改、准备研究以及“生成脚本/结果”
@@ -69,7 +70,7 @@ draft、读取运行/结果并创建派生分析或比较。规划或分析普�
 ## Stable arguments
 
 工具只接收 session 上下文内的稳定资源 ID、expected draft、受控 patch/spec 和文本。禁止路径、URL、SQL、
-shell 命令和任意图表 option。`modify_model` 使用 `tableName + rowKey + changes + expectedDraft`；
+shell 命令和任意图表 option。用户配置图表不进入 Agent prompt 或工具链。`modify_model` 使用 `tableName + rowKey + changes + expectedDraft`；
 `read_model_dataframe` 使用 `scope + tableName + columns + equals + limit + expectedDraft?`；
 `publish_model_version` 使用 `expectedDraft + description?`，服务端从当前消息 ID 生成幂等键，不接受 session/version/path；
 `search_study_facades` 只接收查询词和可选显式函数名；`prepare_study` 只接收目录 facade ID、结构化原始意图、必填 `explanation` 和可选来源 workflow ID；空白或超过 4000 个 Unicode 字符的说明返回 `invalid_study_explanation`，且不产生领域写入；
