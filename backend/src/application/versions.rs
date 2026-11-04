@@ -1,5 +1,3 @@
-use sha2::{Digest, Sha256};
-
 use crate::adapters::ENGINE_CONTRACT_VERSION;
 use crate::auth::CurrentUser;
 use crate::db::models::DraftRef;
@@ -8,6 +6,7 @@ use crate::db::repositories::{
     WorkspaceSnapshot,
 };
 
+use super::opaque_token::{generate_token, hash_token, is_generated_token};
 use super::{ArtifactError, ArtifactService, ms_to_iso, now_ms};
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -319,8 +318,8 @@ impl VersionService {
         user: &CurrentUser,
         version_id: i32,
     ) -> Result<VersionDeletionPreview, VersionError> {
-        let token = random_token();
-        let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
+        let token = generate_token();
+        let token_hash = hash_token(&token);
         let now = now_ms();
         let expires = now + 5 * 60 * 1000;
         let DeletionImpact {
@@ -347,10 +346,10 @@ impl VersionService {
         version_id: i32,
         impact_token: String,
     ) -> Result<(), VersionError> {
-        if impact_token.len() != 64 {
+        if !is_generated_token(&impact_token) {
             return Err(VersionError::InvalidImpactToken);
         }
-        let token_hash = hex::encode(Sha256::digest(impact_token.as_bytes()));
+        let token_hash = hash_token(&impact_token);
         let result = self
             .repo
             .delete_version(&user.id, version_id, token_hash, now_ms())
@@ -363,10 +362,4 @@ impl VersionService {
         }
         Ok(())
     }
-}
-
-fn random_token() -> String {
-    let mut bytes = [0_u8; 32];
-    getrandom::fill(&mut bytes).expect("operating system random source unavailable");
-    hex::encode(bytes)
 }

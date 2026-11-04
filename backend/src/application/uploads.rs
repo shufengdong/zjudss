@@ -23,6 +23,10 @@ use crate::ingestion::{
 };
 use crate::storage::{ParquetInspector, StageLimits};
 
+use super::resource_alias::normalize_alias;
+use super::upload_candidate_policy::{
+    CandidatePolicyError, selected_for_storage, validate_mutable_state, validate_selected_alias,
+};
 use super::{ArtifactError, ArtifactMetadata, ArtifactService, now_ms};
 
 #[derive(Debug)]
@@ -833,8 +837,8 @@ impl UploadBatchService {
                         |aliases| aliases.contains(&d.candidate_id),
                     );
                 let alias = requested_alias.or_else(|| existing.proposed_alias.clone());
-                let selected = d.selected && d.purpose != CandidatePurpose::Skip;
-                if selected && alias.as_deref().is_none_or(|value| value.trim().is_empty()) {
+                let selected = selected_for_storage(d.selected, d.purpose);
+                if validate_selected_alias(d.selected, d.purpose, alias.as_deref()).is_err() {
                     return Err(UploadBatchError::Invalid(
                         "upload_candidate_invalid".into(),
                         "已选择候选必须提供表名或 alias".into(),
@@ -888,16 +892,21 @@ impl UploadBatchService {
     fn ensure_mutable(&self, batch: &UploadBatchRecordSet) -> Result<(), UploadBatchError> {
         if batch.batch.expires_at_ms <= now_ms() || batch.batch.status == "expired" {
             Err(UploadBatchError::Expired)
-        } else if matches!(
-            batch.batch.status.as_str(),
-            "failed" | "discarded" | "confirmed"
-        ) {
-            Err(UploadBatchError::Invalid(
-                "upload_state_invalid".into(),
-                "上传批次不可再修改".into(),
-            ))
         } else {
-            Ok(())
+            match validate_mutable_state(&batch.batch.status, batch.batch.confirmation_in_progress)
+            {
+                Ok(()) => Ok(()),
+                Err(CandidatePolicyError::ConfirmationInProgress) => {
+                    Err(UploadBatchError::Invalid(
+                        "upload_state_invalid".into(),
+                        "上传确认正在执行，不能修改批次".into(),
+                    ))
+                }
+                Err(_) => Err(UploadBatchError::Invalid(
+                    "upload_state_invalid".into(),
+                    "上传批次不可再修改".into(),
+                )),
+            }
         }
     }
 
@@ -1667,9 +1676,6 @@ fn batch_diagnostics(
         )
     }));
     serde_json::json!({"sourceHash":source_hash,"parserVersion":"v4.1","parseSpec":settings,"errors":error.map(|value|vec![serde_json::json!({"code":value.code(),"message":value.to_string()})]).unwrap_or_default()})
-}
-fn normalize_alias(value: &str) -> String {
-    value.trim().to_ascii_lowercase().replace([' ', '-'], "_")
 }
 fn ambiguous_delimiter(bytes: &[u8]) -> bool {
     let first = String::from_utf8_lossy(bytes)

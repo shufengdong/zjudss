@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Integer, Text};
 
+use crate::application::upload_candidate_policy::settled_status;
 use crate::auth::UserId;
 use crate::db::models::{
     DataResourceRecord, DataResourceReplacementPreviewRecord, DraftRef, UploadBatchRecord,
@@ -485,15 +486,10 @@ impl DataResourceRepo {
             }
             let model_done=matches!(batch.model_publish_status.as_str(),"published"|"not_applicable");
             let resource_done=matches!(batch.resource_publish_status.as_str(),"published"|"not_applicable");
-            let any_done = batch.model_publish_status == "published"
-                || batch.resource_publish_status == "published";
-            let status = if model_done && resource_done {
-                "confirmed"
-            } else if any_done {
-                "partially_confirmed"
-            } else {
-                "ready_to_confirm"
-            };
+            let status = settled_status(
+                &batch.model_publish_status,
+                &batch.resource_publish_status,
+            );
             let retained_candidates = schema::upload_candidates::table
                 .filter(schema::upload_candidates::batch_id.eq(batch_id))
                 .filter(schema::upload_candidates::selected.eq(true))

@@ -24,10 +24,15 @@ use crate::db::repositories::{
     StructuredPreviewConfirmation, StructuredPreviewInput, UploadRepo,
     WorkflowStructOverlayMaterial,
 };
-use crate::engine_resources::{EngineResourceSnapshot, FacadeInputKind};
+use crate::engine_resources::EngineResourceSnapshot;
 use crate::storage::StageLimits;
 
 use super::dataframe_reader::{DataFrameReadError, DataFrameReadSource, ParquetDataFrameReader};
+use super::opaque_token::{generate_token, hash_token, validate_presented_token};
+use super::resource_alias::{
+    AliasError, AliasPurpose, ResourceAliasPolicy, default_alias, normalize_alias,
+};
+use super::upload_candidate_policy::validate_replacement_action;
 use super::{
     ArtifactError, ArtifactMetadata, ArtifactService, CandidateDecision, CandidatePurpose,
     UploadBatchError, UploadBatchService, now_ms,
@@ -740,7 +745,12 @@ impl DataResourceService {
                 "上传批次尚未完成解析和用途确认",
             ));
         }
-        if before.batch.replacement_resource_id.is_some() && action.is_none() {
+        if validate_replacement_action(
+            before.batch.replacement_resource_id.is_some(),
+            action.is_some(),
+        )
+        .is_err()
+        {
             return Err(Self::invalid(
                 "replacement_preview_invalid",
                 "替换上传必须明确选择覆盖、另存为或取消",
@@ -1392,8 +1402,8 @@ impl DataResourceService {
         let value = impact_value(&impact);
         let impact_json = serde_json::to_string(&value).expect("impact serializable");
         let impact_hash = hex::encode(Sha256::digest(impact_json.as_bytes()));
-        let token = token("dr-delete", id, now_ms());
-        let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
+        let token = generate_token();
+        let token_hash = hash_token(&token);
         let expires = now_ms() + 10 * 60 * 1000;
         self.repo
             .store_deletion_preview(
@@ -1449,7 +1459,13 @@ impl DataResourceService {
                 .unwrap()
                 .as_bytes(),
         ));
-        let token_hash = hex::encode(Sha256::digest(impact_token.as_bytes()));
+        validate_presented_token(impact_token).map_err(|_| {
+            Self::invalid(
+                "invalid_deletion_impact_token",
+                "删除影响确认凭据无效或已过期",
+            )
+        })?;
+        let token_hash = hash_token(impact_token);
         let deleted = self
             .repo
             .delete(&user.id, id, token_hash, impact_hash, now_ms())
@@ -1539,8 +1555,8 @@ impl DataResourceService {
             current.resource.session_id,
             &format!("structured:{id}:{now}:{}", artifact.sha256),
         );
-        let preview_token = token("dr-replace", id, now);
-        let token_hash = hex::encode(Sha256::digest(preview_token.as_bytes()));
+        let preview_token = generate_token();
+        let token_hash = hash_token(&preview_token);
         let impact_json = serde_json::to_string(&differences).unwrap();
         let impact_hash = hex::encode(Sha256::digest(impact_json.as_bytes()));
         let expires = now + 10 * 60 * 1000;
@@ -1588,7 +1604,9 @@ impl DataResourceService {
         preview_token: &str,
         action: ReplacementAction,
     ) -> Result<Option<DataResourceView>, DataResourceError> {
-        let token_hash = hex::encode(Sha256::digest(preview_token.as_bytes()));
+        validate_presented_token(preview_token)
+            .map_err(|_| Self::invalid("replacement_preview_invalid", "替换预览不存在或已过期"))?;
+        let token_hash = hash_token(preview_token);
         let confirmation = self
             .repo
             .confirm_structured_preview(&user.id, token_hash, action.as_str().into(), now_ms())
@@ -1622,55 +1640,22 @@ impl DataResourceService {
         purpose: CandidatePurpose,
         schema_ref: Option<&str>,
     ) -> Result<(), DataResourceError> {
-        let alias = alias.trim();
-        if !valid_identifier(alias) {
-            return Err(Self::invalid(
+        let purpose = if purpose == CandidatePurpose::ModelTable {
+            AliasPurpose::ModelTable
+        } else {
+            AliasPurpose::DataResource
+        };
+        match ResourceAliasPolicy::new(&self.snapshot).validate(alias, purpose, schema_ref) {
+            Ok(()) => Ok(()),
+            Err(AliasError::Invalid) => Err(Self::invalid(
                 "resource_alias_invalid",
                 "alias 必须是合法 RSS 标识符",
-            ));
-        }
-        if purpose == CandidatePurpose::ModelTable {
-            return Ok(());
-        }
-        let allowed_input = self
-            .snapshot
-            .facades
-            .enabled()
-            .flat_map(|facade| &facade.inputs)
-            .any(|input| {
-                input.alias.eq_ignore_ascii_case(alias)
-                    && matches!(input.kind, FacadeInputKind::Data | FacadeInputKind::Struct)
-                    && schema_ref.is_none_or(|schema| schema == input.schema_ref)
-            });
-        if allowed_input {
-            return Ok(());
-        }
-        let reserved_model = self
-            .snapshot
-            .facades
-            .enabled()
-            .flat_map(|facade| &facade.inputs)
-            .any(|input| {
-                input.alias.eq_ignore_ascii_case(alias) && input.kind == FacadeInputKind::Model
-            });
-        let reserved_output = self.snapshot.facades.enabled().any(|facade| {
-            facade.function.eq_ignore_ascii_case(alias)
-                || facade
-                    .results
-                    .iter()
-                    .any(|result| result.name.eq_ignore_ascii_case(alias))
-        });
-        if reserved_model
-            || reserved_output
-            || alias.starts_with("__")
-            || ["tmp", "result", "output"].contains(&alias.to_ascii_lowercase().as_str())
-        {
-            return Err(Self::invalid(
+            )),
+            Err(AliasError::Reserved) => Err(Self::invalid(
                 "resource_alias_reserved",
                 "alias 与模型、函数、结果或临时命名空间冲突",
-            ));
+            )),
         }
-        Ok(())
     }
 
     async fn revalidate_alias(
@@ -1738,26 +1723,6 @@ fn read_source(row: &ResourcePageRow) -> DataFrameReadSource {
         content_hash: row.normalized_sha256.clone(),
     }
 }
-fn normalize_alias(value: &str) -> String {
-    value.trim().to_ascii_lowercase().replace([' ', '-'], "_")
-}
-fn default_alias(value: &str) -> String {
-    let stem = std::path::Path::new(value)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or(value);
-    let value = normalize_alias(stem);
-    if valid_identifier(&value) {
-        value
-    } else {
-        "data".into()
-    }
-}
-fn valid_identifier(value: &str) -> bool {
-    let mut chars = value.chars();
-    matches!(chars.next(),Some(first) if first=='_'||first.is_ascii_alphabetic())
-        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-}
 fn stable_resource_id(batch: i32, candidate: &str) -> String {
     format!(
         "dr_{}",
@@ -1793,15 +1758,6 @@ fn safe_name(name: &str, fallback: &str) -> String {
 fn impact_value(impact: &DeletionImpactRow) -> Value {
     serde_json::json!({"resourceId":impact.resource.id,"schemaHash":impact.resource.schema_hash,"pendingConfigurationCount":impact.pending_configuration_count,"frozenReferenceCount":impact.frozen_reference_count,"historicalReferenceCount":impact.historical_reference_count})
 }
-fn token(prefix: &str, id: &str, now: i64) -> String {
-    format!(
-        "{prefix}_{}",
-        hex::encode(Sha256::digest(
-            format!("{id}:{now}:{}", std::process::id()).as_bytes()
-        ))
-    )
-}
-
 pub(super) fn struct_parquet(
     contract: &DataFrameSchemaContract,
     values: &serde_json::Map<String, Value>,
