@@ -752,6 +752,11 @@ async fn active_model_clone_counts_every_deduplicated_dataframe_reference() {
         #[diesel(sql_type = diesel::sql_types::BigInt)]
         ref_count: i64,
     }
+    #[derive(diesel::QueryableByName)]
+    struct ArtifactSize {
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        size_bytes: i64,
+    }
 
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
@@ -814,8 +819,14 @@ async fn active_model_clone_counts_every_deduplicated_dataframe_reference() {
             .execute(&mut conn)
             .unwrap();
     }
+    let usage_before_clone = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
 
-    common::publish_model_bytes(
+    let cloned_draft = common::publish_model_bytes(
         &app,
         &user,
         session_id,
@@ -827,6 +838,25 @@ async fn active_model_clone_counts_every_deduplicated_dataframe_reference() {
     )
     .await;
 
+    let usage_after_clone = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
+    let custom_artifact = diesel::sql_query("SELECT a.size_bytes FROM artifacts a JOIN draft_dataframes d ON d.artifact_id=a.id WHERE d.draft_id=?1 AND d.table_name='custom'")
+        .bind::<diesel::sql_types::Integer, _>(cloned_draft.id)
+        .get_result::<ArtifactSize>(&mut app.pool.get().unwrap())
+        .unwrap();
+    assert_eq!(
+        usage_after_clone.used_artifacts,
+        usage_before_clone.used_artifacts + 1
+    );
+    assert_eq!(
+        usage_after_clone.used_bytes,
+        usage_before_clone.used_bytes + custom_artifact.size_bytes
+    );
+
     let mut conn = app.pool.get().unwrap();
     let counted = diesel::sql_query("SELECT artifact_id,ref_count FROM storage_scope_artifacts WHERE storage_scope_id=?1 AND artifact_id=?2")
         .bind::<diesel::sql_types::Integer, _>(user.storage_scope_id)
@@ -835,6 +865,41 @@ async fn active_model_clone_counts_every_deduplicated_dataframe_reference() {
         .unwrap();
     assert_eq!(counted.artifact_id, artifact_id);
     assert_eq!(counted.ref_count, 4);
+
+    drop(conn);
+    app.state
+        .version_service
+        .activate(
+            &user,
+            published.version.version.id,
+            ActivateVersionRequest {
+                discard_draft: true,
+                expected_draft: Some(cloned_draft),
+            },
+        )
+        .await
+        .unwrap();
+    let usage_after_release = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        usage_after_release.used_artifacts,
+        usage_before_clone.used_artifacts
+    );
+    assert_eq!(
+        usage_after_release.used_bytes,
+        usage_before_clone.used_bytes
+    );
+    let mut conn = app.pool.get().unwrap();
+    let released = diesel::sql_query("SELECT artifact_id,ref_count FROM storage_scope_artifacts WHERE storage_scope_id=?1 AND artifact_id=?2")
+        .bind::<diesel::sql_types::Integer, _>(user.storage_scope_id)
+        .bind::<diesel::sql_types::Integer, _>(artifact_id)
+        .get_result::<ArtifactRefCount>(&mut conn)
+        .unwrap();
+    assert_eq!(released.ref_count, 2);
 }
 
 #[tokio::test]

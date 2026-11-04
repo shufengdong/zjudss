@@ -8,7 +8,6 @@ use crate::db::schema;
 
 use super::{RepoError, RepoResult};
 
-#[allow(dead_code)]
 pub(crate) fn storage_scope_id_for_user(
     conn: &mut SqliteConnection,
     user: &UserId,
@@ -21,7 +20,6 @@ pub(crate) fn storage_scope_id_for_user(
         .ok_or(RepoError::NotFound)
 }
 
-#[allow(dead_code)]
 pub(crate) fn retain_refs(
     conn: &mut SqliteConnection,
     scope_id: i32,

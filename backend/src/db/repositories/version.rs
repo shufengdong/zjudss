@@ -339,8 +339,15 @@ impl VersionRepo {
                     if let Some(version_id) = workspace.active_version_id {
                         diesel::sql_query("INSERT INTO draft_dataframes(draft_id,table_name,artifact_id,schema_json,row_count,content_hash,created_at_ms) SELECT ?1,table_name,artifact_id,schema_json,row_count,content_hash,?2 FROM model_dataframes WHERE version_id=?3")
                             .bind::<Integer,_>(draft_id).bind::<BigInt,_>(now_ms).bind::<Integer,_>(version_id).execute(conn)?;
-                        diesel::sql_query("UPDATE storage_scope_artifacts SET ref_count=ref_count+(SELECT count(*) FROM model_dataframes WHERE version_id=?2 AND artifact_id=storage_scope_artifacts.artifact_id) WHERE storage_scope_id=(SELECT storage_scope_id FROM users WHERE id=?1) AND artifact_id IN(SELECT artifact_id FROM model_dataframes WHERE version_id=?2)")
-                            .bind::<Text,_>(&user).bind::<Integer,_>(version_id).execute(conn)?;
+                        let artifact_ids = schema::model_dataframes::table
+                            .filter(schema::model_dataframes::version_id.eq(version_id))
+                            .select(schema::model_dataframes::artifact_id)
+                            .load::<i32>(conn)?;
+                        let scope_id = super::artifact_refs::storage_scope_id_for_user(
+                            conn,
+                            &UserId(user.clone()),
+                        )?;
+                        super::artifact_refs::retain_refs(conn, scope_id, artifact_ids)?;
                     }
                     (draft_id, 1)
                 };

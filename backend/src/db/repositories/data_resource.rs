@@ -757,10 +757,11 @@ impl DataResourceRepo {
                 diesel::insert_into(schema::data_resources::table)
                     .values(&record)
                     .execute(conn)?;
-                diesel::sql_query("UPDATE storage_scope_artifacts SET ref_count=ref_count+1 WHERE storage_scope_id=(SELECT storage_scope_id FROM users WHERE id=?1) AND artifact_id=?2")
-                    .bind::<Text, _>(&user)
-                    .bind::<Integer, _>(dataset.artifact_id)
-                    .execute(conn)?;
+                let scope_id = super::artifact_refs::storage_scope_id_for_user(
+                    conn,
+                    &UserId(user.clone()),
+                )?;
+                super::artifact_refs::retain_ref_count(conn, scope_id, dataset.artifact_id, 1)?;
                 Ok(record)
             })
         })
@@ -1529,14 +1530,17 @@ pub(super) fn publish_resources_on(
             .execute(conn)?;
         resources.push(record);
     }
+    let source_scope_id =
+        super::artifact_refs::storage_scope_id_for_user(conn, &UserId(user.to_owned()))?;
     for (artifact_id, (resource_count, file_ids)) in source_use_counts {
         let additional_refs = resource_count - file_ids.len() as i64;
         if additional_refs > 0 {
-            diesel::sql_query("UPDATE storage_scope_artifacts SET ref_count=ref_count+?1 WHERE storage_scope_id=(SELECT storage_scope_id FROM users WHERE id=?2) AND artifact_id=?3")
-                            .bind::<BigInt,_>(additional_refs)
-                            .bind::<Text,_>(user)
-                            .bind::<Integer,_>(artifact_id)
-                            .execute(conn)?;
+            super::artifact_refs::retain_ref_count(
+                conn,
+                source_scope_id,
+                artifact_id,
+                additional_refs,
+            )?;
         }
         for file_id in file_ids {
             diesel::update(schema::upload_files::table.find(file_id))
@@ -1580,10 +1584,7 @@ pub(super) fn publish_models_on(
     if candidates.is_empty() {
         return Ok(());
     }
-    let scope_id = schema::users::table
-        .find(user)
-        .select(schema::users::storage_scope_id)
-        .first::<i32>(conn)?;
+    let scope_id = super::artifact_refs::storage_scope_id_for_user(conn, &UserId(user.to_owned()))?;
     diesel::sql_query("INSERT INTO workspaces(session_id,created_at_ms,updated_at_ms) VALUES(?1,?2,?2) ON CONFLICT(session_id) DO NOTHING")
                     .bind::<Integer,_>(batch.session_id).bind::<BigInt,_>(now_ms).execute(conn)?;
     #[derive(QueryableByName)]
@@ -1633,8 +1634,11 @@ pub(super) fn publish_models_on(
         {
             diesel::sql_query("INSERT INTO draft_dataframes(draft_id,table_name,artifact_id,schema_json,row_count,content_hash,created_at_ms) SELECT ?1,table_name,artifact_id,schema_json,row_count,content_hash,?2 FROM model_dataframes WHERE version_id=?3")
                             .bind::<Integer,_>(id).bind::<BigInt,_>(now_ms).bind::<Integer,_>(version_id).execute(conn)?;
-            diesel::sql_query("UPDATE storage_scope_artifacts SET ref_count=ref_count+(SELECT count(*) FROM model_dataframes WHERE version_id=?2 AND artifact_id=storage_scope_artifacts.artifact_id) WHERE storage_scope_id=(SELECT storage_scope_id FROM users WHERE id=?1) AND artifact_id IN(SELECT artifact_id FROM model_dataframes WHERE version_id=?2)")
-                            .bind::<Text,_>(user).bind::<Integer,_>(version_id).execute(conn)?;
+            let artifact_ids = schema::model_dataframes::table
+                .filter(schema::model_dataframes::version_id.eq(version_id))
+                .select(schema::model_dataframes::artifact_id)
+                .load::<i32>(conn)?;
+            super::artifact_refs::retain_refs(conn, scope_id, artifact_ids)?;
         }
         (id, 1)
     };
