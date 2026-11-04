@@ -408,6 +408,101 @@ async fn ambiguous_parse_requires_settings() {
 }
 
 #[tokio::test]
+async fn failed_reparse_releases_previous_candidate_artifacts() {
+    let app = TestApp::spawn().await;
+    let (user, session_id) = session(&app, "failed reparse cleanup").await;
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            &user,
+            session_id,
+            "failed-reparse-cleanup".into(),
+            UploadSourceKind::Upload,
+            vec![file(&app, "csv", "data.csv", b"x\n1\n".to_vec())],
+        )
+        .await
+        .unwrap();
+    let batch_id = batch.id.parse::<i32>().unwrap();
+    let artifact_id = zjudss::db::schema::upload_candidates::table
+        .filter(zjudss::db::schema::upload_candidates::batch_id.eq(batch_id))
+        .select(zjudss::db::schema::upload_candidates::normalized_artifact_id)
+        .first::<Option<i32>>(&mut app.pool.get().unwrap())
+        .unwrap()
+        .unwrap();
+
+    let reparsed = app
+        .state
+        .upload_batch_service
+        .update_parse_settings(
+            &user,
+            batch_id,
+            ParseSettings {
+                header_row: 100,
+                ..ParseSettings::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(reparsed.status, UploadBatchStatus::AwaitingParseSettings);
+    assert!(reparsed.candidates.is_empty());
+    let retained = zjudss::db::schema::storage_scope_artifacts::table
+        .filter(
+            zjudss::db::schema::storage_scope_artifacts::storage_scope_id.eq(user.storage_scope_id),
+        )
+        .filter(zjudss::db::schema::storage_scope_artifacts::artifact_id.eq(artifact_id))
+        .select(zjudss::db::schema::storage_scope_artifacts::ref_count)
+        .first::<i64>(&mut app.pool.get().unwrap())
+        .optional()
+        .unwrap();
+    assert_eq!(retained, None);
+}
+
+#[tokio::test]
+async fn unsupported_parse_settings_preserve_existing_candidates() {
+    let app = TestApp::spawn().await;
+    let (user, session_id) = session(&app, "unsupported parse settings").await;
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            &user,
+            session_id,
+            "unsupported-parse-settings".into(),
+            UploadSourceKind::Upload,
+            vec![file(&app, "csv", "data.csv", b"x\n1\n".to_vec())],
+        )
+        .await
+        .unwrap();
+    let batch_id = batch.id.parse::<i32>().unwrap();
+
+    let error = app
+        .state
+        .upload_batch_service
+        .update_parse_settings(
+            &user,
+            batch_id,
+            ParseSettings {
+                encoding: "latin-1".into(),
+                ..ParseSettings::default()
+            },
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code(), "upload_parse_settings_invalid");
+    let unchanged = app
+        .state
+        .upload_batch_service
+        .get(&user, batch_id)
+        .await
+        .unwrap();
+    assert_eq!(unchanged.candidates.len(), 1);
+    assert_eq!(unchanged.candidates[0].id, batch.candidates[0].id);
+}
+
+#[tokio::test]
 async fn formulas_macros_and_external_links_are_never_executed() {
     let bytes = std::fs::read("tests/fixtures/inference/multi.xlsx").unwrap();
     let root = tempfile::tempdir().unwrap();

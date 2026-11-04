@@ -30,6 +30,7 @@ mod study_configurations;
 pub mod study_planning;
 pub(crate) mod upload_candidate_policy;
 pub mod upload_confirmation;
+mod upload_processing;
 pub mod uploads;
 pub mod versions;
 pub mod workflow_worker;
