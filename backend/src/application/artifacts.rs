@@ -38,6 +38,22 @@ impl ArtifactMetadata {
             media_type: Some("application/vnd.apache.parquet".into()),
         }
     }
+
+    pub(crate) fn into_draft(
+        self,
+        staged: &StagedArtifact,
+        created_at_ms: i64,
+    ) -> Result<ArtifactDraft, ArtifactError> {
+        Ok(ArtifactDraft {
+            sha256: staged.sha256.clone(),
+            size_bytes: i64::try_from(staged.size_bytes)
+                .map_err(|_| ArtifactError::SizeOverflow)?,
+            storage_path: ArtifactStore::relative_path(&staged.sha256),
+            format: self.format,
+            media_type: self.media_type,
+            created_at_ms,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,17 +152,7 @@ impl ArtifactService {
         staged: StagedArtifact,
         metadata: ArtifactMetadata,
     ) -> Result<ArtifactRef, ArtifactError> {
-        let size_bytes =
-            i64::try_from(staged.size_bytes).map_err(|_| ArtifactError::SizeOverflow)?;
-        let relative_path = ArtifactStore::relative_path(&staged.sha256);
-        let draft = ArtifactDraft {
-            sha256: staged.sha256.clone(),
-            size_bytes,
-            storage_path: relative_path,
-            format: metadata.format,
-            media_type: metadata.media_type,
-            created_at_ms: now_ms(),
-        };
+        let draft = metadata.into_draft(&staged, now_ms())?;
         let store = self.store.clone();
         let artifacts = self.artifacts.clone();
         let access_gate = self.access_gate.clone();
@@ -174,16 +180,7 @@ impl ArtifactService {
         mut draft: ChartViewDraft,
         staged: StagedArtifact,
     ) -> Result<PublishedChartView, ArtifactError> {
-        let size_bytes =
-            i64::try_from(staged.size_bytes).map_err(|_| ArtifactError::SizeOverflow)?;
-        draft.artifact = ArtifactDraft {
-            sha256: staged.sha256.clone(),
-            size_bytes,
-            storage_path: ArtifactStore::relative_path(&staged.sha256),
-            format: "parquet".into(),
-            media_type: Some("application/vnd.apache.parquet".into()),
-            created_at_ms: draft.created_at_ms,
-        };
+        draft.artifact = ArtifactMetadata::parquet().into_draft(&staged, draft.created_at_ms)?;
         let store = self.store.clone();
         let access_gate = self.access_gate.clone();
         let mut staged = staged;
@@ -208,17 +205,7 @@ impl ArtifactService {
         staged: StagedArtifact,
         metadata: ArtifactMetadata,
     ) -> Result<ArtifactRef, ArtifactError> {
-        let size_bytes =
-            i64::try_from(staged.size_bytes).map_err(|_| ArtifactError::SizeOverflow)?;
-        let relative_path = ArtifactStore::relative_path(&staged.sha256);
-        let draft = ArtifactDraft {
-            sha256: staged.sha256.clone(),
-            size_bytes,
-            storage_path: relative_path,
-            format: metadata.format,
-            media_type: metadata.media_type,
-            created_at_ms: now_ms(),
-        };
+        let draft = metadata.into_draft(&staged, now_ms())?;
         let store = self.store.clone();
         let artifacts = self.artifacts.clone();
         let access_gate = self.access_gate.clone();
@@ -362,6 +349,10 @@ impl ArtifactService {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
+    use crate::storage::{ArtifactStore, StageLimits};
+
     use super::ArtifactMetadata;
 
     #[test]
@@ -373,5 +364,32 @@ mod tests {
             metadata.media_type.as_deref(),
             Some("application/vnd.apache.parquet")
         );
+    }
+
+    #[test]
+    fn staged_artifact_metadata_builds_the_complete_commit_draft() {
+        let root = tempfile::tempdir().expect("create artifact test directory");
+        let store = ArtifactStore::new(root.path().to_path_buf()).expect("create artifact store");
+        let staged = store
+            .stage(Cursor::new(b"draft bytes"), StageLimits::default())
+            .expect("stage artifact");
+
+        let draft = ArtifactMetadata {
+            format: "binary".to_string(),
+            media_type: Some("application/octet-stream".to_string()),
+        }
+        .into_draft(&staged, 1_700_000_000_123)
+        .expect("build artifact draft");
+
+        let sha256 = "e45a4fb4ff1c334d36c8210bb341bd2ebd8a20e7b63013c1bbbd04439c886fa4";
+        assert_eq!(draft.sha256, sha256);
+        assert_eq!(draft.size_bytes, 11);
+        assert_eq!(draft.storage_path, format!("objects/e4/{sha256}"));
+        assert_eq!(draft.format, "binary");
+        assert_eq!(
+            draft.media_type.as_deref(),
+            Some("application/octet-stream")
+        );
+        assert_eq!(draft.created_at_ms, 1_700_000_000_123);
     }
 }

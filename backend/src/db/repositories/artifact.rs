@@ -168,82 +168,9 @@ impl ArtifactRepo {
                         return Ok(artifact);
                     }
                 }
-                let scope = schema::storage_scopes::table
-                    .find(scope_id)
-                    .first::<StorageScope>(conn)
-                    .optional()?
-                    .ok_or(RepoError::NotFound)?;
-                let existing = schema::artifacts::table
-                    .filter(schema::artifacts::sha256.eq(&draft.sha256))
-                    .first::<Artifact>(conn)
-                    .optional()?;
-                if let Some(ref artifact) = existing {
-                    if artifact.size_bytes != draft.size_bytes {
-                        return Err(RepoError::Storage("相同哈希对应不同大小".to_string()));
-                    }
-                    if schema::storage_scope_artifacts::table
-                        .find((scope_id, artifact.id))
-                        .first::<StorageScopeArtifact>(conn)
-                        .optional()?
-                        .is_some()
-                    {
-                        publish.take().expect("publish once")(&artifact.storage_path)?;
-                        retain_ref_count(conn, scope_id, artifact.id, 1)?;
-                        if let Some(file_id) = upload_file_id.as_deref() {
-                            diesel::update(schema::upload_files::table.find(file_id))
-                                .set(schema::upload_files::source_artifact_id.eq(Some(artifact.id)))
-                                .execute(conn)?;
-                        }
-                        return Ok(artifact.clone());
-                    }
-                }
-                if scope.used_artifacts >= scope.artifact_limit
-                    || scope
-                        .used_bytes
-                        .checked_add(draft.size_bytes)
-                        .is_none_or(|bytes| bytes > scope.byte_limit)
-                {
-                    return Err(RepoError::QuotaExceeded);
-                }
-                let storage_path = existing
-                    .as_ref()
-                    .map(|a| a.storage_path.as_str())
-                    .unwrap_or(&draft.storage_path);
-                publish.take().expect("publish once")(storage_path)?;
-                let artifact = match existing {
-                    Some(artifact) => artifact,
-                    None => {
-                        diesel::insert_into(schema::artifacts::table)
-                            .values(NewArtifact {
-                                sha256: draft.sha256,
-                                size_bytes: draft.size_bytes,
-                                storage_path: draft.storage_path,
-                                format: draft.format,
-                                media_type: draft.media_type,
-                                created_at_ms: draft.created_at_ms,
-                            })
-                            .execute(conn)?;
-                        schema::artifacts::table
-                            .order(schema::artifacts::id.desc())
-                            .first(conn)?
-                    }
-                };
-                diesel::insert_into(schema::storage_scope_artifacts::table)
-                    .values(StorageScopeArtifact {
-                        storage_scope_id: scope_id,
-                        artifact_id: artifact.id,
-                        ref_count: 1,
-                        created_at_ms: draft.created_at_ms,
-                    })
-                    .execute(conn)?;
-                diesel::update(schema::storage_scopes::table.find(scope_id))
-                    .set((
-                        schema::storage_scopes::used_artifacts.eq(scope.used_artifacts + 1),
-                        schema::storage_scopes::used_bytes
-                            .eq(scope.used_bytes + artifact.size_bytes),
-                        schema::storage_scopes::updated_at_ms.eq(draft.created_at_ms),
-                    ))
-                    .execute(conn)?;
+                let artifact = commit_draft_in_transaction(conn, scope_id, &draft, |path| {
+                    publish.take().expect("publish once")(path)
+                })?;
                 if let Some(file_id) = upload_file_id.as_deref() {
                     diesel::update(schema::upload_files::table.find(file_id))
                         .set(schema::upload_files::source_artifact_id.eq(Some(artifact.id)))
