@@ -6,7 +6,10 @@ mod scenario_engine;
 mod scripted_agent;
 mod scripted_author;
 
-pub use app::{E2eAppOptions, E2eCatalogMode, build_e2e_app};
+pub use app::{
+    E2eAppDependencies, E2eAppOptions, E2eAppProfile, E2eCatalogMode, assemble_e2e_app,
+    build_e2e_app,
+};
 pub use control::{ControlState, E2eConfig, E2eConfigError, control_router, run_e2e_server};
 pub use engine_fixture::{engine_fixture_root, prepare_engine_fixture};
 pub use faults::{FaultInjector, FaultPoint};

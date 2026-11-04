@@ -502,50 +502,78 @@ impl From<HistoryError> for ApiError {
 
 #[cfg(test)]
 mod tests {
+    use axum::body::to_bytes;
     use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use serde_json::Value;
 
     use super::ApiError;
     use crate::application::charting::{ChartError, ChartServiceError};
     use crate::application::{AppError, HistoryError, RunError};
     use crate::db::repositories::RepoError;
 
-    #[test]
-    fn representative_domain_errors_keep_status_and_stable_code() {
+    #[tokio::test]
+    async fn representative_domain_errors_keep_the_public_response_contract() {
         let cases = [
             (
                 ApiError::authentication_required(),
                 StatusCode::UNAUTHORIZED,
                 "authentication_required",
+                "请先登录",
+                None,
+            ),
+            (
+                HistoryError {
+                    code: "history_query_invalid",
+                    message: "invalid query".into(),
+                }
+                .into(),
+                StatusCode::BAD_REQUEST,
+                "history_query_invalid",
+                "invalid query",
+                None,
             ),
             (
                 ApiError::not_found("missing"),
                 StatusCode::NOT_FOUND,
                 "not_found",
+                "missing",
+                None,
             ),
             (
                 RunError::ConfigurationStale.into(),
                 StatusCode::CONFLICT,
                 "configuration_stale",
+                "冻结输入的来源已经变化",
+                None,
             ),
             (
                 RepoError::QuotaExceeded.into(),
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "storage_quota_exceeded",
+                "存储配额不足",
+                None,
             ),
             (
                 RunError::Invalid("invalid".into()).into(),
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "invalid_run",
+                "invalid",
+                None,
             ),
             (
                 AppError::QueueFull.into(),
                 StatusCode::TOO_MANY_REQUESTS,
                 "agent_queue_full",
+                "Agent 请求队列已满，请稍后重试",
+                None,
             ),
             (
                 ApiError::internal("failed"),
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal_error",
+                "failed",
+                None,
             ),
             (
                 HistoryError {
@@ -555,22 +583,33 @@ mod tests {
                 .into(),
                 StatusCode::SERVICE_UNAVAILABLE,
                 "history_search_unavailable",
+                "unavailable",
+                None,
             ),
         ];
 
-        for (error, expected_status, expected_code) in cases {
-            assert_eq!(error.status, expected_status);
-            assert_eq!(error.code, expected_code);
+        for (error, expected_status, expected_code, expected_message, expected_details) in cases {
+            let response = error.into_response();
+            assert_eq!(response.status(), expected_status);
+            let body = to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .expect("read API error response");
+            let body: Value = serde_json::from_slice(&body).expect("parse API error response");
+            let mut expected = serde_json::json!({
+                "error": expected_message,
+                "code": expected_code,
+            });
+            if let Some(details) = expected_details {
+                expected["details"] = details;
+            }
+            assert_eq!(body, expected);
         }
     }
 
-    #[test]
-    fn structured_domain_details_are_preserved() {
+    #[tokio::test]
+    async fn structured_domain_details_are_preserved() {
         let run: ApiError = RunError::ScriptIncompatible(vec!["bus".into(), "load".into()]).into();
-        assert_eq!(
-            run.details,
-            Some(serde_json::json!({"missingAliases":["bus", "load"]}))
-        );
+        assert_response_details(run, serde_json::json!({"missingAliases":["bus", "load"]})).await;
 
         let chart_details = serde_json::json!({"column":"voltage","reason":"not_numeric"});
         let chart: ApiError = ChartServiceError::Chart(ChartError {
@@ -579,6 +618,15 @@ mod tests {
             details: Some(chart_details.clone()),
         })
         .into();
-        assert_eq!(chart.details, Some(chart_details));
+        assert_response_details(chart, chart_details).await;
+    }
+
+    async fn assert_response_details(error: ApiError, expected: Value) {
+        let response = error.into_response();
+        let body = to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .expect("read API error response");
+        let body: Value = serde_json::from_slice(&body).expect("parse API error response");
+        assert_eq!(body["details"], expected);
     }
 }

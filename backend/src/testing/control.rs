@@ -11,13 +11,14 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::application::{AppState, ArtifactService, StorageLimits};
+use crate::application::{AppState, ArtifactService, RunScheduler, StorageLimits};
 use crate::auth::{AuthService, seed_users};
 use crate::db::{self, DbPool};
 
 use super::{
-    AuthorTurn, E2eAppOptions, E2eCatalogMode, EngineScenario, FaultInjector, FaultPoint,
-    ScenarioEngine, ScriptScenario, ScriptedAgentFactory, ScriptedAuthor, build_e2e_app,
+    AuthorTurn, E2eAppOptions, E2eAppProfile, E2eCatalogMode, EngineScenario, FaultInjector,
+    FaultPoint, ScenarioEngine, ScriptScenario, ScriptedAgentFactory, ScriptedAuthor,
+    build_e2e_app,
 };
 
 const CONTROL_HEADER: &str = "x-zjudss-e2e-token";
@@ -425,6 +426,8 @@ pub async fn run_e2e_server(
             false,
         ),
         E2eAppOptions {
+            scheduler: RunScheduler::new(4, 2, 16),
+            profile: E2eAppProfile::Minimal,
             script_author: Some(author.clone()),
             failure_analyzer: Some(author.clone()),
             managed_workflow_auto_start: true,

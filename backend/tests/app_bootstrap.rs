@@ -8,8 +8,9 @@ use axum::http::{Request, StatusCode};
 use diesel::RunQueryDsl;
 use tower::ServiceExt;
 use zjudss::adapters::SimEngine;
-use zjudss::agent::{AgentFactory, FailureAnalyzer};
-use zjudss::application::{AppState, AppStateDependencies, AppStateOptions};
+use zjudss::agent::{AgentFactory, FailureAnalyzer, ScriptAuthor};
+use zjudss::application::{AppError, AppState, AppStateDependencies, AppStateOptions};
+use zjudss::auth::UserId;
 use zjudss::config::RuntimeConfig;
 use zjudss::testing::{E2eCatalogMode, ScenarioEngine, ScriptedAgentFactory, ScriptedAuthor};
 
@@ -36,10 +37,12 @@ async fn test_app_builder_combines_overrides_without_constructor_variants() {
     let engine: Arc<dyn SimEngine> = Arc::new(ScenarioEngine::default());
     let factory: Arc<dyn AgentFactory> = Arc::new(ScriptedAgentFactory::default());
     let analyzer: Arc<dyn FailureAnalyzer> = Arc::new(ScriptedAuthor::default());
+    let author: Arc<dyn ScriptAuthor> = Arc::new(ScriptedAuthor::default());
     let app = TestApp::builder()
         .engine(engine.clone())
         .agent_factory(factory.clone())
         .failure_analyzer(analyzer.clone())
+        .script_author(author.clone())
         .catalog_mode(E2eCatalogMode::Minimal)
         .spawn()
         .await;
@@ -47,7 +50,55 @@ async fn test_app_builder_combines_overrides_without_constructor_variants() {
     assert!(Arc::ptr_eq(&app.state.engine, &engine));
     assert!(Arc::ptr_eq(&app.state.agent_factory, &factory));
     assert!(Arc::ptr_eq(&app.state.failure_analyzer, &analyzer));
+    assert!(Arc::ptr_eq(&app.state.script_author, &author));
     assert_eq!(app.state.engine_snapshot.contract_version, "e2e-contract");
+    assert_eq!(app.state.upload_single_file_limit_bytes, 2 * 1024 * 1024);
+    assert_eq!(app.state.upload_batch_limit_bytes, 8 * 1024 * 1024);
+
+    let scheduler = app.state.scheduler.clone();
+    let same_user = UserId("scheduler-same-user".into());
+    let owner_active = (0..2)
+        .map(|session_id| {
+            scheduler
+                .try_admit(&same_user, session_id)
+                .expect("minimal E2E scheduler per-user active slot")
+        })
+        .collect::<Vec<_>>();
+    let owner_queued = scheduler
+        .try_admit(&same_user, 3)
+        .expect("minimal E2E scheduler per-user queue slot");
+    assert_eq!(scheduler.active_count(), 2);
+    assert_eq!(scheduler.waiting_count(), 1);
+    drop(owner_queued);
+    assert_eq!(scheduler.waiting_count(), 0);
+    drop(owner_active);
+    assert_eq!(scheduler.active_count(), 0);
+
+    let active = (0..4)
+        .map(|index| {
+            scheduler
+                .try_admit(&UserId(format!("scheduler-user-{index}")), index)
+                .expect("minimal E2E scheduler active slot")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(scheduler.active_count(), 4);
+    let queued = (0..16)
+        .map(|index| {
+            scheduler
+                .try_admit(
+                    &UserId(format!("scheduler-user-queued-{index}")),
+                    10 + index,
+                )
+                .expect("minimal E2E scheduler queue slot")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(scheduler.active_count(), 4);
+    assert_eq!(scheduler.waiting_count(), 16);
+    assert!(matches!(
+        scheduler.try_admit(&UserId("scheduler-user-overflow".into()), 100),
+        Err(AppError::QueueFull)
+    ));
+    drop((active, queued));
 }
 
 #[test]

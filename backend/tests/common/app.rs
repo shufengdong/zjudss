@@ -7,14 +7,14 @@ use tempfile::TempDir;
 use zjudss::adapters::{SimEngine, StubEngine};
 use zjudss::agent::knowledge::AgentKnowledge;
 use zjudss::agent::{AgentFactory, FailureAnalyzer, LlmAgentFactory, LlmConfig, ScriptAuthor};
-use zjudss::application::{
-    AppState, AppStateDependencies, AppStateOptions, RunScheduler, StorageLimits,
-};
+use zjudss::application::{AppState, RunScheduler};
 use zjudss::auth::AuthService;
 use zjudss::config::RuntimeConfig;
 use zjudss::db::{self, DbPool};
-use zjudss::ingestion::ArchiveLimits;
-use zjudss::testing::{E2eCatalogMode, prepare_engine_fixture};
+use zjudss::testing::{
+    E2eAppDependencies, E2eAppOptions, E2eAppProfile, E2eCatalogMode, assemble_e2e_app,
+    prepare_engine_fixture,
+};
 
 use super::fixtures::seed_test_users;
 
@@ -32,7 +32,7 @@ pub struct TestApp {
 pub struct TestAppBuilder {
     ttl: Duration,
     secure: bool,
-    scheduler: RunScheduler,
+    scheduler: Option<RunScheduler>,
     engine: Arc<dyn SimEngine>,
     agent_factory: Arc<dyn AgentFactory>,
     failure_analyzer: Option<Arc<dyn FailureAnalyzer>>,
@@ -45,7 +45,7 @@ impl Default for TestAppBuilder {
         Self {
             ttl: Duration::from_secs(30 * 24 * 60 * 60),
             secure: false,
-            scheduler: RunScheduler::new(8, 2, 32),
+            scheduler: None,
             engine: Arc::new(StubEngine),
             agent_factory: Arc::new(LlmAgentFactory::new(LlmConfig {
                 provider: "deepseek".to_string(),
@@ -66,7 +66,7 @@ impl TestAppBuilder {
     }
 
     pub fn scheduler(mut self, scheduler: RunScheduler) -> Self {
-        self.scheduler = scheduler;
+        self.scheduler = Some(scheduler);
         self
     }
 
@@ -124,61 +124,35 @@ impl TestAppBuilder {
             .expect("publish test engine resource snapshot");
         seed_test_users(&pool, TEST_USERS);
 
-        let auth = AuthService::new(pool.clone(), self.ttl, self.secure);
         let minimal = self.catalog_mode == E2eCatalogMode::Minimal;
-        let state = AppState::assemble(
-            AppStateDependencies {
+        let scheduler = self.scheduler.unwrap_or_else(|| {
+            if minimal {
+                RunScheduler::new(4, 2, 16)
+            } else {
+                RunScheduler::new(8, 2, 32)
+            }
+        });
+        let profile = if minimal {
+            E2eAppProfile::Minimal
+        } else {
+            E2eAppProfile::Runtime(Box::new(config.clone()))
+        };
+        let state = assemble_e2e_app(
+            E2eAppDependencies {
                 pool: pool.clone(),
+                data_dir: config.data_dir.clone(),
                 engine: self.engine,
                 agent_factory: self.agent_factory,
-                auth,
-                scheduler: self.scheduler,
-            },
-            AppStateOptions {
-                data_dir: config.data_dir.clone(),
-                storage_limits: if minimal {
-                    StorageLimits {
-                        artifact_limit: 100,
-                        byte_limit: 64 * 1024 * 1024,
-                        warning_ratio: 0.8,
-                    }
-                } else {
-                    StorageLimits::default()
-                },
+                auth: AuthService::new(pool.clone(), self.ttl, self.secure),
                 engine_snapshot,
-                upload_single_file_limit_bytes: if minimal {
-                    2 * 1024 * 1024
-                } else {
-                    config.upload_single_file_limit_bytes
-                },
-                upload_batch_limit_bytes: if minimal {
-                    8 * 1024 * 1024
-                } else {
-                    config.upload_batch_limit_bytes
-                },
-                upload_staging_ttl_hours: config.upload_staging_ttl_hours,
-                script_repair_max_attempts: config.script_repair_max_attempts,
-                agent_model_retry_max: config.agent_model_retry_max,
-                managed_engine_timeout: Duration::from_millis(config.tensoreval_timeout_ms),
-                managed_result_max_file_bytes: config.result_max_file_bytes,
-                script_author_override: self.script_author,
-                failure_analyzer_override: self.failure_analyzer,
+            },
+            E2eAppOptions {
+                scheduler,
+                profile,
+                script_author: self.script_author,
+                failure_analyzer: self.failure_analyzer,
                 managed_workflow_auto_start: false,
-                archive_limits: if minimal {
-                    ArchiveLimits {
-                        max_entries: 100,
-                        max_expanded_bytes: 16 * 1024 * 1024,
-                        max_compression_ratio: 20,
-                        max_file_bytes: 2 * 1024 * 1024,
-                    }
-                } else {
-                    ArchiveLimits {
-                        max_entries: config.archive_max_entries,
-                        max_expanded_bytes: config.archive_max_expanded_bytes,
-                        max_compression_ratio: config.archive_max_compression_ratio,
-                        max_file_bytes: config.upload_single_file_limit_bytes,
-                    }
-                },
+                catalog_mode: self.catalog_mode,
             },
         );
         let router = zjudss::build_router(state.clone());
