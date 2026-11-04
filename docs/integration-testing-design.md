@@ -11,6 +11,22 @@
 - Manual case journey：仅由用户显式执行的真实 LLM/tensoreval 长测，逐个覆盖当前 snapshot 的可导入案例；不属于
   PR、普通 E2E 或 Release lane，也不作为自动功能追溯的替代证据。
 
+## Test infrastructure ownership
+
+- `backend/src/testing/app.rs` 统一把 minimal/runtime profile、scheduler、engine snapshot 与依赖 override 映射为
+  `AppStateOptions`；`backend/src/testing/engine_fixture.rs` 负责可控引擎资源。两者只在 `e2e-test` feature 下编译，
+  生产组合根仍由 `AppState::assemble` 负责。
+- `backend/tests/common/app.rs` 的 builder 只管理临时目录、数据库迁移、用户 seed 和测试选择，再调用上述共享状态装配；
+  `backend/tests/common/` 其余代码按 fixtures 和 HTTP 边界提供共享能力。新增场景组合 builder 选项，不增加
+  `spawn_with_*` 或另一套 `AppStateOptions` 构造路径；领域专用数据仍留在对应测试文件。
+- `frontend/src/test/fixtures.ts` 只保存重复公共 DTO builder。builder 自有默认值必须为每次调用创建深度隔离的对象，
+  只提供顶层覆盖；override 的所有权仍属于调用方，组件交互和特定领域状态仍在测试内显式表达。
+- Playwright 只经真实 UI、Vite proxy 和 Axum 路由工作；ScenarioEngine 控制确定性外部行为，但不能替代 HTTP、持久化、
+  浏览器交互或公共合同证据。
+
+当前确定性基线为 50 个 Vitest 文件/265 条用例、生产构建和 31 条 Playwright 旅程；Rust 全量套件的真实 eig-rs
+验收断言若失败，必须单独报告实际无效案例，不能通过共享夹具自动跳过或改写资源合同。
+
 ## Coverage matrix
 
 功能目录 `integration-tests/catalog/features.yaml` 是机器可读追溯源。每项包含 source、layers、lanes、真实

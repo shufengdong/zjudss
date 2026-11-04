@@ -69,6 +69,19 @@ repository 的异步请求路径把 Diesel 同步 SQLite 操作封装在 `spawn_
 在开始监听 HTTP 前同步完成。历史搜索的 LIKE/FTS 查询和索引重建语句集中定义，运行与分析仓储共用状态迁移
 值对象，但各自保留独立事务与表级 SQL。
 
+维护性公共代码遵循以下唯一归属，业务模块只保留领域映射和调用点：
+
+| 关注点 | 权威实现 | 边界 |
+|---|---|---|
+| application 组合根 | `backend/src/application/mod.rs` 的 `AppStateDependencies`、`AppStateOptions` 与 `AppState::assemble` | 生产和测试都使用具名依赖/选项；不再增加按参数排列的构造函数变体 |
+| HTTP 错误响应 | `backend/src/api/error.rs` | 各领域错误类型保持独立；这里只集中公开 status/code/message/details 的映射和响应构造 |
+| 后端 E2E 状态装配 | `backend/src/testing/app.rs`、`backend/src/testing/engine_fixture.rs` | 统一 minimal/runtime 限制、scheduler、override 与 snapshot 到 `AppStateOptions` 的映射；仅在 `e2e-test` feature 下编译 |
+| 后端集成测试生命周期 | `backend/tests/common/app.rs` | 只负责临时目录、数据库迁移、用户 seed 和调用共享 E2E 状态装配，不复制 `AppStateOptions` 构造 |
+| 前端 HTTP 传输 | `frontend/src/api/client.ts` 的 `checkedFetch` 与共享下载路径 | 集中凭据、错误体解析和取消信号；领域 API 模块仍负责 URL、DTO 和业务参数 |
+| 前端 DTO 测试数据 | `frontend/src/test/fixtures.ts` | 仅供测试使用；builder 自有的默认值每次深度隔离并只接受顶层覆盖，传入 override 的所有权仍属于调用方 |
+
+这些归属不允许把服务器路径、任意 ECharts option、SQL 或命令带入公共边界，也不改变各层原有的稳定错误码。
+
 ## Capacity and trust
 
 Agent 调度默认实例 8、每用户 2、每会话 1、等待 32；引擎进程默认 4。artifact 配额按固定用户的可信

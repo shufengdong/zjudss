@@ -45,7 +45,7 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 | 统一上传 | complete | DSS/ZIP/CSV/Excel/Parquet/案例的可恢复候选、解析设置/用途确认、model/resource 双发布、部分成功重试与确认幂等 |
 | 独立数据资源 | complete | 会话唯一 alias、原文件/规范 Parquet、Struct 覆盖预览、重新上传替换、删除影响、结果提升和分析输入 |
 | 草稿与版本 | complete | expected revision、整表覆盖、显式发布/激活、影响预览删除 |
-| 案例库 | complete | schema v2 manifest 与 projection profile 严格匹配；当前 144/144 案例通过受控 projector 转成目录声明的 Model/Data/Struct 候选，diagnostic 不进入输入；目录树、详情/搜索、无效叶诊断和窄屏浏览完整 |
+| 案例库 | complete | schema v2 manifest 与 projection profile 严格匹配；最后一次已接受的候选证据中 144/144 案例通过受控 projector 转成目录声明的 Model/Data/Struct 候选，diagnostic 不进入输入；当前相邻资源树状态单独见 Verification |
 | 脚本与运行 | complete | 受管 Agent 脚本已实现候选持久化、直接执行、自动修正和冻结结果合同；普通运行与工作流共用脱敏日志/失败分析器，失败进度卡可恢复展示诊断；成功脚本单次运行读取最新所需输入，失败脚本可比较输入后派生“重新尝试”，手写/上传脚本开放结果合同且不修正；终态 run 支持影响预览和原子删除 |
 | 结果与派生 | complete | 单结果删除、分析、用户配置图表、比较、tombstone 血缘；图表冻结来源快照与自己的 Plot Data，来源删除后仍可发现和读取 |
 | 前端 | complete | 三列/窄屏、模型详细说明先于研究配置卡、配置卡按浏览器会话记忆收起状态且错误自动展开、Struct 参数显示只读模板身份与本次运行覆盖、运行摘要与失败原因/耗时/全结果选择、普通运行与研究工作流共用失败诊断面板、成功研究的脚本/运行结果成果归组与脚本锚定、pending-only 轮询、结果数据表、用户配置图表工作台、active/draft/历史模型表只读工作台、登录用户菜单 |
@@ -85,18 +85,24 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 `schemars` 与 `rand_core`。ZIP 继续关闭默认 feature，仅启用 `deflate`；Arrow 与 Parquet 保持
 `60.0.0` 对齐。升级只包含必要的 API 兼容修改，不改变 REST/SSE、数据库、Agent 工具或引擎边界。
 
-## Backend maintainability baseline
+## Maintainability baseline
 
-后端以 `cargo fmt` 和全 target、全 feature 的零警告 Clippy 作为提交门槛。当前公共实现已收敛以下重复逻辑：
+后端以 `cargo fmt` 和全 target、全 feature 的零警告 Clippy 作为提交门槛，前端以全量 Vitest 和生产构建作为提交门槛。
+2026-11-04 的第一阶段全仓维护性整理已经完成，公共实现收敛以下重复逻辑：
 
 - Parquet artifact 元数据由 `ArtifactMetadata::parquet()` 统一创建；
 - 仿真、分析与比较事件中的数据集引用由 `ResultOutputRef::from_dataset()` 统一映射；
 - 仿真和分析仓储共用内部 `StateTransition` 表达 running/failed 状态字段；
-- `RunService` 使用具名依赖结构装配，避免依赖顺序错误；
+- `AppState` 和 `RunService` 使用具名依赖结构装配，删除按参数排列的构造函数链；
+- API 公开错误响应由 `api/error.rs` 统一构造，同时保留各领域错误类型和稳定 code；
+- 后端测试应用、临时引擎与 HTTP 请求夹具集中到 `backend/src/testing/` 和 `backend/tests/common/`；
+- 前端请求错误解析、下载和取消信号由 `api/client.ts` 统一处理；
+- 前端重复 DTO builder 集中到测试专用 `src/test/fixtures.ts`，每次构造的自有默认值相互隔离，传入 override 仍由调用方持有；
 - 历史搜索的 SQL、结果映射和索引重建步骤集中定义，仓储异步边界保持可读。
 
 领域错误类型仍保留在 adapter、repository 和各 application service 内，避免把不同边界的稳定错误码合并成
-一个含糊的全局错误。上述整理不改变 REST/SSE、数据库 schema、Agent 工具或引擎合同。
+一个含糊的全局错误。旧的 application 构造变体、测试 `spawn_with_*` 分支、前端手写下载分支和重复本地 DTO builder
+已经移除。上述整理不改变 REST/SSE、数据库 schema、Agent 工具或引擎合同。
 
 ## Hard boundaries
 
@@ -115,9 +121,9 @@ token 删除整个会话。删除确认后先隐藏会话并取消其 Agent/engi
 无需重启，下一次调用直接使用路径上的当前普通文件，只有文件不存在或不再是普通文件时才拒绝。资源扫描限制为 512 篇
 Markdown、单篇 4 MiB、文档合计 64 MiB、2,048 个案例、每案例 10,000 文件/2 GiB、依赖深度 64；变更资源树
 后也必须重启。案例只发现 `SPARROWZZ_DIR/dss/rssbundle` 下直接含 manifest 的 `.rssbundle` 目录；运行时允许没有案例。
-manifest 只有逐字段匹配启用的 snapshot projection profile 才可导入；当前 144 个案例全部满足。候选发布门禁要求
+manifest 只有逐字段匹配启用的 snapshot projection profile 才可导入；最后一次已接受的候选快照中 144 个案例全部满足。候选发布门禁要求
 不可导入案例为零，对全部 144 个案例逐一真实运行 projector 并验证目录声明的 Model/Data/Struct/diagnostic 输出；
-当前证据为 144/144 成功、0 失败。之后仅对每个被案例引用的 projection profile 选择一个成功代表，运行只接受
+该已接受证据为 144/144 成功、0 失败，不代表下述当前相邻 eig-rs 工作树。之后仅对每个被案例引用的 projection profile 选择一个成功代表，运行只接受
 DataFrame 命名输入的 `managed.rss`，当前为 6 个代表。当前 profile 和案例分布见 `docs/v4-deployment.md`。
 
 ## Reset and operation
@@ -137,7 +143,7 @@ Vite/Axum/SQLite/CAS 的身份、导入、分层案例目录与窄屏详情、�
 `para`、多资源不猜选、Struct 私有用户/selector 覆盖、source-less 默认值、revision/用户隔离、无提前 confirm 路由及受控列映射发布。
 
 当前代码确定性基线（不含下述真实相邻 eig-rs 资源树断言）通过 `cargo fmt --all -- --check`、
-`cargo clippy --all-targets --all-features -- -D warnings`、后端全量测试、258 条 Vitest、生产构建、31 条 Playwright 旅程及
+`cargo clippy --all-targets --all-features -- -D warnings`、后端全量测试、50 个文件/265 条 Vitest、生产构建、31 条 Playwright 旅程及
 350/350 功能证据、297/297 公共合同、100% PR 功能追溯；候选门禁另以真实
 所选真实 LLM provider、当前 eig-rs/tensoreval、动态门面与案例快照完成规划、执行、分析、比较和删除全旅程。
 候选门禁中的 tensoreval 固定以 `--no-default-features --features tensoreval-cli,with_dsa_mumps` 构建，不使用
@@ -152,10 +158,24 @@ eig-rs 默认 features。
 资源树门禁当前单独报告 7 个 `case_projection_invalid` 案例（四个 DistanceRelays、GFL IEEE123、InductionMachine 和
 59NRelayDemo），因此在外部资源合同修复并重跑前，不能把本次变更声明为候选发布全绿，也不能通过修改 zjudss 放宽该门禁。
 
+2026-11-04 的维护性第一阶段在当前代码上重新通过 50 文件/265 条 Vitest、生产构建、31/31 Playwright、后端格式与
+全 feature 零警告 Clippy；跳过且仅跳过上述一个真实资源树验收断言后，后端其余完整 `e2e-test` 套件通过。精确的
+`cargo test --features e2e-test` 仍只在
+`current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count` 报告以下 7 个外部
+`case_projection_invalid`，所以候选发布状态没有被误标为全绿：
+
+- `Examples/DistanceRelays/DistanceRelayTest.rssbundle`
+- `Examples/DistanceRelays/ReverseDistanceRelayTest.rssbundle`
+- `Examples/DistanceRelays/ReverseTD21RelayTest.rssbundle`
+- `Examples/DistanceRelays/TD21RelayTest.rssbundle`
+- `Examples/IBRDynamics_Cases/GFL_IEEE123/Run_IEEE123Bus_GFLDaily.rssbundle`
+- `Examples/InductionMachine/Run.rssbundle`
+- `Examples/Scripts/59NRelayDemo.rssbundle`
+
 独立的 `./scripts/test-manual-case-journeys` 可由测试人员显式选择运行当前 snapshot 的全部可导入案例，或以
 `CASE_JOURNEY_EXAMPLE_ID`、`CASE_JOURNEY_FACADE`、`CASE_JOURNEY_RESUME_REPORT` 聚焦/续跑。它逐案例验证导入确认、
 自然语言发布、手册原文提示词、研究确认、脚本/修正、运行和结果，并增量写入 `target/manual-case-journeys/report.json`；
-该长测不属于 PR、日常回归或候选发布门禁。当前 144/144 只证明 projector 发布门禁，只有一次显式完整长测的报告全部通过，
+该长测不属于 PR、日常回归或候选发布门禁。已接受快照的 144/144 只证明 projector 发布门禁，只有一次显式完整长测的报告全部通过，
 才能声明 144 个案例的自然语言全链路通过。
 
 案例库确认已切换为当前会话案例整体替换：单事务发布/激活模型版本与配套资源，普通上传仍保持双子事务；确认卡展示影响并保护准备后的并发变更。旧协议的部分发布案例批次需重新准备，不自动补齐为案例切换。验证以本次 case_import、data_resources、workspace_versions 和浏览器案例旅程为准。
