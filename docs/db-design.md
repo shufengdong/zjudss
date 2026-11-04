@@ -73,9 +73,24 @@ ArtifactService 的 read gate 内完成，release/GC 使用 write gate，避免�
 
 ## Artifact references
 
-commit 在一个 immediate transaction 中检查配额、去重并增加引用；发布 blob 使用原子 rename。上传确认、
-失败、放弃或过期会按仍待处理的子事务结算 staging reservation。版本、资源、运行和结果删除在元数据事务完成后
-幂等 release，并由 GC 清理零引用 blob；历史冻结输入通过 artifact 引用或墓碑继续可审计。
+`artifact.rs` 的 `commit_draft_in_transaction` 是唯一 CAS commit 算法：在一个 immediate
+transaction 中检查 scope 与配额、按 hash 去重、发布 blob、创建新 artifact/link 并结算
+`used_artifacts/used_bytes`。blob 发布使用原子 rename。普通提交、批量结果和上传原文件共用该内核；
+上传外层只校验用户/批次状态和已有指针。首次提交与 `upload_files.source_artifact_id`
+写入保持同一事务；指针已存在的同 hash/size 重放不再 retain。
+
+`artifact_refs.rs` 是已有 scope link 计数的唯一写入边界。`retain_refs` 先按 artifact ID
+聚合重复逻辑引用，`retain_ref_count` 使用 checked arithmetic 写回精确计数，`release_refs` 按同样的
+逻辑次数对称释放。缺失 link、非正 retain、溢出或释放下溢都失败关闭，由调用方的 immediate
+transaction 回滚先前更新。retain 不改变唯一 artifact usage；只有首次创建 scope link 或最后一个引用
+删除 link 时才增减 `used_artifacts/used_bytes`。用户 scope 只由仓储内的 `UserId` 解析，不接受
+客户端 scope ID。
+
+版本、资源、运行和工作流 repository 仍拥有引用集合、事务时机、领域 stale/404 映射和
+tombstone；它们不直接编写已有 link 的计数 SQL。领域删除可在同一事务释放，或在元数据事务成功后由
+service 幂等 release；原有删除/tombstone 边界不改变。零引用 blob 由 GC 清理，历史冻结输入通过
+artifact 引用或墓碑继续可审计。上传确认、失败、放弃或过期则按仍待处理的子事务单独结算
+staging reservation，reservation 不并入已提交 usage。
 
 所有 artifact 发布持有共享发布锁，结果批量发布和 GC 持有独占锁。受管运行把全部结果 artifact 引用、
 `result_datasets`、run 与 workflow 终态放进同一个 immediate transaction；事务回滚会在独占区段删除本轮新写入对象。

@@ -91,6 +91,10 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 2026-11-04 的第一阶段全仓维护性整理已经完成，公共实现收敛以下重复逻辑：
 
 - Parquet artifact 元数据由 `ArtifactMetadata::parquet()` 统一创建；
+- staged artifact 到 `ArtifactDraft` 由 `ArtifactMetadata::into_draft()` 统一构造；
+- `artifact.rs` 保留唯一 CAS commit/配额/link 创建内核，上传原文件提交不再复制该算法；
+- `artifact_refs.rs` 统一用户 scope 解析与已有 link 的 retain/release，版本、资源、运行和工作流
+  repository 不再直接更新 `ref_count`；
 - 仿真、分析与比较事件中的数据集引用由 `ResultOutputRef::from_dataset()` 统一映射；
 - 仿真和分析仓储共用内部 `StateTransition` 表达 running/failed 状态字段；
 - `AppState` 和 `RunService` 使用具名依赖结构装配，删除按参数排列的构造函数链；
@@ -171,6 +175,14 @@ eig-rs 默认 features。
 - `Examples/IBRDynamics_Cases/GFL_IEEE123/Run_IEEE123Bus_GFLDaily.rssbundle`
 - `Examples/InductionMachine/Run.rssbundle`
 - `Examples/Scripts/59NRelayDemo.rssbundle`
+
+2026-11-04 的 Artifact/数据库仓储维护阶段已将 CAS commit 收敛为单一内核，并将已有
+scope link 的 retain/release、重复逻辑引用聚合、checked arithmetic 和可信用户 scope 解析集中到
+`artifact_refs.rs`。上传原文件幂等重放、模型 clone、数据资源转移、普通运行和受管工作流的事务/
+tombstone 边界保持不变。本阶段通过后端格式与全 feature 零警告 Clippy、50/50 个文件共
+265/265 条 Vitest、生产构建、31/31 Playwright、350/350 功能证据、297/297 公共合同与 100% PR
+追溯。精确后端全测仍只报告上述同一个真实 eig-rs 断言和同一 7 个案例；仅跳过该断言后，
+其余完整 `e2e-test` 套件通过，因此候选发布状态仍未被标记为全绿。
 
 独立的 `./scripts/test-manual-case-journeys` 可由测试人员显式选择运行当前 snapshot 的全部可导入案例，或以
 `CASE_JOURNEY_EXAMPLE_ID`、`CASE_JOURNEY_FACADE`、`CASE_JOURNEY_RESUME_REPORT` 聚焦/续跑。它逐案例验证导入确认、

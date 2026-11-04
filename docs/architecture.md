@@ -75,6 +75,9 @@ repository 的异步请求路径把 Diesel 同步 SQLite 操作封装在 `spawn_
 |---|---|---|
 | application 组合根 | `backend/src/application/mod.rs` 的 `AppStateDependencies`、`AppStateOptions` 与 `AppState::assemble` | 生产和测试都使用具名依赖/选项；不再增加按参数排列的构造函数变体 |
 | HTTP 错误响应 | `backend/src/api/error.rs` | 各领域错误类型保持独立；这里只集中公开 status/code/message/details 的映射和响应构造 |
+| Artifact CAS 提交与 GC | `backend/src/db/repositories/artifact.rs` | 唯一实现 hash 去重、配额、新 artifact/link 和 usage 结算；上传原文件只在外层增加状态校验、幂等重放和指针写入 |
+| Artifact 已有引用计数 | `backend/src/db/repositories/artifact_refs.rs` | 唯一实现可信用户 scope 解析、重复 ID 聚合和已有 link 的 retain/release；唯一 artifact 的 usage 只在 link 创建/删除时变化 |
+| Artifact 领域事务 | 各 `backend/src/db/repositories/` 领域模块 | 决定引用集合、事务时机、stale/404 映射和 tombstone；不自行更新已有 `ref_count` |
 | 后端 E2E 状态装配 | `backend/src/testing/app.rs`、`backend/src/testing/engine_fixture.rs` | 统一 minimal/runtime 限制、scheduler、override 与 snapshot 到 `AppStateOptions` 的映射；仅在 `e2e-test` feature 下编译 |
 | 后端集成测试生命周期 | `backend/tests/common/app.rs` | 只负责临时目录、数据库迁移、用户 seed 和调用共享 E2E 状态装配，不复制 `AppStateOptions` 构造 |
 | 前端 HTTP 传输 | `frontend/src/api/client.ts` 的 `checkedFetch` 与共享下载路径 | 集中凭据、错误体解析和取消信号；领域 API 模块仍负责 URL、DTO 和业务参数 |

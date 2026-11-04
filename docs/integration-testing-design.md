@@ -51,6 +51,14 @@ Task 10 另以 `backend/tests/script_repair.rs` 覆盖首次生成后立即执�
 64 KiB 脱敏 prompt、审计 stderr 隔离，以及生成阶段取消；前端组件测试覆盖失败诊断直接展示、四段分析、日志下载入口和
 默认折叠的自动修正记录。`artifact_store.rs` 还验证没有数据库记录的崩溃遗留 CAS
 对象可由 GC 回收。这些是行为测试，不能由状态枚举注册测试替代。
+
+Artifact 引用边界另有一组事务证据：`artifact_refs` 单元测试覆盖重复 ID 按逻辑次数
+retain/release 但不重复计费、批量中间缺失 link 的整体回滚、非法/溢出/下溢计数失败关闭和
+用户 scope 404；`artifact_store.rs` 与 `quota_concurrency.rs` 覆盖同 hash 并发提交、配额不超卖、
+跨 scope 独立计费、开启中读取与 GC。`data_resources.rs` 覆盖活动模型中重复 artifact 的逐表
+clone/release、上传 source 引用转移和提升；`managed_workflows.rs` 覆盖确认时 scope link 损坏返回
+`ConfigurationStale`，且 configuration/workflow/run/input snapshot 均不留部分写入。上传 source
+指针幂等重放、删除 tombstone 和 GC 继续由各领域集成测试验证，不用仓储内部结构断言替代。
 Task 11 由 `simulation_runs.rs`、`workflow_retries.rs` 和 `result_deletion.rs` 覆盖资源型手写脚本无 active 执行、
 规范 script message 锚点、按门面读取最新所需输入、开放/冻结结果合同、失败脚本在输入不变时直接派生以及输入变化时
 差异确认、完整新修正预算、派生脚本血缘、终态删除 preview/token、`run_busy`/`result_busy`、全部直接结果原子 tombstone、
