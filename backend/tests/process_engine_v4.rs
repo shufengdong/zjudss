@@ -1365,4 +1365,21 @@ cp probe.parquet "$result_dir/bus.parquet"
     let stderr = &error.diagnostics.as_deref().unwrap()["stderr"]["retained"];
     assert!(stderr.as_array().is_some_and(|bytes| !bytes.is_empty()));
     assert!(case_projection_scripts(&input).is_empty());
+
+    write_executable(&binary, "#!/bin/sh\nwhile :; do sleep 1; done\n");
+    let cancelled_result_dir = root.path().join("cancelled");
+    let cancelled_engine = engine.clone();
+    let cancelled_spec = make_spec(cancelled_result_dir.clone());
+    let task = tokio::spawn(async move { cancelled_engine.project_case(cancelled_spec).await });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while case_projection_scripts(&input).is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(case_projection_scripts(&input).is_empty());
+    assert!(!cancelled_result_dir.exists());
 }
