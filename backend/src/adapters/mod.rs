@@ -17,7 +17,6 @@ pub use import::{
     CaseProjectionSpec, EXECUTION_IMPORT_TABLES, ImportEntryCandidate, ImportInspectSpec,
     ImportInspection, ImportProfile, ImportSpec, ImportedModel, MODEL_TABLE_OUTPUTS,
     PARA_RESOURCE_OUTPUT, ProjectedCase, ProjectionOutputSpec, STATIC_IMPORT_OUTPUTS,
-    STATIC_MODEL_TABLES,
 };
 pub use process::{
     EngineCommand, EngineConfig, OutputLimits, ProcessEngine, build_command, validate_outputs,
@@ -207,14 +206,12 @@ impl CapturedStream {
 }
 
 #[derive(Debug, Clone)]
-pub struct EngineExecution {
+pub struct EngineRunOutput {
     pub exit_code: i32,
     pub stdout: CapturedStream,
     pub stderr: CapturedStream,
     pub datasets: Vec<EngineDatasetOutput>,
 }
-
-pub type EngineRunOutput = EngineExecution;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

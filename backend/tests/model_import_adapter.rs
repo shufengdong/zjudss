@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use zjudss::adapters::{
     CaseProjectionSpec, ImportInspectSpec, ImportProfile, ImportSpec, ProjectionOutputSpec,
-    STATIC_MODEL_TABLES, SimEngine, StubEngine,
+    STATIC_IMPORT_OUTPUTS, SimEngine, StubEngine,
 };
 
 #[tokio::test]
@@ -181,7 +181,7 @@ async fn static_import_emits_all_canonical_snappy_tables_including_zero_rows() {
             .iter()
             .map(|dataset| dataset.name.as_str())
             .collect::<Vec<_>>(),
-        STATIC_MODEL_TABLES
+        STATIC_IMPORT_OUTPUTS
     );
     assert!(
         imported

@@ -54,9 +54,6 @@ pub const STATIC_IMPORT_OUTPUTS: [&str; 21] = [
     PARA_RESOURCE_OUTPUT,
 ];
 
-// Transitional name for V3 callers. V4 publishing must use the split constants above.
-pub const STATIC_MODEL_TABLES: [&str; 21] = STATIC_IMPORT_OUTPUTS;
-
 pub const EXECUTION_IMPORT_TABLES: [&str; 35] = [
     "bus",
     "line",

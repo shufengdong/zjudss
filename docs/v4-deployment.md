@@ -20,6 +20,10 @@ binary 必须支持命名 Parquet input、`--result-dir`、`--output-format parq
 snapshot，不固定 eig-rs/sparrowzz commit、binary SHA、资源 hash 或案例数量。生产没有 stub 回退，也不会自动
 checkout、pull、reset、clean、构建或改写配置的 eig-rs 工作树。
 
+启动顺序固定为：先功能性探测 `TENSOREVAL_BIN`，再从 `SPARROWZZ_DIR` load 资源 snapshot，最后校验源 hash 并原子
+publish。binary capability 与资源目录合同分别失败关闭；资源 load 不接收 binary feature 集合，也不会因 capability
+结果裁剪 catalog、文档或案例。任一步失败都不会开始监听 HTTP。
+
 应用配置及默认值如下；`TENSOREVAL_BIN`、`SPARROWZZ_DIR`、LLM secret 没有生产回退值。
 
 | 变量 | 默认值 |
@@ -119,7 +123,8 @@ SSE 关闭缓冲。前端构建使用 VITE_BASE_PATH=/zjudss/、VITE_API_BASE_PA
 ## Deterministic gate
 
 V4 Task 3 起，候选发布还必须通过 `process_engine_v4`：stdout/stderr 有界流式捕获、运行中结果目录监控、超时/取消
-进程组终止和退出后严格扫描均属于 adapter 发布门禁。RSS 脚本不再依赖 zjudss 静态语法校验能力。
+进程组终止和退出后单次严格 final scan 均属于 adapter 发布门禁；monitor 与 final scan 共用结果目录扫描实现，
+final scan 仍在进程退出后独立执行。RSS 脚本不再依赖 zjudss 静态语法校验能力。
 
 ```bash
 cd backend

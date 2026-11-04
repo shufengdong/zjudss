@@ -85,9 +85,11 @@ shell 命令和任意图表 option。用户配置图表不进入 Agent prompt �
 
 服务启动时从当前 `SPARROWZZ_DIR` 动态发现、验证并发布不可变 snapshot，索引受控文档章节、catalog 和案例。
 snapshot 由本次实际读取的字节计算，不比较 eig-rs/sparrowzz commit，也不要求固定案例数量；更新资源后需重启。
+资源 loader 不接收也不推断 tensoreval binary feature 集合；binary capability probe 与资源 snapshot 校验是独立门禁，
+启动仍先完成 probe，再 load/publish snapshot，任一失败都不开放服务。
 Agent 先 `search_engine_docs`，再凭 section ID 读取需要的片段。案例 search/inspect 只读；应用由固定 UI 完成。
 
-V4 动态目录基础已经实现：`functions.json=2`、`study_facades.json=1`、`dataframes.json=3` 和
+V4 动态目录基础已经实现：`functions.json=2`、`study_facades.json=1`、`dataframes.json=4` 和
 `dtype_grammar=1` 分别校验，不要求版本号相等。`study_facades.json` 是研究门面的唯一入口；输入种类、参数位置、
 结果和选择约束均由该文件及传递 DataFrame schema 决定，`functions.json` 不再补齐研究门面。单个门面或传递 schema
 无效时只禁用受影响门面并保留稳定诊断；文件缺失时发布“没有可用研究门面”的全局诊断。Agent 常驻摘要使用

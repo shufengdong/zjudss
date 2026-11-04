@@ -160,10 +160,10 @@ fn model_import_scripts(root: &Path) -> Vec<PathBuf> {
 fn write_probe_engine(path: &Path, failing_profile: Option<&str>) {
     use std::os::unix::fs::PermissionsExt;
 
-    let tables = zjudss::adapters::STATIC_MODEL_TABLES.join(" ");
+    let tables = zjudss::adapters::STATIC_IMPORT_OUTPUTS.join(" ");
     let execution_tables = format!(
         "{} solution load_shape shape_assignment storage_controller switch_control tcc_curve fuse recloser relay monitor energy_meter fault para diagnostics events",
-        zjudss::adapters::STATIC_MODEL_TABLES[..20].join(" ")
+        zjudss::adapters::MODEL_TABLE_OUTPUTS.join(" ")
     );
     let failing_profile = failing_profile.unwrap_or("none");
     let source = format!(
@@ -631,7 +631,7 @@ async fn process_engine_import_uses_input_root_wrapper_for_nested_entry() {
 
     let tables = format!(
         "{} solution load_shape shape_assignment storage_controller switch_control tcc_curve fuse recloser relay monitor energy_meter fault para diagnostics events",
-        zjudss::adapters::STATIC_MODEL_TABLES[..20].join(" ")
+        zjudss::adapters::MODEL_TABLE_OUTPUTS.join(" ")
     );
     std::fs::write(
         &binary,

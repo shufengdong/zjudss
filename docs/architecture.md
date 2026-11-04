@@ -33,7 +33,8 @@ V4 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axu
 3. repository 查询显式接收 `UserId`；跨用户和不存在资源统一 404。
 4. 发布后的模型版本、脚本 artifact、运行快照、结果和分析记录不可修改。
 5. 生产启动必须通过当前 binary 的功能性 capability 探测、动态 engine resource snapshot、Agent bundle 和用户
-   种子校验；服务不修改 eig-rs 工作树。
+   种子校验；binary 探测与资源 snapshot 是两个独立的失败关闭门禁，资源加载不消费 binary feature 集合；服务不修改
+   eig-rs 工作树。
 6. 结果事实来源仅为 Snappy Parquet；数据库保存索引、schema、行数、hash、状态和血缘。
 
 ## Consistency and recovery
@@ -78,6 +79,10 @@ repository 的异步请求路径把 Diesel 同步 SQLite 操作封装在 `spawn_
 | Artifact CAS 提交与 GC | `backend/src/db/repositories/artifact.rs` | 唯一实现 hash 去重、配额、新 artifact/link 和 usage 结算；上传原文件只在外层增加状态校验、幂等重放和指针写入 |
 | Artifact 已有引用计数 | `backend/src/db/repositories/artifact_refs.rs` | 唯一实现可信用户 scope 解析、重复 ID 聚合和已有 link 的 retain/release；唯一 artifact 的 usage 只在 link 创建/删除时变化 |
 | Artifact 领域事务 | 各 `backend/src/db/repositories/` 领域模块 | 决定引用集合、事务时机、stale/404 映射和 tombstone；不自行更新已有 `ref_count` |
+| tensoreval 进程执行 | `backend/src/adapters/process/execution.rs`、`result_scan.rs`、`monitor.rs`、`task_file.rs` | `execution` 负责进程生命周期和退出映射；monitor 与退出后的 final scan 共用同一结果扫描语义；临时 RSS/wrapper 由 RAII 文件对象负责取消清理 |
+| 引擎导入与投影 | `backend/src/adapters/process/import.rs` | 只编排受控 import/projector spec、临时任务文件和规范输出，不自行启动子进程或扫描结果目录 |
+| 引擎资源读取 | `backend/src/engine_resources/tree.rs`、`loader.rs` | `tree` 唯一实现安全路径、遍历及有界读取/hash；`loader` 解析 catalog、文档与案例并按实际字节生成 snapshot identity，不依赖 binary capability |
+| 引擎资源发布 | `backend/src/engine_resources/publisher.rs` | 唯一实现 generated/source inventory、复制时 hash 复核、staging 清理、原子 rename、既有 snapshot 校验和路径 rebase |
 | 后端 E2E 状态装配 | `backend/src/testing/app.rs`、`backend/src/testing/engine_fixture.rs` | 统一 minimal/runtime 限制、scheduler、override 与 snapshot 到 `AppStateOptions` 的映射；仅在 `e2e-test` feature 下编译 |
 | 后端集成测试生命周期 | `backend/tests/common/app.rs` | 只负责临时目录、数据库迁移、用户 seed 和调用共享 E2E 状态装配，不复制 `AppStateOptions` 构造 |
 | 前端 HTTP 传输 | `frontend/src/api/client.ts` 的 `checkedFetch` 与共享下载路径 | 集中凭据、错误体解析和取消信号；领域 API 模块仍负责 URL、DTO 和业务参数 |

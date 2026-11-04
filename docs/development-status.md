@@ -103,10 +103,16 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 - 前端请求错误解析、下载和取消信号由 `api/client.ts` 统一处理；
 - 前端重复 DTO builder 集中到测试专用 `src/test/fixtures.ts`，每次构造的自有默认值相互隔离，传入 override 仍由调用方持有；
 - 历史搜索的 SQL、结果映射和索引重建步骤集中定义，仓储异步边界保持可读。
+- 第二阶段把 tensoreval 进程职责拆为 `execution`、共享 `result_scan`、`monitor`、`import` 和 RAII `task_file`；退出后只做
+  一次独立 final scan，monitor 不再维护另一套扫描规则，取消 import/projector future 会清理临时 RSS/wrapper；
+- 引擎资源职责拆为安全树 `tree`、snapshot `loader` 和不可变 `publisher`；发布器独占 inventory/hash/staging/rename/rebase，
+  loader 不再消费虚假的 binary feature 集合，启动仍保持 capability probe → load → publish 的独立失败关闭顺序；
+- 删除 `STATIC_MODEL_TABLES` V3 过渡常量和 `EngineExecution` 类型别名，模型 20 表与含 `para` 的 21 个 import 输出分别使用
+  `MODEL_TABLE_OUTPUTS`、`STATIC_IMPORT_OUTPUTS`，运行结果结构直接命名为 `EngineRunOutput`。
 
 领域错误类型仍保留在 adapter、repository 和各 application service 内，避免把不同边界的稳定错误码合并成
 一个含糊的全局错误。旧的 application 构造变体、测试 `spawn_with_*` 分支、前端手写下载分支和重复本地 DTO builder
-已经移除。上述整理不改变 REST/SSE、数据库 schema、Agent 工具或引擎合同。
+已经移除。上述两阶段整理不改变 REST/SSE、数据库 schema、Agent 工具或引擎合同。
 
 ## Hard boundaries
 
@@ -167,6 +173,11 @@ eig-rs 默认 features。
 `cargo test --features e2e-test` 仍只在
 `current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count` 报告以下 7 个外部
 `case_projection_invalid`，所以候选发布状态没有被误标为全绿：
+
+2026-11-04 的维护性第二阶段完成 adapter process 与 engine resource tree/loader/publisher 边界拆分后，再次通过后端格式、
+全 target/all feature 零警告 Clippy、跳过且仅跳过同一外部资源断言的完整 `e2e-test`、50 文件/265 条 Vitest、生产构建、
+31/31 Playwright，以及 350/350 功能证据、297/297 公共合同和 100% PR 追溯。未跳过的后端命令仍只报告下列同一 7 个
+相邻资源树 `case_projection_invalid`，没有新增代码失败，也未放宽资源合同。
 
 - `Examples/DistanceRelays/DistanceRelayTest.rssbundle`
 - `Examples/DistanceRelays/ReverseDistanceRelayTest.rssbundle`

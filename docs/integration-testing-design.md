@@ -110,7 +110,10 @@ Rust 直接工具测试验证 skill 门禁、十进制字符串 ID、当前会�
 ScenarioEngine 场景由控制端按调用顺序排队，不使用 sleep；timeout/cancel 使用 barrier，并能排队提供二进制 stderr、
 结果合同错误和监控错误。进程 adapter 的 Rust 测试使用独立 helper process 验证双流超过 1 MiB 仍持续排空、完整 hash、
 非 UTF-8、非零退出码、进程组超时/取消、运行中三类结果限额、符号链接/目录、监控失败和退出后最终扫描；所有失败
-都断言未发布目录被清理。测试证据写入
+都断言未发布目录被清理。退出后的 final scan 只执行一次并与 monitor 共享扫描实现，同时仍独立复核退出瞬间的目录；
+import/projector 的临时 wrapper 与 RSS 通过 future cancellation 测试证明会被清理。engine resource 测试精确断言
+snapshot identity、catalog 版本、generated + manifest-declared source inventory、逐文件 hash、既有目录损坏拒绝和原子发布后的
+path rebase；binary probe 先于且独立于 resource load。测试证据写入
 `target/functional-coverage/e2e-routes.ndjson`，包含通过的测试名及实际 method/path/status。
 
 ## Commands
