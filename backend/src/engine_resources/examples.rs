@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use super::EngineResourceError;
 use super::projections::{CaseProjectionProfile, CaseProjectionRegistry};
 use super::snapshot::{ResourceLimits, SourceFileSpec};
-use super::{EngineResourceError, hash_bounded_file_with_size, read_bounded_file, safe_file};
+use super::tree::{hash_bounded_file_with_size, read_bounded_file, safe_file};
 
 const SUPPORTED_BUNDLE_SCHEMA_VERSION: u32 = 2;
 const SUPPORTED_BUNDLE_ARTIFACT: &str = "mems.dss-rss-bundle";
