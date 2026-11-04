@@ -6,9 +6,26 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use diesel::RunQueryDsl;
 use tower::ServiceExt;
+use zjudss::application::{AppState, AppStateDependencies, AppStateOptions};
 use zjudss::config::RuntimeConfig;
 
 use common::TestApp;
+
+fn named_assembly_contract(assemble: fn(AppStateDependencies, AppStateOptions) -> AppState) {
+    let _ = assemble;
+}
+
+#[tokio::test]
+async fn app_state_assembly_uses_named_dependencies_and_options() {
+    named_assembly_contract(AppState::assemble);
+    let app = TestApp::spawn().await;
+    assert_eq!(app.state.upload_single_file_limit_bytes, 50 * 1024 * 1024);
+    assert_eq!(app.state.upload_batch_limit_bytes, 500 * 1024 * 1024);
+    assert_eq!(
+        app.state.engine_snapshot.contract_version,
+        "tensoreval-parquet-v3"
+    );
+}
 
 #[test]
 fn runtime_config_uses_v4_defaults_and_rejects_zero_or_inconsistent_limits() {

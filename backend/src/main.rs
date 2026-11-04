@@ -1,6 +1,8 @@
 use zjudss::agent::knowledge::AgentKnowledge;
 use zjudss::agent::{LlmAgentFactory, LlmConfig};
-use zjudss::application::{AppState, RunScheduler, StorageLimits};
+use zjudss::application::{
+    AppState, AppStateDependencies, AppStateOptions, RunScheduler, StorageLimits,
+};
 use zjudss::auth::{AuthService, INIT_USERS_CSV, seed_users};
 use zjudss::catalog::SchemaCatalog;
 use zjudss::config::RuntimeConfig;
@@ -43,10 +45,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         EngineResourceRegistry::load(&runtime.sparrowzz_dir, &resource_features)?;
     let (engine_resources, snapshot_path) =
         EngineResourceRegistry::publish(engine_resources, &runtime.data_dir)?;
-    let catalog = std::sync::Arc::new(SchemaCatalog::from_snapshot(
-        &engine_resources,
-        &engine_resources.contract_version,
-    )?);
+    SchemaCatalog::from_snapshot(&engine_resources, &engine_resources.contract_version)?;
     let engine_resources = std::sync::Arc::new(engine_resources);
     eprintln!(
         "[config] provider = {}, model = {}",
@@ -113,31 +112,34 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         runtime.agent_max_user_runs,
         runtime.agent_queue_capacity,
     );
-    let state = AppState::new_with_resources_and_agent_factory(
-        pool,
-        engine,
-        std::sync::Arc::new(LlmAgentFactory::new(llm)),
-        runtime.data_dir,
-        auth,
-        scheduler,
-        storage_limits,
-        catalog,
-        engine_resources,
-        runtime.upload_single_file_limit_bytes,
-        runtime.upload_batch_limit_bytes,
-        runtime.upload_staging_ttl_hours,
-        runtime.script_repair_max_attempts,
-        runtime.agent_model_retry_max,
-        std::time::Duration::from_millis(runtime.tensoreval_timeout_ms),
-        runtime.result_max_file_bytes,
-        None,
-        None,
-        true,
-        ArchiveLimits {
-            max_entries: runtime.archive_max_entries,
-            max_expanded_bytes: runtime.archive_max_expanded_bytes,
-            max_compression_ratio: runtime.archive_max_compression_ratio,
-            max_file_bytes: runtime.upload_single_file_limit_bytes,
+    let state = AppState::assemble(
+        AppStateDependencies {
+            pool,
+            engine,
+            agent_factory: std::sync::Arc::new(LlmAgentFactory::new(llm)),
+            auth,
+            scheduler,
+        },
+        AppStateOptions {
+            data_dir: runtime.data_dir,
+            storage_limits,
+            engine_snapshot: engine_resources,
+            upload_single_file_limit_bytes: runtime.upload_single_file_limit_bytes,
+            upload_batch_limit_bytes: runtime.upload_batch_limit_bytes,
+            upload_staging_ttl_hours: runtime.upload_staging_ttl_hours,
+            script_repair_max_attempts: runtime.script_repair_max_attempts,
+            agent_model_retry_max: runtime.agent_model_retry_max,
+            managed_engine_timeout: std::time::Duration::from_millis(runtime.tensoreval_timeout_ms),
+            managed_result_max_file_bytes: runtime.result_max_file_bytes,
+            script_author_override: None,
+            failure_analyzer_override: None,
+            managed_workflow_auto_start: true,
+            archive_limits: ArchiveLimits {
+                max_entries: runtime.archive_max_entries,
+                max_expanded_bytes: runtime.archive_max_expanded_bytes,
+                max_compression_ratio: runtime.archive_max_compression_ratio,
+                max_file_bytes: runtime.upload_single_file_limit_bytes,
+            },
         },
     );
     state.artifact_service.collect_unreferenced().await?;

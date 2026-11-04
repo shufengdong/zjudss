@@ -12,7 +12,7 @@ use tower::ServiceExt;
 use zjudss::adapters::{SimEngine, StubEngine};
 use zjudss::agent::knowledge::AgentKnowledge;
 use zjudss::agent::{AgentFactory, FailureAnalyzer, LlmAgentFactory, LlmConfig};
-use zjudss::application::{AppState, RunScheduler};
+use zjudss::application::{AppState, AppStateDependencies, AppStateOptions, RunScheduler};
 use zjudss::application::{CandidateDecision, CandidatePurpose, UploadFile, UploadSourceKind};
 use zjudss::auth::{AuthService, CurrentUser, UserId};
 use zjudss::catalog::SchemaCatalog;
@@ -455,10 +455,8 @@ impl TestApp {
         let (engine_snapshot, _) =
             EngineResourceRegistry::publish(engine_snapshot, &config.data_dir)
                 .expect("publish isolated engine snapshot");
-        let catalog = std::sync::Arc::new(
-            SchemaCatalog::from_snapshot(&engine_snapshot, &engine_snapshot.contract_version)
-                .expect("load isolated schema catalog"),
-        );
+        SchemaCatalog::from_snapshot(&engine_snapshot, &engine_snapshot.contract_version)
+            .expect("load isolated schema catalog");
         let engine_snapshot = std::sync::Arc::new(engine_snapshot);
         let pool = db::establish_pool(&config.database_url).expect("create test database pool");
         {
@@ -475,31 +473,36 @@ impl TestApp {
         );
         let auth = AuthService::new(pool.clone(), ttl, secure);
 
-        let state = AppState::new_with_resources_and_agent_factory(
-            pool.clone(),
-            engine,
-            agent_factory,
-            config.data_dir.clone(),
-            auth,
-            scheduler,
-            zjudss::application::StorageLimits::default(),
-            catalog,
-            engine_snapshot,
-            config.upload_single_file_limit_bytes,
-            config.upload_batch_limit_bytes,
-            config.upload_staging_ttl_hours,
-            config.script_repair_max_attempts,
-            config.agent_model_retry_max,
-            std::time::Duration::from_millis(config.tensoreval_timeout_ms),
-            config.result_max_file_bytes,
-            None,
-            failure_analyzer,
-            false,
-            zjudss::ingestion::ArchiveLimits {
-                max_entries: config.archive_max_entries,
-                max_expanded_bytes: config.archive_max_expanded_bytes,
-                max_compression_ratio: config.archive_max_compression_ratio,
-                max_file_bytes: config.upload_single_file_limit_bytes,
+        let state = AppState::assemble(
+            AppStateDependencies {
+                pool: pool.clone(),
+                engine,
+                agent_factory,
+                auth,
+                scheduler,
+            },
+            AppStateOptions {
+                data_dir: config.data_dir.clone(),
+                storage_limits: zjudss::application::StorageLimits::default(),
+                engine_snapshot,
+                upload_single_file_limit_bytes: config.upload_single_file_limit_bytes,
+                upload_batch_limit_bytes: config.upload_batch_limit_bytes,
+                upload_staging_ttl_hours: config.upload_staging_ttl_hours,
+                script_repair_max_attempts: config.script_repair_max_attempts,
+                agent_model_retry_max: config.agent_model_retry_max,
+                managed_engine_timeout: std::time::Duration::from_millis(
+                    config.tensoreval_timeout_ms,
+                ),
+                managed_result_max_file_bytes: config.result_max_file_bytes,
+                script_author_override: None,
+                failure_analyzer_override: failure_analyzer,
+                managed_workflow_auto_start: false,
+                archive_limits: zjudss::ingestion::ArchiveLimits {
+                    max_entries: config.archive_max_entries,
+                    max_expanded_bytes: config.archive_max_expanded_bytes,
+                    max_compression_ratio: config.archive_max_compression_ratio,
+                    max_file_bytes: config.upload_single_file_limit_bytes,
+                },
             },
         );
         let router = zjudss::build_router(state.clone());

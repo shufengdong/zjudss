@@ -35,11 +35,10 @@ use std::sync::Arc;
 
 use tokio::sync::Semaphore;
 
-use crate::adapters::{SimEngine, resolve_data_dir};
+use crate::adapters::SimEngine;
 use crate::agent::knowledge::AgentKnowledge;
 use crate::agent::{
-    AgentFactory, FailureAnalyzer, LlmAgentFactory, LlmConfig, LlmFailureAnalyzer, LlmScriptAuthor,
-    ScriptAuthor,
+    AgentFactory, FailureAnalyzer, LlmFailureAnalyzer, LlmScriptAuthor, ScriptAuthor,
 };
 use crate::auth::AuthService;
 use crate::catalog::SchemaCatalog;
@@ -163,32 +162,32 @@ pub struct E2eAppOptions {
     pub full_engine_catalog: bool,
 }
 
+pub struct AppStateDependencies {
+    pub pool: DbPool,
+    pub engine: Arc<dyn SimEngine>,
+    pub agent_factory: Arc<dyn AgentFactory>,
+    pub auth: AuthService,
+    pub scheduler: RunScheduler,
+}
+
+pub struct AppStateOptions {
+    pub data_dir: PathBuf,
+    pub storage_limits: StorageLimits,
+    pub engine_snapshot: Arc<EngineResourceSnapshot>,
+    pub upload_single_file_limit_bytes: u64,
+    pub upload_batch_limit_bytes: u64,
+    pub upload_staging_ttl_hours: u64,
+    pub script_repair_max_attempts: usize,
+    pub agent_model_retry_max: usize,
+    pub managed_engine_timeout: std::time::Duration,
+    pub managed_result_max_file_bytes: u64,
+    pub script_author_override: Option<Arc<dyn ScriptAuthor>>,
+    pub failure_analyzer_override: Option<Arc<dyn FailureAnalyzer>>,
+    pub managed_workflow_auto_start: bool,
+    pub archive_limits: ArchiveLimits,
+}
+
 impl AppState {
-    pub fn new(pool: DbPool, engine: Arc<dyn SimEngine>, llm: LlmConfig) -> Self {
-        Self::new_with_data_dir(pool, engine, llm, resolve_data_dir())
-    }
-
-    pub fn new_with_agent_factory(
-        pool: DbPool,
-        engine: Arc<dyn SimEngine>,
-        agent_factory: Arc<dyn AgentFactory>,
-    ) -> Self {
-        let auth = AuthService::new(
-            pool.clone(),
-            std::time::Duration::from_secs(30 * 24 * 60 * 60),
-            false,
-        );
-        Self::new_with_data_dir_and_agent_factory(
-            pool,
-            engine,
-            agent_factory,
-            resolve_data_dir(),
-            auth,
-            RunScheduler::new(8, 2, 32),
-            StorageLimits::default(),
-        )
-    }
-
     #[cfg(feature = "e2e-test")]
     pub fn new_for_e2e(
         pool: DbPool,
@@ -301,195 +300,68 @@ impl AppState {
             EngineResourceSnapshot::minimal("e2e-snapshot", "e2e-contract", engine_root.join("dss"))
         };
         let catalog_value = engine_snapshot.catalog_json.clone();
-        let catalog = Arc::new(
-            SchemaCatalog::from_value("e2e-contract", &catalog_value).expect("e2e catalog valid"),
-        );
+        SchemaCatalog::from_value("e2e-contract", &catalog_value).expect("e2e catalog valid");
         let engine_snapshot = Arc::new(engine_snapshot);
-        Self::new_with_resources_and_agent_factory(
+        Self::assemble(
+            AppStateDependencies {
+                pool,
+                engine,
+                agent_factory,
+                auth,
+                scheduler: RunScheduler::new(4, 2, 16),
+            },
+            AppStateOptions {
+                data_dir,
+                storage_limits: StorageLimits {
+                    artifact_limit: 100,
+                    byte_limit: 64 * 1024 * 1024,
+                    warning_ratio: 0.8,
+                },
+                engine_snapshot,
+                upload_single_file_limit_bytes: 2 * 1024 * 1024,
+                upload_batch_limit_bytes: 8 * 1024 * 1024,
+                upload_staging_ttl_hours: 24,
+                script_repair_max_attempts: 3,
+                agent_model_retry_max: 2,
+                managed_engine_timeout: std::time::Duration::from_secs(120),
+                managed_result_max_file_bytes: 512 * 1024 * 1024,
+                script_author_override: options.script_author,
+                failure_analyzer_override: options.failure_analyzer,
+                managed_workflow_auto_start: options.managed_workflow_auto_start,
+                archive_limits: ArchiveLimits {
+                    max_entries: 100,
+                    max_expanded_bytes: 16 * 1024 * 1024,
+                    max_compression_ratio: 20,
+                    max_file_bytes: 2 * 1024 * 1024,
+                },
+            },
+        )
+    }
+
+    pub fn assemble(dependencies: AppStateDependencies, options: AppStateOptions) -> Self {
+        let AppStateDependencies {
             pool,
             engine,
             agent_factory,
-            data_dir,
-            auth,
-            RunScheduler::new(4, 2, 16),
-            StorageLimits {
-                artifact_limit: 100,
-                byte_limit: 64 * 1024 * 1024,
-                warning_ratio: 0.8,
-            },
-            catalog,
-            engine_snapshot,
-            2 * 1024 * 1024,
-            8 * 1024 * 1024,
-            24,
-            3,
-            2,
-            std::time::Duration::from_secs(120),
-            512 * 1024 * 1024,
-            options.script_author,
-            options.failure_analyzer,
-            options.managed_workflow_auto_start,
-            ArchiveLimits {
-                max_entries: 100,
-                max_expanded_bytes: 16 * 1024 * 1024,
-                max_compression_ratio: 20,
-                max_file_bytes: 2 * 1024 * 1024,
-            },
-        )
-    }
-
-    pub fn new_with_data_dir(
-        pool: DbPool,
-        engine: Arc<dyn SimEngine>,
-        llm: LlmConfig,
-        data_dir: PathBuf,
-    ) -> Self {
-        let auth = AuthService::new(
-            pool.clone(),
-            std::time::Duration::from_secs(30 * 24 * 60 * 60),
-            false,
-        );
-        Self::new_with_data_dir_and_auth(pool, engine, llm, data_dir, auth)
-    }
-
-    pub fn new_with_data_dir_and_auth(
-        pool: DbPool,
-        engine: Arc<dyn SimEngine>,
-        llm: LlmConfig,
-        data_dir: PathBuf,
-        auth: AuthService,
-    ) -> Self {
-        Self::new_with_data_dir_auth_and_scheduler(
-            pool,
-            engine,
-            llm,
-            data_dir,
-            auth,
-            RunScheduler::new(8, 2, 32),
-        )
-    }
-
-    pub fn new_with_data_dir_auth_and_scheduler(
-        pool: DbPool,
-        engine: Arc<dyn SimEngine>,
-        llm: LlmConfig,
-        data_dir: PathBuf,
-        auth: AuthService,
-        scheduler: RunScheduler,
-    ) -> Self {
-        Self::new_with_storage_limits(
-            pool,
-            engine,
-            llm,
-            data_dir,
             auth,
             scheduler,
-            StorageLimits::default(),
-        )
-    }
-
-    pub fn new_with_storage_limits(
-        pool: DbPool,
-        engine: Arc<dyn SimEngine>,
-        llm: LlmConfig,
-        data_dir: PathBuf,
-        auth: AuthService,
-        scheduler: RunScheduler,
-        storage_limits: StorageLimits,
-    ) -> Self {
-        let catalog = Arc::new(SchemaCatalog::from_value(
-            "embedded-test",
-            &serde_json::json!({"schema_version":2,"frames":{"table":{"required":{"id":"str"}}}}),
-        ).expect("内置最小 catalog 有效"));
-        let engine_snapshot = Arc::new(EngineResourceSnapshot::minimal(
-            "embedded-empty",
-            "embedded-test",
-            data_dir.clone(),
-        ));
-        Self::new_with_resources(
-            pool,
-            engine,
-            llm,
+        } = dependencies;
+        let AppStateOptions {
             data_dir,
-            auth,
-            scheduler,
             storage_limits,
-            catalog,
-            engine_snapshot,
-            50 * 1024 * 1024,
-            500 * 1024 * 1024,
-            24,
-            3,
-            2,
-            ArchiveLimits::default(),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_resources(
-        pool: DbPool,
-        engine: Arc<dyn SimEngine>,
-        llm: LlmConfig,
-        data_dir: PathBuf,
-        auth: AuthService,
-        scheduler: RunScheduler,
-        storage_limits: StorageLimits,
-        catalog: Arc<SchemaCatalog>,
-        engine_snapshot: Arc<EngineResourceSnapshot>,
-        upload_single_file_limit_bytes: u64,
-        upload_batch_limit_bytes: u64,
-        upload_staging_ttl_hours: u64,
-        script_repair_max_attempts: usize,
-        agent_model_retry_max: usize,
-        archive_limits: ArchiveLimits,
-    ) -> Self {
-        Self::new_with_resources_and_agent_factory(
-            pool,
-            engine,
-            Arc::new(LlmAgentFactory::new(llm)),
-            data_dir,
-            auth,
-            scheduler,
-            storage_limits,
-            catalog,
             engine_snapshot,
             upload_single_file_limit_bytes,
             upload_batch_limit_bytes,
             upload_staging_ttl_hours,
             script_repair_max_attempts,
             agent_model_retry_max,
-            std::time::Duration::from_secs(120),
-            512 * 1024 * 1024,
-            None,
-            None,
-            true,
+            managed_engine_timeout,
+            managed_result_max_file_bytes,
+            script_author_override,
+            failure_analyzer_override,
+            managed_workflow_auto_start,
             archive_limits,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_resources_and_agent_factory(
-        pool: DbPool,
-        engine: Arc<dyn SimEngine>,
-        agent_factory: Arc<dyn AgentFactory>,
-        data_dir: PathBuf,
-        auth: AuthService,
-        scheduler: RunScheduler,
-        storage_limits: StorageLimits,
-        _catalog: Arc<SchemaCatalog>,
-        engine_snapshot: Arc<EngineResourceSnapshot>,
-        upload_single_file_limit_bytes: u64,
-        upload_batch_limit_bytes: u64,
-        upload_staging_ttl_hours: u64,
-        script_repair_max_attempts: usize,
-        agent_model_retry_max: usize,
-        managed_engine_timeout: std::time::Duration,
-        managed_result_max_file_bytes: u64,
-        script_author_override: Option<Arc<dyn ScriptAuthor>>,
-        failure_analyzer_override: Option<Arc<dyn FailureAnalyzer>>,
-        managed_workflow_auto_start: bool,
-        archive_limits: ArchiveLimits,
-    ) -> Self {
+        } = options;
         let session_repo = SessionRepo::new(pool.clone());
         let script_author: Arc<dyn ScriptAuthor> = script_author_override.unwrap_or_else(|| {
             Arc::new(LlmScriptAuthor::from_factory(
@@ -679,52 +551,6 @@ impl AppState {
             upload_single_file_limit_bytes,
             upload_batch_limit_bytes,
         }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn new_with_data_dir_and_agent_factory(
-        pool: DbPool,
-        engine: Arc<dyn SimEngine>,
-        agent_factory: Arc<dyn AgentFactory>,
-        data_dir: PathBuf,
-        auth: AuthService,
-        scheduler: RunScheduler,
-        storage_limits: StorageLimits,
-    ) -> Self {
-        let catalog = Arc::new(
-            SchemaCatalog::from_value(
-                "embedded-test",
-                &serde_json::json!({"schema_version":2,"frames":{"table":{"required":{"id":"str"}}}}),
-            )
-            .expect("内置最小 catalog 有效"),
-        );
-        let engine_snapshot = Arc::new(EngineResourceSnapshot::minimal(
-            "embedded-empty",
-            "embedded-test",
-            data_dir.clone(),
-        ));
-        Self::new_with_resources_and_agent_factory(
-            pool,
-            engine,
-            agent_factory,
-            data_dir,
-            auth,
-            scheduler,
-            storage_limits,
-            catalog,
-            engine_snapshot,
-            50 * 1024 * 1024,
-            500 * 1024 * 1024,
-            24,
-            3,
-            2,
-            std::time::Duration::from_secs(120),
-            512 * 1024 * 1024,
-            None,
-            None,
-            true,
-            ArchiveLimits::default(),
-        )
     }
 
     /// 派生一次对话的编排服务（共享引擎/事件/仓储，克隆成本低）。
