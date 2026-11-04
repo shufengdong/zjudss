@@ -124,7 +124,7 @@ test('user-configured charts survive source deletion', async ({ loginAs, control
   await alice.page.getByRole('button', { name: '生成预览' }).click()
   await expect(alice.page.getByLabel(/line 图表.*3 个系列.*A相.*B相.*C相.*图例右侧/)).toBeVisible()
   await alice.page.getByRole('button', { name: '保存图表' }).click()
-  await expect(alice.page.getByRole('heading', { name: '三相电压' })).toBeVisible()
+  await expect(alice.page.getByRole('heading', { name: '三相电压', level: 2 })).toBeVisible()
 
   await alice.page.reload()
   await alice.page.getByRole('button', { name: '图表', exact: true }).click()
@@ -137,7 +137,7 @@ test('user-configured charts survive source deletion', async ({ loginAs, control
   await alice.page.getByRole('button', { name: '生成预览' }).click()
   await expect(alice.page.getByRole('button', { name: '保存图表' })).toBeEnabled()
   await alice.page.getByRole('button', { name: '保存图表' }).click()
-  await expect(alice.page.getByRole('heading', { name: '三相电压 副本' })).toBeVisible()
+  await expect(alice.page.getByRole('heading', { name: '三相电压 副本', level: 2 })).toBeVisible()
 
   const saved = (await (await alice.api.get(`/api/sessions/${sessionId}/dataset-views`)).json()).views
   expect(saved.map((view: any) => view.name).sort()).toEqual(['三相电压', '三相电压 副本'])
