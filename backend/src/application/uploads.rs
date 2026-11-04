@@ -12,7 +12,7 @@ use crate::adapters::{
 use crate::auth::CurrentUser;
 use crate::catalog::DataFrameContractKind;
 use crate::db::repositories::{
-    DataResourceRepo, NewUploadCandidate, NewUploadFile, RepoError, UploadBatchRecordSet,
+    NewUploadCandidate, NewUploadFile, RepoError, UploadBatchRecordSet, UploadConfirmationRepo,
     UploadRepo,
 };
 use crate::engine_resources::{
@@ -262,7 +262,7 @@ impl From<std::io::Error> for UploadBatchError {
 #[derive(Clone)]
 pub struct UploadBatchService {
     repo: UploadRepo,
-    confirmation_repo: DataResourceRepo,
+    confirmation_repo: UploadConfirmationRepo,
     artifacts: ArtifactService,
     engine: Arc<dyn SimEngine>,
     snapshot: Arc<EngineResourceSnapshot>,
@@ -273,7 +273,7 @@ pub struct UploadBatchService {
 
 pub(crate) struct UploadBatchServiceDependencies {
     pub repo: UploadRepo,
-    pub confirmation_repo: DataResourceRepo,
+    pub confirmation_repo: UploadConfirmationRepo,
     pub artifacts: ArtifactService,
     pub engine: Arc<dyn SimEngine>,
     pub snapshot: Arc<EngineResourceSnapshot>,

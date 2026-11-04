@@ -21,7 +21,7 @@ use crate::catalog::{DataFrameContractKind, DataFrameSchemaContract, DataTypeCon
 use crate::db::repositories::{
     DataResourceRepo, DeletionImpactRow, DeletionPreviewInput, PromoteDatasetInput, RepoError,
     ResourcePageRow, ResourcePublishInput, RetryStructOverlayRequest,
-    StructuredPreviewConfirmation, StructuredPreviewInput, UploadRepo,
+    StructuredPreviewConfirmation, StructuredPreviewInput, UploadConfirmationRepo, UploadRepo,
     WorkflowStructOverlayMaterial,
 };
 use crate::engine_resources::EngineResourceSnapshot;
@@ -295,6 +295,7 @@ impl From<std::io::Error> for DataResourceError {
 #[derive(Clone)]
 pub struct DataResourceService {
     repo: DataResourceRepo,
+    confirmation_repo: UploadConfirmationRepo,
     upload_repo: UploadRepo,
     uploads: UploadBatchService,
     artifacts: ArtifactService,
@@ -500,6 +501,7 @@ impl DataResourceService {
 
     pub fn new(
         repo: DataResourceRepo,
+        confirmation_repo: UploadConfirmationRepo,
         upload_repo: UploadRepo,
         uploads: UploadBatchService,
         artifacts: ArtifactService,
@@ -508,6 +510,7 @@ impl DataResourceService {
     ) -> Self {
         Self {
             repo,
+            confirmation_repo,
             upload_repo,
             uploads,
             reader: ParquetDataFrameReader::new(artifacts.clone()),
@@ -629,7 +632,7 @@ impl DataResourceService {
         if batch.batch.expires_at_ms <= now_ms() {
             return Err(Self::invalid("upload_batch_expired", "上传批次已过期"));
         }
-        self.repo
+        self.confirmation_repo
             .claim_confirmation(
                 &user.id,
                 batch_id,
@@ -838,7 +841,7 @@ impl DataResourceService {
             && let (Some(operation_id), Some(payload_hash)) =
                 (confirmation_operation_id, confirmation_payload_hash)
             && let Err(error) = self
-                .repo
+                .confirmation_repo
                 .begin_confirmation(&user.id, batch_id, operation_id, payload_hash, now_ms())
                 .await
         {
@@ -890,8 +893,8 @@ impl DataResourceService {
             && refreshed.batch.model_publish_status != "published"
         {
             match self
-                .repo
-                .publish_models(&user.id, batch_id, expected_draft, now_ms())
+                .confirmation_repo
+                .apply_model_candidates_to_draft(&user.id, batch_id, expected_draft, now_ms())
                 .await
             {
                 Ok(()) => {}
@@ -905,7 +908,7 @@ impl DataResourceService {
                         _ => "model_publish_failed",
                     };
                     let diagnostic = serde_json::json!({"code":code,"message":error.to_string()});
-                    self.repo
+                    self.confirmation_repo
                         .mark_child_failed(
                             &user.id,
                             batch_id,
@@ -956,9 +959,13 @@ impl DataResourceService {
                 )
             });
             let published = if refreshed.batch.source_kind == "case" {
-                self.repo.switch_case(&user.id, batch_id, inputs, expected_draft, now_ms()).await
+                self.confirmation_repo
+                    .switch_case(&user.id, batch_id, inputs, expected_draft, now_ms())
+                    .await
             } else {
-                self.repo.publish_resources(&user.id, batch_id, inputs, replacement, now_ms()).await
+                self.confirmation_repo
+                    .publish_resources(&user.id, batch_id, inputs, replacement, now_ms())
+                    .await
             };
             match published {
                 Ok(result) => {
@@ -994,9 +1001,9 @@ impl DataResourceService {
                     } else { error.to_string() };
                     let diagnostic = serde_json::json!({"code":code,"message":message});
                     if refreshed.batch.source_kind == "case" {
-                        self.repo.mark_child_failed(&user.id, batch_id, "model", serde_json::json!([diagnostic.clone()]).to_string(), now_ms()).await?;
+                        self.confirmation_repo.mark_child_failed(&user.id, batch_id, "model", serde_json::json!([diagnostic.clone()]).to_string(), now_ms()).await?;
                     }
-                    self.repo
+                    self.confirmation_repo
                         .mark_child_failed(
                             &user.id,
                             batch_id,
@@ -1008,7 +1015,10 @@ impl DataResourceService {
                 }
             }
         }
-        let cleanup = self.repo.finish_batch(&user.id, batch_id, now_ms()).await?;
+        let cleanup = self
+            .confirmation_repo
+            .finish_batch(&user.id, batch_id, now_ms())
+            .await?;
         for path in cleanup.staged_paths {
             let _ = std::fs::remove_file(self.data_dir.join(path));
         }
@@ -1023,7 +1033,7 @@ impl DataResourceService {
             && let Some(operation_id) = confirmation_operation_id
         {
             let _ = self
-                .repo
+                .confirmation_repo
                 .end_confirmation(&user.id, batch_id, operation_id, now_ms())
                 .await;
         }

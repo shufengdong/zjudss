@@ -17,6 +17,7 @@ mod session;
 mod storage_scope;
 mod study_configuration;
 mod upload;
+mod upload_confirmation;
 mod user;
 mod version;
 
@@ -29,8 +30,7 @@ pub use chart_view::{
 pub use comparison::ComparisonRepo;
 pub use data_resource::{
     DataResourceRepo, DeletedResource, DeletionImpactRow, DeletionPreviewInput,
-    FinishedUploadBatch, PromoteDatasetInput, PublishChildResult, ResourcePageRow,
-    ResourcePublishInput, StructuredPreviewConfirmation, StructuredPreviewInput,
+    PromoteDatasetInput, ResourcePageRow, StructuredPreviewConfirmation, StructuredPreviewInput,
 };
 pub use engine_resource_snapshot::EngineResourceSnapshotRepo;
 pub use history::{HistoryHit, HistoryRepo, SearchFilters};
@@ -59,6 +59,9 @@ pub use study_configuration::{
 pub use upload::{
     NewUploadCandidate, NewUploadFile, RecoverableUpload, SettledUpload, UploadBatchRecordSet,
     UploadRepo,
+};
+pub use upload_confirmation::{
+    FinishedUploadBatch, PublishChildResult, ResourcePublishInput, UploadConfirmationRepo,
 };
 pub use user::UserRepo;
 pub use version::{

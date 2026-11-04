@@ -48,7 +48,7 @@ use crate::db::DbPool;
 use crate::db::repositories::{
     AnalysisRepo, ArtifactRepo, ChartViewRepo, ComparisonRepo, DataResourceRepo, HistoryRepo,
     ManagedWorkflowRepo, MessageRepo, ResultRepo, RunRepo, ScriptRepo, SessionRepo,
-    StorageScopeRepo, StudyConfigurationRepo, UploadRepo, VersionRepo,
+    StorageScopeRepo, StudyConfigurationRepo, UploadConfirmationRepo, UploadRepo, VersionRepo,
 };
 use crate::engine_resources::EngineResourceSnapshot;
 use crate::ingestion::ArchiveLimits;
@@ -237,7 +237,7 @@ impl AppState {
         let upload_batch_service =
             UploadBatchService::new(uploads::UploadBatchServiceDependencies {
                 repo: UploadRepo::new(pool.clone()),
-                confirmation_repo: DataResourceRepo::new(pool.clone()),
+                confirmation_repo: UploadConfirmationRepo::new(pool.clone()),
                 artifacts: artifact_service.clone(),
                 engine: engine.clone(),
                 snapshot: engine_snapshot.clone(),
@@ -247,6 +247,7 @@ impl AppState {
             });
         let data_resource_service = DataResourceService::new(
             DataResourceRepo::new(pool.clone()),
+            UploadConfirmationRepo::new(pool.clone()),
             UploadRepo::new(pool.clone()),
             upload_batch_service.clone(),
             artifact_service.clone(),

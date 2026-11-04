@@ -10,7 +10,7 @@ use zjudss::application::{
     CandidateDecision, CandidatePurpose, ParseSettings, PublishDraftRequest, UploadBatchStatus,
     UploadFile, UploadSourceKind,
 };
-use zjudss::db::repositories::{DataResourceRepo, UploadRepo};
+use zjudss::db::repositories::{UploadConfirmationRepo, UploadRepo};
 use zjudss::storage::StageLimits;
 
 use common::TestApp;
@@ -61,7 +61,7 @@ async fn one_confirmation_claim_cannot_acquire_the_execution_lock_twice() {
     let candidate = &batch.candidates[0];
     let operation_id = "single-executor";
     let payload_hash = "a".repeat(64);
-    DataResourceRepo::new(app.pool.clone())
+    UploadConfirmationRepo::new(app.pool.clone())
         .claim_confirmation(&user.id, batch_id, operation_id, &payload_hash, 10)
         .await
         .unwrap();
@@ -557,7 +557,7 @@ async fn expiry_waits_for_an_active_confirmation_and_resumes_after_it_finishes()
         )
         .await
         .unwrap();
-    let repo = DataResourceRepo::new(app.pool.clone());
+    let repo = UploadConfirmationRepo::new(app.pool.clone());
     let payload_hash = "a".repeat(64);
     repo.claim_confirmation(&user.id, batch_id, "expiry-operation", &payload_hash, 2)
         .await
@@ -668,7 +668,7 @@ async fn startup_recovery_finalizes_committed_children_before_expiry() {
         )
         .await
         .unwrap();
-    let repo = DataResourceRepo::new(app.pool.clone());
+    let repo = UploadConfirmationRepo::new(app.pool.clone());
     let payload_hash = "b".repeat(64);
     repo.claim_confirmation(&user.id, batch_id, "recovery-operation", &payload_hash, 2)
         .await
@@ -718,7 +718,7 @@ async fn startup_recovery_never_confirms_an_unstarted_idempotency_claim() {
         .await
         .unwrap();
     let batch_id = batch.id.parse().unwrap();
-    DataResourceRepo::new(app.pool.clone())
+    UploadConfirmationRepo::new(app.pool.clone())
         .claim_confirmation(
             &user.id,
             batch_id,
