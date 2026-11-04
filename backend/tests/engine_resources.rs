@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -34,7 +33,7 @@ impl Fixture {
         self.dss().join("rssbundle/Grid/123Bus/demo.rssbundle")
     }
     fn load(&self) -> zjudss::engine_resources::EngineResourceSnapshot {
-        EngineResourceRegistry::load(&self.sparrowzz_dir, &HashSet::new()).unwrap()
+        EngineResourceRegistry::load(&self.sparrowzz_dir).unwrap()
     }
 }
 
@@ -176,7 +175,7 @@ fn rejects_each_unsupported_catalog_or_dtype_grammar_version() {
             current[path[path.len() - 1]] = json!(999);
         });
         assert_eq!(
-            EngineResourceRegistry::load(&fixture.sparrowzz_dir, &HashSet::new())
+            EngineResourceRegistry::load(&fixture.sparrowzz_dir)
                 .unwrap_err()
                 .code(),
             "engine_contract_mismatch"
@@ -781,7 +780,7 @@ fn validates_catalog_schema_and_required_shape_but_allows_no_examples() {
         root["schema_version"] = json!(999);
     });
     assert_eq!(
-        EngineResourceRegistry::load(&unsupported.sparrowzz_dir, &HashSet::new())
+        EngineResourceRegistry::load(&unsupported.sparrowzz_dir)
             .unwrap_err()
             .code(),
         "engine_contract_mismatch"
@@ -793,7 +792,7 @@ fn validates_catalog_schema_and_required_shape_but_allows_no_examples() {
     )
     .unwrap();
     assert_eq!(
-        EngineResourceRegistry::load(&malformed.sparrowzz_dir, &HashSet::new())
+        EngineResourceRegistry::load(&malformed.sparrowzz_dir)
             .unwrap_err()
             .code(),
         "catalog_invalid"
@@ -867,13 +866,9 @@ fn all_resource_limits_fail_with_one_stable_code() {
     for limits in cases {
         let fixture = fixture();
         assert_eq!(
-            EngineResourceRegistry::load_with_limits(
-                &fixture.sparrowzz_dir,
-                &HashSet::new(),
-                limits(&fixture)
-            )
-            .unwrap_err()
-            .code(),
+            EngineResourceRegistry::load_with_limits(&fixture.sparrowzz_dir, limits(&fixture))
+                .unwrap_err()
+                .code(),
             "engine_resource_limit_exceeded"
         );
     }
@@ -888,7 +883,7 @@ fn rejects_symlinks_anywhere_in_global_document_tree() {
     std::fs::write(&outside, "outside").unwrap();
     symlink(&outside, fixture.dss().join("docs/linked.md")).unwrap();
     assert_eq!(
-        EngineResourceRegistry::load(&fixture.sparrowzz_dir, &HashSet::new())
+        EngineResourceRegistry::load(&fixture.sparrowzz_dir)
             .unwrap_err()
             .code(),
         "engine_resource_path_escape"
@@ -926,7 +921,7 @@ fn publish_accepts_a_symlinked_data_dir_root() {
 fn current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count() {
     let path = PathBuf::from("../../eig-rs/sparrowzz");
     if path.join("dss/docs/catalog/dataframes.json").is_file() {
-        let snapshot = EngineResourceRegistry::load(&path, &HashSet::new())
+        let snapshot = EngineResourceRegistry::load(&path)
             .expect("current configured eig-rs resources must be dynamically valid");
         assert_eq!(snapshot.catalog_schema_versions.dataframes, 4);
         assert_eq!(snapshot.catalog_schema_versions.case_projections, 2);

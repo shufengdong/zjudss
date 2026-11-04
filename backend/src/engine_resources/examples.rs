@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use super::EngineResourceError;
 use super::projections::{CaseProjectionProfile, CaseProjectionRegistry};
 use super::snapshot::{ResourceLimits, SourceFileSpec};
-use super::tree::{hash_bounded_file_with_size, read_bounded_file, safe_file};
+use super::tree::{hash_bounded_file_with_size, limit_error, read_bounded_file, safe_file};
 
 const SUPPORTED_BUNDLE_SCHEMA_VERSION: u32 = 2;
 const SUPPORTED_BUNDLE_ARTIFACT: &str = "mems.dss-rss-bundle";
@@ -325,7 +325,7 @@ pub(crate) fn load_examples(
             continue;
         }
         if raw.files.len().saturating_add(1) > limits.max_example_files {
-            return Err(super::limit_error("example files"));
+            return Err(limit_error("example files"));
         }
         let manifest: ExampleManifest = raw.into();
         let bundle_root = manifest_path
@@ -376,7 +376,7 @@ pub(crate) fn load_examples(
             let remaining = limits
                 .max_example_bytes
                 .checked_sub(total)
-                .ok_or_else(|| super::limit_error("example bytes"))?;
+                .ok_or_else(|| limit_error("example bytes"))?;
             let (actual_hash, size) =
                 match hash_bounded_file_with_size(&path, remaining, "example bytes") {
                     Ok(result) => result,

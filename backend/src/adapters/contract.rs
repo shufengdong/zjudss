@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -119,18 +118,6 @@ impl EngineCapabilities {
             ));
         }
         Ok(())
-    }
-
-    pub fn resource_features(&self) -> HashSet<String> {
-        [
-            ("named_parquet_inputs", self.named_parquet_inputs),
-            ("static_dss_import", self.static_dss_import),
-            ("single_solve_import", self.single_solve_import),
-        ]
-        .into_iter()
-        .filter(|(_, available)| *available)
-        .map(|(name, _)| name.to_string())
-        .collect()
     }
 }
 

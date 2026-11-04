@@ -463,11 +463,6 @@ fn output_validation_rejects_symlinks_and_capability_probe_fails_closed() {
     assert!(capabilities.static_dss_import);
     assert!(capabilities.single_solve_import);
     capabilities.require_v3().unwrap();
-    assert!(
-        capabilities
-            .resource_features()
-            .contains("static_dss_import")
-    );
     let mismatched = EngineCapabilities {
         contract_version: "legacy".into(),
         result_dir: true,

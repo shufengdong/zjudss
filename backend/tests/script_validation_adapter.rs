@@ -12,19 +12,9 @@ fn capabilities() -> EngineCapabilities {
 }
 
 #[test]
-fn v4_runtime_capabilities_only_require_parquet_and_import_profiles() {
+fn v4_runtime_capabilities_require_parquet_and_import_profiles() {
     let capabilities = capabilities();
     capabilities.require_v3().unwrap();
-    assert_eq!(
-        capabilities.resource_features(),
-        [
-            "named_parquet_inputs".to_string(),
-            "single_solve_import".to_string(),
-            "static_dss_import".to_string(),
-        ]
-        .into_iter()
-        .collect()
-    );
 }
 
 #[test]

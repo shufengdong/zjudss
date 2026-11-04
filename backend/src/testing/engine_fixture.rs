@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -29,8 +28,8 @@ pub fn prepare_engine_fixture(
     let engine_root = engine_root
         .canonicalize()
         .expect("canonicalize e2e engine root");
-    let loaded = EngineResourceRegistry::load(&engine_root, &HashSet::new())
-        .expect("load complete e2e engine resources");
+    let loaded =
+        EngineResourceRegistry::load(&engine_root).expect("load complete e2e engine resources");
     let snapshot = match catalog_mode {
         E2eCatalogMode::Full => {
             EngineResourceRegistry::publish(loaded, data_dir)

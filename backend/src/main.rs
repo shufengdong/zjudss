@@ -39,10 +39,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let llm = LlmConfig::from_env();
     let process_engine = adapters::ProcessEngine::from_env()?;
     let binary_sha256 = process_engine.binary_sha256().to_string();
-    let resource_features = process_engine.capabilities().resource_features();
     let knowledge = AgentKnowledge::load_embedded(&runtime.agent_bundle_version)?;
-    let engine_resources =
-        EngineResourceRegistry::load(&runtime.sparrowzz_dir, &resource_features)?;
+    let engine_resources = EngineResourceRegistry::load(&runtime.sparrowzz_dir)?;
     let (engine_resources, snapshot_path) =
         EngineResourceRegistry::publish(engine_resources, &runtime.data_dir)?;
     SchemaCatalog::from_snapshot(&engine_resources, &engine_resources.contract_version)?;

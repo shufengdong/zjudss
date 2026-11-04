@@ -678,9 +678,8 @@ async fn real_engine_projects_all_examples_and_runs_representative_studies() {
         ENGINE_CONTRACT_VERSION
     );
     let binary_sha256 = config.binary_sha256.clone();
-    let resource_features = config.capabilities.resource_features();
     let engine = ProcessEngine::new(config);
-    let snapshot = EngineResourceRegistry::load(&sparrowzz_dir, &resource_features)
+    let snapshot = EngineResourceRegistry::load(&sparrowzz_dir)
         .unwrap_or_else(|error| panic!("release_engine_snapshot_invalid:{}", error.code()));
     let temp = tempfile::tempdir().unwrap();
     let (snapshot, _) = EngineResourceRegistry::publish(snapshot, temp.path())
