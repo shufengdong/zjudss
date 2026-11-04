@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getRun } from '../../api/client'
-import type { ProgressMessage, SimulationRun } from '../../types'
+import { simulationRun } from '../../test/fixtures'
+import type { ProgressMessage } from '../../types'
 import ProgressCard from './ProgressCard'
 
 vi.mock('../../api/client', () => ({ getRun: vi.fn() }))
@@ -15,15 +16,18 @@ const message = (kind: 'ingestion' | 'run' | 'analysis' = 'run', failed = true):
   ],
 })
 
-const run = (error: unknown): SimulationRun => ({
-  id: '9', sessionId: '1', modelVersionId: '3', modelContentHash: null,
-  scriptResourceId: '4', scriptName: 'study.rss', scriptArtifactId: '5', scriptContentHash: null,
-  scriptMessageId: null, managedWorkflowId: null, clientRunId: 'client-9', status: 'failed', stage: 'run',
-  engineContractVersion: 'v4', agentBundleVersion: null, agentSkillRefs: [], exitCode: 7, error,
-  createdAt: '2026-01-01T00:00:00Z', startedAt: '2026-01-01T00:00:01Z', finishedAt: '2026-01-01T00:00:02Z',
+const failedRun = (error: unknown) => simulationRun({
+  status: 'failed',
+  stage: 'run',
+  exitCode: 7,
+  error,
+  scriptName: 'study.rss',
+  createdAt: '2026-01-01T00:00:00Z',
+  startedAt: '2026-01-01T00:00:01Z',
+  finishedAt: '2026-01-01T00:00:02Z',
 })
 
-const modernRun = run({
+const modernRun = failedRun({
   code: 'run_failed', message: '仿真引擎执行失败', stage: 'run',
   engineLogs: [{ stream: 'stderr', text: 'parse failed', totalBytes: 12, sentBytes: 12, truncated: false }],
   analysisStatus: 'complete',
@@ -49,7 +53,7 @@ describe('ProgressCard', () => {
 
   it('renders_legacy_engine_output_without_polling', async () => {
     vi.useFakeTimers()
-    vi.mocked(getRun).mockResolvedValue(run({
+    vi.mocked(getRun).mockResolvedValue(failedRun({
       code: 'run_failed', message: '旧运行失败', engineOutput: 'legacy stderr',
     }))
     render(<ProgressCard message={message()} />)

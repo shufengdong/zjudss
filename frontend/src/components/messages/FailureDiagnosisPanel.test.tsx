@@ -1,28 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { FailureDiagnosis } from '../../types'
+import { failureDiagnosis } from '../../test/fixtures'
 import FailureDiagnosisPanel from './FailureDiagnosisPanel'
-
-const diagnosis = (overrides: Partial<FailureDiagnosis> = {}): FailureDiagnosis => ({
-  code: 'run_failed',
-  message: '仿真引擎执行失败',
-  stage: 'run',
-  exitCode: 7,
-  durationMs: 1_234,
-  engineLogs: [
-    { stream: 'stdout', text: 'engine banner', totalBytes: 13, sentBytes: 13, truncated: false },
-    { stream: 'stderr', text: 'line one\nline two', totalBytes: 99, sentBytes: 17, truncated: true },
-  ],
-  analysisStatus: 'complete',
-  analysis: {
-    summary: '脚本解析失败',
-    facts: [{ statement: '引擎报告解析失败', evidence: 'stderr: line one' }],
-    possibleCauses: [{ statement: '当前脚本可能存在语法错误', evidence: 'stderr: line two' }],
-    unknowns: ['具体语法位置'],
-    recommendations: ['核对脚本语法'],
-  },
-  ...overrides,
-})
 
 describe('FailureDiagnosisPanel', () => {
   const blobs: Blob[] = []
@@ -43,7 +22,7 @@ describe('FailureDiagnosisPanel', () => {
   })
 
   it('shows logs, metadata, truncation and all structured analysis sections', () => {
-    render(<FailureDiagnosisPanel diagnosis={diagnosis()} downloadPrefix="run-9" />)
+    render(<FailureDiagnosisPanel diagnosis={failureDiagnosis()} downloadPrefix="run-9" />)
 
     expect(screen.getByRole('heading', { name: '失败诊断' })).toBeInTheDocument()
     expect(screen.getByText('仿真引擎执行失败')).toBeInTheDocument()
@@ -60,7 +39,7 @@ describe('FailureDiagnosisPanel', () => {
   })
 
   it('downloads exactly the displayed sanitized text with a safe filename', async () => {
-    render(<FailureDiagnosisPanel diagnosis={diagnosis()} downloadPrefix="run 9/private" />)
+    render(<FailureDiagnosisPanel diagnosis={failureDiagnosis()} downloadPrefix="run 9/private" />)
     const anchor = document.createElement('a')
     const createElement = vi.spyOn(document, 'createElement').mockReturnValue(anchor)
 
@@ -74,13 +53,13 @@ describe('FailureDiagnosisPanel', () => {
   })
 
   it('distinguishes pending, unavailable and missing engine output', () => {
-    const { rerender } = render(<FailureDiagnosisPanel diagnosis={diagnosis({
+    const { rerender } = render(<FailureDiagnosisPanel diagnosis={failureDiagnosis({
       engineLogs: [], analysisStatus: 'pending', analysis: null,
     })} downloadPrefix="run-9" />)
     expect(screen.getByText('本次失败没有可用的引擎输出。')).toBeInTheDocument()
     expect(screen.getByText('正在生成智能分析')).toBeInTheDocument()
 
-    rerender(<FailureDiagnosisPanel diagnosis={diagnosis({
+    rerender(<FailureDiagnosisPanel diagnosis={failureDiagnosis({
       engineLogs: [], analysisStatus: 'unavailable', analysis: null,
     })} downloadPrefix="run-9" />)
     expect(screen.getByText('智能分析暂不可用')).toBeInTheDocument()

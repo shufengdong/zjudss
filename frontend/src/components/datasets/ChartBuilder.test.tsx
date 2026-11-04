@@ -1,6 +1,7 @@
 import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { createChartView, getChartCapabilities, previewChart } from '../../api/client'
+import { chartCapabilities } from '../../test/fixtures'
 import ChartBuilder from './ChartBuilder'
 import { useChartCapabilities } from '../../hooks/useChartCapabilities'
 import { useChartPreview } from '../../hooks/useChartPreview'
@@ -11,18 +12,7 @@ vi.mock('../../api/client', () => ({
 }))
 vi.mock('./ChartPreview', () => ({ default: ({error}:{error:string|null}) => error?<div role="alert">{error}</div>:<div aria-label="图表预览"/> }))
 
-const capabilities = {
-  datasetId: '7', schemaHash: 'h', rowCount: 3,
-  fields: [
-    { column: 'bus', dtype: 'Utf8', nullable: false, unit: null, scalarType: 'string', roles: ['category'], shape: { kind: 'scalar' } },
-    { column: 'v_mag', dtype: 'List(Float64)', nullable: false, unit: 'p.u.', scalarType: 'number', roles: ['measure'],
-      shape: { kind: 'list', rank: 1, observedPaths: [[0], [1], [2]], complete: true, truncated: false, reason: null } },
-    { column: 'wide', dtype: 'List(Float64)', nullable: false, unit: null, scalarType: 'number', roles: ['measure'],
-      shape: { kind: 'list', rank: 1, observedPaths: [[0]], complete: false, truncated: true, reason: 'too_many_components' } },
-  ],
-  templates: ['line','bar','scatter','heatmap','boxplot','histogram'].map(kind => ({ kind, enabled: true, reason: null })),
-  limits: { maxFields: 256, maxObservedPathsPerField: 64, maxSeries: 100, maxPoints: 50000, maxCategories: 5000, maxHeatmapCells: 100000 },
-} as const
+const capabilities = chartCapabilities()
 
 beforeEach(() => {
   vi.clearAllMocks()

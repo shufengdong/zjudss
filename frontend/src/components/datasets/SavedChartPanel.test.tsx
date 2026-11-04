@@ -2,6 +2,7 @@ import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-li
 import { beforeEach, expect, it, vi } from 'vitest'
 import { deleteChartView, getChartCapabilities, getChartView, getChartViewData, listChartViews } from '../../api/client'
 import { useSavedCharts } from '../../hooks/useSavedCharts'
+import { chartCapabilities } from '../../test/fixtures'
 import ChartViewWorkbench from './ChartViewWorkbench'
 import SavedChartPanel from './SavedChartPanel'
 
@@ -83,7 +84,9 @@ it('loads a live view frozen config into a copy builder',async()=>{
   const config={version:1,kind:'histogram',presentation:{legend:{show:true,position:'right',orientation:'vertical'},palette:'monochrome',title:{show:false},axis:{showGrid:false}},value:{column:'v'},bins:12} as const
   vi.mocked(getChartView).mockResolvedValue({...view('9'),contractVersion:'chart-model-v1',config,diagnostics:{}} as never)
   vi.mocked(getChartViewData).mockResolvedValue({kind:'histogram',viewId:'9',sourceDeleted:false} as never)
-  vi.mocked(getChartCapabilities).mockResolvedValue({datasetId:'7',schemaHash:'h',rowCount:3,fields:[{column:'v',dtype:'Float64',nullable:false,unit:null,scalarType:'number',roles:['measure'],shape:{kind:'scalar'}}],templates:['line','bar','scatter','heatmap','boxplot','histogram'].map(kind=>({kind,enabled:true,reason:null})),limits:{maxFields:256,maxObservedPathsPerField:64,maxSeries:100,maxPoints:50000,maxCategories:5000,maxHeatmapCells:100000}} as never)
+  vi.mocked(getChartCapabilities).mockResolvedValue(chartCapabilities({
+    fields: [{column:'v',dtype:'Float64',nullable:false,unit:null,scalarType:'number',roles:['measure'],shape:{kind:'scalar'}}],
+  }))
   render(<ChartViewWorkbench viewId="9" onClose={vi.fn()} onDeleted={vi.fn()} onOpenChart={vi.fn()} notify={vi.fn()}/>)
   fireEvent.click(await screen.findByRole('button',{name:'基于此图表新建'}))
   expect(await screen.findByDisplayValue('chart-9 副本')).toBeInTheDocument()

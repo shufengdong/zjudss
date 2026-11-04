@@ -1,11 +1,12 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
-import type { UploadBatchActions, UploadBatchView } from '../../types'
+import { uploadBatch } from '../../test/fixtures'
+import type { UploadBatchActions } from '../../types'
 import UploadBatchDecisionCard from './UploadBatchDecisionCard'
 
 it('confirms a whole case switch with activation and history guidance', async () => {
-  const batch: UploadBatchView = { id:'5',sessionId:'1',clientBatchId:'case',sourceKind:'case',status:'ready_to_confirm',modelPublishStatus:'ready',resourcePublishStatus:'ready',parseSettings:{},diagnostics:{},reservedBytes:0,expiresAtMs:Date.now()+10000,revision:1,
-    candidates:[{id:'para',displayName:'para',proposedAlias:'para',purpose:'data_resource',selected:true,evidence:{}}] }
+  const batch = uploadBatch({ id:'5',clientBatchId:'case',sourceKind:'case',status:'ready_to_confirm',expiresAtMs:Date.now()+10000,
+    candidates:[{id:'para',displayName:'para',proposedAlias:'para',purpose:'data_resource',selected:true,evidence:{}}] })
   const actions: UploadBatchActions = {updateParseSettings:vi.fn(),updateCandidates:vi.fn().mockResolvedValue({}),confirm:vi.fn().mockResolvedValue({}),discard:vi.fn(),addBatch:vi.fn(),watch:vi.fn()}
   const notify = vi.fn()
   render(<UploadBatchDecisionCard batch={batch} actions={actions} notify={notify} />)
@@ -18,7 +19,7 @@ it('confirms a whole case switch with activation and history guidance', async ()
 })
 
 it('shows switch failures instead of claiming activation', async () => {
-  const batch: UploadBatchView = { id:'6',sessionId:'1',clientBatchId:'case',sourceKind:'case',status:'ready_to_confirm',modelPublishStatus:'ready',resourcePublishStatus:'ready',parseSettings:{},diagnostics:{caseProjection:{title:'新案例'},caseSwitch:{previousCase:{batchId:4,title:'旧案例'},retiringResources:[{id:'r1',displayName:'参数',normalizedAlias:'para'}]}},reservedBytes:0,expiresAtMs:Date.now()+10000,revision:1,candidates:[] }
+  const batch = uploadBatch({ id:'6',clientBatchId:'case',sourceKind:'case',status:'ready_to_confirm',diagnostics:{caseProjection:{title:'新案例'},caseSwitch:{previousCase:{batchId:4,title:'旧案例'},retiringResources:[{id:'r1',displayName:'参数',normalizedAlias:'para'}]}},expiresAtMs:Date.now()+10000 })
   const actions: UploadBatchActions = {updateParseSettings:vi.fn(),updateCandidates:vi.fn().mockResolvedValue({}),confirm:vi.fn().mockResolvedValue({status:'ready_to_confirm',diagnostics:[{message:'资源 para 与用户数据重名'}]}),discard:vi.fn(),addBatch:vi.fn(),watch:vi.fn()}
   const notify=vi.fn()
   render(<UploadBatchDecisionCard batch={batch} actions={actions} notify={notify} />)

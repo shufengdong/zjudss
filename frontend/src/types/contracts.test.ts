@@ -5,6 +5,7 @@ import type { DatasetPage, ModelDataFramePage, OpenDataFrame } from './index'
 import type { ChartConfig, ChartModel, ChartViewSummary, CategoryValue } from './chart'
 import { createChartView, deleteChartView, getChartCapabilities, getChartView, getChartViewData,
   listChartViews, previewChart } from '../api/client'
+import { chartCapabilities } from '../test/fixtures'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -44,6 +45,7 @@ describe('chart contracts', () => {
     const configKinds: ChartConfig['kind'][] = ['line', 'bar', 'scatter', 'heatmap', 'boxplot', 'histogram']
     const modelKinds: ChartModel['kind'][] = ['line', 'bar', 'scatter', 'heatmap', 'boxplot', 'histogram']
     expect(configKinds).toEqual(modelKinds)
+    expect(chartCapabilities().templates.map(template => template.kind)).toEqual(configKinds)
   })
 
   it('keeps large integer categories tagged as decimal strings', () => {

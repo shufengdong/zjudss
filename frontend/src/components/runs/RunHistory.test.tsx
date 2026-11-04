@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { listRunDatasets } from '../../api/client'
+import { simulationRun } from '../../test/fixtures'
 import type { DatasetMetadata, SimulationRun } from '../../types'
 import type { RunHistoryState } from '../../hooks/useRunHistory'
 import RunHistory from './RunHistory'
@@ -8,15 +9,13 @@ import RunHistory from './RunHistory'
 vi.mock('../../api/client', () => ({ listRunDatasets: vi.fn() }))
 
 const mockedListRunDatasets = vi.mocked(listRunDatasets)
-const makeRun = (overrides: Partial<SimulationRun> = {}): SimulationRun => ({
-  id: '9', sessionId: '1', modelVersionId: '3', modelContentHash: 'm'.repeat(64),
-  scriptResourceId: '4', scriptName: 'long-script.rss', scriptArtifactId: '5',
-  scriptContentHash: 's'.repeat(64), clientRunId: 'client-9', status: 'succeeded',
-  scriptMessageId: null, managedWorkflowId: null,
-  stage: 'completed', engineContractVersion: 'tensoreval-parquet-v3', agentBundleVersion: null,
-  agentSkillRefs: [{ kind: 'study-plan', function: 'ds_radial_pf' }], exitCode: 0, error: null,
-  createdAt: '2026-01-01T00:00:00Z', startedAt: '2026-01-01T00:00:01Z',
-  finishedAt: '2026-01-01T00:00:03Z', ...overrides,
+const historyRun = (overrides: Partial<SimulationRun> = {}) => simulationRun({
+  scriptName: 'long-script.rss',
+  agentSkillRefs: [{ kind: 'study-plan', function: 'ds_radial_pf' }],
+  createdAt: '2026-01-01T00:00:00Z',
+  startedAt: '2026-01-01T00:00:01Z',
+  finishedAt: '2026-01-01T00:00:03Z',
+  ...overrides,
 })
 const makeDataset = (id: string, name: string, rowCount: number, sizeBytes: number): DatasetMetadata => ({
   id, runId: '9', analysisRunId: null, name, rowCount, sizeBytes, columns: [], views: [],
@@ -35,7 +34,7 @@ describe('RunHistory', () => {
   beforeEach(() => mockedListRunDatasets.mockReset())
 
   it('renders an informative collapsed summary and offers terminal deletion without requesting results', () => {
-    render(<RunHistory history={state([makeRun()])} datasetRevision={0} onOpenDataset={vi.fn()} />)
+    render(<RunHistory history={state([historyRun()])} datasetRevision={0} onOpenDataset={vi.fn()} />)
     const header = screen.getByRole('button', { name: /静态潮流/ })
     expect(header).toHaveAttribute('aria-expanded', 'false')
     expect(header).toHaveTextContent('成功')
@@ -49,7 +48,7 @@ describe('RunHistory', () => {
   it('uses the main area to locate the exact script while details remain independent',()=>{
     const locate=vi.fn()
     mockedListRunDatasets.mockResolvedValue([])
-    render(<RunHistory history={state([makeRun({scriptMessageId:'message-7'})])} datasetRevision={0} onOpenDataset={vi.fn()} onLocateScript={locate}/>)
+    render(<RunHistory history={state([historyRun({scriptMessageId:'message-7'})])} datasetRevision={0} onOpenDataset={vi.fn()} onLocateScript={locate}/>)
     fireEvent.click(screen.getByRole('button',{name:/静态潮流/}))
     expect(locate).toHaveBeenCalledWith('message-7')
     expect(screen.queryByText('计算结果（0）')).not.toBeInTheDocument()
@@ -60,7 +59,7 @@ describe('RunHistory', () => {
   it('loads deletion impact and deletes only after explicit confirmation',async()=>{
     const previewDeletion=vi.fn().mockResolvedValue({impactToken:'token',status:'succeeded',resultCount:2,resultBytes:1024,derivedReferenceCount:1,promotedReferenceCount:1,resultIds:[1,2],expiresAt:'x'}),deleteRun=vi.fn().mockResolvedValue(undefined)
     const onRunDeleted=vi.fn()
-    render(<RunHistory history={state([makeRun()],{previewDeletion,deleteRun})} datasetRevision={0} onOpenDataset={vi.fn()} onRunDeleted={onRunDeleted}/>)
+    render(<RunHistory history={state([historyRun()],{previewDeletion,deleteRun})} datasetRevision={0} onOpenDataset={vi.fn()} onRunDeleted={onRunDeleted}/>)
     fireEvent.click(screen.getByRole('button',{name:'删除运行 9'}))
     expect(await screen.findByRole('dialog',{name:'删除运行记录'})).toHaveTextContent('2 个直接结果')
     expect(deleteRun).not.toHaveBeenCalled()
@@ -71,7 +70,7 @@ describe('RunHistory', () => {
 
   it('focuses the deletion dialog and cancellation performs no mutation',async()=>{
     const previewDeletion=vi.fn().mockResolvedValue({impactToken:'token',status:'failed',resultCount:0,resultBytes:0,derivedReferenceCount:0,promotedReferenceCount:0,resultIds:[],expiresAt:'x'}),deleteRun=vi.fn()
-    render(<RunHistory history={state([makeRun({status:'failed'})],{previewDeletion,deleteRun})} datasetRevision={0} onOpenDataset={vi.fn()}/>)
+    render(<RunHistory history={state([historyRun({status:'failed'})],{previewDeletion,deleteRun})} datasetRevision={0} onOpenDataset={vi.fn()}/>)
     fireEvent.click(screen.getByRole('button',{name:'删除运行 9'}))
     const cancel=await screen.findByRole('button',{name:'取消'})
     await waitFor(()=>expect(cancel).toHaveFocus())
@@ -86,7 +85,7 @@ describe('RunHistory', () => {
       makeDataset('22', 'loss', 8, 3_277),
     ])
     const onOpenDataset = vi.fn()
-    render(<RunHistory history={state([makeRun()])} datasetRevision={0} onOpenDataset={onOpenDataset} />)
+    render(<RunHistory history={state([historyRun()])} datasetRevision={0} onOpenDataset={onOpenDataset} />)
     fireEvent.click(screen.getByRole('button', { name: /静态潮流/ }))
     expect(screen.getByText('正在加载计算结果…')).toBeInTheDocument()
     expect(await screen.findByText('计算结果（2）')).toBeInTheDocument()
@@ -101,7 +100,7 @@ describe('RunHistory', () => {
   })
 
   it('shows failed and running details without requesting result datasets', () => {
-    const failed = makeRun({
+    const failed = historyRun({
       id: '10', status: 'failed', stage: 'execute', exitCode: 7,
       error: {
         code: 'engine_failed', message: '求解未收敛',
@@ -109,7 +108,7 @@ describe('RunHistory', () => {
       },
       finishedAt: '2026-01-01T00:00:01.700Z',
     })
-    const running = makeRun({
+    const running = historyRun({
       id: '11', status: 'running', stage: 'collect', exitCode: null,
       startedAt: '2026-01-01T00:00:01Z', finishedAt: null,
     })
@@ -133,11 +132,11 @@ describe('RunHistory', () => {
 
   it('preserves expansion and loads results when a running record succeeds', async () => {
     mockedListRunDatasets.mockResolvedValue([makeDataset('23', 'completed-result', 2, 200)])
-    const running = makeRun({ status: 'running', stage: 'execute', finishedAt: null })
+    const running = historyRun({ status: 'running', stage: 'execute', finishedAt: null })
     const { rerender } = render(<RunHistory history={state([running])} datasetRevision={0} onOpenDataset={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: /静态潮流/ }))
     expect(screen.getByText('计算完成后可查看结果')).toBeInTheDocument()
-    rerender(<RunHistory history={state([makeRun()])} datasetRevision={0} onOpenDataset={vi.fn()} />)
+    rerender(<RunHistory history={state([historyRun()])} datasetRevision={0} onOpenDataset={vi.fn()} />)
     expect(await screen.findByText('completed-result')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /静态潮流/ })).toHaveAttribute('aria-expanded', 'true')
   })
@@ -153,7 +152,7 @@ describe('RunHistory', () => {
   it('shows a result error and retries that run only', async () => {
     mockedListRunDatasets.mockRejectedValueOnce(new Error('请求失败（502）'))
       .mockResolvedValueOnce([makeDataset('22', 'loss', 8, 3_277)])
-    render(<RunHistory history={state([makeRun()])} datasetRevision={0} onOpenDataset={vi.fn()} />)
+    render(<RunHistory history={state([historyRun()])} datasetRevision={0} onOpenDataset={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: /静态潮流/ }))
     expect(await screen.findByRole('alert')).toHaveTextContent('结果加载失败：请求失败（502）')
     fireEvent.click(screen.getByRole('button', { name: '重试加载计算结果' }))
@@ -165,7 +164,7 @@ describe('RunHistory', () => {
     const oldRequest = deferred<DatasetMetadata[]>()
     const refreshedRequest = deferred<DatasetMetadata[]>()
     mockedListRunDatasets.mockReturnValueOnce(oldRequest.promise).mockReturnValueOnce(refreshedRequest.promise)
-    const history = state([makeRun()])
+    const history = state([historyRun()])
     const { rerender } = render(<RunHistory history={history} datasetRevision={0} onOpenDataset={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: /静态潮流/ }))
     rerender(<RunHistory history={history} datasetRevision={1} onOpenDataset={vi.fn()} />)
@@ -179,7 +178,7 @@ describe('RunHistory', () => {
   it('invalidates a collapsed result cache after deletion before reopening', async () => {
     mockedListRunDatasets.mockResolvedValueOnce([makeDataset('21', 'deleted-result', 1, 100)])
       .mockResolvedValueOnce([makeDataset('22', 'remaining-result', 1, 100)])
-    const history = state([makeRun()])
+    const history = state([historyRun()])
     const { rerender } = render(<RunHistory history={history} datasetRevision={0} onOpenDataset={vi.fn()} />)
     const header = screen.getByRole('button', { name: /静态潮流/ })
     fireEvent.click(header)

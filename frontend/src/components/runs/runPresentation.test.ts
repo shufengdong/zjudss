@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SimulationRun } from '../../types'
+import { simulationRun } from '../../test/fixtures'
 import {
   formatBytes,
   formatDuration,
@@ -12,17 +13,6 @@ import {
   runTitle,
 } from './runPresentation'
 
-const run = (overrides: Partial<SimulationRun> = {}): SimulationRun => ({
-  id: '9', sessionId: '1', modelVersionId: '3', modelContentHash: 'm'.repeat(64),
-  scriptResourceId: '4', scriptName: 'manual-study.rss', scriptArtifactId: '5',
-  scriptContentHash: 's'.repeat(64), clientRunId: 'client', status: 'succeeded',
-  scriptMessageId: null, managedWorkflowId: null,
-  stage: 'completed', engineContractVersion: 'v3', agentBundleVersion: null,
-  agentSkillRefs: [], exitCode: 0, error: null,
-  createdAt: '2026-01-01T00:00:00.000Z', startedAt: '2026-01-01T00:00:01.000Z',
-  finishedAt: '2026-01-01T00:00:03.500Z', ...overrides,
-})
-
 describe('run presentation', () => {
   it.each([
     ['ds_radial_pf', '静态潮流'],
@@ -33,14 +23,14 @@ describe('run presentation', () => {
     ['ds_harmonic_study', '谐波分析'],
     ['ds_motor_dynamics', '电机暂态'],
   ])('maps governed function %s to %s', (studyFunction, title) => {
-    expect(runTitle(run({ agentSkillRefs: [{ kind: 'study-plan', function: studyFunction }] }))).toBe(title)
+    expect(runTitle(simulationRun({ agentSkillRefs: [{ kind: 'study-plan', function: studyFunction }] }))).toBe(title)
   })
 
   it('falls back to the immutable script name for manual or malformed audit data', () => {
-    expect(runTitle(run())).toBe('manual-study.rss')
-    expect(runTitle(run({ agentSkillRefs: [{ kind: 'study-plan', function: 'unknown' }] }))).toBe('manual-study.rss')
-    expect(runTitle(run({ agentSkillRefs: { function: 'ds_fault_study' } }))).toBe('manual-study.rss')
-    expect(runTitle(run({ agentSkillRefs: [{ kind: 'study-plan', function: '__proto__' }] }))).toBe('manual-study.rss')
+    expect(runTitle(simulationRun())).toBe('manual-study.rss')
+    expect(runTitle(simulationRun({ agentSkillRefs: [{ kind: 'study-plan', function: 'unknown' }] }))).toBe('manual-study.rss')
+    expect(runTitle(simulationRun({ agentSkillRefs: { function: 'ds_fault_study' } }))).toBe('manual-study.rss')
+    expect(runTitle(simulationRun({ agentSkillRefs: [{ kind: 'study-plan', function: '__proto__' }] }))).toBe('manual-study.rss')
   })
 
   it('localizes statuses and execution stages without guessing unknown values', () => {
@@ -55,11 +45,11 @@ describe('run presentation', () => {
   })
 
   it('derives terminal, running and queued durations from authoritative timestamps', () => {
-    expect(runDurationMs(run(), Date.parse('2026-01-01T00:00:10Z'))).toBe(2_500)
-    expect(runDurationMs(run({ status: 'running', finishedAt: null }), Date.parse('2026-01-01T00:00:04Z'))).toBe(3_000)
-    expect(runDurationMs(run({ status: 'queued', startedAt: null, finishedAt: null }), Date.parse('2026-01-01T00:00:02Z'))).toBe(2_000)
-    expect(runDurationMs(run({ finishedAt: '2025-12-31T23:59:59Z' }), Date.now())).toBeNull()
-    expect(runDurationMs(run({ startedAt: 'not-a-date' }), Date.now())).toBeNull()
+    expect(runDurationMs(simulationRun(), Date.parse('2026-01-01T00:00:10Z'))).toBe(2_500)
+    expect(runDurationMs(simulationRun({ status: 'running', finishedAt: null }), Date.parse('2026-01-01T00:00:04Z'))).toBe(3_000)
+    expect(runDurationMs(simulationRun({ status: 'queued', startedAt: null, finishedAt: null }), Date.parse('2026-01-01T00:00:02Z'))).toBe(2_000)
+    expect(runDurationMs(simulationRun({ finishedAt: '2025-12-31T23:59:59Z' }), Date.now())).toBeNull()
+    expect(runDurationMs(simulationRun({ startedAt: 'not-a-date' }), Date.now())).toBeNull()
   })
 
   it('formats durations and byte sizes deterministically', () => {
@@ -75,17 +65,17 @@ describe('run presentation', () => {
   })
 
   it('renders only bounded public failure strings and otherwise uses a safe fallback', () => {
-    expect(runFailure(run({ status: 'failed', error: {
+    expect(runFailure(simulationRun({ status: 'failed', error: {
       code: 'run_failed', message: '求解未收敛', engineOutput: 'line 1\nline 2',
     } }))).toEqual({
       code: 'run_failed', message: '求解未收敛', engineOutput: 'line 1\nline 2',
     })
-    expect(runFailure(run({ status: 'failed', error: null })).message).toBe('运行失败，未提供可用原因')
-    expect(runFailure(run({ status: 'failed', error: ['raw', 'diagnostics'] })).message).toBe('运行失败，未提供可用原因')
-    const bounded = runFailure(run({ status: 'failed', error: { message: '错'.repeat(600) } })).message
+    expect(runFailure(simulationRun({ status: 'failed', error: null })).message).toBe('运行失败，未提供可用原因')
+    expect(runFailure(simulationRun({ status: 'failed', error: ['raw', 'diagnostics'] })).message).toBe('运行失败，未提供可用原因')
+    const bounded = runFailure(simulationRun({ status: 'failed', error: { message: '错'.repeat(600) } })).message
     expect(Array.from(bounded)).toHaveLength(501)
     expect(bounded.endsWith('…')).toBe(true)
-    const boundedOutput = runFailure(run({ status: 'failed', error: {
+    const boundedOutput = runFailure(simulationRun({ status: 'failed', error: {
       message: '失败', engineOutput: '错'.repeat(17_000),
     } })).engineOutput!
     expect(Array.from(boundedOutput)).toHaveLength(16_385)
@@ -93,7 +83,7 @@ describe('run presentation', () => {
   })
 
   it('parses modern run diagnosis into the shared bounded shape', () => {
-    const diagnosis = parseRunFailureDiagnosis(run({
+    const parsed = parseRunFailureDiagnosis(simulationRun({
       status: 'failed', exitCode: 7, stage: 'run', error: {
         code: 'run_failed', message: '仿真引擎执行失败', stage: 'run', durationMs: 999,
         engineLogs: [{ stream: 'stderr', text: 'parse failed', totalBytes: 12, sentBytes: 12, truncated: false }],
@@ -106,7 +96,7 @@ describe('run presentation', () => {
       },
     }))
 
-    expect(diagnosis).toEqual({
+    expect(parsed).toEqual({
       code: 'run_failed', message: '仿真引擎执行失败', stage: 'run', exitCode: 7,
       durationMs: 2_500,
       engineLogs: [{ stream: 'stderr', text: 'parse failed', totalBytes: 12, sentBytes: 12, truncated: false }],
@@ -120,14 +110,14 @@ describe('run presentation', () => {
   })
 
   it('maps legacy engine output to one stderr log with unavailable analysis', () => {
-    const diagnosis = parseRunFailureDiagnosis(run({ status: 'failed', error: {
+    const parsed = parseRunFailureDiagnosis(simulationRun({ status: 'failed', error: {
       code: 'run_failed', message: '旧运行失败', engineOutput: 'legacy stderr',
     } }))
 
-    expect(diagnosis.engineLogs).toEqual([{
+    expect(parsed.engineLogs).toEqual([{
       stream: 'stderr', text: 'legacy stderr', totalBytes: null, sentBytes: null, truncated: false,
     }])
-    expect(diagnosis.analysisStatus).toBe('unavailable')
-    expect(diagnosis.analysis).toBeNull()
+    expect(parsed.analysisStatus).toBe('unavailable')
+    expect(parsed.analysis).toBeNull()
   })
 })

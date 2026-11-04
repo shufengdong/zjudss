@@ -1,8 +1,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { confirmUploadBatch, getUploadBatch, uploadBatchFiles } from '../api/client'
+import { uploadBatch } from '../test/fixtures'
 import { classifyUploads, selectableCandidateIds, useUploadBatches } from './useUploadBatches'
-import type { UploadBatchView } from '../types'
 
 vi.mock('../api/client', () => ({
   getUploadBatch: vi.fn(), uploadBatchFiles: vi.fn(), uploadScript: vi.fn(),
@@ -10,11 +10,12 @@ vi.mock('../api/client', () => ({
   discardUploadBatch: vi.fn(),
 }))
 
-const batch = (id: string, sessionId = 's'):UploadBatchView => ({
-  id, sessionId, clientBatchId: `client-${id}`, sourceKind: 'upload', replacementResourceId: null,
-  status: 'awaiting_purpose', modelPublishStatus: 'ready', resourcePublishStatus: 'ready',
-  parseSettings: {}, diagnostics: [], reservedBytes: 1, expiresAtMs: 10, revision: 1,
-  candidates: [],
+const durableBatch = (id: string, sessionId = 's') => uploadBatch({
+  id,
+  sessionId,
+  clientBatchId: `client-${id}`,
+  diagnostics: [],
+  reservedBytes: 1,
 })
 
 describe('useUploadBatches', () => {
@@ -47,7 +48,7 @@ describe('useUploadBatches', () => {
   })
 
   it('recovers durable batch ids and clears them when the session changes', async () => {
-    vi.mocked(getUploadBatch).mockImplementation(async id => batch(id, id === 'one' ? 's1' : 's2'))
+    vi.mocked(getUploadBatch).mockImplementation(async id => durableBatch(id, id === 'one' ? 's1' : 's2'))
     const { result, rerender } = renderHook(({ sessionId, ids }) => useUploadBatches(sessionId, null, vi.fn(), ids), {
       initialProps: { sessionId: 's1' as string | null, ids: ['one'] },
     })
@@ -57,8 +58,8 @@ describe('useUploadBatches', () => {
   })
 
   it('adds newly observed durable ids without clearing batches already accepted in the session', async () => {
-    vi.mocked(uploadBatchFiles).mockResolvedValue(batch('local'))
-    vi.mocked(getUploadBatch).mockResolvedValue(batch('durable'))
+    vi.mocked(uploadBatchFiles).mockResolvedValue(durableBatch('local'))
+    vi.mocked(getUploadBatch).mockResolvedValue(durableBatch('durable'))
     const { result, rerender } = renderHook(({ids})=>useUploadBatches('s',null,vi.fn(),ids),{initialProps:{ids:[] as string[]}})
     await act(async()=>result.current.upload([new File(['id\n1'],'data.csv')]))
     expect(result.current.batches.map(value=>value.id)).toContain('local')
@@ -67,7 +68,7 @@ describe('useUploadBatches', () => {
   })
 
   it('uploads all supported non-RSS files in one unified batch', async () => {
-    vi.mocked(uploadBatchFiles).mockResolvedValue(batch('new'))
+    vi.mocked(uploadBatchFiles).mockResolvedValue(durableBatch('new'))
     const { result } = renderHook(() => useUploadBatches('s', null, vi.fn(), []))
     await act(async () => result.current.upload([new File(['id\n1'], 'data.csv'), new File(['x'], 'case.dss')]))
     expect(uploadBatchFiles).toHaveBeenCalledTimes(1)
