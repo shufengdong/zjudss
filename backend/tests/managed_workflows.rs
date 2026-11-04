@@ -746,6 +746,107 @@ async fn confirmation_transaction_rejects_an_active_model_changed_after_preparat
 }
 
 #[tokio::test]
+async fn confirmation_missing_owned_artifact_rolls_back_without_partial_workflow() {
+    #[derive(QueryableByName)]
+    struct ArtifactId {
+        #[diesel(sql_type = diesel::sql_types::Integer)]
+        artifact_id: i32,
+    }
+
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "missing owned artifact", 1)
+        .await
+        .unwrap();
+    let configuration = ready_study(&app, &user, session.id).await;
+    let prepared = app
+        .state
+        .study_configuration_service
+        .prepare_confirmation(&user, configuration.id, configuration.revision)
+        .await
+        .unwrap();
+    let overlays = app
+        .state
+        .data_resource_service
+        .materialize_study_struct_overlays(&user, &prepared)
+        .await
+        .unwrap();
+    let overlay_artifact_ids = overlays
+        .iter()
+        .filter(|overlay| overlay.owns_artifact_reference)
+        .map(|overlay| overlay.artifact_id)
+        .collect::<Vec<_>>();
+
+    let mut conn = app.pool.get().unwrap();
+    let artifact_id = diesel::sql_query("SELECT d.artifact_id FROM model_dataframes d JOIN model_versions v ON v.id=d.version_id JOIN workspaces w ON w.id=v.workspace_id WHERE w.session_id=?1 ORDER BY d.id LIMIT 1")
+        .bind::<diesel::sql_types::Integer, _>(session.id)
+        .get_result::<ArtifactId>(&mut conn)
+        .unwrap()
+        .artifact_id;
+    diesel::delete(
+        zjudss::db::schema::storage_scope_artifacts::table
+            .find((user.storage_scope_id, artifact_id)),
+    )
+    .execute(&mut conn)
+    .unwrap();
+    drop(conn);
+
+    let error = ManagedWorkflowRepo::new(app.pool.clone())
+        .confirm_and_start(
+            &user.id,
+            prepared,
+            overlays,
+            "missing-owned-artifact".into(),
+            3,
+            "test".into(),
+            "[]".into(),
+            2,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        ManagedWorkflowRepoError::ConfigurationStale
+    ));
+
+    let mut conn = app.pool.get().unwrap();
+    let status = zjudss::db::schema::study_configurations::table
+        .find(configuration.id)
+        .select(zjudss::db::schema::study_configurations::status)
+        .first::<String>(&mut conn)
+        .unwrap();
+    let workflow_count = zjudss::db::schema::managed_workflows::table
+        .filter(zjudss::db::schema::managed_workflows::configuration_id.eq(Some(configuration.id)))
+        .count()
+        .get_result::<i64>(&mut conn)
+        .unwrap();
+    let run_count = zjudss::db::schema::simulation_runs::table
+        .filter(zjudss::db::schema::simulation_runs::session_id.eq(session.id))
+        .filter(zjudss::db::schema::simulation_runs::managed_workflow_id.is_not_null())
+        .count()
+        .get_result::<i64>(&mut conn)
+        .unwrap();
+    let input_count = zjudss::db::schema::workflow_input_snapshots::table
+        .count()
+        .get_result::<i64>(&mut conn)
+        .unwrap();
+    assert_eq!(status, "ready_to_confirm");
+    assert_eq!((workflow_count, run_count, input_count), (0, 0, 0));
+    drop(conn);
+
+    for artifact_id in overlay_artifact_ids {
+        app.state
+            .artifact_service
+            .release(user.storage_scope_id, artifact_id)
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
 async fn private_struct_overlay_rejects_a_stale_source_hash() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");

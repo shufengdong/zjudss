@@ -2139,15 +2139,18 @@ fn insert_input(
             schema::workflow_input_snapshots::created_at_ms.eq(now_ms),
         ))
         .execute(conn)?;
-    let retained = diesel::sql_query(
-        "UPDATE storage_scope_artifacts SET ref_count=ref_count+1 WHERE storage_scope_id=(SELECT u.storage_scope_id FROM users u JOIN sessions s ON s.user_id=u.id JOIN managed_workflows w ON w.session_id=s.id WHERE w.id=?1) AND artifact_id=?2",
-    )
-    .bind::<diesel::sql_types::Integer, _>(workflow_id)
-    .bind::<diesel::sql_types::Integer, _>(artifact_id)
-    .execute(conn)?;
-    if retained != 1 {
-        return Err(ManagedWorkflowRepoError::ConfigurationStale);
-    }
+    let owner = schema::managed_workflows::table
+        .inner_join(
+            schema::sessions::table
+                .on(schema::sessions::id.eq(schema::managed_workflows::session_id)),
+        )
+        .filter(schema::managed_workflows::id.eq(workflow_id))
+        .select(schema::sessions::user_id)
+        .first::<String>(conn)?;
+    let scope_id = super::artifact_refs::storage_scope_id_for_user(conn, &UserId(owner))
+        .map_err(configuration_artifact_error)?;
+    super::artifact_refs::retain_ref_count(conn, scope_id, artifact_id, 1)
+        .map_err(configuration_artifact_error)?;
     Ok(())
 }
 
@@ -2286,15 +2289,14 @@ fn retain_artifact(
     artifact_id: i32,
     count: i64,
 ) -> Result<(), ManagedWorkflowRepoError> {
-    let changed = diesel::sql_query(
-        "UPDATE storage_scope_artifacts SET ref_count=ref_count+?3 WHERE storage_scope_id=(SELECT storage_scope_id FROM users WHERE id=?1) AND artifact_id=?2",
-    )
-    .bind::<diesel::sql_types::Text, _>(user)
-    .bind::<diesel::sql_types::Integer, _>(artifact_id)
-    .bind::<diesel::sql_types::BigInt, _>(count)
-    .execute(conn)?;
-    if changed != 1 {
-        return Err(ManagedWorkflowRepoError::Repository(RepoError::NotFound));
-    }
+    let scope_id = super::artifact_refs::storage_scope_id_for_user(conn, &UserId(user.to_owned()))?;
+    super::artifact_refs::retain_ref_count(conn, scope_id, artifact_id, count)?;
     Ok(())
+}
+
+fn configuration_artifact_error(error: RepoError) -> ManagedWorkflowRepoError {
+    match error {
+        RepoError::NotFound => ManagedWorkflowRepoError::ConfigurationStale,
+        error => ManagedWorkflowRepoError::Repository(error),
+    }
 }

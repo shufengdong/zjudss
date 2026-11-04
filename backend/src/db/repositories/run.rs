@@ -501,18 +501,14 @@ impl RunRepo {
                 }
                 let frozen = FrozenRunInputs { model, resources };
                 let input_snapshot_json = serde_json::to_string(&frozen).map_err(|error| RunRepoError::Repository(RepoError::Storage(error.to_string())))?;
-                let scope_id = schema::users::table
-                    .find(&user)
-                    .select(schema::users::storage_scope_id)
-                    .first::<i32>(conn)?;
                 let mut retained_artifacts = vec![script.artifact_id];
                 retained_artifacts.extend(frozen.model.iter().flat_map(|model| model.frames.iter().map(|frame| frame.artifact_id)));
                 retained_artifacts.extend(frozen.resources.iter().map(|resource| resource.artifact_id));
-                for artifact_id in retained_artifacts {
-                    let retained = diesel::update(schema::storage_scope_artifacts::table.find((scope_id, artifact_id)))
-                        .set(schema::storage_scope_artifacts::ref_count.eq(schema::storage_scope_artifacts::ref_count + 1)).execute(conn)?;
-                    if retained != 1 { return Err(RunRepoError::Repository(RepoError::NotFound)); }
-                }
+                let scope_id = super::artifact_refs::storage_scope_id_for_user(
+                    conn,
+                    &UserId(user.clone()),
+                )?;
+                super::artifact_refs::retain_refs(conn, scope_id, retained_artifacts)?;
                 #[derive(QueryableByName)] struct MessageId { #[diesel(sql_type=Integer)] id: i32 }
                 let script_message_id = diesel::sql_query("SELECT id FROM messages WHERE session_id=?1 AND kind='script' AND json_extract(payload_json,'$.script.id')=CAST(?2 AS TEXT) ORDER BY id DESC LIMIT 1")
                     .bind::<Integer, _>(script.session_id).bind::<Integer, _>(script.id).get_result::<MessageId>(conn).optional()?.map(|row| row.id);
