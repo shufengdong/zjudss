@@ -93,7 +93,7 @@ GC、失败重试记录和物理 object 扫描继续留在 `artifact.rs`，因�
 
 ### 6.3 `backend/src/application/artifacts.rs`
 
-`ArtifactMetadata` 提供一个 crate 内 helper，把 `StagedArtifact` 和 `created_at_ms` 转成 `ArtifactDraft`，统一 size 转换、
+`ArtifactMetadata` 提供一个消费自身的 crate 内 helper，把 `StagedArtifact` 和 `created_at_ms` 转成 `ArtifactDraft`，统一 size 转换、
 规范 CAS 相对路径、format 和 media type。普通 commit、upload source 和物化图表使用该 helper；它不负责持久化或权限。
 
 ## 7. 调用方迁移
