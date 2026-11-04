@@ -182,12 +182,10 @@ async fn first_message_response_contains_the_authoritative_session_title() {
 #[tokio::test]
 async fn queue_rejection_has_stable_error_and_does_not_write_message() {
     let scheduler = RunScheduler::new(1, 1, 1);
-    let app = TestApp::spawn_with_scheduler(
-        std::time::Duration::from_secs(30 * 24 * 60 * 60),
-        false,
-        scheduler.clone(),
-    )
-    .await;
+    let app = TestApp::builder()
+        .scheduler(scheduler.clone())
+        .spawn()
+        .await;
     let cookie = app.login_cookie("instance").await;
 
     let create = app

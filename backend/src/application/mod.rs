@@ -41,7 +41,6 @@ use crate::agent::{
     AgentFactory, FailureAnalyzer, LlmFailureAnalyzer, LlmScriptAuthor, ScriptAuthor,
 };
 use crate::auth::AuthService;
-use crate::catalog::SchemaCatalog;
 use crate::db::DbPool;
 use crate::db::repositories::{
     AnalysisRepo, ArtifactRepo, ChartViewRepo, ComparisonRepo, DataResourceRepo, HistoryRepo,
@@ -154,14 +153,6 @@ pub struct AppState {
     pub upload_batch_limit_bytes: u64,
 }
 
-#[cfg(feature = "e2e-test")]
-pub struct E2eAppOptions {
-    pub script_author: Option<Arc<dyn ScriptAuthor>>,
-    pub failure_analyzer: Option<Arc<dyn FailureAnalyzer>>,
-    pub managed_workflow_auto_start: bool,
-    pub full_engine_catalog: bool,
-}
-
 pub struct AppStateDependencies {
     pub pool: DbPool,
     pub engine: Arc<dyn SimEngine>,
@@ -188,156 +179,6 @@ pub struct AppStateOptions {
 }
 
 impl AppState {
-    #[cfg(feature = "e2e-test")]
-    pub fn new_for_e2e(
-        pool: DbPool,
-        data_dir: PathBuf,
-        agent_factory: Arc<dyn AgentFactory>,
-        engine: Arc<dyn SimEngine>,
-        auth: AuthService,
-        options: E2eAppOptions,
-    ) -> Self {
-        use sha2::{Digest, Sha256};
-
-        use crate::engine_resources::EngineResourceRegistry;
-
-        let engine_root = data_dir
-            .parent()
-            .unwrap_or(&data_dir)
-            .join("engine-fixture");
-        let bundle_path = "E2E/Demo/E2E demo.rssbundle";
-        let bundle_relative = format!("dss/rssbundle/{bundle_path}");
-        let bundle = engine_root.join(&bundle_relative);
-        std::fs::create_dir_all(bundle.join("dss")).expect("create e2e example directory");
-        let main_bytes = b"model = import_dss(\"dss/model.dss\");\n";
-        let managed_bytes = b"[result_voltage] = ds_newton_raphson_pf(bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para);\n";
-        let source_bytes = b"new circuit.e2e basekv=10\n";
-        std::fs::write(bundle.join("main.rss"), main_bytes).expect("write e2e main");
-        std::fs::write(bundle.join("managed.rss"), managed_bytes).expect("write e2e managed");
-        std::fs::write(bundle.join("dss/model.dss"), source_bytes).expect("write e2e model");
-        let main_hash = hex::encode(Sha256::digest(main_bytes));
-        let managed_hash = hex::encode(Sha256::digest(managed_bytes));
-        let source_hash = hex::encode(Sha256::digest(source_bytes));
-        let manifest = serde_json::json!({
-            "schema_version": 2,
-            "artifact": "mems.dss-rss-bundle",
-            "generator": "zjudss-e2e/1",
-            "psa_contract_version": "0.1.0",
-            "entry": "main.rss",
-            "study": {
-                "kind": "static_power_flow",
-                "compatibility": "opendss-native",
-                "solver": "newton",
-                "results": ["voltage"]
-            },
-            "source": {
-                "entry": "dss/model.dss",
-                "root": "dss",
-                "tree_sha256": source_hash
-            },
-            "projection": {
-                "source_function": "ds_newton_raphson_pf",
-                "profile": "dss_static_newton_v1",
-                "projector": "project_dss_static_model",
-                "target_function": "ds_newton_raphson_pf",
-                "managed_entry": "managed.rss",
-                "status": "enabled",
-                "stable_diagnostic": "PSA.DSS.PROJECTION.INVALID",
-                "results": [{"source":"voltage","target":"bus_phase","binding":"result_voltage"}]
-            },
-            "files": [
-                {"path": "dss/model.dss", "role": "dss-entry", "sha256": source_hash},
-                {"path": "main.rss", "role": "main-rss", "sha256": main_hash},
-                {"path": "managed.rss", "role": "managed-rss", "sha256": managed_hash}
-            ],
-            "inputs": []
-        });
-        let manifest_bytes = serde_json::to_vec_pretty(&manifest).expect("serialize e2e manifest");
-        std::fs::write(bundle.join("manifest.json"), &manifest_bytes).expect("write e2e manifest");
-        let invalid_relative = "dss/rssbundle/E2E/Demo/Broken.rssbundle";
-        let invalid_bytes = b"{";
-        std::fs::create_dir_all(engine_root.join(invalid_relative))
-            .expect("create invalid e2e example directory");
-        std::fs::write(
-            engine_root.join(invalid_relative).join("manifest.json"),
-            invalid_bytes,
-        )
-        .expect("write invalid e2e manifest");
-        let catalog_dir = engine_root.join("dss/docs/catalog");
-        std::fs::create_dir_all(&catalog_dir).expect("create e2e catalog directory");
-        let dataframes =
-            include_bytes!("../../tests/fixtures/engine_resources/catalog/dataframes.json");
-        let functions =
-            include_bytes!("../../tests/fixtures/engine_resources/catalog/functions.json");
-        let study_facades =
-            include_bytes!("../../tests/fixtures/engine_resources/catalog/study_facades.json");
-        let case_projections =
-            include_bytes!("../../tests/fixtures/engine_resources/catalog/case_projections.json");
-        std::fs::write(catalog_dir.join("dataframes.json"), dataframes)
-            .expect("write e2e dataframes catalog");
-        std::fs::write(catalog_dir.join("functions.json"), functions)
-            .expect("write e2e functions catalog");
-        std::fs::write(catalog_dir.join("study_facades.json"), study_facades)
-            .expect("write e2e study facades catalog");
-        std::fs::write(catalog_dir.join("case_projections.json"), case_projections)
-            .expect("write e2e case projections catalog");
-        std::fs::write(
-            engine_root.join("dss/docs/e2e-guide.md"),
-            b"# E2E guide\nUse deterministic scenarios.",
-        )
-        .expect("write e2e guide");
-        // macOS 的临时目录常以 /var 暴露、canonicalize 后变为 /private/var；
-        // 快照根必须规范化，否则案例导入的越界检查会误判合法 fixture。
-        let engine_root = engine_root
-            .canonicalize()
-            .expect("canonicalize e2e engine root");
-        let loaded_snapshot =
-            EngineResourceRegistry::load(&engine_root, &std::collections::HashSet::new())
-                .expect("load complete e2e engine resources");
-        let engine_snapshot = if options.full_engine_catalog {
-            loaded_snapshot
-        } else {
-            EngineResourceSnapshot::minimal("e2e-snapshot", "e2e-contract", engine_root.join("dss"))
-        };
-        let catalog_value = engine_snapshot.catalog_json.clone();
-        SchemaCatalog::from_value("e2e-contract", &catalog_value).expect("e2e catalog valid");
-        let engine_snapshot = Arc::new(engine_snapshot);
-        Self::assemble(
-            AppStateDependencies {
-                pool,
-                engine,
-                agent_factory,
-                auth,
-                scheduler: RunScheduler::new(4, 2, 16),
-            },
-            AppStateOptions {
-                data_dir,
-                storage_limits: StorageLimits {
-                    artifact_limit: 100,
-                    byte_limit: 64 * 1024 * 1024,
-                    warning_ratio: 0.8,
-                },
-                engine_snapshot,
-                upload_single_file_limit_bytes: 2 * 1024 * 1024,
-                upload_batch_limit_bytes: 8 * 1024 * 1024,
-                upload_staging_ttl_hours: 24,
-                script_repair_max_attempts: 3,
-                agent_model_retry_max: 2,
-                managed_engine_timeout: std::time::Duration::from_secs(120),
-                managed_result_max_file_bytes: 512 * 1024 * 1024,
-                script_author_override: options.script_author,
-                failure_analyzer_override: options.failure_analyzer,
-                managed_workflow_auto_start: options.managed_workflow_auto_start,
-                archive_limits: ArchiveLimits {
-                    max_entries: 100,
-                    max_expanded_bytes: 16 * 1024 * 1024,
-                    max_compression_ratio: 20,
-                    max_file_bytes: 2 * 1024 * 1024,
-                },
-            },
-        )
-    }
-
     pub fn assemble(dependencies: AppStateDependencies, options: AppStateOptions) -> Self {
         let AppStateDependencies {
             pool,

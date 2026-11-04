@@ -75,7 +75,7 @@ async fn provider_errors_release_the_permit_without_exposing_internal_details() 
             message: "api_key=top-secret upstream=https://internal.example".into(),
         }],
     });
-    let app = TestApp::spawn_with_agent_factory(factory).await;
+    let app = TestApp::builder().agent_factory(factory).spawn().await;
     let p = principal();
     let session = app
         .state

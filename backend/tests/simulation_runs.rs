@@ -349,8 +349,11 @@ async fn failed_run_publishes_a_terminal_failed_progress_event() {
         exit_code: 7,
     });
     let analyzer = Arc::new(PendingFailureAnalyzer::default());
-    let app =
-        TestApp::spawn_with_engine_and_failure_analyzer(Arc::new(engine), analyzer.clone()).await;
+    let app = TestApp::builder()
+        .engine(Arc::new(engine))
+        .failure_analyzer(analyzer.clone())
+        .spawn()
+        .await;
     let (user, cookie, session_id, _version_id, script_id) = setup(&app).await;
     let response = post_run(&app, &cookie, &script_id, "failed-run").await;
     assert_eq!(response.status(), StatusCode::ACCEPTED);
@@ -475,7 +478,11 @@ async fn failed_run_persists_structured_analysis_after_logs_and_terminal_progres
         unknowns: vec!["具体语法位置".into()],
         recommendations: vec!["核对脚本语法".into()],
     }));
-    let app = TestApp::spawn_with_engine_and_failure_analyzer(Arc::new(engine), analyzer).await;
+    let app = TestApp::builder()
+        .engine(Arc::new(engine))
+        .failure_analyzer(analyzer)
+        .spawn()
+        .await;
     let (user, cookie, _session_id, _version_id, script_id) = setup(&app).await;
     let response = post_run(&app, &cookie, &script_id, "failed-run-analysis").await;
     let value: Value =
@@ -541,7 +548,11 @@ async fn failed_run_keeps_logs_when_failure_analysis_is_unavailable() {
     });
     let analyzer = Arc::new(ScriptedAuthor::default());
     analyzer.enqueue_analysis(Err("provider unavailable".into()));
-    let app = TestApp::spawn_with_engine_and_failure_analyzer(Arc::new(engine), analyzer).await;
+    let app = TestApp::builder()
+        .engine(Arc::new(engine))
+        .failure_analyzer(analyzer)
+        .spawn()
+        .await;
     let (user, cookie, _session_id, _version_id, script_id) = setup(&app).await;
     let response = post_run(&app, &cookie, &script_id, "failed-run-unavailable").await;
     let value: Value =
@@ -582,8 +593,11 @@ async fn failed_run_times_out_analysis_without_reopening_the_terminal_run() {
         exit_code: 12,
     });
     let analyzer = Arc::new(PendingFailureAnalyzer::default());
-    let app =
-        TestApp::spawn_with_engine_and_failure_analyzer(Arc::new(engine), analyzer.clone()).await;
+    let app = TestApp::builder()
+        .engine(Arc::new(engine))
+        .failure_analyzer(analyzer.clone())
+        .spawn()
+        .await;
     let (user, cookie, _session_id, _version_id, script_id) = setup(&app).await;
     let response = post_run(&app, &cookie, &script_id, "failed-run-timeout").await;
     let value: Value =
@@ -622,8 +636,11 @@ async fn restart_recovery_resolves_pending_run_analysis_without_changing_logs() 
         exit_code: 11,
     });
     let analyzer = Arc::new(PendingFailureAnalyzer::default());
-    let app =
-        TestApp::spawn_with_engine_and_failure_analyzer(Arc::new(engine), analyzer.clone()).await;
+    let app = TestApp::builder()
+        .engine(Arc::new(engine))
+        .failure_analyzer(analyzer.clone())
+        .spawn()
+        .await;
     let (user, cookie, _session_id, _version_id, script_id) = setup(&app).await;
     let response = post_run(&app, &cookie, &script_id, "failed-run-recovery").await;
     let value: Value =
@@ -650,7 +667,10 @@ async fn restart_recovery_resolves_pending_run_analysis_without_changing_logs() 
 async fn empty_result_run_reports_stable_error_and_can_be_deleted_atomically() {
     let engine = ScenarioEngine::default();
     engine.enqueue(EngineScenario::Empty);
-    let app = TestApp::spawn_with_engine(std::sync::Arc::new(engine)).await;
+    let app = TestApp::builder()
+        .engine(std::sync::Arc::new(engine))
+        .spawn()
+        .await;
     let (user, cookie, _session_id, _version_id, script_id) = setup(&app).await;
     let response = post_run(&app, &cookie, &script_id, "empty-result-run").await;
     assert_eq!(response.status(), StatusCode::ACCEPTED);

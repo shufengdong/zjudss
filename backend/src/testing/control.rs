@@ -16,8 +16,8 @@ use crate::auth::{AuthService, seed_users};
 use crate::db::{self, DbPool};
 
 use super::{
-    AuthorTurn, EngineScenario, FaultInjector, FaultPoint, ScenarioEngine, ScriptScenario,
-    ScriptedAgentFactory, ScriptedAuthor,
+    AuthorTurn, E2eAppOptions, E2eCatalogMode, EngineScenario, FaultInjector, FaultPoint,
+    ScenarioEngine, ScriptScenario, ScriptedAgentFactory, ScriptedAuthor, build_e2e_app,
 };
 
 const CONTROL_HEADER: &str = "x-zjudss-e2e-token";
@@ -414,7 +414,7 @@ pub async fn run_e2e_server(
     let llm = Arc::new(ScriptedAgentFactory::default());
     let engine = Arc::new(ScenarioEngine::default());
     let author = Arc::new(ScriptedAuthor::default());
-    let state = AppState::new_for_e2e(
+    let state = build_e2e_app(
         pool.clone(),
         data_dir,
         llm.clone(),
@@ -424,11 +424,11 @@ pub async fn run_e2e_server(
             std::time::Duration::from_secs(30 * 24 * 60 * 60),
             false,
         ),
-        crate::application::E2eAppOptions {
+        E2eAppOptions {
             script_author: Some(author.clone()),
             failure_analyzer: Some(author.clone()),
             managed_workflow_auto_start: true,
-            full_engine_catalog: true,
+            catalog_mode: E2eCatalogMode::Full,
         },
     );
     crate::db::repositories::EngineResourceSnapshotRepo::new(state.pool.clone())

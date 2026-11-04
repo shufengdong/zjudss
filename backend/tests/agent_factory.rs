@@ -38,7 +38,10 @@ impl AgentFactory for RecordingFactory {
 #[tokio::test]
 async fn chat_builds_one_agent_per_user_message() {
     let factory = Arc::new(RecordingFactory::default());
-    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let app = TestApp::builder()
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
     let cookie = app.login_cookie("instance").await;
     let create = app
         .router

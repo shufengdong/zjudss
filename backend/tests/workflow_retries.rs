@@ -911,12 +911,14 @@ async fn retry_rejects_replacement_lineage_deeper_than_limit() {
 async fn unchanged_failed_agent_script_starts_a_derived_retry_with_a_fresh_budget() {
     let author = Arc::new(ScriptedAuthor::default());
     let engine = Arc::new(ScenarioEngine::default());
-    let app = common::TestApp::spawn_minimal_with_engine_and_agent_factory(
-        engine.clone(),
-        Arc::new(ScriptedAgentFactory::default()),
-        author.clone(),
-    )
-    .await;
+    let app = common::TestApp::builder()
+        .engine(engine.clone())
+        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
+        .script_author(author.clone())
+        .failure_analyzer(author.clone())
+        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
     let user = common::test_user("alice@example.com");
     let source = failed_source(&app, &user, &author, &engine).await;
     assert_eq!(source.status, "failed");
@@ -988,12 +990,14 @@ async fn unchanged_failed_agent_script_starts_a_derived_retry_with_a_fresh_budge
 async fn changed_inputs_require_confirmation_and_freeze_the_new_active_model() {
     let author = Arc::new(ScriptedAuthor::default());
     let engine = Arc::new(ScenarioEngine::default());
-    let app = common::TestApp::spawn_minimal_with_engine_and_agent_factory(
-        engine.clone(),
-        Arc::new(ScriptedAgentFactory::default()),
-        author.clone(),
-    )
-    .await;
+    let app = common::TestApp::builder()
+        .engine(engine.clone())
+        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
+        .script_author(author.clone())
+        .failure_analyzer(author.clone())
+        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
     let user = common::test_user("alice@example.com");
     let source = failed_source(&app, &user, &author, &engine).await;
     let source_script_id = source.final_script_resource_id.unwrap();

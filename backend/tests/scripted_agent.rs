@@ -256,7 +256,10 @@ fn assert_no_script_or_run(events: &[Value]) {
 #[tokio::test]
 async fn explicit_publish_request_uses_exact_draft_and_activates_the_version() {
     let factory = Arc::new(ScriptedAgentFactory::default());
-    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let app = TestApp::builder()
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
     let session = create_session(&app).await;
     let session_id = session.parse().unwrap();
     let draft = seed_canonical_draft(&app, &common::test_user("instance"), session_id).await;
@@ -319,7 +322,10 @@ async fn explicit_publish_request_uses_exact_draft_and_activates_the_version() {
 async fn publish_then_study_request_continues_to_prepare_configuration_without_bypassing_confirmation()
  {
     let factory = Arc::new(ScriptedAgentFactory::default());
-    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let app = TestApp::builder()
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
     let session = create_session(&app).await;
     let session_id = session.parse().unwrap();
     let draft = seed_agent_study_draft(&app, session_id).await;
@@ -403,7 +409,10 @@ async fn publish_then_study_request_continues_to_prepare_configuration_without_b
 #[tokio::test]
 async fn script_or_result_generation_words_do_not_implicitly_publish_a_draft() {
     let factory = Arc::new(ScriptedAgentFactory::default());
-    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let app = TestApp::builder()
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
     let session = create_session(&app).await;
     let session_id = session.parse().unwrap();
     let draft = seed_canonical_draft(&app, &common::test_user("instance"), session_id).await;
@@ -464,7 +473,10 @@ async fn script_or_result_generation_words_do_not_implicitly_publish_a_draft() {
 #[tokio::test]
 async fn study_power_flow_searches_then_prepares_a_configuration_without_a_script() {
     let factory = Arc::new(ScriptedAgentFactory::default());
-    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let app = TestApp::builder()
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
     let session = create_session(&app).await;
     publish_agent_study_model(&app, session.parse().unwrap()).await;
     let explanation = "您希望用牛顿-拉夫逊法求解当前模型的静态潮流。该方法按您指定的算法处理网络；请核对模型输入和 para 参数，初始计划输出母线电压，之后仍需在卡片中确认。";
@@ -528,7 +540,10 @@ async fn study_power_flow_searches_then_prepares_a_configuration_without_a_scrip
 #[tokio::test]
 async fn natural_language_result_selection_updates_the_durable_card_without_starting_work() {
     let factory = Arc::new(ScriptedAgentFactory::default());
-    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let app = TestApp::builder()
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
     let session = create_session(&app).await;
     let session_id = session.parse().unwrap();
     let user = common::test_user("instance");
@@ -648,7 +663,10 @@ async fn natural_language_result_selection_updates_the_durable_card_without_star
 #[tokio::test]
 async fn prepared_configuration_survives_provider_finalization_failure() {
     let factory = Arc::new(ScriptedAgentFactory::default());
-    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let app = TestApp::builder()
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
     let session = create_session(&app).await;
     publish_agent_study_model(&app, session.parse().unwrap()).await;
     let explanation = "您希望准备牛顿-拉夫逊潮流研究。请检查当前模型输入、para 参数和母线电压结果，并在确认配置后再开始执行。";
@@ -699,7 +717,10 @@ async fn prepared_configuration_survives_provider_finalization_failure() {
 #[tokio::test]
 async fn conversational_agent_cannot_create_a_generic_script() {
     let factory = Arc::new(ScriptedAgentFactory::default());
-    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let app = TestApp::builder()
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
     let session = create_session(&app).await;
     let session_id = session.parse().unwrap();
     factory.enqueue(ScriptScenario {
@@ -731,7 +752,10 @@ async fn conversational_agent_cannot_create_a_generic_script() {
 #[tokio::test]
 async fn ambiguous_study_requests_present_catalog_choices_before_prepare() {
     let factory = Arc::new(ScriptedAgentFactory::default());
-    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let app = TestApp::builder()
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
     let session = create_session(&app).await;
     factory.enqueue(ScriptScenario {
         id: "study-choice".into(),
@@ -773,7 +797,10 @@ async fn ambiguous_study_requests_present_catalog_choices_before_prepare() {
 #[tokio::test]
 async fn transient_studies_use_catalog_search_and_configuration_cards() {
     let factory = Arc::new(ScriptedAgentFactory::default());
-    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let app = TestApp::builder()
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
     let session = create_session(&app).await;
     factory.enqueue(ScriptScenario {
         id: "motor-config".into(),
@@ -830,7 +857,10 @@ async fn barrier_holds_and_releases_agent_run_without_sleep() {
             },
         ],
     });
-    let app = TestApp::spawn_with_agent_factory(factory.clone()).await;
+    let app = TestApp::builder()
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
     let session = create_session(&app).await;
     let cookie = app.login_cookie("instance").await;
     let response = app

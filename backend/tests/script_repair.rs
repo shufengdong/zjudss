@@ -116,12 +116,14 @@ async fn generated_script_executes_immediately_and_publishes_exact_results() {
     let engine = Arc::new(ScenarioEngine::default());
     author.enqueue(script_turn("result = test(table, para);"));
     engine.enqueue(success());
-    let app = TestApp::spawn_minimal_with_engine_and_agent_factory(
-        engine.clone(),
-        Arc::new(ScriptedAgentFactory::default()),
-        author.clone(),
-    )
-    .await;
+    let app = TestApp::builder()
+        .engine(engine.clone())
+        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
+        .script_author(author.clone())
+        .failure_analyzer(author.clone())
+        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
     let user = common::test_user("alice@example.com");
     let workflow = confirm(&app, &user, "success").await;
 
@@ -181,12 +183,14 @@ async fn nonzero_exit_is_sanitized_repaired_and_then_succeeds() {
         exit_code: 7,
     });
     engine.enqueue(success());
-    let app = TestApp::spawn_minimal_with_engine_and_agent_factory(
-        engine.clone(),
-        Arc::new(ScriptedAgentFactory::default()),
-        author.clone(),
-    )
-    .await;
+    let app = TestApp::builder()
+        .engine(engine.clone())
+        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
+        .script_author(author.clone())
+        .failure_analyzer(author.clone())
+        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
     let user = common::test_user("alice@example.com");
     let workflow = confirm(&app, &user, "repair").await;
 
@@ -234,12 +238,14 @@ async fn initial_contract_rejection_does_not_execute_and_repair_consumes_budget(
     ));
     author.enqueue(script_turn("result = test(table, para);"));
     engine.enqueue(success());
-    let app = TestApp::spawn_minimal_with_engine_and_agent_factory(
-        engine.clone(),
-        Arc::new(ScriptedAgentFactory::default()),
-        author,
-    )
-    .await;
+    let app = TestApp::builder()
+        .engine(engine.clone())
+        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
+        .script_author(author.clone())
+        .failure_analyzer(author)
+        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
     let user = common::test_user("alice@example.com");
     let workflow = confirm(&app, &user, "contract").await;
 
@@ -271,12 +277,14 @@ async fn timeout_is_not_repaired() {
         stderr: b"timeout".to_vec(),
         exit_code: 0,
     });
-    let app = TestApp::spawn_minimal_with_engine_and_agent_factory(
-        engine.clone(),
-        Arc::new(ScriptedAgentFactory::default()),
-        author.clone(),
-    )
-    .await;
+    let app = TestApp::builder()
+        .engine(engine.clone())
+        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
+        .script_author(author.clone())
+        .failure_analyzer(author.clone())
+        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
     let user = common::test_user("alice@example.com");
     let workflow = confirm(&app, &user, "timeout").await;
 
@@ -312,12 +320,14 @@ async fn repair_budget_allows_at_most_four_engine_calls() {
             exit_code: 7,
         });
     }
-    let app = TestApp::spawn_minimal_with_engine_and_agent_factory(
-        engine.clone(),
-        Arc::new(ScriptedAgentFactory::default()),
-        author,
-    )
-    .await;
+    let app = TestApp::builder()
+        .engine(engine.clone())
+        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
+        .script_author(author.clone())
+        .failure_analyzer(author)
+        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
     let user = common::test_user("alice@example.com");
     let workflow = confirm(&app, &user, "budget").await;
 
@@ -357,12 +367,14 @@ async fn result_contract_rejection_repairs_without_publishing_partial_results() 
         },
     ]));
     engine.enqueue(success());
-    let app = TestApp::spawn_minimal_with_engine_and_agent_factory(
-        engine.clone(),
-        Arc::new(ScriptedAgentFactory::default()),
-        author,
-    )
-    .await;
+    let app = TestApp::builder()
+        .engine(engine.clone())
+        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
+        .script_author(author.clone())
+        .failure_analyzer(author)
+        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
     let user = common::test_user("alice@example.com");
     let workflow = confirm(&app, &user, "result-contract").await;
 
@@ -398,12 +410,14 @@ async fn cancellation_interrupts_the_author_without_creating_a_candidate() {
     let engine = Arc::new(ScenarioEngine::default());
     author.enqueue(AuthorTurn::Wait("author-blocked".into()));
     author.enqueue(script_turn("result = test(table, para);"));
-    let app = TestApp::spawn_minimal_with_engine_and_agent_factory(
-        engine.clone(),
-        Arc::new(ScriptedAgentFactory::default()),
-        author.clone(),
-    )
-    .await;
+    let app = TestApp::builder()
+        .engine(engine.clone())
+        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
+        .script_author(author.clone())
+        .failure_analyzer(author.clone())
+        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
     let user = common::test_user("alice@example.com");
     let workflow = confirm(&app, &user, "cancel-author").await;
     let service = app.state.managed_workflow_service.clone();
@@ -441,12 +455,14 @@ async fn cancellation_interrupts_the_author_without_creating_a_candidate() {
 async fn candidate_quota_failure_terminalizes_with_stable_code() {
     let author = Arc::new(ScriptedAuthor::default());
     author.enqueue(script_turn("result = test(table, para);"));
-    let app = TestApp::spawn_minimal_with_engine_and_agent_factory(
-        Arc::new(ScenarioEngine::default()),
-        Arc::new(ScriptedAgentFactory::default()),
-        author,
-    )
-    .await;
+    let app = TestApp::builder()
+        .engine(Arc::new(ScenarioEngine::default()))
+        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
+        .script_author(author.clone())
+        .failure_analyzer(author)
+        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
     let user = common::test_user("alice@example.com");
     let workflow = confirm(&app, &user, "candidate-quota").await;
     let usage = app

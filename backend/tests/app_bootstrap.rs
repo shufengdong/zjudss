@@ -1,13 +1,17 @@
 mod common;
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use diesel::RunQueryDsl;
 use tower::ServiceExt;
+use zjudss::adapters::SimEngine;
+use zjudss::agent::{AgentFactory, FailureAnalyzer};
 use zjudss::application::{AppState, AppStateDependencies, AppStateOptions};
 use zjudss::config::RuntimeConfig;
+use zjudss::testing::{E2eCatalogMode, ScenarioEngine, ScriptedAgentFactory, ScriptedAuthor};
 
 use common::TestApp;
 
@@ -25,6 +29,25 @@ async fn app_state_assembly_uses_named_dependencies_and_options() {
         app.state.engine_snapshot.contract_version,
         "tensoreval-parquet-v3"
     );
+}
+
+#[tokio::test]
+async fn test_app_builder_combines_overrides_without_constructor_variants() {
+    let engine: Arc<dyn SimEngine> = Arc::new(ScenarioEngine::default());
+    let factory: Arc<dyn AgentFactory> = Arc::new(ScriptedAgentFactory::default());
+    let analyzer: Arc<dyn FailureAnalyzer> = Arc::new(ScriptedAuthor::default());
+    let app = TestApp::builder()
+        .engine(engine.clone())
+        .agent_factory(factory.clone())
+        .failure_analyzer(analyzer.clone())
+        .catalog_mode(E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
+
+    assert!(Arc::ptr_eq(&app.state.engine, &engine));
+    assert!(Arc::ptr_eq(&app.state.agent_factory, &factory));
+    assert!(Arc::ptr_eq(&app.state.failure_analyzer, &analyzer));
+    assert_eq!(app.state.engine_snapshot.contract_version, "e2e-contract");
 }
 
 #[test]
