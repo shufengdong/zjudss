@@ -1,43 +1,38 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::sync::Arc;
 
-use arrow_array::types::Float64Type;
-use arrow_array::{
-    Array, ArrayRef, BooleanArray, Float64Array, Int64Array, ListArray, RecordBatch, StringArray,
-    UInt32Array,
-};
-use arrow_schema::{DataType, Field, Schema};
-use parquet::arrow::ArrowWriter;
-use parquet::basic::Compression;
-use parquet::file::properties::WriterProperties;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::auth::{CurrentUser, UserId};
-use crate::catalog::{DataFrameContractKind, DataFrameSchemaContract, DataTypeContract};
+use crate::catalog::DataFrameContractKind;
 use crate::db::repositories::{
-    DataResourceRepo, DeletionImpactRow, DeletionPreviewInput, PromoteDatasetInput, RepoError,
-    ResourcePageRow, RetryStructOverlayRequest, StructuredPreviewConfirmation,
-    StructuredPreviewInput, WorkflowStructOverlayMaterial,
+    DataResourceRepo, PromoteDatasetInput, RepoError, ResourcePageRow, RetryStructOverlayRequest,
+    WorkflowStructOverlayMaterial,
 };
 use crate::engine_resources::EngineResourceSnapshot;
-use crate::storage::StageLimits;
 
 use super::dataframe_reader::{DataFrameReadError, DataFrameReadSource, ParquetDataFrameReader};
-use super::opaque_token::{generate_token, hash_token, validate_presented_token};
 use super::resource_alias::{
     AliasError, AliasPurpose, ResourceAliasPolicy, default_alias, normalize_alias,
 };
-use super::upload_confirmation::ReplacementAction;
-use super::{
-    ArtifactError, ArtifactMetadata, ArtifactService, CandidatePurpose, UploadBatchError, now_ms,
-};
+use super::{ArtifactError, ArtifactService, CandidatePurpose, UploadBatchError, now_ms};
 
 #[path = "study_struct_overlays.rs"]
 pub(super) mod study_struct_overlays;
 use self::study_struct_overlays::materialize_struct_overlay;
+#[path = "data_resource_deletion.rs"]
+mod data_resource_deletion;
+#[path = "data_resource_parquet.rs"]
+mod data_resource_parquet;
+#[path = "data_resource_replacement.rs"]
+mod data_resource_replacement;
+
+pub use self::data_resource_deletion::{DataResourceDeletionPreview, DeletedDataResource};
+use self::data_resource_parquet::struct_parquet;
+pub use self::data_resource_replacement::StructuredReplacementPreview;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,38 +78,6 @@ pub struct DataResourceDownload {
     pub file: File,
     pub file_name: String,
     pub media_type: &'static str,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DataResourceDeletionPreview {
-    pub impact_token: String,
-    pub resource_id: String,
-    pub display_name: String,
-    pub alias: String,
-    pub size_bytes: i64,
-    pub pending_configuration_count: i64,
-    pub frozen_reference_count: i64,
-    pub historical_reference_count: i64,
-    pub expires_at_ms: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeletedDataResource {
-    pub resource_id: String,
-    pub tombstone: Value,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StructuredReplacementPreview {
-    pub preview_token: String,
-    pub resource_id: String,
-    pub expected_content_hash: String,
-    pub schema_ref: String,
-    pub differences: Vec<Value>,
-    pub expires_at_ms: i64,
 }
 
 #[derive(Debug)]
@@ -692,247 +655,6 @@ impl DataResourceService {
         }
     }
 
-    pub async fn preview_deletion(
-        &self,
-        user: &CurrentUser,
-        id: &str,
-    ) -> Result<DataResourceDeletionPreview, DataResourceError> {
-        let impact = self.repo.deletion_impact(&user.id, id).await?;
-        let value = impact_value(&impact);
-        let impact_json = serde_json::to_string(&value).expect("impact serializable");
-        let impact_hash = hex::encode(Sha256::digest(impact_json.as_bytes()));
-        let token = generate_token();
-        let token_hash = hash_token(&token);
-        let expires = now_ms() + 10 * 60 * 1000;
-        self.repo
-            .store_deletion_preview(
-                &user.id,
-                DeletionPreviewInput {
-                    resource_id: id.into(),
-                    token_hash,
-                    impact_hash,
-                    impact_json,
-                    expires_at_ms: expires,
-                    created_at_ms: now_ms(),
-                },
-            )
-            .await?;
-        Ok(DataResourceDeletionPreview {
-            impact_token: token,
-            resource_id: id.into(),
-            display_name: impact.resource.display_name,
-            alias: impact.resource.alias,
-            size_bytes: impact.normalized_size_bytes,
-            pending_configuration_count: impact.pending_configuration_count,
-            frozen_reference_count: impact.frozen_reference_count,
-            historical_reference_count: impact.historical_reference_count,
-            expires_at_ms: expires,
-        })
-    }
-
-    pub async fn delete(
-        &self,
-        user: &CurrentUser,
-        id: &str,
-        impact_token: &str,
-    ) -> Result<DeletedDataResource, DataResourceError> {
-        let impact = match self.repo.deletion_impact(&user.id, id).await {
-            Ok(value) => value,
-            Err(RepoError::NotFound) => {
-                let row = self.repo.find_record(&user.id, id).await?;
-                if row.status == "deleted" {
-                    return Ok(DeletedDataResource {
-                        resource_id: id.into(),
-                        tombstone: row
-                            .tombstone_json
-                            .and_then(|value| serde_json::from_str(&value).ok())
-                            .unwrap_or_else(|| serde_json::json!({"id":id})),
-                    });
-                }
-                return Err(DataResourceError::NotFound);
-            }
-            Err(error) => return Err(error.into()),
-        };
-        let impact_hash = hex::encode(Sha256::digest(
-            serde_json::to_string(&impact_value(&impact))
-                .unwrap()
-                .as_bytes(),
-        ));
-        validate_presented_token(impact_token).map_err(|_| {
-            Self::invalid(
-                "invalid_deletion_impact_token",
-                "删除影响确认凭据无效或已过期",
-            )
-        })?;
-        let token_hash = hash_token(impact_token);
-        let deleted = self
-            .repo
-            .delete(&user.id, id, token_hash, impact_hash, now_ms())
-            .await?;
-        Ok(DeletedDataResource {
-            resource_id: id.into(),
-            tombstone: serde_json::json!({"id":id,"alias":deleted.resource.alias,"schemaHash":deleted.resource.schema_hash}),
-        })
-    }
-
-    pub async fn preview_structured_replacement(
-        &self,
-        user: &CurrentUser,
-        id: &str,
-        expected_content_hash: &str,
-        schema_ref: &str,
-        values: Value,
-    ) -> Result<StructuredReplacementPreview, DataResourceError> {
-        let current = self.repo.find(&user.id, id, false).await?;
-        if current.normalized_sha256 != expected_content_hash {
-            return Err(DataResourceError::Stale);
-        }
-        if current.resource.declared_schema_ref.as_deref() != Some(schema_ref) {
-            return Err(Self::invalid(
-                "structured_schema_mismatch",
-                "资源声明的 Struct schema 与请求不一致",
-            ));
-        }
-        let contract = self
-            .snapshot
-            .schemas
-            .resolve(schema_ref)
-            .map_err(|error| Self::invalid("structured_schema_mismatch", &error.to_string()))?;
-        if contract.kind != DataFrameContractKind::Struct {
-            return Err(Self::invalid(
-                "structured_schema_mismatch",
-                "schema 不是 Struct",
-            ));
-        }
-        let object = values
-            .as_object()
-            .ok_or_else(|| Self::invalid("structured_values_invalid", "values 必须是对象"))?;
-        let parquet = struct_parquet(contract, object)?;
-        let staged = self
-            .artifacts
-            .store()
-            .stage(std::io::Cursor::new(parquet), StageLimits::default())
-            .map_err(ArtifactError::from)?;
-        let artifact = self
-            .artifacts
-            .commit(user.storage_scope_id, staged, ArtifactMetadata::parquet())
-            .await?;
-        let columns = contract
-            .fields
-            .iter()
-            .map(|field| super::dataframe_reader::DataFrameColumn {
-                name: field.name.clone(),
-                dtype: dtype_label(&field.dtype),
-                nullable: field.nullable,
-                unit: Some(field.unit.0.clone()),
-            })
-            .collect::<Vec<_>>();
-        let schema_json = serde_json::to_string(&columns)
-            .map_err(|error| Self::invalid("structured_values_invalid", &error.to_string()))?;
-        let old_page = self
-            .reader
-            .page(user, &read_source(&current), Some(1), None, &[])
-            .await?;
-        let differences = contract
-            .fields
-            .iter()
-            .enumerate()
-            .filter_map(|(index, field)| {
-                let before = old_page
-                    .rows
-                    .first()
-                    .and_then(|row| row.get(index))
-                    .cloned()
-                    .unwrap_or(Value::Null);
-                let after = object.get(&field.name).cloned().unwrap_or(Value::Null);
-                (before != after)
-                    .then(|| serde_json::json!({"field":field.name,"before":before,"after":after}))
-            })
-            .collect::<Vec<_>>();
-        let now = now_ms();
-        let pending_id = stable_resource_id(
-            current.resource.session_id,
-            &format!("structured:{id}:{now}:{}", artifact.sha256),
-        );
-        let preview_token = generate_token();
-        let token_hash = hash_token(&preview_token);
-        let impact_json = serde_json::to_string(&differences).unwrap();
-        let impact_hash = hex::encode(Sha256::digest(impact_json.as_bytes()));
-        let expires = now + 10 * 60 * 1000;
-        let input = StructuredPreviewInput {
-            token_hash,
-            user_id: user.id.0.clone(),
-            old_resource_id: id.into(),
-            pending_artifact_id: artifact.id,
-            pending_resource_id: pending_id,
-            expected_content_hash: expected_content_hash.into(),
-            schema_ref: schema_ref.into(),
-            schema_json,
-            schema_hash: contract.schema_hash.clone(),
-            values_json: values.to_string(),
-            display_name: current.resource.display_name.clone(),
-            proposed_alias: current.resource.alias.clone(),
-            impact_hash,
-            impact_json,
-            expires_at_ms: expires,
-            created_at_ms: now,
-        };
-        match self.repo.store_structured_preview(input).await {
-            Ok(()) => {}
-            Err(error) => {
-                let _ = self
-                    .artifacts
-                    .release(user.storage_scope_id, artifact.id)
-                    .await;
-                return Err(error.into());
-            }
-        }
-        Ok(StructuredReplacementPreview {
-            preview_token,
-            resource_id: id.into(),
-            expected_content_hash: expected_content_hash.into(),
-            schema_ref: schema_ref.into(),
-            differences,
-            expires_at_ms: expires,
-        })
-    }
-
-    pub async fn confirm_structured_replacement(
-        &self,
-        user: &CurrentUser,
-        preview_token: &str,
-        action: ReplacementAction,
-    ) -> Result<Option<DataResourceView>, DataResourceError> {
-        validate_presented_token(preview_token)
-            .map_err(|_| Self::invalid("replacement_preview_invalid", "替换预览不存在或已过期"))?;
-        let token_hash = hash_token(preview_token);
-        let confirmation = self
-            .repo
-            .confirm_structured_preview(&user.id, token_hash, action.as_str().into(), now_ms())
-            .await?;
-        match confirmation {
-            StructuredPreviewConfirmation::Published(resource) => {
-                Ok(Some(self.get(user, &resource.id).await?))
-            }
-            StructuredPreviewConfirmation::Cancelled => Ok(None),
-            StructuredPreviewConfirmation::Rejected { code } => Err(Self::invalid(
-                code,
-                if code == "resource_stale" {
-                    "原资源已发生变化，请重新生成预览"
-                } else {
-                    "替换预览不存在或已过期"
-                },
-            )),
-        }
-    }
-
-    pub async fn cleanup_expired_structured_previews(&self) -> Result<usize, DataResourceError> {
-        self.repo
-            .take_expired_structured_previews(now_ms())
-            .await
-            .map_err(Into::into)
-    }
-
     pub(super) fn validate_alias(
         &self,
         alias: &str,
@@ -1052,204 +774,5 @@ fn safe_name(name: &str, fallback: &str) -> String {
         fallback.into()
     } else {
         safe
-    }
-}
-fn impact_value(impact: &DeletionImpactRow) -> Value {
-    serde_json::json!({"resourceId":impact.resource.id,"schemaHash":impact.resource.schema_hash,"pendingConfigurationCount":impact.pending_configuration_count,"frozenReferenceCount":impact.frozen_reference_count,"historicalReferenceCount":impact.historical_reference_count})
-}
-pub(super) fn struct_parquet(
-    contract: &DataFrameSchemaContract,
-    values: &serde_json::Map<String, Value>,
-) -> Result<Vec<u8>, DataResourceError> {
-    let known = contract
-        .fields
-        .iter()
-        .map(|field| field.name.as_str())
-        .collect::<BTreeSet<_>>();
-    if values.keys().any(|name| !known.contains(name.as_str())) {
-        return Err(DataResourceService::invalid(
-            "structured_values_invalid",
-            "values 包含 schema 未声明字段",
-        ));
-    }
-    let mut fields = Vec::new();
-    let mut arrays = Vec::<ArrayRef>::new();
-    for field in &contract.fields {
-        let value = values.get(&field.name);
-        if field.required && value.is_none_or(Value::is_null) {
-            return Err(DataResourceService::invalid(
-                "structured_values_invalid",
-                &format!("缺少必填字段 {}", field.name),
-            ));
-        }
-        let (dtype, array) = struct_array(&field.dtype, value, field.nullable, &field.name)?;
-        fields.push(Field::new(&field.name, dtype, field.nullable));
-        arrays.push(array);
-    }
-    let schema = Arc::new(Schema::new(fields));
-    let batch = RecordBatch::try_new(schema.clone(), arrays).map_err(|error| {
-        DataResourceService::invalid("structured_values_invalid", &error.to_string())
-    })?;
-    let properties = WriterProperties::builder()
-        .set_compression(Compression::SNAPPY)
-        .build();
-    let mut output = Vec::new();
-    let mut writer =
-        ArrowWriter::try_new(&mut output, schema, Some(properties)).map_err(|error| {
-            DataResourceService::invalid("structured_values_invalid", &error.to_string())
-        })?;
-    writer
-        .write(&batch)
-        .and_then(|_| writer.close().map(|_| ()))
-        .map_err(|error| {
-            DataResourceService::invalid("structured_values_invalid", &error.to_string())
-        })?;
-    Ok(output)
-}
-fn struct_array(
-    dtype: &DataTypeContract,
-    value: Option<&Value>,
-    nullable: bool,
-    name: &str,
-) -> Result<(DataType, ArrayRef), DataResourceError> {
-    let null = value.is_none_or(Value::is_null);
-    if null && !nullable {
-        return Err(DataResourceService::invalid(
-            "structured_values_invalid",
-            &format!("字段 {name} 不能为空"),
-        ));
-    }
-    match dtype {
-        DataTypeContract::Primitive { name: kind } | DataTypeContract::Semantic { name: kind }
-            if kind == "str" || kind.contains("string") =>
-        {
-            let item = if null {
-                None
-            } else {
-                Some(value.unwrap().as_str().ok_or_else(|| {
-                    DataResourceService::invalid(
-                        "structured_values_invalid",
-                        &format!("字段 {name} 必须是字符串"),
-                    )
-                })?)
-            };
-            Ok((DataType::Utf8, Arc::new(StringArray::from(vec![item]))))
-        }
-        DataTypeContract::Primitive { name: kind } | DataTypeContract::Semantic { name: kind }
-            if kind == "bool" =>
-        {
-            let item = if null {
-                None
-            } else {
-                Some(value.unwrap().as_bool().ok_or_else(|| {
-                    DataResourceService::invalid(
-                        "structured_values_invalid",
-                        &format!("字段 {name} 必须是布尔值"),
-                    )
-                })?)
-            };
-            Ok((DataType::Boolean, Arc::new(BooleanArray::from(vec![item]))))
-        }
-        DataTypeContract::Primitive { name: kind } | DataTypeContract::Semantic { name: kind }
-            if kind == "f64" || kind.contains("float") =>
-        {
-            let item = if null {
-                None
-            } else {
-                Some(value.unwrap().as_f64().ok_or_else(|| {
-                    DataResourceService::invalid(
-                        "structured_values_invalid",
-                        &format!("字段 {name} 必须是数值"),
-                    )
-                })?)
-            };
-            Ok((DataType::Float64, Arc::new(Float64Array::from(vec![item]))))
-        }
-        DataTypeContract::Primitive { name: kind } | DataTypeContract::Semantic { name: kind }
-            if kind == "u32" || kind.contains("u32") =>
-        {
-            let item = if null {
-                None
-            } else {
-                Some(
-                    u32::try_from(value.unwrap().as_u64().ok_or_else(|| {
-                        DataResourceService::invalid(
-                            "structured_values_invalid",
-                            &format!("字段 {name} 必须是非负整数"),
-                        )
-                    })?)
-                    .map_err(|_| {
-                        DataResourceService::invalid(
-                            "structured_values_invalid",
-                            &format!("字段 {name} 超出 u32 范围"),
-                        )
-                    })?,
-                )
-            };
-            Ok((DataType::UInt32, Arc::new(UInt32Array::from(vec![item]))))
-        }
-        DataTypeContract::Primitive { name: kind } | DataTypeContract::Semantic { name: kind }
-            if kind == "i64" || kind.contains("int") =>
-        {
-            let item = if null {
-                None
-            } else {
-                Some(value.unwrap().as_i64().ok_or_else(|| {
-                    DataResourceService::invalid(
-                        "structured_values_invalid",
-                        &format!("字段 {name} 必须是整数"),
-                    )
-                })?)
-            };
-            Ok((DataType::Int64, Arc::new(Int64Array::from(vec![item]))))
-        }
-        DataTypeContract::Constructor {
-            name: kind,
-            element,
-        } if kind == "list"
-            && matches!(element.as_ref(),DataTypeContract::Primitive{name} if name=="f64") =>
-        {
-            let items = if null {
-                None
-            } else {
-                Some(
-                    value
-                        .unwrap()
-                        .as_array()
-                        .ok_or_else(|| {
-                            DataResourceService::invalid(
-                                "structured_values_invalid",
-                                &format!("字段 {name} 必须是数组"),
-                            )
-                        })?
-                        .iter()
-                        .map(|item| {
-                            item.as_f64().ok_or_else(|| {
-                                DataResourceService::invalid(
-                                    "structured_values_invalid",
-                                    &format!("字段 {name} 包含非数值"),
-                                )
-                            })
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                )
-            };
-            let array = ListArray::from_iter_primitive::<Float64Type, _, _>(vec![
-                items.map(|row| row.into_iter().map(Some).collect::<Vec<_>>()),
-            ]);
-            Ok((array.data_type().clone(), Arc::new(array)))
-        }
-        _ => Err(DataResourceService::invalid(
-            "structured_values_invalid",
-            &format!("字段 {name} 的 dtype 暂不支持"),
-        )),
-    }
-}
-fn dtype_label(dtype: &DataTypeContract) -> String {
-    match dtype {
-        DataTypeContract::Primitive { name } | DataTypeContract::Semantic { name } => name.clone(),
-        DataTypeContract::Constructor { name, element } => {
-            format!("{}<{}>", name, dtype_label(element))
-        }
     }
 }

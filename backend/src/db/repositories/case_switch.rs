@@ -2,8 +2,11 @@
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Integer, Text};
 
-use super::data_resource::{apply_model_candidates_to_draft_on, owned_batch, publish_resources_on};
+use super::data_resource::owned_batch;
 use super::upload_confirmation::UploadConfirmationRepo;
+use super::upload_confirmation::transactions::{
+    apply_model_candidates_to_draft_on, publish_resources_on,
+};
 use super::upload_confirmation::{PublishChildResult, ResourcePublishInput};
 use super::version::{PublishCommand, VersionRepoError, publish_on};
 use super::{RepoError, RepoResult};

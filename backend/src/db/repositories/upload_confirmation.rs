@@ -11,6 +11,9 @@ use crate::db::{DbPool, schema};
 use super::{DataResourceRepo, RepoResult};
 use super::{RepoError, data_resource};
 
+#[path = "upload_confirmation_transactions.rs"]
+pub(super) mod transactions;
+
 #[derive(Debug, Clone)]
 pub struct ResourcePublishInput {
     pub candidate_id: String,
@@ -191,7 +194,7 @@ impl UploadConfirmationRepo {
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.immediate_transaction::<_, RepoError, _>(|conn| {
-                data_resource::publish_resources_on(
+                transactions::publish_resources_on(
                     conn,
                     &user,
                     batch_id,
@@ -217,7 +220,7 @@ impl UploadConfirmationRepo {
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             conn.immediate_transaction::<_, RepoError, _>(|conn| {
-                data_resource::apply_model_candidates_to_draft_on(
+                transactions::apply_model_candidates_to_draft_on(
                     conn,
                     &user,
                     batch_id,
