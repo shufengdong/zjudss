@@ -92,6 +92,130 @@ async fn deletion_requires_preview_rejects_active_and_detects_changed_impact() {
 }
 
 #[tokio::test]
+async fn deletion_rejects_busy_versions_and_invalid_or_expired_tokens() {
+    let app = TestApp::spawn().await;
+    let cookie = app.login_cookie("alice@example.com").await;
+    let (session_id, version_id) = published_version(&app, &cookie).await;
+    let mut conn = app.pool.get().unwrap();
+    diesel::sql_query("UPDATE workspaces SET active_version_id=NULL WHERE active_version_id=?1")
+        .bind::<diesel::sql_types::Integer, _>(version_id)
+        .execute(&mut conn)
+        .unwrap();
+    diesel::sql_query("INSERT INTO script_resources(session_id,artifact_id,name,source_kind,content_hash,validation_status,required_aliases_json,outputs_json,diagnostics_json,agent_skill_refs_json,created_at_ms) SELECT ?1,md.artifact_id,'busy.rss','upload',a.sha256,'valid','[]','[]','{}','[]',2 FROM model_dataframes md JOIN artifacts a ON a.id=md.artifact_id WHERE md.version_id=?2 LIMIT 1")
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .bind::<diesel::sql_types::Integer, _>(version_id)
+        .execute(&mut conn)
+        .unwrap();
+    diesel::sql_query("INSERT INTO simulation_runs(session_id,model_version_id,model_content_hash,script_resource_id,script_artifact_id,script_content_hash,client_run_id,status,stage,engine_contract_version,agent_skill_refs_json,created_at_ms) SELECT ?1,v.id,v.content_hash,s.id,s.artifact_id,s.content_hash,'busy-run','running','engine','test','[]',3 FROM model_versions v JOIN script_resources s ON s.session_id=?1 WHERE v.id=?2 ORDER BY s.id DESC LIMIT 1")
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .bind::<diesel::sql_types::Integer, _>(version_id)
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
+
+    let busy = preview(&app, &cookie, version_id).await;
+    assert_eq!(busy.status(), StatusCode::CONFLICT);
+    let busy_body: Value =
+        serde_json::from_slice(&to_bytes(busy.into_body(), 1024 * 1024).await.unwrap()).unwrap();
+    assert_eq!(busy_body["code"], "version_has_active_consumers");
+
+    let malformed = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete(format!(
+                "/api/versions/{version_id}?impactToken=not-a-token"
+            ))
+            .header("cookie", &cookie)
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(malformed.status(), StatusCode::CONFLICT);
+
+    let mut conn = app.pool.get().unwrap();
+    diesel::sql_query(
+        "UPDATE simulation_runs SET status='succeeded' WHERE client_run_id='busy-run'",
+    )
+    .execute(&mut conn)
+    .unwrap();
+    drop(conn);
+    let response = preview(&app, &cookie, version_id).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    let token = value["impactToken"].as_str().unwrap();
+    diesel::sql_query("UPDATE version_deletion_previews SET expires_at_ms=0 WHERE version_id=?1")
+        .bind::<diesel::sql_types::Integer, _>(version_id)
+        .execute(&mut app.pool.get().unwrap())
+        .unwrap();
+    let expired = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/versions/{version_id}?impactToken={token}"))
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(expired.status(), StatusCode::CONFLICT);
+    let expired_body: Value =
+        serde_json::from_slice(&to_bytes(expired.into_body(), 1024 * 1024).await.unwrap()).unwrap();
+    assert_eq!(expired_body["code"], "invalid_deletion_impact_token");
+}
+
+#[tokio::test]
+async fn deletion_releases_the_model_artifact_reference() {
+    let app = TestApp::spawn().await;
+    let cookie = app.login_cookie("alice@example.com").await;
+    let user = common::test_user("alice@example.com");
+    let (_session_id, version_id) = published_version(&app, &cookie).await;
+    let mut conn = app.pool.get().unwrap();
+    diesel::sql_query("UPDATE workspaces SET active_version_id=NULL WHERE active_version_id=?1")
+        .bind::<diesel::sql_types::Integer, _>(version_id)
+        .execute(&mut conn)
+        .unwrap();
+    let artifact_id = zjudss::db::schema::model_dataframes::table
+        .filter(zjudss::db::schema::model_dataframes::version_id.eq(version_id))
+        .select(zjudss::db::schema::model_dataframes::artifact_id)
+        .first::<i32>(&mut conn)
+        .unwrap();
+    drop(conn);
+
+    let response = preview(&app, &cookie, version_id).await;
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    let token = value["impactToken"].as_str().unwrap();
+    let deleted = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/versions/{version_id}?impactToken={token}"))
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+    let retained = zjudss::db::schema::storage_scope_artifacts::table
+        .filter(
+            zjudss::db::schema::storage_scope_artifacts::storage_scope_id.eq(user.storage_scope_id),
+        )
+        .filter(zjudss::db::schema::storage_scope_artifacts::artifact_id.eq(artifact_id))
+        .count()
+        .get_result::<i64>(&mut app.pool.get().unwrap())
+        .unwrap();
+    assert_eq!(retained, 0);
+}
+
+#[tokio::test]
 async fn deletion_tombstones_version_runs_and_raw_results_but_keeps_derived_lineage() {
     let app = TestApp::spawn().await;
     let cookie = app.login_cookie("alice@example.com").await;
