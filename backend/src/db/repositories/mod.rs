@@ -61,13 +61,14 @@ pub use upload::{
     UploadRepo,
 };
 pub use upload_confirmation::{
-    FinishedUploadBatch, PublishChildResult, ResourcePublishInput, UploadConfirmationRepo,
+    DraftApplicationMode, FinishedUploadBatch, PublishChildResult, ResourcePublishInput,
+    UploadConfirmationRepo,
 };
 pub use user::UserRepo;
 pub use version::{
-    DeleteResult, DeletionImpact, DraftDataFrameReadRow, DraftSnapshot, PublishCommand,
-    PublishResult, VersionDataFrameReadRow, VersionDataframeRow, VersionRepo, VersionRepoError,
-    VersionRow, VersionSnapshot, WorkspaceRow, WorkspaceSnapshot,
+    DeletionImpact, DraftDataFrameReadRow, DraftSnapshot, PublishCommand, PublishResult,
+    VersionDataFrameReadRow, VersionDataframeRow, VersionRepo, VersionRepoError, VersionRow,
+    VersionSnapshot, WorkspaceRow, WorkspaceSnapshot,
 };
 
 #[derive(Debug)]

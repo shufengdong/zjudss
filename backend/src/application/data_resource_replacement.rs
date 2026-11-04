@@ -59,6 +59,10 @@ impl DataResourceService {
         let object = values
             .as_object()
             .ok_or_else(|| Self::invalid("structured_values_invalid", "values 必须是对象"))?;
+        let old_page = self
+            .reader
+            .page(user, &read_source(&current), Some(1), None, &[])
+            .await?;
         let parquet = struct_parquet(contract, object)?;
         let staged = self
             .artifacts
@@ -83,10 +87,6 @@ impl DataResourceService {
             .collect::<Vec<_>>();
         let schema_json = serde_json::to_string(&columns)
             .map_err(|error| Self::invalid("structured_values_invalid", &error.to_string()))?;
-        let old_page = self
-            .reader
-            .page(user, &read_source(&current), Some(1), None, &[])
-            .await?;
         let differences = contract
             .fields
             .iter()

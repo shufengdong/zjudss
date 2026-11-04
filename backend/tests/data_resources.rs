@@ -1644,6 +1644,62 @@ async fn expired_and_stale_structured_previews_release_pending_artifacts() {
 }
 
 #[tokio::test]
+async fn unreadable_source_does_not_commit_a_structured_preview_artifact() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session_id = session(&app, &user, "unreadable-structured-source").await;
+    let (para, _) = publish_para_resource(&app, &user, session_id, "unreadable-para").await;
+    let baseline = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
+    #[derive(diesel::QueryableByName)]
+    struct StoragePath {
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        storage_path: String,
+    }
+    let storage_path = diesel::sql_query(
+        "SELECT a.storage_path FROM data_resources r JOIN artifacts a ON a.id=r.normalized_artifact_id WHERE r.id=?1",
+    )
+    .bind::<diesel::sql_types::Text, _>(&para.id)
+    .get_result::<StoragePath>(&mut app.pool.get().unwrap())
+    .unwrap()
+    .storage_path;
+    std::fs::remove_file(app.data_dir.join(storage_path)).unwrap();
+
+    let error = app
+        .state
+        .data_resource_service
+        .preview_structured_replacement(
+            &user,
+            &para.id,
+            &para.content_hash,
+            "frames.para",
+            serde_json::json!({
+                "base_frequency_hz": 50.0,
+                "max_iter": 31,
+                "max_control_iter": 10,
+                "tol": 1e-6,
+                "line_model": "exact",
+                "result": "bus_phase,summary"
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "dataframe_read_failed");
+    let after = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
+    assert_eq!(after.used_artifacts, baseline.used_artifacts);
+    assert_eq!(after.used_bytes, baseline.used_bytes);
+}
+
+#[tokio::test]
 async fn partial_confirmation_keeps_only_failed_child_retryable() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");

@@ -264,9 +264,13 @@ pub(in crate::db::repositories) fn apply_model_candidates_to_draft_on(
     user: &str,
     batch_id: i32,
     expected_draft: Option<DraftRef>,
+    mode: super::DraftApplicationMode,
     now_ms: i64,
 ) -> RepoResult<()> {
     let batch = owned_batch(conn, user, batch_id)?;
+    if batch.source_kind != mode.expected_source_kind() {
+        return Err(RepoError::InvalidState("upload_strategy_mismatch".into()));
+    }
     if batch.model_publish_status == "published" {
         return Ok(());
     }
@@ -304,7 +308,10 @@ pub(in crate::db::repositories) fn apply_model_candidates_to_draft_on(
         .bind::<Integer, _>(workspace.id)
         .get_result::<Draft>(conn)
         .optional()?;
-    if batch.source_kind == "case" && draft.is_some() && expected_draft.is_none() {
+    if mode == super::DraftApplicationMode::ReplaceAll
+        && draft.is_some()
+        && expected_draft.is_none()
+    {
         return Err(RepoError::InvalidState("draft_revision_conflict".into()));
     }
     if let Some(expected) = expected_draft {
@@ -325,7 +332,7 @@ pub(in crate::db::repositories) fn apply_model_candidates_to_draft_on(
             diesel::select(diesel::dsl::sql::<Integer>("last_insert_rowid()")).get_result(conn)?;
         if let Some(version_id) = workspace
             .active_version_id
-            .filter(|_| batch.source_kind != "case")
+            .filter(|_| mode == super::DraftApplicationMode::MergeWithActiveBase)
         {
             diesel::sql_query("INSERT INTO draft_dataframes(draft_id,table_name,artifact_id,schema_json,row_count,content_hash,created_at_ms) SELECT ?1,table_name,artifact_id,schema_json,row_count,content_hash,?2 FROM model_dataframes WHERE version_id=?3")
                             .bind::<Integer,_>(id).bind::<BigInt,_>(now_ms).bind::<Integer,_>(version_id).execute(conn)?;
@@ -338,7 +345,7 @@ pub(in crate::db::repositories) fn apply_model_candidates_to_draft_on(
         (id, 1)
     };
     let mut release = Vec::new();
-    if batch.source_kind == "case" {
+    if mode == super::DraftApplicationMode::ReplaceAll {
         release = schema::draft_dataframes::table
             .filter(schema::draft_dataframes::draft_id.eq(draft_id))
             .select(schema::draft_dataframes::artifact_id)

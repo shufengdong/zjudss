@@ -16,11 +16,6 @@ pub struct DeletionImpact {
     pub reclaimable_bytes: i64,
 }
 
-#[derive(Debug, Clone)]
-pub struct DeleteResult {
-    pub release_artifact_ids: Vec<i32>,
-}
-
 impl VersionRepo {
     pub async fn preview_deletion(
         &self,
@@ -55,12 +50,12 @@ impl VersionRepo {
         version_id: i32,
         token_hash: String,
         now_ms: i64,
-    ) -> Result<DeleteResult, VersionRepoError> {
+    ) -> Result<(), VersionRepoError> {
         let pool = self.pool.clone();
         let user = user.0.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            conn.immediate_transaction::<DeleteResult,VersionRepoError,_>(|conn| {
+            conn.immediate_transaction::<(),VersionRepoError,_>(|conn| {
                 #[derive(QueryableByName)] struct Preview { #[diesel(sql_type=Text)] impact_hash:String }
                 let preview = diesel::sql_query("SELECT impact_hash FROM version_deletion_previews WHERE token_hash=?1 AND user_id=?2 AND version_id=?3 AND expires_at_ms>=?4")
                     .bind::<Text,_>(&token_hash).bind::<Text,_>(&user).bind::<Integer,_>(version_id).bind::<BigInt,_>(now_ms).get_result::<Preview>(conn).optional()?;
@@ -76,6 +71,11 @@ impl VersionRepo {
                     .bind::<Integer,_>(version_id).load::<ArtifactId>(conn)?.into_iter().map(|row| row.artifact_id).collect::<Vec<_>>();
                 release.extend(diesel::sql_query("SELECT d.artifact_id FROM result_datasets d JOIN simulation_runs r ON r.id=d.run_id WHERE r.model_version_id=?1 AND d.deleted_at_ms IS NULL ORDER BY d.id")
                     .bind::<Integer,_>(version_id).load::<ArtifactId>(conn)?.into_iter().map(|row| row.artifact_id));
+                let scope_id = super::super::artifact_refs::storage_scope_id_for_user(
+                    conn,
+                    &UserId(user.clone()),
+                )?;
+                super::super::artifact_refs::release_refs(conn, scope_id, release, now_ms)?;
                 let tombstone = serde_json::json!({"contentHash":version.content_hash,"impact":impact,"deletedAtMs":now_ms}).to_string();
                 diesel::delete(schema::model_dataframes::table.filter(schema::model_dataframes::version_id.eq(version_id))).execute(conn)?;
                 diesel::sql_query("UPDATE result_datasets SET artifact_id=NULL,deleted_at_ms=?1,tombstone_json=json_object('resultName',result_name,'schemaHash',schema_hash,'rowCount',row_count,'sizeBytes',size_bytes) WHERE run_id IN (SELECT id FROM simulation_runs WHERE model_version_id=?2) AND deleted_at_ms IS NULL")
@@ -85,7 +85,7 @@ impl VersionRepo {
                 diesel::sql_query("UPDATE model_versions SET deleted_at_ms=?1,tombstone_json=?2 WHERE id=?3")
                     .bind::<BigInt,_>(now_ms).bind::<Text,_>(tombstone).bind::<Integer,_>(version_id).execute(conn)?;
                 diesel::sql_query("DELETE FROM version_deletion_previews WHERE token_hash=?1").bind::<Text,_>(token_hash).execute(conn)?;
-                Ok(DeleteResult { release_artifact_ids: release })
+                Ok(())
             })
         }).await.map_err(|error| VersionRepoError::Repository(RepoError::Join(error)))?
     }

@@ -37,6 +37,21 @@ pub struct FinishedUploadBatch {
     pub staged_paths: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftApplicationMode {
+    MergeWithActiveBase,
+    ReplaceAll,
+}
+
+impl DraftApplicationMode {
+    pub(super) fn expected_source_kind(self) -> &'static str {
+        match self {
+            Self::MergeWithActiveBase => "upload",
+            Self::ReplaceAll => "case",
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct UploadConfirmationRepo {
     pub(super) pool: DbPool,
@@ -213,6 +228,7 @@ impl UploadConfirmationRepo {
         user: &UserId,
         batch_id: i32,
         expected_draft: Option<DraftRef>,
+        mode: DraftApplicationMode,
         now_ms: i64,
     ) -> RepoResult<()> {
         let pool = self.pool.clone();
@@ -225,6 +241,7 @@ impl UploadConfirmationRepo {
                     &user,
                     batch_id,
                     expected_draft,
+                    mode,
                     now_ms,
                 )
             })

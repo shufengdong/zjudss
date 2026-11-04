@@ -350,16 +350,9 @@ impl VersionService {
             return Err(VersionError::InvalidImpactToken);
         }
         let token_hash = hash_token(&impact_token);
-        let result = self
-            .repo
+        self.repo
             .delete_version(&user.id, version_id, token_hash, now_ms())
             .await?;
-        for artifact_id in result.release_artifact_ids {
-            let _ = self
-                .artifacts
-                .release(user.storage_scope_id, artifact_id)
-                .await;
-        }
         Ok(())
     }
 }

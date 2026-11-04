@@ -213,6 +213,19 @@ impl UploadProcessor {
             .await
             .map_err(|error| UploadBatchError::Invalid(error.code.clone(), error.to_string()))?;
         let projection_diagnostics = read_projection_diagnostics(&projected.diagnostics)?;
+        let case_switch = case_switch_state.await?;
+        for dataset in &projected.dataframes {
+            if !profile
+                .projector_outputs
+                .iter()
+                .any(|output| output.alias == dataset.name)
+            {
+                return Err(UploadBatchError::Invalid(
+                    "case_projection_output_mismatch".into(),
+                    "案例投影输出未出现在已发布合同中".into(),
+                ));
+            }
+        }
         let mut candidates = Vec::new();
         let mut committed = Vec::new();
         for dataset in projected.dataframes {
@@ -220,12 +233,7 @@ impl UploadProcessor {
                 .projector_outputs
                 .iter()
                 .find(|output| output.alias == dataset.name)
-                .ok_or_else(|| {
-                    UploadBatchError::Invalid(
-                        "case_projection_output_mismatch".into(),
-                        "案例投影输出未出现在已发布合同中".into(),
-                    )
-                })?;
+                .expect("projected outputs were validated before committing artifacts");
             let purpose = match output.input_kind {
                 FacadeInputKind::Model => CandidatePurpose::ModelTable,
                 FacadeInputKind::Data | FacadeInputKind::Struct => CandidatePurpose::DataResource,
@@ -263,7 +271,7 @@ impl UploadProcessor {
             ));
         }
         let mut diagnostics = batch_diagnostics(record, settings, None);
-        diagnostics["caseSwitch"] = case_switch_state.await?;
+        diagnostics["caseSwitch"] = case_switch;
         diagnostics["caseProjection"] = serde_json::json!({
             "exampleId": example.id,
             "title": example.title,

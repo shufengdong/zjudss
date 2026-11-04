@@ -215,5 +215,7 @@ tombstone 边界保持不变。本阶段通过后端格式与全 feature 零警�
 2026-11-04 的上传、模型版本与数据资源所有权维护阶段已通过后端格式、全 target/all feature 零警告 Clippy，以及
 `upload_batches`、`case_import`、`model_imports`、`data_resources`、`study_configurations`、`managed_workflows`、
 `version_deletion`、`model_versions` 和 `workspace_versions` 定向行为测试。新增回归锁定重新解析失败后的 artifact 清理、
-不受支持解析设置不破坏旧候选、版本 busy/无效或过期 token 和版本 artifact 释放。完整仓库门禁在最终验证阶段执行；
-候选发布仍受上文同一真实 eig-rs 资源树断言及 7 个外部 `case_projection_invalid` 阻塞，本阶段未放宽该合同。
+不受支持解析设置不破坏旧候选、structured replacement 源不可读时不提交新 artifact、版本 busy/无效或过期 token，
+以及版本删除与 artifact 引用释放的事务原子性。最终全仓验证已执行：前端 50 个文件 265 项测试与生产构建通过，
+功能覆盖 350/350、公共契约 297/297；后端跳过已知外部资源断言后的 `e2e-test` 全套通过。未跳过运行仍只受上文
+同一真实 eig-rs 资源树断言及 7 个外部 `case_projection_invalid` 阻塞，本阶段未放宽该合同，也不将候选发布标记为全绿。

@@ -11,7 +11,7 @@ use super::{RepoError, RepoResult};
 #[path = "version_deletion.rs"]
 mod version_deletion;
 
-pub use self::version_deletion::{DeleteResult, DeletionImpact};
+pub use self::version_deletion::DeletionImpact;
 
 #[derive(QueryableByName, Debug, Clone)]
 pub struct WorkspaceRow {

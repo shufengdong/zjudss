@@ -7,7 +7,7 @@ use super::upload_confirmation::UploadConfirmationRepo;
 use super::upload_confirmation::transactions::{
     apply_model_candidates_to_draft_on, publish_resources_on,
 };
-use super::upload_confirmation::{PublishChildResult, ResourcePublishInput};
+use super::upload_confirmation::{DraftApplicationMode, PublishChildResult, ResourcePublishInput};
 use super::version::{PublishCommand, VersionRepoError, publish_on};
 use super::{RepoError, RepoResult};
 use crate::auth::UserId;
@@ -59,7 +59,14 @@ impl UploadConfirmationRepo {
                     diesel::sql_query("UPDATE study_configurations SET status='invalidated',updated_at_ms=?1 WHERE id IN(SELECT configuration_id FROM study_input_bindings WHERE resource_id=?2) AND status IN ('choosing_facade','collecting_inputs','ready_to_confirm')")
                         .bind::<BigInt,_>(now_ms).bind::<Text,_>(&old.id).execute(conn)?;
                 }
-                apply_model_candidates_to_draft_on(conn, &user, batch_id, expected_draft, now_ms)?;
+                apply_model_candidates_to_draft_on(
+                    conn,
+                    &user,
+                    batch_id,
+                    expected_draft,
+                    DraftApplicationMode::ReplaceAll,
+                    now_ms,
+                )?;
                 let resources = publish_resources_on(conn, &user, batch_id, inputs, None, now_ms)?;
                 for previous in &old {
                     if let Some(next) = resources.resources.iter().find(|next| next.normalized_alias == previous.normalized_alias) {

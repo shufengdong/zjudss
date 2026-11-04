@@ -9,7 +9,8 @@ use sha2::{Digest, Sha256};
 use crate::auth::CurrentUser;
 use crate::db::models::DraftRef;
 use crate::db::repositories::{
-    DataResourceRepo, RepoError, ResourcePublishInput, UploadConfirmationRepo, UploadRepo,
+    DataResourceRepo, DraftApplicationMode, RepoError, ResourcePublishInput,
+    UploadConfirmationRepo, UploadRepo,
 };
 use crate::storage::StageLimits;
 
@@ -467,7 +468,13 @@ impl UploadConfirmationService {
         {
             match self
                 .confirmation_repo
-                .apply_model_candidates_to_draft(&user.id, batch_id, expected_draft, now_ms())
+                .apply_model_candidates_to_draft(
+                    &user.id,
+                    batch_id,
+                    expected_draft,
+                    DraftApplicationMode::MergeWithActiveBase,
+                    now_ms(),
+                )
                 .await
             {
                 Ok(()) => {}

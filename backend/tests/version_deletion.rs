@@ -216,6 +216,58 @@ async fn deletion_releases_the_model_artifact_reference() {
 }
 
 #[tokio::test]
+async fn artifact_reference_release_failure_rolls_back_version_deletion() {
+    let app = TestApp::spawn().await;
+    let cookie = app.login_cookie("alice@example.com").await;
+    let user = common::test_user("alice@example.com");
+    let (_session_id, version_id) = published_version(&app, &cookie).await;
+    let mut conn = app.pool.get().unwrap();
+    diesel::sql_query("UPDATE workspaces SET active_version_id=NULL WHERE active_version_id=?1")
+        .bind::<diesel::sql_types::Integer, _>(version_id)
+        .execute(&mut conn)
+        .unwrap();
+    let artifact_id = zjudss::db::schema::model_dataframes::table
+        .filter(zjudss::db::schema::model_dataframes::version_id.eq(version_id))
+        .select(zjudss::db::schema::model_dataframes::artifact_id)
+        .first::<i32>(&mut conn)
+        .unwrap();
+    drop(conn);
+
+    let response = preview(&app, &cookie, version_id).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    let token = value["impactToken"].as_str().unwrap();
+    diesel::delete(
+        zjudss::db::schema::storage_scope_artifacts::table
+            .find((user.storage_scope_id, artifact_id)),
+    )
+    .execute(&mut app.pool.get().unwrap())
+    .unwrap();
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/versions/{version_id}?impactToken={token}"))
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let deleted_at = zjudss::db::schema::model_versions::table
+        .find(version_id)
+        .select(zjudss::db::schema::model_versions::deleted_at_ms)
+        .first::<Option<i64>>(&mut app.pool.get().unwrap())
+        .unwrap();
+    assert_eq!(deleted_at, None);
+}
+
+#[tokio::test]
 async fn deletion_tombstones_version_runs_and_raw_results_but_keeps_derived_lineage() {
     let app = TestApp::spawn().await;
     let cookie = app.login_cookie("alice@example.com").await;
@@ -230,6 +282,10 @@ async fn deletion_tombstones_version_runs_and_raw_results_but_keeps_derived_line
     diesel::sql_query("INSERT INTO result_datasets(run_id,artifact_id,result_name,schema_json,schema_hash,row_count,size_bytes,created_at_ms) SELECT r.id,r.script_artifact_id,'raw','{}',r.script_content_hash,1,1,4 FROM simulation_runs r WHERE r.client_run_id='run'").execute(&mut conn).unwrap();
     diesel::sql_query("INSERT INTO result_analysis_runs(session_id,intent_json,script_artifact_id,status,stage,agent_bundle_version,agent_skill_refs_json,engine_contract_version,created_at_ms) SELECT ?1,'{}',artifact_id,'succeeded','completed','test','[]','test',5 FROM script_resources WHERE session_id=?1 LIMIT 1").bind::<diesel::sql_types::Integer,_>(session_id).execute(&mut conn).unwrap();
     diesel::sql_query("INSERT INTO result_datasets(analysis_run_id,artifact_id,result_name,schema_json,schema_hash,row_count,size_bytes,created_at_ms) SELECT ar.id,s.artifact_id,'derived','{}',s.content_hash,1,1,6 FROM result_analysis_runs ar JOIN script_resources s ON s.session_id=ar.session_id WHERE ar.session_id=?1 LIMIT 1").bind::<diesel::sql_types::Integer,_>(session_id).execute(&mut conn).unwrap();
+    diesel::sql_query("UPDATE storage_scope_artifacts SET ref_count=ref_count+5 WHERE artifact_id=(SELECT artifact_id FROM model_dataframes WHERE version_id=?1 LIMIT 1)")
+        .bind::<diesel::sql_types::Integer, _>(version_id)
+        .execute(&mut conn)
+        .unwrap();
     diesel::sql_query("INSERT INTO dataset_lineage_snapshots(derived_dataset_id,source_dataset_id,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json,created_at_ms) SELECT d.id,r.id,r.result_name,r.schema_json,r.schema_hash,r.schema_hash,'{}',7 FROM result_datasets d JOIN result_datasets r WHERE d.analysis_run_id IS NOT NULL AND r.run_id IS NOT NULL LIMIT 1").execute(&mut conn).unwrap();
     drop(conn);
 
