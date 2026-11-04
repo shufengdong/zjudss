@@ -1,5 +1,6 @@
 mod analysis;
 mod artifact;
+mod artifact_refs;
 mod case_switch;
 mod chart_view;
 mod comparison;

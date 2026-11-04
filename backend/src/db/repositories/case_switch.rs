@@ -72,7 +72,12 @@ impl DataResourceRepo {
                     expected: DraftRef { id:draft.id, revision:draft.revision }, client_publish_id:format!("case-batch-{batch_id}"),
                     description:diagnostics["caseProjection"]["title"].as_str().unwrap_or("切换应用案例").chars().take(200).collect(), engine_contract:"tensoreval-parquet-v3".into(), now_ms,
                 }).map_err(|error| match error { VersionRepoError::Repository(error) => error, _ => RepoError::InvalidState("案例模型版本发布失败".into()) })?;
-                super::artifact::release_refs(conn, scope_id, published.release_artifact_ids, now_ms)?;
+                super::artifact_refs::release_refs(
+                    conn,
+                    scope_id,
+                    published.release_artifact_ids,
+                    now_ms,
+                )?;
                 diesel::update(schema::study_configurations::table.filter(schema::study_configurations::session_id.eq(batch.session_id)).filter(schema::study_configurations::status.eq_any(["choosing_facade","collecting_inputs","ready_to_confirm"])))
                     .set((schema::study_configurations::status.eq("invalidated"),schema::study_configurations::updated_at_ms.eq(now_ms))).execute(conn)?;
                 let receipt = serde_json::json!({"versionId":published.version_id,"activated":true,"deduplicated":published.deduplicated,"caseBatchId":batch_id});

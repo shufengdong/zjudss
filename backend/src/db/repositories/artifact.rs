@@ -1,66 +1,12 @@
 use diesel::prelude::*;
-use std::collections::BTreeMap;
 
 use crate::db::models::{
     Artifact, ArtifactGcFailure, NewArtifact, StorageScope, StorageScopeArtifact,
 };
 use crate::db::{DbPool, schema};
 
+use super::artifact_refs::{release_refs, retain_ref_count};
 use super::{RepoError, RepoResult};
-
-pub(crate) fn release_refs(
-    conn: &mut SqliteConnection,
-    scope_id: i32,
-    artifact_ids: impl IntoIterator<Item = i32>,
-    now_ms: i64,
-) -> RepoResult<()> {
-    let mut counts = BTreeMap::<i32, i64>::new();
-    for artifact_id in artifact_ids {
-        *counts.entry(artifact_id).or_default() += 1;
-    }
-    let mut removed_artifacts = 0_i64;
-    let mut removed_bytes = 0_i64;
-    for (artifact_id, release_count) in counts {
-        let link = schema::storage_scope_artifacts::table
-            .find((scope_id, artifact_id))
-            .first::<StorageScopeArtifact>(conn)
-            .optional()?
-            .ok_or(RepoError::NotFound)?;
-        if release_count > link.ref_count {
-            return Err(RepoError::InvalidState(
-                "artifact 引用释放次数超过持有次数".into(),
-            ));
-        }
-        if release_count < link.ref_count {
-            diesel::update(schema::storage_scope_artifacts::table.find((scope_id, artifact_id)))
-                .set(schema::storage_scope_artifacts::ref_count.eq(link.ref_count - release_count))
-                .execute(conn)?;
-        } else {
-            let size_bytes = schema::artifacts::table
-                .find(artifact_id)
-                .select(schema::artifacts::size_bytes)
-                .first::<i64>(conn)?;
-            diesel::delete(schema::storage_scope_artifacts::table.find((scope_id, artifact_id)))
-                .execute(conn)?;
-            removed_artifacts += 1;
-            removed_bytes = removed_bytes
-                .checked_add(size_bytes)
-                .ok_or_else(|| RepoError::InvalidState("artifact 大小溢出".into()))?;
-        }
-    }
-    if removed_artifacts > 0 {
-        diesel::update(schema::storage_scopes::table.find(scope_id))
-            .set((
-                schema::storage_scopes::used_artifacts
-                    .eq(schema::storage_scopes::used_artifacts - removed_artifacts),
-                schema::storage_scopes::used_bytes
-                    .eq(schema::storage_scopes::used_bytes - removed_bytes),
-                schema::storage_scopes::updated_at_ms.eq(now_ms),
-            ))
-            .execute(conn)?;
-    }
-    Ok(())
-}
 
 #[derive(Debug, Clone)]
 pub struct ArtifactDraft {
@@ -235,17 +181,14 @@ impl ArtifactRepo {
                     if artifact.size_bytes != draft.size_bytes {
                         return Err(RepoError::Storage("相同哈希对应不同大小".to_string()));
                     }
-                    if let Some(link) = schema::storage_scope_artifacts::table
+                    if schema::storage_scope_artifacts::table
                         .find((scope_id, artifact.id))
                         .first::<StorageScopeArtifact>(conn)
                         .optional()?
+                        .is_some()
                     {
                         publish.take().expect("publish once")(&artifact.storage_path)?;
-                        diesel::update(
-                            schema::storage_scope_artifacts::table.find((scope_id, artifact.id)),
-                        )
-                        .set(schema::storage_scope_artifacts::ref_count.eq(link.ref_count + 1))
-                        .execute(conn)?;
+                        retain_ref_count(conn, scope_id, artifact.id, 1)?;
                         if let Some(file_id) = upload_file_id.as_deref() {
                             diesel::update(schema::upload_files::table.find(file_id))
                                 .set(schema::upload_files::source_artifact_id.eq(Some(artifact.id)))
@@ -424,15 +367,14 @@ where
         if artifact.size_bytes != draft.size_bytes {
             return Err(RepoError::Storage("相同哈希对应不同大小".to_string()));
         }
-        if let Some(link) = schema::storage_scope_artifacts::table
+        if schema::storage_scope_artifacts::table
             .find((scope_id, artifact.id))
             .first::<StorageScopeArtifact>(conn)
             .optional()?
+            .is_some()
         {
             publish(&artifact.storage_path)?;
-            diesel::update(schema::storage_scope_artifacts::table.find((scope_id, artifact.id)))
-                .set(schema::storage_scope_artifacts::ref_count.eq(link.ref_count + 1))
-                .execute(conn)?;
+            retain_ref_count(conn, scope_id, artifact.id, 1)?;
             return Ok(artifact.clone());
         }
     }

@@ -610,7 +610,7 @@ impl UploadRepo {
                 };
                 let mut release_artifact_ids = artifacts;
                 release_artifact_ids.extend(source_artifacts);
-                super::artifact::release_refs(conn, scope_id, release_artifact_ids, now_ms)?;
+                super::artifact_refs::release_refs(conn, scope_id, release_artifact_ids, now_ms)?;
                 diesel::update(
                     schema::upload_candidates::table
                         .filter(schema::upload_candidates::batch_id.eq(batch_id)),

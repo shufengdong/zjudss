@@ -550,7 +550,7 @@ impl DataResourceRepo {
                 .filter(schema::sessions::deletion_status.eq("live"))
                 .select(schema::users::storage_scope_id)
                 .first::<i32>(conn)?;
-            super::artifact::release_refs(conn, scope_id, release_artifact_ids, now_ms)?;
+            super::artifact_refs::release_refs(conn, scope_id, release_artifact_ids, now_ms)?;
             if !retained_candidate_ids.is_empty() {
                 diesel::update(
                     schema::upload_candidates::table
@@ -788,7 +788,7 @@ impl DataResourceRepo {
                     .filter(schema::users::id.eq(&input.user_id))
                     .select(schema::users::storage_scope_id)
                     .first::<i32>(conn)?;
-                super::artifact::release_refs(
+                super::artifact_refs::release_refs(
                     conn,
                     scope_id,
                     superseded,
@@ -849,7 +849,7 @@ impl DataResourceRepo {
                     .optional()?
                     .ok_or_else(|| RepoError::InvalidState("replacement_preview_invalid".into()))?;
                 if preview.expires_at_ms < now {
-                    super::artifact::release_refs(
+                    super::artifact_refs::release_refs(
                         conn,
                         scope_id,
                         [preview.pending_artifact_id],
@@ -865,7 +865,7 @@ impl DataResourceRepo {
                 }
                 let old = owned_resource(conn, &user, &preview.old_resource_id, true)?;
                 let Some(old_artifact_id) = old.normalized_artifact_id else {
-                    super::artifact::release_refs(
+                    super::artifact_refs::release_refs(
                         conn,
                         scope_id,
                         [preview.pending_artifact_id],
@@ -886,7 +886,7 @@ impl DataResourceRepo {
                 if !matches!(old.status.as_str(), "live" | "needs_rename")
                     || current_hash != preview.expected_content_hash
                 {
-                    super::artifact::release_refs(
+                    super::artifact_refs::release_refs(
                         conn,
                         scope_id,
                         [preview.pending_artifact_id],
@@ -901,7 +901,7 @@ impl DataResourceRepo {
                     });
                 }
                 if action == "cancel" {
-                    super::artifact::release_refs(
+                    super::artifact_refs::release_refs(
                         conn,
                         scope_id,
                         [preview.pending_artifact_id],
@@ -1030,7 +1030,7 @@ impl DataResourceRepo {
                         .push(row.artifact_id);
                 }
                 for (scope_id, artifact_ids) in by_scope {
-                    super::artifact::release_refs(conn, scope_id, artifact_ids, now_ms)?;
+                    super::artifact_refs::release_refs(conn, scope_id, artifact_ids, now_ms)?;
                 }
                 diesel::sql_query(
                     "DELETE FROM data_resource_replacement_previews WHERE expires_at_ms<?1",
@@ -1194,7 +1194,7 @@ impl DataResourceRepo {
                     .filter(schema::users::id.eq(&user))
                     .select(schema::users::storage_scope_id)
                     .first::<i32>(conn)?;
-                super::artifact::release_refs(
+                super::artifact_refs::release_refs(
                     conn,
                     scope_id,
                     release_artifact_ids,
@@ -1696,7 +1696,7 @@ pub(super) fn publish_models_on(
             schema::workspace_drafts::updated_at_ms.eq(now_ms),
         ))
         .execute(conn)?;
-    super::artifact::release_refs(conn, scope_id, release, now_ms)?;
+    super::artifact_refs::release_refs(conn, scope_id, release, now_ms)?;
     let receipt = serde_json::json!({"draftId":draft_id,"draftRevision":revision,"tableCount":candidates.len()}).to_string();
     diesel::update(schema::upload_batches::table.find(batch_id))
         .set((

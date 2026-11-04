@@ -947,7 +947,7 @@ impl RunRepo {
                     artifacts.extend(snapshot.resources.iter().map(|resource| resource.artifact_id));
                 }
                 let scope_id = schema::users::table.find(&user).select(schema::users::storage_scope_id).first::<i32>(conn)?;
-                super::artifact::release_refs(conn, scope_id, artifacts, now_ms)?;
+                super::artifact_refs::release_refs(conn, scope_id, artifacts, now_ms)?;
                 let tombstone = serde_json::json!({"clientRunId":run.client_run_id,"status":run.status,"modelContentHash":run.model_content_hash,"scriptContentHash":run.script_content_hash,"impact":impact}).to_string();
                 diesel::sql_query("UPDATE simulation_runs SET deleted_at_ms=?1,tombstone_json=?2 WHERE id=?3 AND deleted_at_ms IS NULL")
                     .bind::<BigInt,_>(now_ms).bind::<Text,_>(tombstone).bind::<Integer,_>(run_id).execute(conn)?;

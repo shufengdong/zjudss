@@ -5,7 +5,8 @@ use crate::auth::UserId;
 use crate::db::models::{ChartViewRow, NewChartView};
 use crate::db::{DbPool, schema};
 
-use super::artifact::{commit_draft_in_transaction, release_refs};
+use super::artifact::commit_draft_in_transaction;
+use super::artifact_refs::release_refs;
 use super::{ArtifactDraft, RepoError, RepoResult};
 
 #[derive(Debug, Clone)]

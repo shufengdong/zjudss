@@ -414,7 +414,7 @@ impl SessionRepo {
                     .filter(schema::users::id.eq(&user_id.0))
                     .select(schema::users::storage_scope_id)
                     .first::<i32>(conn)?;
-                super::artifact::release_refs(
+                super::artifact_refs::release_refs(
                     conn,
                     scope_id,
                     artifact_ids,
