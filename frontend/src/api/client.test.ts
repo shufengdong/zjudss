@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  ApiError,
+  downloadDataResource,
+  downloadDataset,
   downloadModelDataFrame,
   deleteSession,
   getModelDataFrame,
@@ -63,6 +66,92 @@ describe('authentication-required notifications', () => {
     await expect(login('alice', 'wrong')).rejects.toMatchObject({ status: 401 })
     expect(listener).not.toHaveBeenCalled()
     window.removeEventListener('zjudss:authentication-required', listener)
+  })
+})
+
+describe('protected downloads', () => {
+  const version: ModelDataFrameSource = {
+    kind: 'model-version', dataframeId: '11', versionId: '7', tableName: 'bus',
+  }
+
+  it('uses response filenames for all download endpoints', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('dataset', {
+        status: 200,
+        headers: { 'content-disposition': 'attachment; filename="dataset-result.parquet"' },
+      }))
+      .mockResolvedValueOnce(new Response('resource', {
+        status: 200,
+        headers: { 'content-disposition': 'attachment; filename="resource-source.csv"' },
+      }))
+      .mockResolvedValueOnce(new Response('model', {
+        status: 200,
+        headers: { 'content-disposition': 'attachment; filename="model-table.parquet"' },
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(downloadDataset('1', 'fallback-dataset')).resolves.toMatchObject({ filename: 'dataset-result.parquet' })
+    await expect(downloadDataResource('2', 'original', 'fallback-resource')).resolves.toMatchObject({ filename: 'resource-source.csv' })
+    await expect(downloadModelDataFrame(version)).resolves.toMatchObject({ filename: 'model-table.parquet' })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('uses endpoint-specific fallback filenames when disposition is absent', async () => {
+    const fetchMock = vi.fn().mockImplementation(
+      () => Promise.resolve(new Response('content', { status: 200 })),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(downloadDataset('1', 'dataset-name')).resolves.toMatchObject({ filename: 'dataset-name.parquet' })
+    await expect(downloadDataResource('2', 'normalized', 'resource-name')).resolves.toMatchObject({ filename: 'resource-name.parquet' })
+    await expect(downloadModelDataFrame(version)).resolves.toMatchObject({ filename: 'bus.parquet' })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('uses structured errors and emits one authentication event for a download 401', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ error: '请先登录', code: 'authentication_required', details: { reason: 'expired' } }),
+      { status: 401, headers: { 'content-type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    await new Promise((resolve) => window.setTimeout(resolve, 0))
+    const listener = vi.fn()
+    window.addEventListener('zjudss:authentication-required', listener)
+
+    await expect(downloadDataset('1')).rejects.toEqual(
+      new ApiError(401, '请先登录', 'authentication_required', { reason: 'expired' }),
+    )
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    window.removeEventListener('zjudss:authentication-required', listener)
+  })
+
+  it('uses a stable fallback error for non-JSON download failures', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('upstream failed', { status: 500 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(downloadDataResource('2', 'original')).rejects.toMatchObject({
+      status: 500,
+      message: '请求失败（500）',
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('passes the caller abort signal through every download', async () => {
+    const fetchMock = vi.fn().mockImplementation(
+      () => Promise.resolve(new Response('content', { status: 200 })),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const signal = new AbortController().signal
+
+    await downloadDataset('1', 'dataset', signal)
+    await downloadDataResource('2', 'original', 'resource', signal)
+    await downloadModelDataFrame(version, signal)
+
+    expect(fetchMock.mock.calls).toHaveLength(3)
+    for (const [, init] of fetchMock.mock.calls as [string, RequestInit][]) {
+      expect(init.signal).toBe(signal)
+    }
   })
 })
 

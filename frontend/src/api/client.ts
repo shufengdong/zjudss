@@ -26,7 +26,7 @@ async function errorFrom(res:Response) {
     return new ApiError(res.status,body.error??`请求失败（${res.status}）`,body.code,body.details)
   } catch { return new ApiError(res.status,`请求失败（${res.status}）`) }
 }
-export async function request<T>(url:string,init:RequestInit={},parse:(r:Response)=>Promise<T>=(r)=>r.json() as Promise<T>,reportAuthentication=true):Promise<T>{
+async function checkedFetch(url:string,init:RequestInit={},reportAuthentication=true):Promise<Response>{
   const headers=new Headers(init.headers)
   if(init.body!==undefined&&!(init.body instanceof FormData)&&!headers.has('Content-Type')) headers.set('Content-Type','application/json')
   const res=await fetch(apiUrl(url),{...init,headers})
@@ -35,7 +35,17 @@ export async function request<T>(url:string,init:RequestInit={},parse:(r:Respons
     if(reportAuthentication&&res.status===401) emitAuthenticationRequired()
     throw error
   }
+  return res
+}
+export async function request<T>(url:string,init:RequestInit={},parse:(r:Response)=>Promise<T>=(r)=>r.json() as Promise<T>,reportAuthentication=true):Promise<T>{
+  const res=await checkedFetch(url,init,reportAuthentication)
   return parse(res)
+}
+async function download(url:string,fallbackFilename:string,signal?:AbortSignal):Promise<{blob:Blob;filename:string}>{
+  const res=await checkedFetch(url,{signal})
+  const disposition=res.headers.get('content-disposition')??''
+  const filename=disposition.match(/filename="?([^";]+)"?/i)?.[1]??fallbackFilename
+  return{blob:await res.blob(),filename}
 }
 const params=(values:Record<string,string|number|undefined|null>)=>{
   const p=new URLSearchParams()
@@ -124,17 +134,12 @@ export const deleteDataset=(id:string)=>request<{datasetId:string;tombstone:unkn
 export const getStorageUsage=()=>request<StorageUsage>('/api/storage-usage')
 export const previewScriptRetry=(scriptId:string,clientRetryId:string)=>request<RetryPreviewView>(`/api/scripts/${scriptId}/retry-previews`,{method:'POST',body:JSON.stringify({clientRetryId})})
 export const confirmScriptRetry=(previewId:string,confirmed=true)=>request<ManagedWorkflowView>(`/api/retry-previews/${previewId}/confirm`,{method:'POST',body:JSON.stringify({confirmed})})
-export async function downloadDataset(id:string,name='dataset'){
-  const res=await fetch(apiUrl(`/api/datasets/${id}/download`)); if(!res.ok){const error=await errorFrom(res);if(res.status===401)emitAuthenticationRequired();throw error}
-  return {blob:await res.blob(),filename:`${name}.parquet`}
+export async function downloadDataset(id:string,name='dataset',signal?:AbortSignal){
+  return download(`/api/datasets/${id}/download`,`${name}.parquet`,signal)
 }
-export async function downloadDataResource(id:string,kind:'normalized'|'original',name='data-resource'){
-  const res=await fetch(apiUrl(`/api/data-resources/${id}/download${params({kind})}`))
-  if(!res.ok){const error=await errorFrom(res);if(res.status===401)emitAuthenticationRequired();throw error}
-  const disposition=res.headers.get('content-disposition')??''
+export async function downloadDataResource(id:string,kind:'normalized'|'original',name='data-resource',signal?:AbortSignal){
   const fallback=kind==='normalized'?`${name}.parquet`:name
-  const filename=disposition.match(/filename="?([^";]+)"?/i)?.[1]??fallback
-  return{blob:await res.blob(),filename}
+  return download(`/api/data-resources/${id}/download${params({kind})}`,fallback,signal)
 }
 
 const modelDataFramePath = (source:ModelDataFrameSource, suffix='') => {
@@ -165,13 +170,5 @@ export const getModelDataFrameRows = (
 
 export async function downloadModelDataFrame(source:ModelDataFrameSource, signal?:AbortSignal) {
   const url = `${modelDataFramePath(source, '/download')}${params(modelDraftQuery(source))}`
-  const res = await fetch(apiUrl(url), { signal })
-  if (!res.ok) {
-    const error = await errorFrom(res)
-    if (res.status === 401) emitAuthenticationRequired()
-    throw error
-  }
-  const disposition = res.headers.get('content-disposition') ?? ''
-  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] ?? `${source.tableName}.parquet`
-  return { blob: await res.blob(), filename }
+  return download(url, `${source.tableName}.parquet`, signal)
 }
