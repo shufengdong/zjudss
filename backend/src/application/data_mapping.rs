@@ -19,7 +19,8 @@ use crate::storage::StageLimits;
 
 use super::{
     CandidateDecision, CandidatePurpose, DataResourceService, DataResourceView,
-    StudyConfigurationError, UploadBatchService, UploadFile, UploadSourceKind, now_ms,
+    StudyConfigurationError, UploadBatchService, UploadConfirmationService, UploadFile,
+    UploadSourceKind, now_ms,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -42,6 +43,7 @@ pub struct CreateMappedResourceRequest {
 #[derive(Clone)]
 pub struct DataMappingService {
     resources: DataResourceService,
+    confirmations: UploadConfirmationService,
     uploads: UploadBatchService,
     upload_repo: UploadRepo,
 }
@@ -49,11 +51,13 @@ pub struct DataMappingService {
 impl DataMappingService {
     pub fn new(
         resources: DataResourceService,
+        confirmations: UploadConfirmationService,
         uploads: UploadBatchService,
         upload_repo: UploadRepo,
     ) -> Self {
         Self {
             resources,
+            confirmations,
             uploads,
             upload_repo,
         }
@@ -158,7 +162,7 @@ impl DataMappingService {
             .await
             .map_err(StudyConfigurationError::from)?;
         let confirmation = self
-            .resources
+            .confirmations
             .publish_candidates(
                 user,
                 batch.id.parse().expect("upload batch id is numeric"),

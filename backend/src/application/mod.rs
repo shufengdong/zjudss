@@ -29,6 +29,7 @@ pub mod scripts;
 mod study_configurations;
 pub mod study_planning;
 pub(crate) mod upload_candidate_policy;
+pub mod upload_confirmation;
 pub mod uploads;
 pub mod versions;
 pub mod workflow_worker;
@@ -70,7 +71,7 @@ pub use data_mapping::{ColumnMapping, CreateMappedResourceRequest, DataMappingSe
 pub use data_resources::{
     DataResourceDeletionPreview, DataResourceDownload, DataResourceError, DataResourcePage,
     DataResourceRows, DataResourceService, DataResourceView, DeletedDataResource,
-    ReplacementAction, StructuredReplacementPreview, UploadConfirmation,
+    StructuredReplacementPreview,
 };
 pub use datasets::{DatasetError, DatasetService};
 pub use events::{
@@ -102,6 +103,9 @@ pub use scripts::{
 };
 pub use study_configurations::*;
 pub use study_planning::StudyPlanningService;
+pub use upload_confirmation::{
+    ReplacementAction, UploadConfirmation, UploadConfirmationError, UploadConfirmationService,
+};
 pub use uploads::{
     CandidateDecision, CandidatePurpose, ChildPublishStatus, ParseSettings, UploadBatchError,
     UploadBatchService, UploadBatchStatus, UploadBatchView, UploadCandidateView, UploadFile,
@@ -124,6 +128,7 @@ pub struct AppState {
     pub artifact_service: ArtifactService,
     pub version_service: VersionService,
     pub upload_batch_service: UploadBatchService,
+    pub upload_confirmation_service: UploadConfirmationService,
     pub data_resource_service: DataResourceService,
     pub data_mapping_service: DataMappingService,
     pub model_dataframe_read_service: ModelDataFrameReadService,
@@ -247,15 +252,21 @@ impl AppState {
             });
         let data_resource_service = DataResourceService::new(
             DataResourceRepo::new(pool.clone()),
+            artifact_service.clone(),
+            engine_snapshot.clone(),
+        );
+        let upload_confirmation_service = UploadConfirmationService::new(
+            DataResourceRepo::new(pool.clone()),
             UploadConfirmationRepo::new(pool.clone()),
             UploadRepo::new(pool.clone()),
             upload_batch_service.clone(),
+            data_resource_service.clone(),
             artifact_service.clone(),
-            engine_snapshot.clone(),
             data_dir.clone(),
         );
         let data_mapping_service = DataMappingService::new(
             data_resource_service.clone(),
+            upload_confirmation_service.clone(),
             upload_batch_service.clone(),
             UploadRepo::new(pool.clone()),
         );
@@ -367,6 +378,7 @@ impl AppState {
             version_service,
             model_dataframe_read_service,
             upload_batch_service,
+            upload_confirmation_service,
             data_resource_service,
             data_mapping_service,
             script_service,

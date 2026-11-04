@@ -60,8 +60,8 @@ async fn import_case(app: &TestApp, user: &zjudss::auth::CurrentUser, session_id
         })
         .collect();
     app.state
-        .data_resource_service
-        .confirm_upload(user, batch.id.parse().unwrap(), decisions, None, None, id)
+        .upload_confirmation_service
+        .confirm(user, batch.id.parse().unwrap(), decisions, None, None, id)
         .await
         .unwrap();
     let workspace = app
@@ -194,7 +194,7 @@ async fn publish_data_resource(
         .await
         .unwrap();
     app.state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(
             user,
             batch.id.parse().unwrap(),

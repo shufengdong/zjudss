@@ -258,7 +258,7 @@ async fn catalog_model_schema_outside_network20_publishes_to_draft_and_version()
     );
     let confirmation = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(
             &user,
             batch.id.parse().unwrap(),

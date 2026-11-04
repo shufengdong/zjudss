@@ -545,8 +545,8 @@ async fn case_confirmation_preserves_legacy_replacement_action_compatibility() {
     let cancelled = prepare_switch(&app, &cookie, cancelled_session.id, "cancel-case").await;
     let cancelled_confirmation = app
         .state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             &user,
             cancelled["id"].as_str().unwrap().parse().unwrap(),
             vec![],
@@ -574,8 +574,8 @@ async fn case_confirmation_preserves_legacy_replacement_action_compatibility() {
         let operation = format!("case-action-confirm-{index}");
         let confirmation = app
             .state
-            .data_resource_service
-            .confirm_upload(&user, batch_id, vec![], Some(action), None, &operation)
+            .upload_confirmation_service
+            .confirm(&user, batch_id, vec![], Some(action), None, &operation)
             .await
             .unwrap();
         assert_eq!(confirmation.status, "confirmed");
@@ -586,8 +586,8 @@ async fn case_confirmation_preserves_legacy_replacement_action_compatibility() {
         if action == ReplacementAction::Replace {
             let conflict = app
                 .state
-                .data_resource_service
-                .confirm_upload(
+                .upload_confirmation_service
+                .confirm(
                     &user,
                     batch_id,
                     vec![],

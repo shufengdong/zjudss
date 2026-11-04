@@ -108,8 +108,8 @@ pub async fn publish_model_bytes(
         .collect();
     let confirmation = app
         .state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             user,
             batch.id.parse().unwrap(),
             decisions,

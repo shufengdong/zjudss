@@ -101,7 +101,7 @@ async fn data_resource_tools_list_read_rename_and_promote_owned_session_resource
         .unwrap();
     let published = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(
             &user,
             batch.id.parse().unwrap(),

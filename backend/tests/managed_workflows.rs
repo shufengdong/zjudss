@@ -56,8 +56,8 @@ async fn ready_study(
         })
         .collect();
     app.state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             user,
             batch.id.parse().unwrap(),
             decisions,

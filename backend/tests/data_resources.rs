@@ -59,7 +59,7 @@ async fn publish_csv_resource(
         .await
         .unwrap();
     app.state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(
             user,
             batch.id.parse().unwrap(),
@@ -129,7 +129,7 @@ async fn publish_para_resource(
     let batch_id = batch.id.parse().unwrap();
     let published = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(user, batch_id, decisions)
         .await
         .unwrap();
@@ -170,8 +170,8 @@ async fn generic_dataframe_publishes_as_readable_resource_without_schema_ref() {
 
     let confirmation = app
         .state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             &user,
             batch.id.parse().unwrap(),
             decisions.clone(),
@@ -202,8 +202,8 @@ async fn generic_dataframe_publishes_as_readable_resource_without_schema_ref() {
     assert_eq!(page.rows.len(), 2);
     let replay = app
         .state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             &user,
             batch.id.parse().unwrap(),
             decisions,
@@ -216,8 +216,8 @@ async fn generic_dataframe_publishes_as_readable_resource_without_schema_ref() {
     assert_eq!(replay.resources[0].id, resource.id);
     let conflict = app
         .state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             &user,
             batch.id.parse().unwrap(),
             vec![],
@@ -367,7 +367,7 @@ async fn concurrent_confirmation_commits_each_original_reference_once() {
         alias: Some("concurrent_source".into()),
     }];
     let replay_decisions = decisions.clone();
-    let first = app.state.data_resource_service.confirm_upload(
+    let first = app.state.upload_confirmation_service.confirm(
         &user,
         batch.id.parse().unwrap(),
         decisions.clone(),
@@ -375,7 +375,7 @@ async fn concurrent_confirmation_commits_each_original_reference_once() {
         None,
         "same-operation",
     );
-    let second = app.state.data_resource_service.confirm_upload(
+    let second = app.state.upload_confirmation_service.confirm(
         &user,
         batch.id.parse().unwrap(),
         decisions,
@@ -399,8 +399,8 @@ async fn concurrent_confirmation_commits_each_original_reference_once() {
         .revision;
     let replay = app
         .state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             &user,
             batch.id.parse().unwrap(),
             replay_decisions,
@@ -464,7 +464,7 @@ async fn concurrent_same_operation_with_different_decisions_never_drifts_inputs(
             alias: Some(alias.into()),
         }]
     };
-    let first = app.state.data_resource_service.confirm_upload(
+    let first = app.state.upload_confirmation_service.confirm(
         &user,
         batch.id.parse().unwrap(),
         decision("first_payload"),
@@ -472,7 +472,7 @@ async fn concurrent_same_operation_with_different_decisions_never_drifts_inputs(
         None,
         "shared-operation",
     );
-    let second = app.state.data_resource_service.confirm_upload(
+    let second = app.state.upload_confirmation_service.confirm(
         &user,
         batch.id.parse().unwrap(),
         decision("second_payload"),
@@ -523,7 +523,7 @@ async fn confirm_and_discard_race_never_revives_a_terminal_batch() {
         alias: Some("race_source".into()),
     }];
 
-    let confirm = app.state.data_resource_service.confirm_upload(
+    let confirm = app.state.upload_confirmation_service.confirm(
         &user,
         batch_id,
         decisions,
@@ -990,7 +990,7 @@ async fn static_para_is_a_resource_and_never_a_model_dataframe() {
         .collect();
     let confirmation = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(&user, batch.id.parse().unwrap(), decisions)
         .await
         .unwrap();
@@ -1072,7 +1072,7 @@ async fn repeated_schema_bound_para_requires_an_explicit_replacement_choice() {
             .collect();
         let confirmation = app
             .state
-            .data_resource_service
+            .upload_confirmation_service
             .publish_candidates(&user, batch.id.parse().unwrap(), decisions)
             .await
             .unwrap();
@@ -1151,7 +1151,7 @@ async fn schema_bound_replacement_can_be_saved_as_a_new_resource() {
         .collect();
     let saved = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_replacement(
             &user,
             replacement.id.parse().unwrap(),
@@ -1189,7 +1189,7 @@ async fn replacement_transfers_alias_and_preserves_old_artifact() {
     let first_candidate = &first.candidates[0];
     let published = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(
             &user,
             first.id.parse().unwrap(),
@@ -1238,7 +1238,7 @@ async fn replacement_transfers_alias_and_preserves_old_artifact() {
     let candidate = &replacement.candidates[0];
     let replaced = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_replacement(
             &user,
             replacement.id.parse().unwrap(),
@@ -1298,7 +1298,7 @@ async fn foreign_resource_is_hidden_and_deletion_requires_current_impact_token()
     let candidate = &batch.candidates[0];
     let result = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(
             &user,
             batch.id.parse().unwrap(),
@@ -1429,7 +1429,7 @@ async fn structured_replacement_preview_does_not_publish_until_confirmed() {
         .collect();
     let published = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(&user, batch.id.parse().unwrap(), decisions)
         .await
         .unwrap();
@@ -1691,7 +1691,7 @@ async fn partial_confirmation_keeps_only_failed_child_retryable() {
     model.alias = None;
     let first = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(&user, batch.id.parse().unwrap(), decisions)
         .await
         .unwrap();
@@ -1727,7 +1727,7 @@ async fn partial_confirmation_keeps_only_failed_child_retryable() {
         .collect();
     let second = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(&user, batch.id.parse().unwrap(), retry)
         .await
         .unwrap();
@@ -1808,8 +1808,8 @@ async fn resource_alias_conflict_keeps_the_model_draft_published_first() {
 
     let confirmation = app
         .state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             &user,
             batch.id.parse().unwrap(),
             decisions,
@@ -1932,7 +1932,7 @@ async fn ordinary_resource_can_feed_existing_analysis_pipeline_with_frozen_linea
     let candidate = &batch.candidates[0];
     let published = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(
             &user,
             batch.id.parse().unwrap(),
@@ -2038,7 +2038,7 @@ async fn engine_snapshot_revalidation_marks_reserved_alias_until_user_renames_it
     let candidate = &batch.candidates[0];
     let published = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(
             &user,
             batch.id.parse().unwrap(),
@@ -2114,7 +2114,7 @@ async fn repeated_default_alias_gets_a_stable_server_fallback() {
         let candidate = &batch.candidates[0];
         let published = app
             .state
-            .data_resource_service
+            .upload_confirmation_service
             .publish_candidates(
                 &user,
                 batch.id.parse().unwrap(),
@@ -2173,8 +2173,8 @@ async fn explicit_alias_conflict_replay_keeps_the_frozen_failure() {
     let batch_id = batch.id.parse().unwrap();
     let first = app
         .state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             &user,
             batch_id,
             vec![decision.clone()],
@@ -2209,8 +2209,8 @@ async fn explicit_alias_conflict_replay_keeps_the_frozen_failure() {
 
     let replay = app
         .state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             &user,
             batch_id,
             vec![decision],
@@ -2294,7 +2294,7 @@ async fn para_contract_cannot_be_reclassified_as_a_renamed_model_table() {
 
     let error = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(&user, batch.id.parse().unwrap(), decisions)
         .await
         .unwrap_err();
@@ -2335,8 +2335,8 @@ async fn unresolved_upload_cannot_be_confirmed_or_lose_its_reservation() {
 
     let error = app
         .state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             &user,
             batch.id.parse().unwrap(),
             vec![],
@@ -2408,8 +2408,8 @@ async fn partial_confirmation_releases_completed_files_and_freezes_published_dec
         .collect::<Vec<_>>();
     let first = app
         .state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             &user,
             batch.id.parse().unwrap(),
             decisions.clone(),
@@ -2444,8 +2444,8 @@ async fn partial_confirmation_releases_completed_files_and_freezes_published_dec
     skipped.alias = Some("late_resource".into());
     let error = app
         .state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             &user,
             batch.id.parse().unwrap(),
             changed,
@@ -2477,7 +2477,7 @@ async fn discarding_a_failed_resource_publish_releases_original_and_normalized_a
         .unwrap();
     let first_confirmation = app
         .state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(
             &user,
             first.id.parse().unwrap(),
@@ -2513,8 +2513,8 @@ async fn discarding_a_failed_resource_publish_releases_original_and_normalized_a
         .unwrap();
     let confirmation = app
         .state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             &user,
             failed.id.parse().unwrap(),
             vec![CandidateDecision {
@@ -2534,8 +2534,8 @@ async fn discarding_a_failed_resource_publish_releases_original_and_normalized_a
     assert_eq!(confirmation.resource_status, "failed");
     let cancelled = app
         .state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             &user,
             failed.id.parse().unwrap(),
             vec![],

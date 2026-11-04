@@ -28,8 +28,8 @@ pub async fn confirm_upload(
     Json(body): Json<ConfirmBody>,
 ) -> Result<Json<Value>, ApiError> {
     let confirmation = state
-        .data_resource_service
-        .confirm_upload(
+        .upload_confirmation_service
+        .confirm(
             &user,
             id,
             body.decisions,

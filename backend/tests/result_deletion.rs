@@ -50,7 +50,7 @@ async fn create_completed_run(app: &TestApp) -> (zjudss::auth::CurrentUser, Stri
         .unwrap();
     let candidate = &accepted.candidates[0];
     app.state
-        .data_resource_service
+        .upload_confirmation_service
         .publish_candidates(
             &user,
             accepted.id.parse().unwrap(),
