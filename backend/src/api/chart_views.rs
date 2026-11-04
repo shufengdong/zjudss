@@ -21,22 +21,24 @@ fn public_id(value: &str) -> Result<i32, ApiError> {
 }
 
 fn json_request<T>(request: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
-    request.map(|Json(value)| value).map_err(|_| ApiError {
-        status: StatusCode::BAD_REQUEST,
-        message: "图表请求格式无效".into(),
-        code: "chart_config_invalid",
-        details: None,
+    request.map(|Json(value)| value).map_err(|_| {
+        ApiError::public(
+            StatusCode::BAD_REQUEST,
+            "chart_config_invalid",
+            "图表请求格式无效",
+        )
     })
 }
 
 fn list_query(
     query: Result<Query<ChartViewListQuery>, QueryRejection>,
 ) -> Result<ChartViewListQuery, ApiError> {
-    query.map(|Query(value)| value).map_err(|_| ApiError {
-        status: StatusCode::BAD_REQUEST,
-        message: "图表分页参数无效".into(),
-        code: "chart_cursor_invalid",
-        details: None,
+    query.map(|Query(value)| value).map_err(|_| {
+        ApiError::public(
+            StatusCode::BAD_REQUEST,
+            "chart_cursor_invalid",
+            "图表分页参数无效",
+        )
     })
 }
 

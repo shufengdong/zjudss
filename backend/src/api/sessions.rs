@@ -154,12 +154,11 @@ pub async fn delete(
     Query(query): Query<DeleteSessionQuery>,
 ) -> Result<StatusCode, ApiError> {
     if query.impact_token.len() != 64 {
-        return Err(ApiError {
-            status: StatusCode::CONFLICT,
-            message: "删除影响令牌无效".into(),
-            code: "invalid_deletion_impact_token",
-            details: None,
-        });
+        return Err(ApiError::public(
+            StatusCode::CONFLICT,
+            "invalid_deletion_impact_token",
+            "删除影响令牌无效",
+        ));
     }
     let token_hash = hex::encode(Sha256::digest(query.impact_token.as_bytes()));
     let should_delete = state
