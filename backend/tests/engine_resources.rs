@@ -731,7 +731,11 @@ fn bundle_manifest_rejects_symlinked_files_without_blocking_other_cases() {
 fn publish_freezes_only_manifest_declared_case_sources_and_rebases_the_snapshot() {
     let fixture = fixture();
     let data = tempfile::tempdir().unwrap();
-    let (published, path) = EngineResourceRegistry::publish(fixture.load(), data.path()).unwrap();
+    let loaded = fixture.load();
+    let expected_id = loaded.id.clone();
+    let expected_contract_version = loaded.contract_version.clone();
+    let expected_catalog_versions = loaded.catalog_schema_versions;
+    let (published, path) = EngineResourceRegistry::publish(loaded, data.path()).unwrap();
     assert_eq!(published.engine_root, path.join("source"));
     assert!(path.join("catalog/dataframes.json").is_file());
     assert!(path.join("docs/nested/guide.md").is_file());
@@ -740,6 +744,44 @@ fn publish_freezes_only_manifest_declared_case_sources_and_rebases_the_snapshot(
     assert!(bundle.join("manifest.json").is_file());
     assert!(bundle.join("main.rss").is_file());
     assert!(bundle.join("dss/model.dss").is_file());
+
+    let manifest: Value =
+        serde_json::from_slice(&std::fs::read(path.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["snapshotId"], expected_id);
+    assert_eq!(manifest["engineContractVersion"], expected_contract_version);
+    assert_eq!(
+        manifest["catalogSchemaVersions"],
+        serde_json::to_value(expected_catalog_versions).unwrap()
+    );
+    let files = manifest["files"].as_object().unwrap();
+    let actual_paths = files.keys().map(String::as_str).collect::<Vec<_>>();
+    assert_eq!(
+        actual_paths,
+        vec![
+            "catalog/case_projections.json",
+            "catalog/dataframes.json",
+            "catalog/functions.json",
+            "catalog/study_facades.json",
+            "docs-index.json",
+            "docs/nested/guide.md",
+            "examples.json",
+            "source/dss/docs/catalog/case_projections.json",
+            "source/dss/docs/catalog/dataframes.json",
+            "source/dss/docs/catalog/functions.json",
+            "source/dss/docs/catalog/study_facades.json",
+            "source/dss/docs/nested/guide.md",
+            "source/dss/rssbundle/Grid/123Bus/demo.rssbundle/dss/model.dss",
+            "source/dss/rssbundle/Grid/123Bus/demo.rssbundle/main.rss",
+            "source/dss/rssbundle/Grid/123Bus/demo.rssbundle/managed.rss",
+            "source/dss/rssbundle/Grid/123Bus/demo.rssbundle/manifest.json",
+        ]
+    );
+    for (relative, expected_hash) in files {
+        assert_eq!(
+            expected_hash.as_str().unwrap(),
+            hash(&std::fs::read(path.join(relative)).unwrap())
+        );
+    }
 }
 
 #[test]
