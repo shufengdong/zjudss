@@ -3,6 +3,7 @@ mod common;
 use std::io::Cursor;
 
 use diesel::RunQueryDsl;
+use sha2::{Digest, Sha256};
 
 use zjudss::application::{
     ActivateVersionRequest, CandidateDecision, CandidatePurpose, PublishDraftRequest,
@@ -1743,6 +1744,172 @@ async fn partial_confirmation_keeps_only_failed_child_retryable() {
             .len(),
         1
     );
+}
+
+#[tokio::test]
+async fn resource_alias_conflict_keeps_the_model_draft_published_first() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session_id = session(&app, &user, "model-first-partial").await;
+    publish_csv_resource(
+        &app,
+        &user,
+        session_id,
+        "occupied-resource",
+        "occupied",
+        b"x\n1\n",
+    )
+    .await;
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            &user,
+            session_id,
+            "model-first-conflict".into(),
+            UploadSourceKind::Upload,
+            vec![UploadFile {
+                client_file_id: "master".into(),
+                file_name: "master.dss".into(),
+                relative_path: Some("master.dss".into()),
+                media_type: None,
+                staged: app
+                    .state
+                    .artifact_service
+                    .store()
+                    .stage(Cursor::new(b"New Circuit.demo\n"), StageLimits::default())
+                    .unwrap(),
+            }],
+        )
+        .await
+        .unwrap();
+    let decisions = batch
+        .candidates
+        .iter()
+        .map(|candidate| {
+            let is_resource = candidate.purpose == Some(CandidatePurpose::DataResource);
+            CandidateDecision {
+                candidate_id: candidate.id.clone(),
+                purpose: candidate.purpose.unwrap(),
+                selected: true,
+                table_name: (!is_resource).then(|| {
+                    candidate
+                        .inferred_schema_ref
+                        .as_deref()
+                        .unwrap()
+                        .trim_start_matches("frames.")
+                        .to_string()
+                }),
+                display_name: None,
+                alias: is_resource.then(|| "occupied".into()),
+            }
+        })
+        .collect();
+
+    let confirmation = app
+        .state
+        .data_resource_service
+        .confirm_upload(
+            &user,
+            batch.id.parse().unwrap(),
+            decisions,
+            None,
+            None,
+            "model-first-conflict",
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(confirmation.status, "partially_confirmed");
+    assert_eq!(confirmation.model_status, "published");
+    assert_eq!(confirmation.resource_status, "failed");
+    assert!(confirmation.model_receipt.is_some());
+    assert_eq!(
+        confirmation.diagnostics[0]["code"],
+        "resource_alias_conflict"
+    );
+    let workspace = app
+        .state
+        .version_service
+        .workspace(&user, session_id)
+        .await
+        .unwrap();
+    assert_eq!(workspace.draft.unwrap().dataframes.len(), 20);
+}
+
+#[tokio::test]
+async fn legacy_prefixed_tokens_remain_valid_for_unexpired_resource_previews() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session_id = session(&app, &user, "legacy-preview-token").await;
+    let resource = publish_csv_resource(
+        &app,
+        &user,
+        session_id,
+        "legacy-delete",
+        "legacy_delete",
+        b"x\n1\n",
+    )
+    .await;
+    app.state
+        .data_resource_service
+        .preview_deletion(&user, &resource.id)
+        .await
+        .unwrap();
+    let legacy_delete = format!("dr-delete_{}", "a".repeat(64));
+    let delete_hash = hex::encode(Sha256::digest(legacy_delete.as_bytes()));
+    diesel::sql_query(
+        "UPDATE data_resource_deletion_previews SET token_hash=?1 WHERE resource_id=?2",
+    )
+    .bind::<diesel::sql_types::Text, _>(&delete_hash)
+    .bind::<diesel::sql_types::Text, _>(&resource.id)
+    .execute(&mut app.pool.get().unwrap())
+    .unwrap();
+    let deleted = app
+        .state
+        .data_resource_service
+        .delete(&user, &resource.id, &legacy_delete)
+        .await
+        .unwrap();
+    assert_eq!(deleted.resource_id, resource.id);
+
+    let (para, _) = publish_para_resource(&app, &user, session_id, "legacy-replace").await;
+    app.state
+        .data_resource_service
+        .preview_structured_replacement(
+            &user,
+            &para.id,
+            &para.content_hash,
+            "frames.para",
+            serde_json::json!({
+                "base_frequency_hz": 50.0,
+                "max_iter": 31,
+                "max_control_iter": 10,
+                "tol": 1e-6,
+                "line_model": "exact",
+                "result": "bus_phase,summary"
+            }),
+        )
+        .await
+        .unwrap();
+    let legacy_replace = format!("dr-replace_{}", "b".repeat(64));
+    let replace_hash = hex::encode(Sha256::digest(legacy_replace.as_bytes()));
+    diesel::sql_query(
+        "UPDATE data_resource_replacement_previews SET token_hash=?1 WHERE old_resource_id=?2",
+    )
+    .bind::<diesel::sql_types::Text, _>(&replace_hash)
+    .bind::<diesel::sql_types::Text, _>(&para.id)
+    .execute(&mut app.pool.get().unwrap())
+    .unwrap();
+    let replacement = app
+        .state
+        .data_resource_service
+        .confirm_structured_replacement(&user, &legacy_replace, ReplacementAction::Replace)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(replacement.alias, para.alias);
+    assert_ne!(replacement.id, para.id);
 }
 
 #[tokio::test]

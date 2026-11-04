@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use common::TestApp;
+use zjudss::application::ReplacementAction;
 
 #[tokio::test]
 async fn applying_a_case_creates_one_recoverable_upload_batch_without_publishing() {
@@ -527,6 +528,78 @@ async fn confirm_switch(app: &TestApp, cookie: &str, batch: &Value, operation: &
         serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
             .unwrap();
     body["uploadConfirmation"].clone()
+}
+
+#[tokio::test]
+async fn case_confirmation_preserves_legacy_replacement_action_compatibility() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let cookie = app.login_cookie("alice@example.com").await;
+
+    let cancelled_session = app
+        .state
+        .session_repo
+        .create(&user.id, "cancel case", 1)
+        .await
+        .unwrap();
+    let cancelled = prepare_switch(&app, &cookie, cancelled_session.id, "cancel-case").await;
+    let cancelled_confirmation = app
+        .state
+        .data_resource_service
+        .confirm_upload(
+            &user,
+            cancelled["id"].as_str().unwrap().parse().unwrap(),
+            vec![],
+            Some(ReplacementAction::Cancel),
+            None,
+            "cancel-case",
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancelled_confirmation.status, "discarded");
+
+    for (index, action) in [ReplacementAction::Replace, ReplacementAction::SaveAsNew]
+        .into_iter()
+        .enumerate()
+    {
+        let session = app
+            .state
+            .session_repo
+            .create(&user.id, &format!("case action {index}"), 1)
+            .await
+            .unwrap();
+        let batch =
+            prepare_switch(&app, &cookie, session.id, &format!("case-action-{index}")).await;
+        let batch_id = batch["id"].as_str().unwrap().parse().unwrap();
+        let operation = format!("case-action-confirm-{index}");
+        let confirmation = app
+            .state
+            .data_resource_service
+            .confirm_upload(&user, batch_id, vec![], Some(action), None, &operation)
+            .await
+            .unwrap();
+        assert_eq!(confirmation.status, "confirmed");
+        assert_eq!(confirmation.model_status, "published");
+        assert_eq!(confirmation.resource_status, "published");
+        assert!(!confirmation.resources.is_empty());
+
+        if action == ReplacementAction::Replace {
+            let conflict = app
+                .state
+                .data_resource_service
+                .confirm_upload(
+                    &user,
+                    batch_id,
+                    vec![],
+                    Some(ReplacementAction::SaveAsNew),
+                    None,
+                    &operation,
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(conflict.code(), "idempotency_conflict");
+        }
+    }
 }
 
 #[tokio::test]
