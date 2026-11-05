@@ -3,10 +3,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::adapters::{
-    ENGINE_CONTRACT_VERSION, ErrorCategory, NamedInput, RunMode, RunSpec, SimEngine,
-};
-use crate::agent::{FailureAnalysisRequest, FailureAnalyzer};
+use crate::adapters::{ENGINE_CONTRACT_VERSION, ErrorCategory, RunMode, RunSpec, SimEngine};
+use crate::agent::FailureAnalyzer;
 use crate::auth::CurrentUser;
 use crate::db::models::SimulationRun;
 use crate::db::repositories::{
@@ -14,12 +12,14 @@ use crate::db::repositories::{
     RunDeletionImpact, RunRepo, RunRepoError, ScriptRepo,
 };
 use crate::engine_resources::EngineResourceSnapshot;
-use crate::storage::{ArtifactStore, ParquetInspector, StageLimits};
+use crate::storage::{ArtifactStore, StageLimits};
 
-use super::diagnostics::{
-    FailureAnalysisStatus, RunFailureDiagnosis, adapter_engine_logs, sanitize_adapter_stderr,
-    sanitize_adapter_stdout,
+use super::diagnostics::{FailureAnalysisStatus, RunFailureDiagnosis, adapter_engine_logs};
+use super::execution_failure::failure_analysis_request;
+use super::execution_input_tree::{
+    ExecutionInputArtifact, ExecutionInputError, ExecutionInputSpec, build_execution_input_tree,
 };
+use super::execution_results::inspect_engine_outputs;
 use super::struct_overlays::{StructOverlayError, StructOverlayService};
 use super::{
     ArtifactError, ArtifactService, DataResourceError, EventBus, EventWriter, MessageRepo,
@@ -519,19 +519,7 @@ impl RunService {
                 .resolve(&artifact.storage_path)
                 .ok()?;
             let current_script = std::fs::read_to_string(path).ok()?;
-            let stderr = sanitize_adapter_stderr(&error);
-            let request = FailureAnalysisRequest {
-                current_script,
-                sanitized_stdout: sanitize_adapter_stdout(&error).map(|stdout| stdout.text),
-                sanitized_stderr: stderr.text,
-                diagnostic: Some(serde_json::json!({
-                    "code": error.code,
-                    "category": error.category.as_str(),
-                    "exitCode": engine_failure_details(&RunError::Adapter(error.clone())).1,
-                })),
-                locked_contract: None,
-                inputs: None,
-            };
+            let request = failure_analysis_request(current_script, &error, None, None);
             self.failure_analyzer.analyze_failure(request).await.ok()
         };
         let analysis = tokio::time::timeout(std::time::Duration::from_secs(30), analysis)
@@ -567,48 +555,31 @@ impl RunService {
             )
             .await;
         let context = self.repo.context(&user.id, id).await?;
-        let root = self.data_dir.join("runs").join(id.to_string());
-        let input = root.join("input");
-        let result = root.join("result");
-        std::fs::create_dir_all(&input).map_err(RunError::Io)?;
-        std::fs::create_dir_all(&result).map_err(RunError::Io)?;
-        let _cleanup = RunTreeCleanup(root.clone());
         let script_artifact_id = context
             .run
             .script_artifact_id
             .ok_or_else(|| RunError::Invalid("受管脚本尚未生成".into()))?;
-        let script_artifact = self
-            .artifacts
-            .find_owned(user.storage_scope_id, script_artifact_id)
-            .await?;
-        let script_source = self
-            .artifacts
-            .store()
-            .resolve(&script_artifact.storage_path)
-            .map_err(ArtifactError::from)?;
-        let script_path = PathBuf::from("script.rss");
-        std::fs::copy(script_source, input.join(&script_path)).map_err(RunError::Io)?;
-        let mut named = Vec::new();
-        for frame in context.frames {
-            let artifact = self
-                .artifacts
-                .find_owned(user.storage_scope_id, frame.artifact_id)
-                .await?;
-            let source = self
-                .artifacts
-                .store()
-                .resolve(&artifact.storage_path)
-                .map_err(ArtifactError::from)?;
-            let relative = PathBuf::from("model").join(format!("{}.parquet", frame.table_name));
-            if let Some(parent) = input.join(&relative).parent() {
-                std::fs::create_dir_all(parent).map_err(RunError::Io)?
-            }
-            std::fs::copy(source, input.join(&relative)).map_err(RunError::Io)?;
-            named.push(NamedInput {
-                alias: frame.table_name,
-                relative_path: relative,
-            });
-        }
+        let tree = build_execution_input_tree(
+            user,
+            &self.artifacts,
+            &self.data_dir,
+            "runs",
+            id,
+            ExecutionInputSpec {
+                script_artifact_id,
+                model_frames: context
+                    .frames
+                    .into_iter()
+                    .map(|frame| ExecutionInputArtifact {
+                        alias: frame.table_name,
+                        artifact_id: frame.artifact_id,
+                    })
+                    .collect(),
+                resources: Vec::new(),
+            },
+        )
+        .await
+        .map_err(map_execution_input_error)?;
         self.repo.set_running(&user.id, id, "run", now_ms()).await?;
         let _ = writer
             .progress(
@@ -623,10 +594,10 @@ impl RunService {
             .engine
             .run_dataframe(RunSpec {
                 mode: RunMode::Dataframe,
-                input_tree: input,
-                script_path,
-                named_inputs: named,
-                result_dir: result,
+                input_tree: tree.input_dir.clone(),
+                script_path: tree.script_path.clone(),
+                named_inputs: tree.named_inputs.clone(),
+                result_dir: tree.result_dir.clone(),
                 timeout: self.engine_timeout,
             })
             .await
@@ -637,12 +608,13 @@ impl RunService {
                 "脚本没有生成结果数据集".into(),
             ));
         }
-        let actual_names = output
-            .datasets
+        let inspected = inspect_engine_outputs(&output.datasets, self.result_max_file_bytes)
+            .map_err(|error| RunError::Invalid(error.to_string()))?;
+        let actual_names = inspected
             .iter()
             .map(|dataset| dataset.name.as_str())
             .collect::<std::collections::BTreeSet<_>>();
-        if actual_names.len() != output.datasets.len()
+        if actual_names.len() != inspected.len()
             || actual_names.iter().any(|name| !valid_result_name(name))
         {
             return Err(RunError::ResultContract(
@@ -659,15 +631,14 @@ impl RunService {
                 .iter()
                 .map(|result| result.name.as_str())
                 .collect::<std::collections::BTreeSet<_>>();
-            if expected != actual_names || contract.len() != output.datasets.len() {
+            if expected != actual_names || contract.len() != inspected.len() {
                 return Err(RunError::ResultContract(
                     "result_contract_invalid",
                     "结果名称集合与冻结合同不一致".into(),
                 ));
             }
             for expected in contract {
-                let dataset = output
-                    .datasets
+                let dataset = inspected
                     .iter()
                     .find(|dataset| dataset.name == expected.name)
                     .expect("name set checked");
@@ -694,12 +665,8 @@ impl RunService {
         let mut staged_artifacts = Vec::new();
         let mut drafts = Vec::new();
         let mut datasets = Vec::new();
-        for output in output.datasets {
-            let metadata = ParquetInspector::metadata(&output.path)
-                .map_err(|error| RunError::Invalid(error.to_string()))?;
-            if !metadata.snappy {
-                return Err(RunError::Invalid("运行结果必须是 Snappy Parquet".into()));
-            }
+        for output in inspected {
+            let metadata = output.metadata;
             let staged = self
                 .artifacts
                 .store()
@@ -798,13 +765,6 @@ impl RunService {
     }
 }
 
-struct RunTreeCleanup(PathBuf);
-impl Drop for RunTreeCleanup {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 fn public_failure_reason(error: &RunError) -> &'static str {
     match error {
         RunError::Adapter(error) => match error.category {
@@ -817,6 +777,14 @@ fn public_failure_reason(error: &RunError) -> &'static str {
         RunError::Invalid(_) | RunError::ResultContract(_, _) => "result",
         RunError::Artifact(_) | RunError::Io(_) => "io",
         _ => "internal",
+    }
+}
+
+fn map_execution_input_error(error: ExecutionInputError) -> RunError {
+    match error {
+        ExecutionInputError::Invalid(_, message) => RunError::Invalid(message),
+        ExecutionInputError::Artifact(error) => RunError::Artifact(error),
+        ExecutionInputError::Io(error) => RunError::Io(error),
     }
 }
 

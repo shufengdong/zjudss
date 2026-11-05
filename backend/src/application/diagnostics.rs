@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::adapters::AdapterError;
@@ -99,6 +100,18 @@ pub fn sanitize_adapter_stderr(error: &AdapterError) -> SanitizedDiagnostic {
 
 pub fn sanitize_adapter_stdout(error: &AdapterError) -> Option<SanitizedDiagnostic> {
     sanitize_adapter_stream(error, "stdout")
+}
+
+pub(crate) fn failure_analysis_diagnostic(error: &AdapterError) -> Value {
+    json!({
+        "code": error.code,
+        "category": error.category.as_str(),
+        "exitCode": error
+            .diagnostics
+            .as_deref()
+            .and_then(|value| value.get("exitCode"))
+            .and_then(Value::as_i64),
+    })
 }
 
 fn sanitize_adapter_stream(error: &AdapterError, stream_name: &str) -> Option<SanitizedDiagnostic> {

@@ -6,10 +6,9 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
-use crate::adapters::{AdapterError, NamedInput, RunMode, RunSpec, SimEngine};
+use crate::adapters::{AdapterError, RunMode, RunSpec, SimEngine};
 use crate::agent::{
-    EngineDocRef, FailureAnalysisRequest, FailureAnalyzer, ScriptAuthor, ScriptGenerationRequest,
-    ScriptRepairRequest,
+    EngineDocRef, FailureAnalyzer, ScriptAuthor, ScriptGenerationRequest, ScriptRepairRequest,
 };
 use crate::auth::CurrentUser;
 use crate::catalog::{DataTypeContract, SchemaFieldContract};
@@ -22,8 +21,13 @@ use crate::storage::{ArtifactStore, ParquetMetadata, StageLimits};
 
 use super::diagnostics::{
     EngineLog, SanitizedDiagnostic, adapter_engine_logs, raw_adapter_stderr,
-    sanitize_adapter_stderr, sanitize_adapter_stdout,
+    sanitize_adapter_stderr,
 };
+use super::execution_failure::failure_analysis_request;
+use super::execution_input_tree::{
+    ExecutionInputArtifact, ExecutionInputError, ExecutionInputSpec, build_execution_input_tree,
+};
+use super::execution_results::inspect_engine_outputs;
 use super::script_contract::ScriptContractInspector;
 use super::{
     ArtifactError, ArtifactMetadata, ArtifactService, LockedStudyContract, RunScheduler,
@@ -403,14 +407,13 @@ impl WorkflowWorker {
                             return Err(message);
                         }
                     };
-                    let analysis_request = FailureAnalysisRequest {
-                        current_script: current_script.clone(),
-                        sanitized_stdout: sanitize_adapter_stdout(&error).map(|stdout| stdout.text),
-                        sanitized_stderr: sanitized.text.clone(),
-                        diagnostic: Some(diagnostic.clone()),
-                        locked_contract: Some(locked.clone()),
-                        inputs: Some(inputs.clone()),
-                    };
+                    let mut analysis_request = failure_analysis_request(
+                        current_script.clone(),
+                        &error,
+                        Some(serde_json::to_value(&locked).expect("locked contract serializes")),
+                        Some(serde_json::to_value(&inputs).expect("workflow inputs serialize")),
+                    );
+                    analysis_request.diagnostic = Some(diagnostic.clone());
                     let analysis = tokio::select! {
                         result = tokio::time::timeout(
                             std::time::Duration::from_secs(30),
@@ -643,62 +646,57 @@ impl WorkflowWorker {
         &self,
         user: &CurrentUser,
         aggregate: &ManagedWorkflowAggregate,
-        script: &str,
+        _script: &str,
         cancel: &mut watch::Receiver<bool>,
     ) -> Result<Vec<crate::adapters::EngineDatasetOutput>, ExecutionFailure> {
         let attempt = aggregate.attempts.last().ok_or_else(|| {
             ExecutionFailure::Local("attempt_missing", "运行 attempt 不存在".into())
         })?;
-        let root = self
-            .data_dir
-            .join("managed-workflows")
-            .join(aggregate.workflow.id.to_string())
-            .join(attempt.id.to_string());
-        let mut private_tree = PrivateTree::new(root.clone());
-        let input = root.join("input");
-        let result = root.join("result");
-        std::fs::create_dir_all(&input)
-            .and_then(|_| std::fs::create_dir_all(&result))
-            .map_err(|error| ExecutionFailure::Local("input_stage_failed", error.to_string()))?;
-        let script_path = PathBuf::from("script.rss");
-        std::fs::write(input.join(&script_path), script)
-            .map_err(|error| ExecutionFailure::Local("input_stage_failed", error.to_string()))?;
-        let mut named_inputs = Vec::new();
-        for frozen in &aggregate.inputs {
-            let artifact_id = frozen.artifact_id.ok_or_else(|| {
-                ExecutionFailure::Local("input_artifact_missing", frozen.input_name.clone())
-            })?;
-            let alias = frozen.input_alias.clone().ok_or_else(|| {
-                ExecutionFailure::Local("input_alias_missing", frozen.input_name.clone())
-            })?;
-            let relative = PathBuf::from("inputs").join(format!("{alias}.parquet"));
-            std::fs::create_dir_all(input.join("inputs")).map_err(|error| {
+        let script_artifact_id = attempt.script_artifact_id.ok_or_else(|| {
+            ExecutionFailure::Local("input_artifact_missing", "candidate script".into())
+        })?;
+        let resources = aggregate
+            .inputs
+            .iter()
+            .map(|frozen| {
+                Ok(ExecutionInputArtifact {
+                    alias: frozen.input_alias.clone().ok_or_else(|| {
+                        ExecutionFailure::Local("input_alias_missing", frozen.input_name.clone())
+                    })?,
+                    artifact_id: frozen.artifact_id.ok_or_else(|| {
+                        ExecutionFailure::Local("input_artifact_missing", frozen.input_name.clone())
+                    })?,
+                })
+            })
+            .collect::<Result<Vec<_>, ExecutionFailure>>()?;
+        let mut tree = build_execution_input_tree(
+            user,
+            &self.artifacts,
+            &self.data_dir,
+            "managed-workflows",
+            attempt.id,
+            ExecutionInputSpec {
+                script_artifact_id,
+                model_frames: Vec::new(),
+                resources,
+            },
+        )
+        .await
+        .map_err(|error| match error {
+            ExecutionInputError::Invalid(code, message) => ExecutionFailure::Local(code, message),
+            ExecutionInputError::Artifact(error) => {
+                ExecutionFailure::Local("input_artifact_missing", error.to_string())
+            }
+            ExecutionInputError::Io(error) => {
                 ExecutionFailure::Local("input_stage_failed", error.to_string())
-            })?;
-            let mut source = self
-                .artifacts
-                .open_owned(user.storage_scope_id, artifact_id)
-                .await
-                .map_err(|error| {
-                    ExecutionFailure::Local("input_artifact_missing", error.to_string())
-                })?;
-            let mut target = std::fs::File::create(input.join(&relative)).map_err(|error| {
-                ExecutionFailure::Local("input_stage_failed", error.to_string())
-            })?;
-            std::io::copy(&mut source, &mut target).map_err(|error| {
-                ExecutionFailure::Local("input_stage_failed", error.to_string())
-            })?;
-            named_inputs.push(NamedInput {
-                alias,
-                relative_path: relative,
-            });
-        }
+            }
+        })?;
         let run = self.engine.run_dataframe(RunSpec {
             mode: RunMode::Dataframe,
-            input_tree: input,
-            script_path,
-            named_inputs,
-            result_dir: result,
+            input_tree: tree.input_dir.clone(),
+            script_path: tree.script_path.clone(),
+            named_inputs: tree.named_inputs.clone(),
+            result_dir: tree.result_dir.clone(),
             timeout: self.engine_timeout,
         });
         tokio::pin!(run);
@@ -710,7 +708,7 @@ impl WorkflowWorker {
             }
         };
         if outcome.is_ok() {
-            private_tree.keep();
+            tree.keep();
         }
         outcome
     }
@@ -720,16 +718,19 @@ impl WorkflowWorker {
         locked: &LockedStudyContract,
         outputs: &[crate::adapters::EngineDatasetOutput],
     ) -> Result<(), Value> {
+        let inspected = inspect_engine_outputs(outputs, self.result_max_file_bytes).map_err(
+            |error| json!({"code":"result_contract_invalid","message":error.to_string()}),
+        )?;
         let expected = locked
             .results
             .iter()
             .map(|result| result.name.as_str())
             .collect::<BTreeSet<_>>();
-        let actual = outputs
+        let actual = inspected
             .iter()
             .map(|output| output.name.as_str())
             .collect::<BTreeSet<_>>();
-        if expected != actual || outputs.len() != expected.len() {
+        if expected != actual || inspected.len() != expected.len() {
             return Err(json!({
                 "code":"result_contract_invalid",
                 "message":"结果名称集合与冻结合同不一致",
@@ -738,7 +739,7 @@ impl WorkflowWorker {
             }));
         }
         for result in &locked.results {
-            let output = outputs
+            let output = inspected
                 .iter()
                 .find(|output| output.name == result.name)
                 .expect("result name set checked");
@@ -784,7 +785,14 @@ impl WorkflowWorker {
         let mut datasets = Vec::new();
         let roots = output_roots(&outputs);
         let _cleanup = OutputTreeCleanup(roots);
-        for output in outputs {
+        let inspected =
+            inspect_engine_outputs(&outputs, self.result_max_file_bytes).map_err(|error| {
+                ResultCommitFailure {
+                    code: "result_publish_failed",
+                    message: error.to_string(),
+                }
+            })?;
+        for output in inspected {
             let staged = self
                 .artifacts
                 .store()
@@ -1123,11 +1131,6 @@ fn cleanup_roots(roots: &BTreeSet<PathBuf>) {
     }
 }
 
-struct PrivateTree {
-    root: PathBuf,
-    keep: bool,
-}
-
 struct ResultCommitFailure {
     code: &'static str,
     message: String,
@@ -1143,24 +1146,6 @@ struct OutputTreeCleanup(BTreeSet<PathBuf>);
 impl Drop for OutputTreeCleanup {
     fn drop(&mut self) {
         cleanup_roots(&self.0);
-    }
-}
-
-impl PrivateTree {
-    fn new(root: PathBuf) -> Self {
-        Self { root, keep: false }
-    }
-
-    fn keep(&mut self) {
-        self.keep = true;
-    }
-}
-
-impl Drop for PrivateTree {
-    fn drop(&mut self) {
-        if !self.keep {
-            let _ = std::fs::remove_dir_all(&self.root);
-        }
     }
 }
 
