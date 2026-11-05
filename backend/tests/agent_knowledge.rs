@@ -211,6 +211,20 @@ fn preflight_rejects_duplicate_allowed_tools() {
 }
 
 #[test]
+fn preflight_rejects_an_empty_allowed_tool_registry() {
+    let index = json!({"bundleVersion":"test", "skills":[]});
+    let (manifest, index, system, files) = fixture(index, BTreeMap::new());
+    let mut manifest: Value = serde_json::from_str(&manifest).unwrap();
+    manifest["allowedTools"] = json!([]);
+
+    let error =
+        AgentKnowledge::load_from_parts("test", &manifest.to_string(), &index, &system, files)
+            .unwrap_err();
+
+    assert_eq!(error.code(), "allowed_tools_empty");
+}
+
+#[test]
 fn preflight_rejects_bundle_and_engine_contract_mismatch() {
     let content = "skill".to_string();
     let files = BTreeMap::from([("skills/a.md".to_string(), content.clone())]);

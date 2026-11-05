@@ -134,6 +134,12 @@ impl AgentKnowledge {
             skill_index_json.as_bytes(),
             &manifest.skill_index_sha256,
         )?;
+        if manifest.allowed_tools.is_empty() {
+            return Err(KnowledgeError::new(
+                "allowed_tools_empty",
+                "工具权限清单不能为空",
+            ));
+        }
         let mut allowed_tools = HashSet::new();
         for tool in &manifest.allowed_tools {
             if tool.trim().is_empty() {

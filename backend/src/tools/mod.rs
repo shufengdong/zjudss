@@ -354,6 +354,8 @@ pub fn validate_tool_catalog(manifest: &AgentManifest) -> Result<(), ToolCatalog
 
 /// 每请求按已经校验的 manifest 顺序装配一套有状态工具（§5）。
 pub fn build_tools(services: Arc<ToolServices>) -> Vec<RegisteredTool> {
+    validate_tool_catalog(&services.agent_knowledge.manifest)
+        .expect("agent tool catalog must match the validated manifest");
     services
         .agent_knowledge
         .manifest
