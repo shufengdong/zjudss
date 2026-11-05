@@ -34,6 +34,10 @@ it('builds list components, gates save on a fresh preview, and invalidates it on
   fireEvent.click(screen.getByText('显示设置'))
   fireEvent.change(screen.getByLabelText('调色板'), { target: { value: 'monochrome' } })
   expect(screen.getByRole('button', { name: '保存图表' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: '生成预览' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: '保存图表' })).toBeEnabled())
+  fireEvent.change(screen.getByLabelText('标题'), { target: { value: '新标题' } })
+  expect(screen.getByRole('button', { name: '保存图表' })).toBeDisabled()
 })
 
 it('hides line-only settings for histogram and keeps preview errors editable', async () => {
@@ -158,4 +162,22 @@ it('edits selected measure display names without changing physical field referen
   expect(calls[calls.length-1]?.[1].config).toMatchObject({measures:[
     {column:'v_mag',path:[0],label:'A相'},{column:'v_mag',path:[1],label:'B相'},{column:'v_mag',path:[2],label:'C相'},
   ]})
+})
+
+it('renders nested component paths with their capability display labels', async () => {
+  vi.mocked(getChartCapabilities).mockResolvedValue(chartCapabilities({
+    fields: [
+      ...capabilities.fields,
+      {
+        column: 'tensor', dtype: 'List(List(Float64))', nullable: false, unit: 'p.u.',
+        scalarType: 'number', roles: ['measure'],
+        shape: {
+          kind: 'list', rank: 2, observedPaths: [[1, 2]], complete: true,
+          truncated: false, reason: null,
+        },
+      },
+    ],
+  }) as never)
+  render(<ChartBuilder datasetId="7" sourceName="result" onSaved={vi.fn()} notify={vi.fn()} />)
+  expect(await screen.findByRole('option', { name: 'tensor[1][2] · tensor 1.2' })).toBeInTheDocument()
 })
