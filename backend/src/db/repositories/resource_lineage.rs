@@ -9,7 +9,7 @@ use super::{RepoError, RepoResult};
 const MAX_REPLACEMENT_DEPTH: usize = 64;
 
 #[derive(Debug, Clone)]
-pub(crate) struct ResolvedStructResource {
+pub(super) struct ResolvedStructResource {
     pub id: String,
     pub artifact_id: i32,
     pub alias: String,
@@ -19,13 +19,13 @@ pub(crate) struct ResolvedStructResource {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct FrozenStructOverrides {
+pub(super) struct FrozenStructOverrides {
     pub user: Value,
     pub selector: Value,
     pub merged: Value,
 }
 
-pub(crate) fn frozen_struct_overrides(
+pub(super) fn frozen_struct_overrides(
     snapshot: &Value,
 ) -> RepoResult<Option<FrozenStructOverrides>> {
     let Some(effective) = snapshot.get("effective") else {
@@ -82,7 +82,7 @@ pub(crate) fn frozen_struct_overrides(
     }))
 }
 
-pub(crate) fn resolve_live_struct_successor(
+pub(super) fn resolve_live_struct_successor(
     conn: &mut SqliteConnection,
     session_id: i32,
     frozen_resource_id: &str,

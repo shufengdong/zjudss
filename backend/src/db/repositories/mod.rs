@@ -20,6 +20,7 @@ mod upload;
 mod upload_confirmation;
 mod user;
 mod version;
+mod workflow_input;
 
 pub use analysis::AnalysisRepo;
 pub use artifact::{ArtifactDraft, ArtifactRepo};
@@ -37,13 +38,9 @@ pub use history::{HistoryHit, HistoryRepo, SearchFilters};
 pub(crate) use managed_workflow::recover_interrupted_workflows;
 pub use managed_workflow::{
     ConfirmStartOutcome, ManagedWorkflowAggregate, ManagedWorkflowRepo, ManagedWorkflowRepoError,
-    NewWorkflowCandidate, PendingRunDataset, RetryStructOverlayRequest, WorkflowAttemptUpdate,
-    WorkflowStructOverlayMaterial,
+    NewWorkflowCandidate, PendingRunDataset, WorkflowAttemptUpdate, WorkflowStructOverlayMaterial,
 };
 pub use message::MessageRepo;
-pub(crate) use resource_lineage::{
-    ResolvedStructResource, frozen_struct_overrides, resolve_live_struct_successor,
-};
 pub use result::{DeleteResultError, DeletedResult, LineageRow, ResultRepo, ResultViewRow};
 pub(crate) use run::RunArtifactOutputs;
 pub use run::{
@@ -70,6 +67,8 @@ pub use version::{
     VersionDataFrameReadRow, VersionDataframeRow, VersionRepo, VersionRepoError, VersionRow,
     VersionSnapshot, WorkspaceRow, WorkspaceSnapshot,
 };
+pub(crate) use workflow_input::resolve_frozen_struct_input_on;
+pub use workflow_input::{StructOverlayRequest, WorkflowInputRepo};
 
 #[derive(Debug)]
 pub enum RepoError {

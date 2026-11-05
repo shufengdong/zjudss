@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use crate::auth::{CurrentUser, UserId};
 use crate::catalog::DataFrameContractKind;
 use crate::db::repositories::{
-    DataResourceRepo, PromoteDatasetInput, RepoError, ResourcePageRow, RetryStructOverlayRequest,
+    DataResourceRepo, PromoteDatasetInput, RepoError, ResourcePageRow, StructOverlayRequest,
     WorkflowStructOverlayMaterial,
 };
 use crate::engine_resources::EngineResourceSnapshot;
@@ -314,7 +314,7 @@ impl DataResourceService {
     pub async fn materialize_retry_struct_overlays(
         &self,
         user: &CurrentUser,
-        requests: &[RetryStructOverlayRequest],
+        requests: &[StructOverlayRequest],
     ) -> Result<Vec<WorkflowStructOverlayMaterial>, DataResourceError> {
         let mut materials: Vec<WorkflowStructOverlayMaterial> = Vec::new();
         for request in requests {

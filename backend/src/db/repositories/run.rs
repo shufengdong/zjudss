@@ -3,13 +3,13 @@ use diesel::sql_types::{BigInt, Integer, Nullable, Text};
 use sha2::Digest;
 
 use super::{
-    ArtifactDraft, ArtifactRepo, RepoError, RepoResult, RetryStructOverlayRequest, StateTransition,
-    WorkflowStructOverlayMaterial, frozen_struct_overrides, resolve_live_struct_successor,
+    ArtifactDraft, ArtifactRepo, RepoError, RepoResult, StateTransition, StructOverlayRequest,
+    WorkflowInputRepo, WorkflowStructOverlayMaterial, resolve_frozen_struct_input_on,
 };
 use crate::agent::FailureAnalysis;
 use crate::application::diagnostics::FailureAnalysisStatus;
 use crate::auth::UserId;
-use crate::db::models::SimulationRun;
+use crate::db::models::{SimulationRun, WorkflowInputSnapshotRecord};
 use crate::db::{DbPool, schema};
 
 #[derive(Debug, Clone)]
@@ -214,125 +214,14 @@ impl RunRepo {
         &self,
         user: &UserId,
         script_id: i32,
-    ) -> Result<Vec<RetryStructOverlayRequest>, RunRepoError> {
-        let pool = self.pool.clone();
-        let user = user.0.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(RepoError::Pool)?;
-            #[derive(QueryableByName)]
-            struct ScriptSession {
-                #[diesel(sql_type = Integer)]
-                session_id: i32,
-                #[diesel(sql_type = Text)]
-                source_kind: String,
-            }
-            let script_session = diesel::sql_query(
-                "SELECT s.session_id,s.source_kind FROM script_resources s JOIN sessions se ON se.id=s.session_id WHERE s.id=?1 AND se.user_id=?2 AND se.deletion_status='live'",
-            )
-            .bind::<Integer, _>(script_id)
-            .bind::<Text, _>(&user)
-            .get_result::<ScriptSession>(&mut conn)
-            .optional()?
-            .ok_or(RunRepoError::Repository(RepoError::NotFound))?;
-            if script_session.source_kind != "agent" {
-                return Ok(Vec::new());
-            }
-            #[derive(QueryableByName)]
-            struct OverlayRow {
-                #[diesel(sql_type = Text)]
-                input_name: String,
-                #[diesel(sql_type = Nullable<Text>)]
-                resource_id: Option<String>,
-                #[diesel(sql_type = Nullable<Text>)]
-                input_alias: Option<String>,
-                #[diesel(sql_type = Nullable<Text>)]
-                schema_ref: Option<String>,
-                #[diesel(sql_type = Text)]
-                snapshot_json: String,
-            }
-            let rows = diesel::sql_query(
-                "SELECT i.input_name,i.resource_id,i.input_alias,i.schema_ref,i.snapshot_json \
-                 FROM script_resources s \
-                 JOIN sessions se ON se.id=s.session_id \
-                 JOIN workflow_input_snapshots i ON i.workflow_id=s.managed_workflow_id AND i.input_kind<>'model' \
-                 WHERE s.id=?1 AND se.user_id=?2 AND se.deletion_status='live' AND s.source_kind='agent'",
-            )
-            .bind::<Integer, _>(script_id)
-            .bind::<Text, _>(&user)
-            .load::<OverlayRow>(&mut conn)?;
-            let mut requests = Vec::new();
-            for row in rows {
-                let snapshot: serde_json::Value = serde_json::from_str(&row.snapshot_json)
-                    .map_err(|error| RepoError::Storage(error.to_string()))?;
-                let Some(overrides) = frozen_struct_overrides(&snapshot).map_err(|error| {
-                    match error {
-                        RepoError::InvalidState(_) => RunRepoError::ConfigurationStale,
-                        error => RunRepoError::Repository(error),
-                    }
-                })?
-                else {
-                    continue;
-                };
-                let source = snapshot.get("source").unwrap_or(&snapshot);
-                let frozen_resource_id = source
-                    .get("resourceId")
-                    .and_then(serde_json::Value::as_str)
-                    .or(row.resource_id.as_deref());
-                let Some(frozen_resource_id) = frozen_resource_id else {
-                    continue;
-                };
-                let resource_alias = source
-                    .get("resourceAlias")
-                    .or_else(|| snapshot.get("resourceAlias"))
-                    .and_then(serde_json::Value::as_str)
-                    .or(row.input_alias.as_deref())
-                    .ok_or(RunRepoError::ConfigurationStale)?;
-                let schema_ref = row
-                    .schema_ref
-                    .as_deref()
-                    .ok_or(RunRepoError::ConfigurationStale)?;
-                let resource = resolve_live_struct_successor(
-                    &mut conn,
-                    script_session.session_id,
-                    frozen_resource_id,
-                    resource_alias,
-                    schema_ref,
-                )
-                .map_err(|error| match error {
-                    RepoError::InvalidState(_) => RunRepoError::ConfigurationStale,
-                    error => RunRepoError::Repository(error),
-                })?
-                .ok_or(RunRepoError::ConfigurationStale)?;
-                let source_unchanged = source
-                    .get("resourceId")
-                    .and_then(serde_json::Value::as_str)
-                    == Some(resource.id.as_str())
-                    && source
-                        .get("contentHash")
-                        .and_then(serde_json::Value::as_str)
-                        == Some(resource.content_hash.as_str())
-                    && source
-                        .get("schemaHash")
-                        .and_then(serde_json::Value::as_str)
-                        == Some(resource.schema_hash.as_str());
-                if !source_unchanged {
-                    requests.push(RetryStructOverlayRequest {
-                        input_id: row.input_name,
-                        source_resource_id: resource.id,
-                        source_artifact_id: resource.artifact_id,
-                        source_content_hash: resource.content_hash,
-                        source_schema_hash: resource.schema_hash,
-                        schema_ref: resource.schema_ref,
-                        user_overrides: overrides.user,
-                        selector_overrides: overrides.selector,
-                        overrides: overrides.merged,
-                    });
-                }
-            }
-            Ok(requests)
-        })
-        .await
-        .map_err(|error| RunRepoError::Repository(RepoError::Join(error)))?
+    ) -> Result<Vec<StructOverlayRequest>, RunRepoError> {
+        WorkflowInputRepo::new(self.pool.clone())
+            .overlay_requests_for_script(user, script_id)
+            .await
+            .map_err(|error| match error {
+                RepoError::InvalidState(_) => RunRepoError::ConfigurationStale,
+                error => RunRepoError::Repository(error),
+            })
     }
 
     pub async fn create(
@@ -423,16 +312,13 @@ impl RunRepo {
                     #[diesel(sql_type=Nullable<Text>)] content_hash: Option<String>,
                     #[diesel(sql_type=Nullable<Text>)] source_kind: Option<String>,
                     #[diesel(sql_type=Nullable<Text>)] lineage_json: Option<String>,
-                    #[diesel(sql_type=Nullable<Integer>)] frozen_artifact_id: Option<i32>,
-                    #[diesel(sql_type=Nullable<Text>)] frozen_content_hash: Option<String>,
-                    #[diesel(sql_type=Nullable<Text>)] snapshot_json: Option<String>,
                 }
                 let resource_rows = if managed {
                     let workflow_id = script.managed_workflow_id.expect("managed workflow");
-                    diesel::sql_query("SELECT i.input_name,i.input_kind,i.resource_id,i.input_alias alias,d.normalized_artifact_id artifact_id,i.schema_ref expected_schema_ref,i.schema_hash expected_schema_hash,d.declared_schema_ref current_schema_ref,d.schema_hash,a.sha256 content_hash,d.source_kind,d.lineage_json,i.artifact_id frozen_artifact_id,i.content_hash frozen_content_hash,i.snapshot_json FROM workflow_input_snapshots i LEFT JOIN data_resources d ON lower(d.alias)=lower(COALESCE(json_extract(i.snapshot_json,'$.resourceAlias'),i.input_alias)) AND d.session_id=?1 AND d.status='live' LEFT JOIN artifacts a ON a.id=d.normalized_artifact_id WHERE i.workflow_id=?2 AND i.input_kind<>'model' ORDER BY i.input_name")
+                    diesel::sql_query("SELECT i.input_name,i.input_kind,i.resource_id,i.input_alias alias,d.normalized_artifact_id artifact_id,i.schema_ref expected_schema_ref,i.schema_hash expected_schema_hash,d.declared_schema_ref current_schema_ref,d.schema_hash,a.sha256 content_hash,d.source_kind,d.lineage_json FROM workflow_input_snapshots i LEFT JOIN data_resources d ON lower(d.alias)=lower(COALESCE(json_extract(i.snapshot_json,'$.resourceAlias'),i.input_alias)) AND d.session_id=?1 AND d.status='live' LEFT JOIN artifacts a ON a.id=d.normalized_artifact_id WHERE i.workflow_id=?2 AND i.input_kind<>'model' ORDER BY i.input_name")
                         .bind::<Integer, _>(script.session_id).bind::<Integer, _>(workflow_id).load::<ResourceRow>(conn)?
                 } else {
-                    diesel::sql_query("SELECT NULL input_name,NULL input_kind,d.id resource_id,d.alias,d.normalized_artifact_id artifact_id,NULL expected_schema_ref,NULL expected_schema_hash,d.declared_schema_ref current_schema_ref,d.schema_hash,a.sha256 content_hash,d.source_kind,d.lineage_json,NULL frozen_artifact_id,NULL frozen_content_hash,NULL snapshot_json FROM data_resources d JOIN artifacts a ON a.id=d.normalized_artifact_id WHERE d.session_id=?1 AND d.status='live' ORDER BY d.alias")
+                    diesel::sql_query("SELECT NULL input_name,NULL input_kind,d.id resource_id,d.alias,d.normalized_artifact_id artifact_id,NULL expected_schema_ref,NULL expected_schema_hash,d.declared_schema_ref current_schema_ref,d.schema_hash,a.sha256 content_hash,d.source_kind,d.lineage_json FROM data_resources d JOIN artifacts a ON a.id=d.normalized_artifact_id WHERE d.session_id=?1 AND d.status='live' ORDER BY d.alias")
                         .bind::<Integer, _>(script.session_id).load::<ResourceRow>(conn)?
                 };
                 if managed {
@@ -441,6 +327,14 @@ impl RunRepo {
                         .bind::<Integer, _>(script.managed_workflow_id.expect("managed workflow")).get_result::<Count>(conn)?.count;
                     if resource_rows.len() as i64 != expected { return Err(RunRepoError::ConfigurationStale); }
                 }
+                let frozen_inputs = if managed {
+                    schema::workflow_input_snapshots::table
+                        .filter(schema::workflow_input_snapshots::workflow_id.eq(script.managed_workflow_id.expect("managed workflow")))
+                        .filter(schema::workflow_input_snapshots::input_kind.ne("model"))
+                        .load::<WorkflowInputSnapshotRecord>(conn)?
+                } else {
+                    Vec::new()
+                };
                 let mut resources = Vec::with_capacity(resource_rows.len());
                 for row in resource_rows {
                     if !managed {
@@ -459,43 +353,27 @@ impl RunRepo {
                         continue;
                     }
                     let input_name = row.input_name.clone().ok_or(RunRepoError::ConfigurationStale)?;
-                    let snapshot: serde_json::Value = serde_json::from_str(row.snapshot_json.as_deref().ok_or(RunRepoError::ConfigurationStale)?)
-                        .map_err(|error| RunRepoError::Repository(RepoError::Storage(error.to_string())))?;
-                    if snapshot.get("effective").is_none()
-                        && row.input_kind.as_deref() != Some("struct")
-                    {
+                    if row.input_kind.as_deref() != Some("struct") {
                         if row.expected_schema_ref != row.current_schema_ref { return Err(RunRepoError::ScriptIncompatible(vec![input_name])); }
                         resources.push(FrozenRunResource { input_name: row.input_name, input_kind: row.input_kind, resource_id: row.resource_id, alias: row.alias, artifact_id: row.artifact_id.ok_or(RunRepoError::ConfigurationStale)?, schema_ref: row.current_schema_ref, schema_hash: row.schema_hash.ok_or(RunRepoError::ConfigurationStale)?, content_hash: row.content_hash.ok_or(RunRepoError::ConfigurationStale)?, source_kind: row.source_kind.unwrap_or_default(), lineage: row.lineage_json.as_deref().and_then(|value|serde_json::from_str(value).ok()).unwrap_or(serde_json::Value::Null) });
                         continue;
                     }
-                    let source = snapshot.get("source").unwrap_or(&snapshot);
-                    let frozen_resource_id = source.get("resourceId").and_then(serde_json::Value::as_str).or(row.resource_id.as_deref());
-                    let Some(frozen_resource_id) = frozen_resource_id else {
-                        resources.push(FrozenRunResource { input_name: row.input_name, input_kind: row.input_kind, resource_id: None, alias: row.alias, artifact_id: row.frozen_artifact_id.ok_or(RunRepoError::ConfigurationStale)?, schema_ref: row.expected_schema_ref, schema_hash: row.expected_schema_hash.ok_or(RunRepoError::ConfigurationStale)?, content_hash: row.frozen_content_hash.ok_or(RunRepoError::ConfigurationStale)?, source_kind: "workflow_private".into(), lineage: serde_json::Value::Null });
+                    let frozen_input = frozen_inputs
+                        .iter()
+                        .find(|input| input.input_name == input_name)
+                        .ok_or(RunRepoError::ConfigurationStale)?;
+                    let resolved = resolve_frozen_struct_input_on(conn, script.session_id, frozen_input)
+                        .map_err(|error| match error { RepoError::InvalidState(_) => RunRepoError::ConfigurationStale, error => RunRepoError::Repository(error) })?;
+                    let Some(resource) = resolved.resource else {
+                        resources.push(FrozenRunResource { input_name: row.input_name, input_kind: row.input_kind, resource_id: None, alias: row.alias, artifact_id: resolved.effective_artifact_id, schema_ref: row.expected_schema_ref, schema_hash: row.expected_schema_hash.ok_or(RunRepoError::ConfigurationStale)?, content_hash: resolved.effective_content_hash, source_kind: "workflow_private".into(), lineage: serde_json::Value::Null });
                         continue;
                     };
-                    let expected_schema_ref = row.expected_schema_ref.as_deref().ok_or(RunRepoError::ConfigurationStale)?;
-                    let resource_alias = source.get("resourceAlias").or_else(||snapshot.get("resourceAlias")).and_then(serde_json::Value::as_str).unwrap_or(&row.alias);
-                    let resource = resolve_live_struct_successor(conn, script.session_id, frozen_resource_id, resource_alias, expected_schema_ref)
-                        .map_err(|error| match error { RepoError::InvalidState(_) => RunRepoError::ConfigurationStale, error => RunRepoError::Repository(error) })?
-                        .ok_or(RunRepoError::ConfigurationStale)?;
-                    let source_unchanged = source.get("resourceId").and_then(serde_json::Value::as_str) == Some(resource.id.as_str())
-                        && source.get("contentHash").and_then(serde_json::Value::as_str) == Some(resource.content_hash.as_str())
-                        && source.get("schemaHash").and_then(serde_json::Value::as_str) == Some(resource.schema_hash.as_str());
-                    let (artifact_id, content_hash) = if source_unchanged {
-                        (row.frozen_artifact_id.ok_or(RunRepoError::ConfigurationStale)?, row.frozen_content_hash.ok_or(RunRepoError::ConfigurationStale)?)
-                    } else if frozen_struct_overrides(&snapshot)
-                        .map_err(|error| match error {
-                            RepoError::InvalidState(_) => RunRepoError::ConfigurationStale,
-                            error => RunRepoError::Repository(error),
-                        })?
-                        .is_none()
-                    {
-                        (resource.artifact_id, resource.content_hash.clone())
-                    } else {
+                    let (artifact_id, content_hash) = if let Some(request) = resolved.request {
                         let overlay = overlays.iter().find(|overlay| overlay.input_id == input_name).ok_or(RunRepoError::ConfigurationStale)?;
-                        if overlay.source_resource_id.as_deref() != Some(resource.id.as_str()) || overlay.source_artifact_id != Some(resource.artifact_id) || overlay.source_content_hash.as_deref() != Some(resource.content_hash.as_str()) || overlay.source_schema_hash.as_deref() != Some(resource.schema_hash.as_str()) || overlay.schema_ref != resource.schema_ref { return Err(RunRepoError::ConfigurationStale); }
+                        if overlay.source_resource_id.as_deref() != Some(request.source_resource_id.as_str()) || overlay.source_artifact_id != Some(request.source_artifact_id) || overlay.source_content_hash.as_deref() != Some(request.source_content_hash.as_str()) || overlay.source_schema_hash.as_deref() != Some(request.source_schema_hash.as_str()) || overlay.schema_ref != request.schema_ref { return Err(RunRepoError::ConfigurationStale); }
                         (overlay.artifact_id, overlay.content_hash.clone())
+                    } else {
+                        (resolved.effective_artifact_id, resolved.effective_content_hash)
                     };
                     resources.push(FrozenRunResource { input_name: row.input_name, input_kind: row.input_kind, resource_id: Some(resource.id), alias: row.alias, artifact_id, schema_ref: Some(resource.schema_ref), schema_hash: resource.schema_hash, content_hash, source_kind: "struct".into(), lineage: serde_json::Value::Null });
                 }

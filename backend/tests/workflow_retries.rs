@@ -427,6 +427,18 @@ async fn retry_and_rerun_resolve_the_same_struct_successor_matrix() {
             failed_overlay_source(&app, &user, matches!(case, SuccessorCase::SourceLess)).await;
         let source_script_id = source.final_script_resource_id.unwrap();
         let source_input = frozen_para(&app, source.id);
+        let original_source_snapshot: Value =
+            serde_json::from_str(&source_input.snapshot_json).unwrap();
+        let expected_merged_overrides = original_source_snapshot["effective"]["overrides"].clone();
+        let expected_user_overrides = original_source_snapshot["effective"]["userOverrides"]
+            .as_object()
+            .map(|_| original_source_snapshot["effective"]["userOverrides"].clone())
+            .unwrap_or_else(|| json!({}));
+        let expected_selector_overrides =
+            original_source_snapshot["effective"]["selectorOverrides"]
+                .as_object()
+                .map(|_| original_source_snapshot["effective"]["selectorOverrides"].clone())
+                .unwrap_or_else(|| json!({}));
         let session_id = app
             .state
             .run_service
@@ -587,6 +599,29 @@ async fn retry_and_rerun_resolve_the_same_struct_successor_matrix() {
                 .unwrap()
         };
         let retry_input = frozen_para(&app, retry_workflow.id);
+        let retry_snapshot: Value = serde_json::from_str(&retry_input.snapshot_json).unwrap();
+        assert_eq!(
+            retry_snapshot["effective"]["userOverrides"],
+            if matches!(case, SuccessorCase::LegacyMergedOverrides) {
+                json!({})
+            } else {
+                expected_user_overrides.clone()
+            },
+            "{case:?}"
+        );
+        assert_eq!(
+            retry_snapshot["effective"]["selectorOverrides"],
+            if matches!(case, SuccessorCase::LegacyMergedOverrides) {
+                json!({})
+            } else {
+                expected_selector_overrides.clone()
+            },
+            "{case:?}"
+        );
+        assert_eq!(
+            retry_snapshot["effective"]["overrides"], expected_merged_overrides,
+            "{case:?}"
+        );
         let rerun = rerun.unwrap();
         let rerun_snapshot: Value = serde_json::from_str(&rerun.run.input_snapshot_json).unwrap();
         let rerun_para = rerun_snapshot["resources"]
