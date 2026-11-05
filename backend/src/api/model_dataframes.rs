@@ -1,11 +1,10 @@
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::{Response, StatusCode, header};
+use axum::http::Response;
 use serde::Deserialize;
-use tokio::io::AsyncReadExt;
 
-use super::ApiError;
+use super::{ApiError, attachment};
 use crate::application::{AppState, DraftReadExpectation};
 use crate::auth::CurrentUser;
 
@@ -149,19 +148,5 @@ fn parse_columns(columns: Option<&str>) -> Vec<String> {
 async fn download_response(
     file: crate::application::model_dataframes::ModelDataFrameDownload,
 ) -> Result<Response<Body>, ApiError> {
-    let mut source = tokio::fs::File::from_std(file.file);
-    let mut bytes = Vec::new();
-    source
-        .read_to_end(&mut bytes)
-        .await
-        .map_err(|error| ApiError::internal(error.to_string()))?;
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, file.media_type)
-        .header(
-            header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{}\"", file.file_name),
-        )
-        .body(Body::from(bytes))
-        .map_err(|error| ApiError::internal(error.to_string()))
+    attachment::response(file.file, file.media_type, file.file_name).await
 }

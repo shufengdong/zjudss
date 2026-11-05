@@ -1,15 +1,14 @@
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::{Response, StatusCode, header};
+use axum::http::Response;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::io::AsyncReadExt;
 
 use crate::application::{AppState, CandidateDecision, ReplacementAction};
 use crate::auth::CurrentUser;
 
-use super::ApiError;
+use super::{ApiError, attachment};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -148,20 +147,7 @@ pub async fn download(
         .data_resource_service
         .download(&user, &id, original)
         .await?;
-    let mut file = tokio::fs::File::from_std(download.file);
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .await
-        .map_err(|error| ApiError::internal(error.to_string()))?;
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, download.media_type)
-        .header(
-            header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{}\"", download.file_name),
-        )
-        .body(Body::from(bytes))
-        .map_err(|error| ApiError::internal(error.to_string()))
+    attachment::response(download.file, download.media_type, download.file_name).await
 }
 
 pub async fn deletion_preview(

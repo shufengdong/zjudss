@@ -1,11 +1,10 @@
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::{Response, StatusCode, header};
+use axum::http::Response;
 use serde::Deserialize;
-use tokio::io::AsyncReadExt;
 
-use super::ApiError;
+use super::{ApiError, attachment};
 use crate::application::AppState;
 use crate::auth::CurrentUser;
 
@@ -57,18 +56,5 @@ pub async fn download(
     Path(id): Path<i32>,
 ) -> Result<Response<Body>, ApiError> {
     let f = s.dataset_service.download(&p, id).await?;
-    let mut file = tokio::fs::File::from_std(f.file);
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
-        .await
-        .map_err(|e| ApiError::internal(e.to_string()))?;
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, f.media_type)
-        .header(
-            header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{}\"", f.file_name),
-        )
-        .body(Body::from(bytes))
-        .map_err(|e| ApiError::internal(e.to_string()))
+    attachment::response(f.file, f.media_type, f.file_name).await
 }

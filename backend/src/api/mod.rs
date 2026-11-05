@@ -1,6 +1,7 @@
 //! HTTP 层：axum 路由、handler、DTO 与 SSE。
 
 mod analysis;
+mod attachment;
 mod auth;
 mod chart_views;
 mod comparisons;
