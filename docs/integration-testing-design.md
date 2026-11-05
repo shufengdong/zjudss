@@ -148,13 +148,17 @@ Agent bundle 和发现/选择的案例集合；输入与输出为同一路径时
 候选发布执行 `scripts/test-release-integration`。脚本缺省使用 DeepSeek，也可通过 `LLM_PROVIDER=bailian`、
 `LLM_MODEL`、`BAILIAN_API_KEY` 和 `BAILIAN_BASE_URL` 切换到百炼；endpoint 与 API Key 必须同地域。报告记录测试 ID、Agent bundle hash、用户 seed hash/数量、engine
 contract、当前 binary hash、动态资源 snapshot 与案例分类数量；hash 是证据而非固定接收值，日志必须脱敏。
+Agent bundle 版本和完整工具权限只从 `backend/resources/agent/v4/manifest.json` 读取：真实与手工旅程把该次
+`allowedTools` 传给语义轨迹断言，发布 shell 直接比较报告版本与同一 manifest，不维护第二份工具全集或版本常量。
 真实门禁必须覆盖模型导入/发布、目录驱动的研究门面检索、配置卡准备与最终确认、Agent 创建受管研究脚本、自动执行、结果分析/比较和只使用稳定 ID。门禁扫描全部
 manifest schema v2 案例，要求不可导入案例为零，并对每个案例真实执行其 projector，逐项验证有序 Snappy Parquet
-输出及 Model/Data/Struct/diagnostic 分类。当前 snapshot 的证据为 144/144 成功；报告以 `projectedExamples`、
+输出及 Model/Data/Struct/diagnostic 分类。2026-10-30 最后一次已接受的候选证据为 144/144 成功；每次候选仍必须以本次
+动态 snapshot 重新生成报告，并以 `projectedExamples`、
 `projectionFailures` 和逐案例 `caseProjections` 固化该门禁，任一案例失败都使候选发布失败。
-随后对每个被案例引用的 profile 选择一个投影成功的代表，以其命名 Parquet 输入执行 `managed.rss`；当前为 6 个代表，
+随后对每个被案例引用的 profile 选择一个投影成功的代表，以其命名 Parquet 输入执行 `managed.rss`；上次证据为 6 个代表，
 同时覆盖全部 study family。projector 输出缺失、重复、多余、顺序合同不一致或 manifest/profile 不一致均原子失败。
-没有案例引用的 disabled profile 可以保留稳定诊断，但不能被 manifest 使用。当前分布见 `docs/v4-deployment.md`。
+没有案例引用的 disabled profile 可以保留稳定诊断，但不能被 manifest 使用。历史证据分布见 `docs/v4-deployment.md`；
+数量不是未来 snapshot 的固定接收条件。
 
 ## Failure policy
 

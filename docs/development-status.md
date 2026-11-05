@@ -182,6 +182,15 @@ Agent bundle/权限；没有 adapter 外进程启动，也没有把任意 EChart
 - 删除无消费者的 `useAnalysisRun` 和只转发 `useChartView` 的 `useDatasetView`。本阶段没有改变公共路由、DTO、消息、稳定错误码、
   migration、功能目录、Agent 权限、ChartModel/ECharts 或 Parquet 合同。
 
+2026-11-05 的全局验证、部署与文档收敛阶段（8.9）已经完成；设计/计划提交为 `2ffa23d`，实施提交为 `b5779fe`：
+
+- release semantic assertions 不再维护完整工具 allowlist；真实发布和手工全案例 journey 从当前 Agent manifest 读取并传入
+  `allowedTools`，段落级工具子集、skill 门禁、稳定 ID 与副作用次数规则保持独立；
+- `scripts/test-release-integration` 删除过期的 `v4.2.0` 报告断言，直接比较报告版本与当前 manifest；release config 测试也
+  比较 `.env.example` 和 manifest，不再复制工具数量或 bundle 版本；
+- 部署与集成测试文档把 144/144、profile 和代表运行数明确标为 2026-10-30 的历史候选证据；新候选必须从本次动态
+  snapshot 重新产生零失败报告，不把旧数量当作接收门槛。
+
 ## Hard boundaries
 
 所有 tensoreval 调用必须经过 adapter；所有 repository 查询带 `UserId`；所有模型和结果正文使用 Snappy Parquet；浏览器与
@@ -221,7 +230,7 @@ Vite/Axum/SQLite/CAS 的身份、导入、分层案例目录与窄屏详情、�
 `para`、多资源不猜选、Struct 私有用户/selector 覆盖、source-less 默认值、revision/用户隔离、无提前 confirm 路由及受控列映射发布。
 
 当前代码确定性基线（不含下述真实相邻 eig-rs 资源树断言）通过 `cargo fmt --all -- --check`、
-`cargo clippy --all-targets --all-features -- -D warnings`、后端全量测试、52 个文件/275 条 Vitest、生产构建、31 条 Playwright 旅程及
+`cargo clippy --all-targets --all-features -- -D warnings`、后端全量测试、54 个文件/285 条 Vitest、生产构建、31 条 Playwright 旅程及
 350/350 功能证据、297/297 公共合同、100% PR 功能追溯；候选门禁另以真实
 所选真实 LLM provider、当前 eig-rs/tensoreval、动态门面与案例快照完成规划、执行、分析、比较和删除全旅程。
 候选门禁中的 tensoreval 固定以 `--no-default-features --features tensoreval-cli,with_dsa_mumps` 构建，不使用
@@ -304,3 +313,11 @@ manifest、contract manifest 聚焦测试。完整 `cargo test --features e2e-te
 2026-11-05 的 8.8 阶段通过 attachment 三类端点的后端聚焦测试、54/54 文件共 284/284 项前端 Vitest 和生产构建。
 全量 Vitest 首次在受限环境中仅因开发服务器无法监听 `127.0.0.1` 失败；允许回环监听后原命令全绿。Playwright、功能覆盖、
 后端全量格式/Clippy/test 与发布配置将在 8.9 全局门禁统一复验。
+
+2026-11-05 的 8.9 最终门禁通过后端格式和全 target/all feature 零警告 Clippy。受限环境首次让 `e2e_server` 的回环监听
+返回 `Operation not permitted`；允许本机回环后，未过滤完整 Rust 套件只在
+`current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count` 精确报告上文同样 7 个外部
+`case_projection_invalid`，`engine_resources` 其余 32/32 通过；跳过且仅跳过该断言后其余完整 `e2e-test` 通过。
+前端 54/54 文件、285/285 Vitest、生产构建和 31/31 Playwright 通过；PR 功能门禁为 350/350 功能证据、
+297/297 公共合同、30/30 目录条目和 100% 追溯。本机未配置 `TENSOREVAL_BIN`、`SPARROWZZ_DIR`、真实 LLM secret、
+`INIT_USERS_CSV` 或 `target/eig-rs`，因此真实候选发布 lane 未执行；候选发布仍受相邻资源树七案例阻塞，未标记为全绿。

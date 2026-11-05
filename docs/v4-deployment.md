@@ -146,11 +146,14 @@ git diff --check
 ## Published case facade coverage
 
 2026-10-30 起以 `dss/docs/catalog/case_projections.json` schema v2 和 rssbundle manifest schema v2
-为唯一合同，不保留 schema v1 兼容。当前目录有 9 个投影 profile：7 个启用、2 个以稳定诊断禁用；144 个
-manifest 案例全部引用启用 profile，可导入覆盖为 **144/144**。案例实际引用 6 个 profile；启用但暂时没有案例的
+为唯一合同，不保留 schema v1 兼容。目录中的 profile、manifest 和引用数量都由本次资源 snapshot 动态发现；正式接收
+不固定 profile 或案例数量，只要求目录计数自洽、所有 manifest 引用启用 profile 且本次真实 projector 零失败。
+
+2026-10-30 最后一次已接受的候选证据中有 9 个投影 profile（7 个启用、2 个以稳定诊断禁用）和 144 个
+manifest 案例，可导入覆盖为 **144/144**。案例实际引用 6 个 profile；启用但当时没有案例的
 `dss_static_radial_v1` 仍可供后续 bundle 使用。`AutoAdd` 和 `RelCalc` profile 保持禁用，不会被伪装成可执行门面。
-候选发布门禁还会对这 144 个案例逐一调用当前 binary 的真实 projector；当前证据为 **144/144 投影成功、0 失败**，
-而不是仅根据 manifest/profile 静态匹配推断可导入。
+该次候选发布门禁对 144 个案例逐一调用当时的真实 binary，证据为 **144/144 投影成功、0 失败**，而不是仅根据
+manifest/profile 静态匹配推断可导入。下表也是该次证据分布，不是未来 snapshot 的固定门槛。
 
 | manifest 来源函数 | 目标 DataFrame 门面 | 案例数 |
 |---|---|---:|
@@ -199,19 +202,22 @@ bundle hash、用户 seed hash/数量、engine contract/checks 和 binary hash�
 发现的 study 类型、案例函数到门面的覆盖及代表运行。报告中的 `projectedExamples` 必须等于可导入和发现的 bundle 数，
 `projectionFailures` 必须为零，`caseProjections` 必须为每个稳定案例 ID 保存唯一的 Model/Data/Struct/diagnostic 数量摘要；
 原始 stderr、脚本和物理路径不进入报告。binary hash 和 snapshot 是本次证据，不是接收门槛。
+Agent bundle 报告版本与工具轨迹权限都必须读取本次 `backend/resources/agent/v4/manifest.json`；release shell、真实旅程和
+手工全案例旅程不得维护版本字符串或完整工具 allowlist 的镜像。
 真实门禁要求至少一个 rssbundle，且每个 manifest 案例都必须声明启用的 V4 门面和可执行的 Model/Data/Struct
 投影；`nonImportableExamples` 必须为零。动态门面必须 `enabled_count == catalog_entry_count` 且零诊断。
 投影目录允许保留没有案例引用的显式 disabled profile，但必须满足
 `enabled_count + disabled_diagnostic_count == catalog_entry_count`，且任何 manifest 都不能引用 disabled profile。
-门禁先对每个可导入案例运行一次真实 projector 并验证全部目录声明输出；当前 snapshot 为 144 个案例全部成功。
+门禁先对本次 snapshot 的每个可导入案例运行一次真实 projector 并验证全部目录声明输出。
 随后对每个被案例引用的 profile，从投影成功的案例中选择一个代表，以其 DataFrame 输出作为命名输入执行
-`managed.rss`，当前共 6 个代表。执行前按 profile 的 `resultSelector` 合同，将 manifest `study.results` 经 `resultMap` 映射后的 target
+`managed.rss`；代表数量等于本次被引用 profile 数。执行前按 profile 的 `resultSelector` 合同，将 manifest `study.results` 经 `resultMap` 映射后的 target
 集合写入指定 Struct 字段；因此真实门禁同时覆盖每个当前 study family、案例结果选择和实际输出数量，而不写死
 门面数、profile 数或案例数。
 
 ## Opt-in all-case semantic journey
 
-候选发布门禁的 144/144 证明每个案例 projector 与目录合同可用，不证明后续对话发布、提示词、研究配置、脚本和结果链路。
+候选发布门禁的全案例 projector 通过只证明该次 snapshot 的 projector 与目录合同可用，不证明后续对话发布、提示词、
+研究配置、脚本和结果链路。上文 144/144 是有日期的历史候选证据，不能代替新 snapshot 的报告。
 需要该证据时，由已知会把案例/工作区上下文发送给所选真实 LLM provider 的测试人员显式运行：
 
 ```bash
