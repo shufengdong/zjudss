@@ -140,6 +140,22 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 该整理不改变 REST/SSE、JSON DTO、稳定错误码、数据库 schema、Agent bundle/权限或前端流程。功能目录只把两条已合并的
 行为测试引用更新为当前测试符号，没有新增或删除公共合同。
 
+2026-11-05 的结果读取、分析、比较与图表维护阶段（8.6）已经完成；设计/计划提交为 `09a0b56`、`a2688c6`，
+实施提交序列为 `3020383`、`10ac54b`、`992da49`、`8d59375`、`7d47ddb`、`8bfd27b`、`055e874`：
+
+- `ResultSourceService` 成为 live dataset 用户作用域、会话、schema、artifact 与内容 hash 的唯一应用层来源事实，
+  dataset page/download、分析输入和图表读取复用它；`ParquetDataFrameReader` 继续独占物理 Parquet 读取语义；
+- 分析的单次输入解析/冻结/staging 与输出验证/提交/失败清理由 `analysis/inputs.rs`、`outputs.rs` 分离，
+  比较的纯兼容性策略与受控 RSS 生成由 `comparisons/compatibility.rs`、`script.rs` 分离；两个公开 service facade、
+  状态机、事务和错误码未改变；
+- `ChartCompiler::compile` 保持入口不变，公共候选/预算/schema 与 line、bar、scatter、heatmap、boxplot、histogram
+  六类算法分模块；图表 service 的来源解析、Plot Data 物化和冻结展示/cursor 也分离，已保存图表仍不依赖 live 来源；
+- 前端 `ChartBuilder` 收敛为组合层，纯字段映射、六类 config seed/build、capability/preview/save Hook、模板控件和显示控件
+  分离；浏览器仍只产生受控 `ChartConfig`，`chart-model-v1 → EChartsOption` 仍只在本地确定性 adapters 中完成。
+
+机械审计和合同 diff 确认本阶段没有新增/修改公共路由、DTO、消息、稳定错误码、migration、图表合同、功能目录或
+Agent bundle/权限；没有 adapter 外进程启动，也没有把任意 ECharts option 或物理路径带入公共边界。
+
 ## Hard boundaries
 
 所有 tensoreval 调用必须经过 adapter；所有 repository 查询带 `UserId`；所有模型和结果正文使用 Snappy Parquet；浏览器与
@@ -179,7 +195,7 @@ Vite/Axum/SQLite/CAS 的身份、导入、分层案例目录与窄屏详情、�
 `para`、多资源不猜选、Struct 私有用户/selector 覆盖、source-less 默认值、revision/用户隔离、无提前 confirm 路由及受控列映射发布。
 
 当前代码确定性基线（不含下述真实相邻 eig-rs 资源树断言）通过 `cargo fmt --all -- --check`、
-`cargo clippy --all-targets --all-features -- -D warnings`、后端全量测试、50 个文件/265 条 Vitest、生产构建、31 条 Playwright 旅程及
+`cargo clippy --all-targets --all-features -- -D warnings`、后端全量测试、52 个文件/275 条 Vitest、生产构建、31 条 Playwright 旅程及
 350/350 功能证据、297/297 公共合同、100% PR 功能追溯；候选门禁另以真实
 所选真实 LLM provider、当前 eig-rs/tensoreval、动态门面与案例快照完成规划、执行、分析、比较和删除全旅程。
 候选门禁中的 tensoreval 固定以 `--no-default-features --features tensoreval-cli,with_dsa_mumps` 构建，不使用
@@ -243,3 +259,12 @@ retry/rerun 对底层 lineage helper 的直接调用，以及 adapter 外的进�
 零警告 Clippy 通过；精确跳过唯一外部资源断言后完整 `e2e-test` 通过；前端 50/50 文件、265/265 Vitest、生产构建、
 31/31 Playwright、350/350 功能证据、297/297 公共合同和 100% PR 追溯通过。未过滤后端测试仍只报告上文同一断言和
 同一 7 个 `case_projection_invalid`，因此候选发布状态仍未标记为全绿。
+
+2026-11-05 的 8.6 阶段在提交 `055e874` 后完成最终验证：后端 `cargo fmt --all -- --check` 与全 target/all feature
+零警告 Clippy 通过；未过滤 `cargo test --features e2e-test` 只在
+`current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count` 报告上文完全相同的 7 个
+`case_projection_invalid`，其余 engine resource 测试为 32/32；跳过且仅跳过该精确外部断言后，完整 `e2e-test`
+套件通过。前端 52/52 文件、275/275 Vitest 和生产构建通过；PR 功能覆盖为 350/350、公共合同 297/297、30/30
+目录条目，追溯率 100%。本机没有配置候选发布要求的 `TENSOREVAL_BIN`、`SPARROWZZ_DIR`、真实 LLM secret、
+`INIT_USERS_CSV` 或 `target/eig-rs`，因此没有把未运行的真实 binary 构建和 LLM 发布全旅程记为通过；相邻资源树七案例
+状态仍是外部兼容性阻塞，候选发布仍未标记为全绿。

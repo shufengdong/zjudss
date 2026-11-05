@@ -48,6 +48,33 @@ V4 是空库直接切换版本。系统由 React/TypeScript 工作台、Rust/Axu
 已发布目录损坏或 catalog 不兼容都会失败关闭。更新文档、catalog 或案例资源后必须重启以发布新 snapshot；
 单独替换 `TENSOREVAL_BIN` 无需重启，下一次 adapter 调用直接执行路径上的当前普通文件。
 
+## Result, analysis, comparison, and chart ownership
+
+结果读取先经过 `backend/src/application/result_sources.rs` 的 `ResultSourceService`：它以
+`CurrentUser + dataset ID` 解析 live dataset、所属会话、用户 storage scope 内的 artifact、已解析 schema、artifact
+内容 hash 和 `DataFrameReadSource`。结果表格分页/下载、dataset 分析输入和图表 capability/编译共享这一个来源事实；
+数据资源与模型表因 ID 和生命周期不同，继续使用各自的受控来源解析。`ParquetDataFrameReader` 仍是应用层分页、投影、
+Arrow→JSON、下载和批次扫描的唯一物理 DataFrame 读取内核。
+
+分析、比较和图表只共享来源事实与无副作用读取，不共享状态机：
+
+- `analysis/inputs.rs` 在一次解析中同时冻结输入快照和执行 artifact，`analysis/outputs.rs` 负责验证、提交和清理输出；
+  `AnalysisService` 保留阶段迁移、引擎调度、原子发布和消息投影。
+- `comparisons/compatibility.rs` 只从运行/结果事实推导稳定键、同名数值列和 dtype/unit 兼容性，
+  `comparisons/script.rs` 只从该受控模型生成 RSS；比较仍通过既有分析门面执行并独立发布比较快照。
+- `charting/compiler.rs` 保留 `ChartCompiler::compile` 门面；`compiler/common.rs` 与 `schema.rs` 保存共享不变量，
+  line/bar/scatter/heatmap/boxplot/histogram 各自拥有算法。`charting/service/source.rs` 解析/读取来源，
+  `materialization.rs` 构造不可变 Snappy Parquet Plot Data 和发布 draft，`presentation.rs` 只恢复冻结 DTO、模型和 cursor。
+
+已保存图表的读取不重新访问来源 DataFrame，只消费冻结配置、schema、诊断和自己的 Plot Data artifact；来源 tombstone
+后仍可恢复，并以 `sourceDeleted` 反映血缘状态。发布前来源被删除仍由原子 repository 边界拒绝，不产生 live view 或
+artifact 引用。
+
+前端 `ChartBuilder` 只组合 `chart_builder/` 下的受控层次：`fieldMapping.ts` 和 `state.ts` 做纯字段/config 转换，
+`useChartBuilder.ts` 管理 capability seed、预览 fingerprint 和保存 operation ID，模板/显示控件保持受控。
+浏览器继续只提交 `ChartConfig`，并由按图表类型分离的 adapters 将服务端 `chart-model-v1` 确定性映射为本地
+`EChartsOption`；后端、DTO 和持久化都不接收任意 ECharts option。
+
 案例扫描显式解析 manifest schema v2 的 schema/artifact、入口、study、source、projection、files 和 inputs，并把
 projection 逐字段绑定到同一 snapshot 的 `case_projections.json` schema v2。单个无效 manifest 仍形成
 带脱敏诊断的不可导入叶节点，不阻断其他案例。应用案例时先验证不可变快照中 `manifest.json` 和
@@ -87,6 +114,13 @@ repository 的异步请求路径把 Diesel 同步 SQLite 操作封装在 `spawn_
 | 后端集成测试生命周期 | `backend/tests/common/app.rs` | 只负责临时目录、数据库迁移、用户 seed 和调用共享 E2E 状态装配，不复制 `AppStateOptions` 构造 |
 | 前端 HTTP 传输 | `frontend/src/api/client.ts` 的 `checkedFetch` 与共享下载路径 | 集中凭据、错误体解析和取消信号；领域 API 模块仍负责 URL、DTO 和业务参数 |
 | 前端 DTO 测试数据 | `frontend/src/test/fixtures.ts` | 仅供测试使用；builder 自有的默认值每次深度隔离并只接受顶层覆盖，传入 override 的所有权仍属于调用方 |
+| live 结果来源事实 | `backend/src/application/result_sources.rs` | 唯一组合 dataset 用户/live 校验、会话、artifact scope、schema 与 artifact content hash；不拥有删除或发布事务 |
+| 物理 DataFrame 读取 | `backend/src/application/dataframe_reader.rs` | 唯一实现结果/资源/模型表的受控 Parquet 分页、投影、批次读取、cursor 内容绑定和 Arrow 值转换 |
+| 分析输入与输出 | `backend/src/application/analysis/inputs.rs`、`outputs.rs` | 输入一次解析后同时用于快照与 staging；输出模块验证/提交/失败清理，服务门面继续拥有状态机和发布 |
+| 比较兼容性与脚本 | `backend/src/application/comparisons/compatibility.rs`、`script.rs` | 前者是纯兼容性策略，后者只消费受控模型生成 RSS；不读取文件、不访问数据库、不成为通用脚本入口 |
+| 图表编译算法 | `backend/src/application/charting/compiler/` | facade 保持不变；公共候选/预算/schema 与六类独立算法分层，不合并不同统计语义 |
+| 图表来源与物化视图 | `backend/src/application/charting/service/` | 来源解析、Plot Data draft、冻结展示/cursor 分离；`ChartViewRepo` 继续独占幂等发布、列表和删除事务 |
+| 前端受控图表构建 | `frontend/src/components/datasets/chart_builder/` | 纯字段/状态转换、Hook 副作用、模板控件和显示控件分离；只产生 `ChartConfig`，不产生或接收服务器 ECharts option |
 
 这些归属不允许把服务器路径、任意 ECharts option、SQL 或命令带入公共边界，也不改变各层原有的稳定错误码。
 
