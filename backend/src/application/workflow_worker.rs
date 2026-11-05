@@ -1007,7 +1007,7 @@ fn engine_log_diagnostic(log: &EngineLog) -> Value {
     })
 }
 
-pub(crate) fn validate_schema(
+fn validate_schema(
     metadata: &ParquetMetadata,
     expected: &[SchemaFieldContract],
 ) -> Result<(), String> {
@@ -1045,7 +1045,7 @@ pub(crate) fn validate_schema(
     Ok(())
 }
 
-pub(crate) fn validate_non_null_values(
+fn validate_non_null_values(
     path: &std::path::Path,
     expected: &[SchemaFieldContract],
 ) -> Result<(), String> {

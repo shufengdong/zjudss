@@ -1,4 +1,3 @@
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -8,11 +7,9 @@ use crate::agent::FailureAnalyzer;
 use crate::auth::CurrentUser;
 use crate::db::models::SimulationRun;
 use crate::db::repositories::{
-    ArtifactDraft, CreateRun, NewRunDataset, RepoError, RunArtifactOutputs, RunDataset,
-    RunDeletionImpact, RunRepo, RunRepoError, ScriptRepo,
+    CreateRun, RepoError, RunDataset, RunDeletionImpact, RunRepo, RunRepoError, ScriptRepo,
 };
 use crate::engine_resources::EngineResourceSnapshot;
-use crate::storage::{ArtifactStore, StageLimits};
 
 use super::diagnostics::{FailureAnalysisStatus, RunFailureDiagnosis, adapter_engine_logs};
 use super::execution_failure::failure_analysis_request;
@@ -20,6 +17,7 @@ use super::execution_input_tree::{
     ExecutionInputArtifact, ExecutionInputError, ExecutionInputSpec, build_execution_input_tree,
 };
 use super::execution_results::inspect_engine_outputs;
+use super::run_results::{FrozenResultPolicy, OpenResultPolicy, publish_run_results};
 use super::struct_overlays::{StructOverlayError, StructOverlayService};
 use super::{
     ArtifactError, ArtifactService, DataResourceError, EventBus, EventWriter, MessageRepo,
@@ -201,126 +199,7 @@ impl RunService {
             failure_analyzer,
         }
     }
-    pub async fn create(
-        &self,
-        user: &CurrentUser,
-        script_id: i32,
-        request: CreateRunRequest,
-    ) -> Result<RunSubmission, RunError> {
-        if request.client_run_id.trim().is_empty() || request.client_run_id.len() > 128 {
-            return Err(RunError::Invalid(
-                "clientRunId 必须为 1 到 128 个字符".into(),
-            ));
-        }
-        let script = self.repo_for_script(user, script_id).await?;
-        if let Some(created) = self
-            .repo
-            .find_create_replay(
-                &user.id,
-                script.session_id,
-                script_id,
-                &request.client_run_id,
-            )
-            .await?
-        {
-            return Ok(RunSubmission {
-                run: created.run,
-                script_name: script.name,
-                replayed: true,
-            });
-        }
-        let ticket = self
-            .scheduler
-            .try_admit(&user.id, script.session_id)
-            .map_err(|_| RunError::QueueFull)?;
-        let overlay_requests = self
-            .repo
-            .struct_overlay_requests(&user.id, script_id)
-            .await?;
-        let staged = self
-            .struct_overlays
-            .stage_requests(user, &overlay_requests)
-            .await
-            .map_err(map_rerun_overlay_error)?;
-        let (inputs, drafts, mut staged_artifacts) = staged.into_parts();
-        let store = self.artifacts.store().clone();
-        let _publication_guard = self.artifacts.exclusive_publication_guard().await;
-        let publish_store = store.clone();
-        let published_new = Arc::new(Mutex::new(Vec::<String>::new()));
-        let published_by_callback = published_new.clone();
-        let result = self
-            .repo
-            .create_with_overlay_artifacts(
-                &user.id,
-                CreateRun {
-                    script_id,
-                    client_run_id: request.client_run_id,
-                    engine_contract_version: ENGINE_CONTRACT_VERSION.into(),
-                    created_at_ms: now_ms(),
-                },
-                inputs,
-                drafts,
-                move |index, path| {
-                    let existed = publish_store
-                        .resolve(path)
-                        .map_err(|error| RepoError::Storage(error.to_string()))?
-                        .is_file();
-                    publish_store
-                        .publish(&mut staged_artifacts[index], path)
-                        .map_err(|error| RepoError::Storage(error.to_string()))?;
-                    if !existed {
-                        published_by_callback
-                            .lock()
-                            .expect("published overlay paths")
-                            .push(path.to_string());
-                    }
-                    Ok(())
-                },
-            )
-            .await;
-        if result.is_err() {
-            for path in published_new
-                .lock()
-                .expect("published overlay paths")
-                .iter()
-            {
-                let _ = store.remove(path);
-            }
-        }
-        let created = result?;
-        if !created.replayed {
-            let service = self.clone();
-            let principal = user.clone();
-            let run_id = created.run.id;
-            let session_id = script.session_id;
-            tokio::spawn(async move {
-                let mut cancelled = service
-                    .session_cancellations
-                    .subscribe(&principal.id, session_id);
-                if *cancelled.borrow() {
-                    return;
-                }
-                let _ = ticket
-                    .run_cancellable(service.execute(principal, run_id), &mut cancelled)
-                    .await;
-            });
-        }
-        Ok(RunSubmission {
-            run: created.run,
-            script_name: script.name,
-            replayed: created.replayed,
-        })
-    }
-    async fn repo_for_script(
-        &self,
-        user: &CurrentUser,
-        script_id: i32,
-    ) -> Result<crate::db::models::ScriptResource, RunError> {
-        self.scripts
-            .find(&user.id, script_id)
-            .await
-            .map_err(Into::into)
-    }
+
     pub async fn find(&self, user: &CurrentUser, id: i32) -> Result<SimulationRun, RunError> {
         self.repo.find(&user.id, id).await.map_err(Into::into)
     }
@@ -374,9 +253,11 @@ impl RunService {
             })
             .collect()
     }
+
     pub async fn datasets(&self, user: &CurrentUser, id: i32) -> Result<Vec<RunDataset>, RunError> {
         self.repo.datasets(&user.id, id).await.map_err(Into::into)
     }
+
     pub async fn latest_statuses(
         &self,
         user: &CurrentUser,
@@ -386,384 +267,10 @@ impl RunService {
             .await
             .map_err(Into::into)
     }
-    pub async fn preview_deletion(
-        &self,
-        user: &CurrentUser,
-        id: i32,
-    ) -> Result<RunDeletionPreview, RunError> {
-        let mut bytes = [0_u8; 32];
-        getrandom::fill(&mut bytes).expect("operating system random source unavailable");
-        let token = hex::encode(bytes);
-        let token_hash = hex::encode(Sha256::digest(token.as_bytes()));
-        let now = now_ms();
-        let expires = now + 5 * 60 * 1000;
-        let impact = self
-            .repo
-            .preview_deletion(&user.id, id, token_hash, expires, now)
-            .await?;
-        Ok(RunDeletionPreview {
-            impact_token: token,
-            impact,
-            expires_at: ms_to_iso(expires),
-        })
-    }
-    pub async fn delete(
-        &self,
-        user: &CurrentUser,
-        id: i32,
-        impact_token: &str,
-    ) -> Result<(), RunError> {
-        if impact_token.len() != 64 {
-            return Err(RunError::InvalidDeletionImpactToken);
-        }
-        let token_hash = hex::encode(Sha256::digest(impact_token.as_bytes()));
-        self.repo
-            .delete_run(&user.id, id, token_hash, now_ms())
-            .await?;
-        Ok(())
-    }
-    async fn execute(&self, user: CurrentUser, id: i32) {
-        if let Err(error) = self.execute_inner(&user, id).await {
-            let run = self.repo.find(&user.id, id).await.ok();
-            let failed_stage = run
-                .as_ref()
-                .map(|run| run.stage.clone())
-                .unwrap_or_else(|| "run".to_string());
-            eprintln!("[run] failed id={id}, stage={failed_stage}: {error}");
-            let reason = public_failure_reason(&error);
-            let (_, exit_code) = engine_failure_details(&error);
-            let code = match &error {
-                RunError::ResultContract(code, _) => *code,
-                _ => "run_failed",
-            };
-            let finished_at = now_ms();
-            let engine_logs = match &error {
-                RunError::Adapter(error) => adapter_engine_logs(error),
-                _ => Vec::new(),
-            };
-            let failure = RunFailureDiagnosis {
-                code: code.into(),
-                reason: reason.into(),
-                stage: failed_stage.clone(),
-                duration_ms: run
-                    .as_ref()
-                    .and_then(|run| run.started_at_ms)
-                    .map(|started| finished_at.saturating_sub(started)),
-                engine_logs,
-                analysis_status: if matches!(error, RunError::Adapter(_)) {
-                    FailureAnalysisStatus::Pending
-                } else {
-                    FailureAnalysisStatus::Unavailable
-                },
-                analysis: None,
-            };
-            let failed = self
-                .repo
-                .fail(
-                    &user.id,
-                    id,
-                    &failed_stage,
-                    serde_json::to_string(&failure)
-                        .expect("bounded run failure diagnosis serializes"),
-                    exit_code,
-                    finished_at,
-                )
-                .await;
-            if failed.is_ok()
-                && let Some(run) = run
-            {
-                let writer = EventWriter::new(
-                    user.id.clone(),
-                    run.session_id,
-                    self.messages.clone(),
-                    self.events.clone(),
-                );
-                let _ = writer
-                    .progress(
-                        OperationRef {
-                            kind: OperationKind::Run,
-                            id: id.to_string(),
-                        },
-                        run_failed_stages(&failed_stage),
-                    )
-                    .await;
-                if let RunError::Adapter(adapter_error) = error {
-                    let service = self.clone();
-                    let principal = user.clone();
-                    tokio::spawn(async move {
-                        service
-                            .enrich_failure_analysis(principal, run, adapter_error)
-                            .await;
-                    });
-                }
-            }
-        }
-    }
-
-    async fn enrich_failure_analysis(
-        &self,
-        user: CurrentUser,
-        run: SimulationRun,
-        error: crate::adapters::AdapterError,
-    ) {
-        let analysis = async {
-            let artifact_id = run.script_artifact_id?;
-            let artifact = self
-                .artifacts
-                .find_owned(user.storage_scope_id, artifact_id)
-                .await
-                .ok()?;
-            let path = self
-                .artifacts
-                .store()
-                .resolve(&artifact.storage_path)
-                .ok()?;
-            let current_script = std::fs::read_to_string(path).ok()?;
-            let request = failure_analysis_request(current_script, &error, None, None);
-            self.failure_analyzer.analyze_failure(request).await.ok()
-        };
-        let analysis = tokio::time::timeout(std::time::Duration::from_secs(30), analysis)
-            .await
-            .ok()
-            .flatten();
-        let (status, analysis) = match analysis.as_ref() {
-            Some(analysis) => (FailureAnalysisStatus::Complete, Some(analysis)),
-            None => (FailureAnalysisStatus::Unavailable, None),
-        };
-        let _ = self
-            .repo
-            .complete_failure_analysis(&user.id, run.id, status, analysis)
-            .await;
-    }
-    async fn execute_inner(&self, user: &CurrentUser, id: i32) -> Result<(), RunError> {
-        self.repo
-            .set_running(&user.id, id, "prepare", now_ms())
-            .await?;
-        let writer = EventWriter::new(
-            user.id.clone(),
-            self.repo.find(&user.id, id).await?.session_id,
-            self.messages.clone(),
-            self.events.clone(),
-        );
-        let _ = writer
-            .progress(
-                OperationRef {
-                    kind: OperationKind::Run,
-                    id: id.to_string(),
-                },
-                run_stages("prepare"),
-            )
-            .await;
-        let context = self.repo.context(&user.id, id).await?;
-        let script_artifact_id = context
-            .run
-            .script_artifact_id
-            .ok_or_else(|| RunError::Invalid("受管脚本尚未生成".into()))?;
-        let tree = build_execution_input_tree(
-            user,
-            &self.artifacts,
-            &self.data_dir,
-            "runs",
-            id,
-            ExecutionInputSpec {
-                script_artifact_id,
-                model_frames: context
-                    .frames
-                    .into_iter()
-                    .map(|frame| ExecutionInputArtifact {
-                        alias: frame.table_name,
-                        artifact_id: frame.artifact_id,
-                    })
-                    .collect(),
-                resources: Vec::new(),
-            },
-        )
-        .await
-        .map_err(map_execution_input_error)?;
-        self.repo.set_running(&user.id, id, "run", now_ms()).await?;
-        let _ = writer
-            .progress(
-                OperationRef {
-                    kind: OperationKind::Run,
-                    id: id.to_string(),
-                },
-                run_stages("run"),
-            )
-            .await;
-        let output = self
-            .engine
-            .run_dataframe(RunSpec {
-                mode: RunMode::Dataframe,
-                input_tree: tree.input_dir.clone(),
-                script_path: tree.script_path.clone(),
-                named_inputs: tree.named_inputs.clone(),
-                result_dir: tree.result_dir.clone(),
-                timeout: self.engine_timeout,
-            })
-            .await
-            .map_err(map_engine_run_error)?;
-        if output.datasets.is_empty() {
-            return Err(RunError::ResultContract(
-                "no_result_dataset",
-                "脚本没有生成结果数据集".into(),
-            ));
-        }
-        let inspected = inspect_engine_outputs(&output.datasets, self.result_max_file_bytes)
-            .map_err(|error| RunError::Invalid(error.to_string()))?;
-        let actual_names = inspected
-            .iter()
-            .map(|dataset| dataset.name.as_str())
-            .collect::<std::collections::BTreeSet<_>>();
-        if actual_names.len() != inspected.len()
-            || actual_names.iter().any(|name| !valid_result_name(name))
-        {
-            return Err(RunError::ResultContract(
-                "result_contract_invalid",
-                "结果名称不合法或重复".into(),
-            ));
-        }
-        if let Some(contract_json) = context.run.result_contract_json.as_deref() {
-            let contract: Vec<super::FrozenResultContract> = serde_json::from_str(contract_json)
-                .map_err(|_| {
-                    RunError::ResultContract("result_contract_invalid", "冻结结果合同无效".into())
-                })?;
-            let expected = contract
-                .iter()
-                .map(|result| result.name.as_str())
-                .collect::<std::collections::BTreeSet<_>>();
-            if expected != actual_names || contract.len() != inspected.len() {
-                return Err(RunError::ResultContract(
-                    "result_contract_invalid",
-                    "结果名称集合与冻结合同不一致".into(),
-                ));
-            }
-            for expected in contract {
-                let dataset = inspected
-                    .iter()
-                    .find(|dataset| dataset.name == expected.name)
-                    .expect("name set checked");
-                let schema = self
-                    .snapshot
-                    .schemas
-                    .resolve(&expected.schema_ref)
-                    .map_err(|_| {
-                        RunError::ResultContract(
-                            "result_contract_invalid",
-                            "冻结结果 schema 不可用".into(),
-                        )
-                    })?;
-                super::workflow_worker::validate_schema(&dataset.metadata, &schema.fields)
-                    .map_err(|message| {
-                        RunError::ResultContract("result_contract_invalid", message)
-                    })?;
-                super::workflow_worker::validate_non_null_values(&dataset.path, &schema.fields)
-                    .map_err(|message| {
-                        RunError::ResultContract("result_contract_invalid", message)
-                    })?;
-            }
-        }
-        let mut staged_artifacts = Vec::new();
-        let mut drafts = Vec::new();
-        let mut datasets = Vec::new();
-        for output in inspected {
-            let metadata = output.metadata;
-            let staged = self
-                .artifacts
-                .store()
-                .stage(
-                    std::fs::File::open(&output.path).map_err(RunError::Io)?,
-                    StageLimits {
-                        max_bytes: self.result_max_file_bytes,
-                    },
-                )
-                .map_err(ArtifactError::from)?;
-            let size_bytes = i64::try_from(staged.size_bytes)
-                .map_err(|_| RunError::Invalid("结果过大".into()))?;
-            drafts.push(ArtifactDraft {
-                sha256: staged.sha256.clone(),
-                size_bytes,
-                storage_path: ArtifactStore::relative_path(&staged.sha256),
-                format: "parquet".into(),
-                media_type: Some("application/vnd.apache.parquet".into()),
-                created_at_ms: now_ms(),
-            });
-            staged_artifacts.push(staged);
-            let (schema_json, schema_hash) =
-                crate::application::datasets::schema_json_and_hash(&metadata);
-            datasets.push(NewRunDataset {
-                artifact_id: 0,
-                result_name: output.name,
-                schema_json,
-                schema_hash,
-                row_count: metadata.row_count as i64,
-                size_bytes: metadata.size_bytes as i64,
-                created_at_ms: now_ms(),
-            });
-        }
-        let store = self.artifacts.store().clone();
-        let _publication_guard = self.artifacts.exclusive_publication_guard().await;
-        let publish_store = store.clone();
-        let published_new = Arc::new(Mutex::new(Vec::<String>::new()));
-        let published_by_callback = published_new.clone();
-        let publication = self
-            .repo
-            .complete_with_artifact_outputs(
-                &user.id,
-                RunArtifactOutputs {
-                    scope_id: user.storage_scope_id,
-                    run_id: id,
-                    drafts,
-                    datasets,
-                    finished_at_ms: now_ms(),
-                },
-                move |index, path| {
-                    let existed = publish_store
-                        .resolve(path)
-                        .map_err(|error| RepoError::Storage(error.to_string()))?
-                        .is_file();
-                    publish_store
-                        .publish(&mut staged_artifacts[index], path)
-                        .map_err(|error| RepoError::Storage(error.to_string()))?;
-                    if !existed {
-                        published_by_callback
-                            .lock()
-                            .expect("published run paths")
-                            .push(path.to_string());
-                    }
-                    Ok(())
-                },
-            )
-            .await;
-        if publication.is_err() {
-            for path in published_new.lock().expect("published run paths").iter() {
-                let _ = store.remove(path);
-            }
-        }
-        match publication {
-            Ok(results) => {
-                let _ = writer
-                    .progress(
-                        OperationRef {
-                            kind: OperationKind::Run,
-                            id: id.to_string(),
-                        },
-                        run_stages("completed"),
-                    )
-                    .await;
-                let _ = writer
-                    .result(
-                        Some(id),
-                        None,
-                        "运行结果",
-                        results.iter().map(run_output_ref).collect(),
-                    )
-                    .await;
-                Ok(())
-            }
-            Err(error) => Err(error.into()),
-        }
-    }
 }
+
+include!("run_execution.rs");
+include!("run_deletion.rs");
 
 fn public_failure_reason(error: &RunError) -> &'static str {
     match error {
@@ -826,12 +333,6 @@ fn map_engine_run_error(error: crate::adapters::AdapterError) -> RunError {
         }
         _ => RunError::Adapter(error),
     }
-}
-
-fn valid_result_name(value: &str) -> bool {
-    let mut chars = value.chars();
-    matches!(chars.next(), Some('a'..='z' | 'A'..='Z' | '_'))
-        && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 fn engine_failure_details(error: &RunError) -> (Option<String>, Option<i32>) {
