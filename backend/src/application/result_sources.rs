@@ -29,9 +29,7 @@ impl std::error::Error for ResultSourceError {}
 #[derive(Debug, Clone)]
 pub(crate) struct ResultSource {
     pub dataset: RunDataset,
-    #[allow(dead_code)] // consumed by analysis input resolution in the next task
     pub session_id: i32,
-    #[allow(dead_code)] // consumed by analysis staging in the next task
     pub artifact: ArtifactRef,
     #[allow(dead_code)] // consumed by chart compilation in Task 6
     pub columns: Vec<DataFrameColumn>,
@@ -66,7 +64,6 @@ impl ResultSource {
         })
     }
 
-    #[allow(dead_code)] // consumed by analysis lineage snapshots in the next task
     pub(crate) fn producer(&self) -> Value {
         if let Some(run_id) = self.dataset.run_id {
             json!({"kind":"run","runId":run_id.to_string()})

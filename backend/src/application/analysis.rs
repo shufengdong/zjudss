@@ -8,20 +8,25 @@ use std::{
 
 use serde_json::{Value, json};
 
-use crate::adapters::{ENGINE_CONTRACT_VERSION, NamedInput, RunMode, RunSpec, SimEngine};
+use crate::adapters::{ENGINE_CONTRACT_VERSION, RunMode, RunSpec, SimEngine};
 use crate::agent::knowledge::AgentKnowledge;
 use crate::application::{
     ArtifactMetadata, ArtifactService, DatasetViewRef, EventBus, EventWriter, OperationKind,
     OperationRef, ResultOutputRef, Stage, StageStatus, VisualizationKind, now_ms,
 };
 use crate::auth::CurrentUser;
-use crate::db::models::{
-    NewResultAnalysisRun, NewResultDataset, ResultAnalysisInput, ResultAnalysisRun,
-};
+use crate::db::models::{NewResultAnalysisRun, ResultAnalysisRun};
 use crate::db::repositories::{
     AnalysisRepo, DataResourceRepo, MessageRepo, ResultRepo, RunDataset,
 };
-use crate::storage::{ParquetInspector, StageLimits};
+use crate::storage::StageLimits;
+
+mod inputs;
+mod outputs;
+
+use crate::application::result_sources::ResultSourceService;
+use inputs::ResolvedAnalysisInputs;
+use outputs::{collect_outputs, validate_output_names};
 
 #[derive(Debug, Clone)]
 pub struct AnalysisInput {
@@ -93,6 +98,7 @@ pub struct AnalysisService {
     knowledge: Arc<AgentKnowledge>,
     data_dir: PathBuf,
     data_resources: DataResourceRepo,
+    sources: ResultSourceService,
 }
 
 impl AnalysisService {
@@ -108,6 +114,7 @@ impl AnalysisService {
         data_dir: PathBuf,
         data_resources: DataResourceRepo,
     ) -> Self {
+        let sources = ResultSourceService::new(results.clone(), artifacts.clone());
         Self {
             repo,
             results,
@@ -118,12 +125,20 @@ impl AnalysisService {
             knowledge,
             data_dir,
             data_resources,
+            sources,
         }
     }
 
     pub async fn run(&self, request: AnalysisRequest) -> Result<AnalysisOutcome, AnalysisError> {
         validate_request(&request)?;
-        let input_rows = self.snapshot_inputs(&request).await?;
+        let resolved_inputs = ResolvedAnalysisInputs::resolve(
+            &request.inputs,
+            &request.principal,
+            request.session_id,
+            &self.sources,
+            &self.data_resources,
+        )
+        .await?;
         let scope = self
             .artifacts
             .resolve_scope(request.principal.storage_scope_id)
@@ -156,13 +171,20 @@ impl AnalysisService {
                     started_at_ms: None,
                     finished_at_ms: None,
                 },
-                input_rows,
+                resolved_inputs.snapshot_rows(),
             )
             .await
             .map_err(|error| AnalysisError::new("analysis_create_failed", error.to_string()))?;
         let root = self.data_dir.join("analysis-work").join(run.id.to_string());
         let result = self
-            .run_inner(&request, &run, scope.id, &script.relative_path, &root)
+            .run_inner(
+                &request,
+                &run,
+                &resolved_inputs,
+                scope.id,
+                &script.relative_path,
+                &root,
+            )
             .await;
         let _ = std::fs::remove_dir_all(&root);
         match result {
@@ -183,82 +205,11 @@ impl AnalysisService {
         }
     }
 
-    async fn snapshot_inputs(
-        &self,
-        request: &AnalysisRequest,
-    ) -> Result<Vec<ResultAnalysisInput>, AnalysisError> {
-        let mut rows = Vec::with_capacity(request.inputs.len());
-        for (ordinal, input) in request.inputs.iter().enumerate() {
-            match &input.source {
-                AnalysisInputSource::DatasetId(dataset_id) => {
-                    let dataset = self
-                        .results
-                        .find_live(&request.principal.id, *dataset_id)
-                        .await
-                        .map_err(|_| {
-                            AnalysisError::new("analysis_input_not_found", "资源不存在")
-                        })?;
-                    if self
-                        .results
-                        .session_id(&request.principal.id, dataset.id)
-                        .await
-                        .map_err(|_| AnalysisError::new("analysis_input_not_found", "资源不存在"))?
-                        != request.session_id
-                    {
-                        return Err(AnalysisError::new("analysis_input_not_found", "资源不存在"));
-                    }
-                    let artifact = self
-                        .artifacts
-                        .find_owned(
-                            request.principal.storage_scope_id,
-                            dataset.artifact_id.ok_or_else(|| {
-                                AnalysisError::new("analysis_input_not_found", "资源不存在")
-                            })?,
-                        )
-                        .await
-                        .map_err(|_| {
-                            AnalysisError::new("analysis_input_not_found", "资源不存在")
-                        })?;
-                    let producer = if let Some(run_id) = dataset.run_id {
-                        json!({"kind":"run","runId":run_id.to_string()})
-                    } else {
-                        json!({"kind":"analysis","analysisRunId":dataset.analysis_run_id.map(|id|id.to_string())})
-                    };
-                    rows.push(ResultAnalysisInput {
-                        analysis_run_id: 0,
-                        dataset_id: Some(dataset.id),
-                        resource_id: None,
-                        alias: input.alias.clone(),
-                        ordinal: ordinal as i32,
-                        source_name: dataset.result_name,
-                        source_schema_json: dataset.schema_json,
-                        source_schema_hash: dataset.schema_hash,
-                        source_content_hash: artifact.sha256,
-                        source_producer_json: producer.to_string(),
-                    });
-                }
-                AnalysisInputSource::DataResourceId(resource_id) => {
-                    let resource = self
-                        .data_resources
-                        .find(&request.principal.id, resource_id, false)
-                        .await
-                        .map_err(|_| {
-                            AnalysisError::new("analysis_input_not_found", "资源不存在")
-                        })?;
-                    if resource.resource.session_id != request.session_id {
-                        return Err(AnalysisError::new("analysis_input_not_found", "资源不存在"));
-                    }
-                    rows.push(ResultAnalysisInput{analysis_run_id:0,dataset_id:None,resource_id:Some(resource.resource.id.clone()),alias:input.alias.clone(),ordinal:ordinal as i32,source_name:resource.resource.display_name,source_schema_json:resource.resource.schema_json,source_schema_hash:resource.resource.schema_hash,source_content_hash:resource.normalized_sha256.clone(),source_producer_json:json!({"kind":"data_resource","resourceId":resource.resource.id,"contentHash":resource.normalized_sha256}).to_string()});
-                }
-            }
-        }
-        Ok(rows)
-    }
-
     async fn run_inner(
         &self,
         request: &AnalysisRequest,
         run: &ResultAnalysisRun,
+        resolved_inputs: &ResolvedAnalysisInputs,
         scope_id: i32,
         script_artifact_path: &str,
         root: &Path,
@@ -284,63 +235,9 @@ impl AnalysisService {
             .map_err(|error| AnalysisError::new("analysis_script_missing", error.to_string()))?;
         std::fs::copy(script_source, tree.join("generated/analysis.rss"))
             .map_err(|error| AnalysisError::new("analysis_staging_failed", error.to_string()))?;
-        let mut named_inputs = Vec::new();
-        for input in &request.inputs {
-            let (artifact_id, input_key) = match &input.source {
-                AnalysisInputSource::DatasetId(dataset_id) => {
-                    let dataset = self
-                        .results
-                        .find_live(&request.principal.id, *dataset_id)
-                        .await
-                        .map_err(|error| {
-                            AnalysisError::new("analysis_input_not_found", error.to_string())
-                        })?;
-                    (
-                        dataset.artifact_id.ok_or_else(|| {
-                            AnalysisError::new("analysis_input_not_found", "资源不存在")
-                        })?,
-                        format!("dataset-{dataset_id}"),
-                    )
-                }
-                AnalysisInputSource::DataResourceId(resource_id) => {
-                    let resource = self
-                        .data_resources
-                        .find(&request.principal.id, resource_id, false)
-                        .await
-                        .map_err(|error| {
-                            AnalysisError::new("analysis_input_not_found", error.to_string())
-                        })?;
-                    (
-                        resource.resource.normalized_artifact_id.ok_or_else(|| {
-                            AnalysisError::new("analysis_input_not_found", "资源不存在")
-                        })?,
-                        format!("resource-{resource_id}"),
-                    )
-                }
-            };
-            let artifact = self
-                .artifacts
-                .find_owned(scope_id, artifact_id)
-                .await
-                .map_err(|error| {
-                    AnalysisError::new("analysis_input_not_found", error.to_string())
-                })?;
-            let source = self
-                .artifacts
-                .store()
-                .resolve(&artifact.storage_path)
-                .map_err(|error| {
-                    AnalysisError::new("analysis_input_not_found", error.to_string())
-                })?;
-            let relative_path = PathBuf::from(format!("inputs/{input_key}.parquet"));
-            std::fs::copy(source, tree.join(&relative_path)).map_err(|error| {
-                AnalysisError::new("analysis_staging_failed", error.to_string())
-            })?;
-            named_inputs.push(NamedInput {
-                alias: input.alias.clone(),
-                relative_path,
-            });
-        }
+        let named_inputs = resolved_inputs
+            .stage(&self.artifacts, scope_id, &tree)
+            .await?;
         self.stage(&request.principal, run.id, "run", &writer)
             .await?;
         let output = self
@@ -355,94 +252,20 @@ impl AnalysisService {
             })
             .await
             .map_err(|error| AnalysisError::new("analysis_engine_failed", error.to_string()))?;
-        let names = output
-            .datasets
-            .iter()
-            .map(|dataset| dataset.name.as_str())
-            .collect::<HashSet<_>>();
-        if names.len() != request.expected_outputs.len()
-            || request
-                .expected_outputs
-                .iter()
-                .any(|name| !names.contains(name.as_str()))
-        {
-            return Err(AnalysisError::new(
-                "analysis_output_mismatch",
-                "实际输出与声明输出不一致",
-            ));
-        }
+        validate_output_names(&output.datasets, &request.expected_outputs)?;
         self.stage(&request.principal, run.id, "collect", &writer)
             .await?;
-        let mut committed = Vec::new();
-        let mut drafts = Vec::new();
-        for output in output.datasets {
-            let metadata = ParquetInspector::metadata(&output.path).map_err(|error| {
-                AnalysisError::new("analysis_output_invalid", error.to_string())
-            })?;
-            if !metadata.snappy {
-                return Err(AnalysisError::new(
-                    "analysis_output_invalid",
-                    "输出必须为 Snappy Parquet",
-                ));
-            }
-            let file = std::fs::File::open(&output.path).map_err(|error| {
-                AnalysisError::new("analysis_output_invalid", error.to_string())
-            })?;
-            let staged = self
-                .artifacts
-                .store()
-                .stage(
-                    file,
-                    StageLimits {
-                        max_bytes: 500 * 1024 * 1024,
-                    },
-                )
-                .map_err(|error| {
-                    AnalysisError::new("analysis_output_invalid", error.to_string())
-                })?;
-            let artifact = match self
-                .artifacts
-                .commit(scope_id, staged, ArtifactMetadata::parquet())
-                .await
-            {
-                Ok(artifact) => artifact,
-                Err(error) => {
-                    for artifact_id in committed {
-                        let _ = self.artifacts.release(scope_id, artifact_id).await;
-                    }
-                    return Err(AnalysisError::new(
-                        "analysis_output_commit_failed",
-                        error.to_string(),
-                    ));
-                }
-            };
-            committed.push(artifact.id);
-            let (schema_json, schema_hash) =
-                crate::application::datasets::schema_json_and_hash(&metadata);
-            drafts.push(NewResultDataset {
-                run_id: None,
-                analysis_run_id: Some(run.id),
-                artifact_id: Some(artifact.id),
-                result_name: output.name,
-                schema_json,
-                schema_hash,
-                row_count: metadata.row_count as i64,
-                size_bytes: metadata.size_bytes as i64,
-                created_at_ms: now_ms(),
-            });
-        }
+        let committed = collect_outputs(output.datasets, run.id, scope_id, &self.artifacts).await?;
         self.stage(&request.principal, run.id, "present", &writer)
             .await?;
         let (run, datasets) = match self
             .repo
-            .complete(&request.principal.id, run.id, drafts, now_ms())
+            .complete(&request.principal.id, run.id, committed.drafts(), now_ms())
             .await
         {
             Ok(value) => value,
             Err(error) => {
-                for artifact_id in committed {
-                    let _ = self.artifacts.release(scope_id, artifact_id).await;
-                }
+                committed.release(&self.artifacts, scope_id).await;
                 return Err(AnalysisError::new(
                     "analysis_publish_failed",
                     error.to_string(),
