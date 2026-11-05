@@ -168,6 +168,20 @@ Agent bundle/权限；没有 adapter 外进程启动，也没有把任意 EChart
 - 公开工具仍为 23 个、skills 仍为 5 个，bundle 保持 `v4.4.0`；HTTP/SSE、数据库、稳定错误码、运行 provenance、
   ScriptAuthor/FailureAnalyzer 隔离和功能目录均未改变。
 
+2026-11-05 的 API、前端状态与界面整合维护阶段（8.8）已经完成；设计/计划提交为 `4c5edc4`，实施提交为
+`01058ec`、`fe7b373`：
+
+- dataset、data resource 与 model DataFrame 下载端点通过 API 内部 attachment helper 统一文件读取和响应 header，
+  各 handler 仍按用户作用域解析稳定资源 ID 并决定领域文件，路由、媒体类型、文件名和错误码未改变；
+- 前端用小型 request-generation gate 统一一次性读取的取消、代次与卸载失效，修复 comparison 切换后的迟到覆盖并提供独立
+  loading/error/retry；数据资源工作台、图表读取和 capability 读取同样拒绝旧响应；
+- 资源和已保存图表的 cursor 结果只复用按稳定 ID 覆盖且保持首次顺序的纯合并函数，分页、轮询和 mutation 继续由领域 hook
+  持有；显式资源刷新会使同会话旧请求与旧分页失效；
+- 会话、运行、数据资源和模型版本删除共享可访问的 impact dialog 外壳，领域 preview/token/副作用保持分离；旧 token 被拒绝后
+  重新预览并要求再次确认，模型版本删除不再使用 `window.confirm`；历史版本激活放弃草稿仍保留独立明确确认；
+- 删除无消费者的 `useAnalysisRun` 和只转发 `useChartView` 的 `useDatasetView`。本阶段没有改变公共路由、DTO、消息、稳定错误码、
+  migration、功能目录、Agent 权限、ChartModel/ECharts 或 Parquet 合同。
+
 ## Hard boundaries
 
 所有 tensoreval 调用必须经过 adapter；所有 repository 查询带 `UserId`；所有模型和结果正文使用 Snappy Parquet；浏览器与
@@ -286,3 +300,7 @@ manifest、contract manifest 聚焦测试。完整 `cargo test --features e2e-te
 `current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count` 外部资源断言报告相同 7 个
 `case_projection_invalid`；精确跳过且仅跳过该断言后，其余完整 Rust 套件通过。8.7 没有修改前端或公共合同，前端与
 功能覆盖将在 8.8/8.9 全局门禁统一复验。
+
+2026-11-05 的 8.8 阶段通过 attachment 三类端点的后端聚焦测试、54/54 文件共 284/284 项前端 Vitest 和生产构建。
+全量 Vitest 首次在受限环境中仅因开发服务器无法监听 `127.0.0.1` 失败；允许回环监听后原命令全绿。Playwright、功能覆盖、
+后端全量格式/Clippy/test 与发布配置将在 8.9 全局门禁统一复验。

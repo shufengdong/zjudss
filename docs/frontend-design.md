@@ -67,7 +67,8 @@ snapshot 目录的 bool/number/enum/string/date、单位、默认值和范围合
 但 durable 对话摘要继续保留。分流只使用服务端 `sourceKind`，不从候选名称或用途推断。只有非空 draft
 显示“生成版本”，并提供最多 200 个 Unicode 字符的可选单行描述。发布后使用服务端响应中的冻结描述刷新列表；
 内容去重时明确显示复用的已有版本及其原描述。失败保留输入，成功或切换会话清空输入。激活历史版本遇到 draft
-时使用明确确认框放弃草稿。版本删除先读取影响预览，再提交一次性 impact token。
+时使用明确确认框放弃草稿。版本删除先打开命名 dialog 并读取结构化影响预览，再提交一次性 impact token；删除失败会保留
+dialog、重新读取影响并要求用户用新 token 再次确认，迟到的旧预览不能覆盖新目标。
 
 用户也可在对话中明确说“发布当前模型草稿并自动激活”；Agent 只能发布本轮检查到的精确 draft revision。导入、修改、
 研究请求或“生成脚本/结果”不会替用户发布。明确点击案例“确认切换案例”则整体发布并自动激活该案例模型版本。案例候选的“确认切换案例”和研究卡的“确认并生成脚本”仍是固定 UI
@@ -77,10 +78,11 @@ snapshot 目录的 bool/number/enum/string/date、单位、默认值和范围合
 
 右侧“数据文件”页列出当前会话的普通 DataFrame 资源，显示 display name、稳定 alias、schemaRef（若有）、来源、
 行列数、大小、状态和创建信息。`para` 与负荷曲线等资源使用同一列表和生命周期，不进入模型版本。列表用 opaque
-cursor 分页且按稳定资源 ID 去重；迟到的旧会话响应不能覆盖当前页面。
+cursor 分页且按稳定资源 ID 去重；显式刷新会建立新请求代次，迟到的旧会话、旧刷新或旧分页响应不能覆盖当前页面。
 
 “查看”按稳定资源 ID 打开 cursor 分页表格；规范文件始终可下载，只有 `originalAvailable=true` 时显示原文件入口。
-删除先读取 impact preview，再在命名确认框中展示未确认配置、冻结引用和历史引用，确认后才携 token 删除。
+删除先打开共享的命名 dialog，再读取 impact preview 并展示未确认配置、冻结引用和历史引用，确认后才携 token 删除；
+服务端拒绝旧 token 时在同一 dialog 刷新影响，不能自动重放删除。
 “重新上传”建立 replacement batch，旧资源在处理期间仍可用；差异确认提供“覆盖当前资源”“另存为新资源”与
 “取消替换”三个动作，终态后刷新 alias owner。当前 snapshot 明确给出 Struct schema 且资源为单行时显示
 “修改参数”，普通表不显示该按钮；实际参数卡由研究确认界面承载。
@@ -130,7 +132,8 @@ profile、文件角色计数及诊断。加载、空结果、
 运行记录主区域在存在 `scriptMessageId` 时定位对应的历史脚本消息，详情由独立按钮展开，二者不会形成嵌套按钮；缺少
 锚点时明确显示脚本尚未生成。目标不在当前页时先用 `loadAround` 进入 anchored history window，窄屏先收起结果面板，
 然后聚焦、滚动并短暂高亮准确消息；锚定窗口始终提供“返回最新消息”。删除运行必须先读取影响 token 并在命名 dialog
-确认，成功后移除运行、失效结果缓存并关闭被删除结果的工作台，冲突或影响变化保留原记录并显示服务端诊断。
+确认，成功后移除运行、失效结果缓存并关闭被删除结果的工作台；冲突或影响变化保留原记录、刷新影响并显示服务端诊断，
+用户必须再次确认新 token。
 
 ## Results
 
@@ -144,7 +147,8 @@ runId 读取当前存活数据集，逐项显示名称、行列数与“查看�
 打开它，不再固定打开第一个结果。运行列表和单次结果加载分别展示 loading、错误与重试；迟到响应按请求代次丢弃。展开状态在
 同一 session 的运行列表刷新中保留，切换 session 时清空。DatasetWorkbench 使用 cursor 分页、服务端列投影和 Parquet 下载；单个结果可以
 删除，删除成功后提升 `datasetRevision`，失效所有已缓存结果并使当前展开的成功记录立即重新读取；当时收起的记录在下次展开时
-重新读取，因此不会恢复已删除入口，同时保留运行和兄弟结果。比较通过稳定 ID 打开。数据分页将 Arrow 的 `Utf8`、`LargeUtf8` 与 `Utf8View`
+重新读取，因此不会恢复已删除入口，同时保留运行和兄弟结果。比较通过稳定 ID 打开，切换比较、失败重试或卸载会取消并失效
+旧请求，迟到响应不能覆盖当前比较。数据分页将 Arrow 的 `Utf8`、`LargeUtf8` 与 `Utf8View`
 统一输出为 JSON 字符串，将 `List`、`LargeList`、ListView 和定长 List 递归输出为 JSON 数组；成功运行的
 进度卡必须把包括“收集结果”在内的全部阶段标记为完成。桌面数据集详情
 在遮罩层内水平居中，内容宽度不同不得改变对齐方式；窄屏继续占满可用宽度。
@@ -179,9 +183,14 @@ DELETE，确认时携带预览 token，提交期间禁用重复操作。影响�
 workspace、upload batches、data resources、scripts、runs 和 usage 独立加载；切换 session 时清理上传队列和资源页，避免旧会话卡片泄漏。401 统一进入登录页，
 SSE resync 触发有界重载。
 
+普通一次性读取统一使用只管理 AbortController 与 generation 的请求 gate；领域 hook 仍各自拥有 data/loading/error、cursor、
+轮询和 mutation 语义。cursor 列表只共享按稳定 ID 覆盖且保持首次顺序的纯合并函数，不建立全局缓存。会话、运行、数据资源
+和模型版本删除共享同一个可访问 impact dialog 外壳，但目标、preview DTO、token 刷新和成功副作用仍由各领域组件持有。
+
 ## Accessibility
 
-交互元素使用原生 button/input、可辨别名称和 focus 顺序；modal/drawer 有遮罩关闭控件。桌面和 390px
+交互元素使用原生 button/input、可辨别名称和 focus 顺序；impact dialog 统一关联标题/描述、聚焦取消按钮并约束 Tab，
+Escape 与遮罩只在非提交状态关闭，窄屏内容在视口内纵向滚动。其他 modal/drawer 有遮罩关闭控件。桌面和 390px
 viewport 都由 Playwright + axe 检查 serious/critical violations。模型版本历史展开按钮以可见版本名称作为
 accessible name，并通过 `aria-expanded` 暴露状态；窄屏模型表工作台不得造成页面横向溢出。
 
