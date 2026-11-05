@@ -2,13 +2,139 @@ use diesel::prelude::*;
 use serde_json::Value;
 
 use crate::auth::UserId;
-use crate::db::models::WorkflowInputSnapshotRecord;
+use crate::db::models::{Artifact, WorkflowInputSnapshotRecord};
 use crate::db::{DbPool, schema};
 
 use super::resource_lineage::{
     ResolvedStructResource, frozen_struct_overrides, resolve_live_struct_successor,
 };
 use super::{RepoError, RepoResult};
+
+#[derive(Debug, Clone)]
+pub enum OverlayArtifactSource {
+    Existing {
+        artifact_id: i32,
+        content_hash: String,
+    },
+    Batch {
+        draft_index: usize,
+        content_hash: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkflowOverlayInput {
+    pub input_id: String,
+    pub source_resource_id: Option<String>,
+    pub source_artifact_id: Option<i32>,
+    pub source_content_hash: Option<String>,
+    pub source_schema_hash: Option<String>,
+    pub schema_ref: String,
+    pub schema_hash: String,
+    pub effective_values_json: String,
+    pub user_overrides_json: String,
+    pub selector_overrides_json: String,
+    pub overrides_json: String,
+    pub artifact: OverlayArtifactSource,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CommittedOverlayInput {
+    pub input_id: String,
+    pub source_resource_id: Option<String>,
+    pub source_artifact_id: Option<i32>,
+    pub source_content_hash: Option<String>,
+    pub source_schema_hash: Option<String>,
+    pub artifact_id: i32,
+    pub content_hash: String,
+    pub schema_ref: String,
+    pub schema_hash: String,
+    pub effective_values_json: String,
+    pub user_overrides_json: String,
+    pub selector_overrides_json: String,
+    pub overrides_json: String,
+    pub adopts_batch_link: bool,
+}
+
+pub(crate) fn commit_overlay_inputs_on(
+    conn: &mut SqliteConnection,
+    scope_id: i32,
+    inputs: Vec<WorkflowOverlayInput>,
+    batch: &[Artifact],
+) -> RepoResult<Vec<CommittedOverlayInput>> {
+    let mut committed = Vec::with_capacity(inputs.len());
+    let mut batch_uses = vec![0_u8; batch.len()];
+    for input in inputs {
+        let (artifact_id, content_hash, adopts_batch_link) = match input.artifact {
+            OverlayArtifactSource::Existing {
+                artifact_id,
+                content_hash,
+            } => {
+                let owned_hash = schema::artifacts::table
+                    .inner_join(schema::storage_scope_artifacts::table)
+                    .filter(schema::artifacts::id.eq(artifact_id))
+                    .filter(schema::storage_scope_artifacts::storage_scope_id.eq(scope_id))
+                    .select(schema::artifacts::sha256)
+                    .first::<String>(conn)
+                    .optional()?
+                    .ok_or(RepoError::NotFound)?;
+                if owned_hash != content_hash {
+                    return Err(RepoError::InvalidState(
+                        "overlay_existing_hash_mismatch".into(),
+                    ));
+                }
+                (artifact_id, content_hash, false)
+            }
+            OverlayArtifactSource::Batch {
+                draft_index,
+                content_hash,
+            } => {
+                let uses = batch_uses
+                    .get_mut(draft_index)
+                    .ok_or_else(|| RepoError::InvalidState("overlay_draft_index_invalid".into()))?;
+                *uses = uses.checked_add(1).ok_or_else(|| {
+                    RepoError::InvalidState("overlay_draft_reference_overflow".into())
+                })?;
+                if *uses != 1 {
+                    return Err(RepoError::InvalidState(
+                        "overlay_draft_reference_duplicate".into(),
+                    ));
+                }
+                let artifact = batch
+                    .get(draft_index)
+                    .ok_or_else(|| RepoError::InvalidState("overlay_draft_index_invalid".into()))?;
+                if artifact.sha256 != content_hash {
+                    return Err(RepoError::InvalidState(
+                        "overlay_batch_hash_mismatch".into(),
+                    ));
+                }
+                (artifact.id, content_hash, true)
+            }
+        };
+        committed.push(CommittedOverlayInput {
+            input_id: input.input_id,
+            source_resource_id: input.source_resource_id,
+            source_artifact_id: input.source_artifact_id,
+            source_content_hash: input.source_content_hash,
+            source_schema_hash: input.source_schema_hash,
+            artifact_id,
+            content_hash,
+            schema_ref: input.schema_ref,
+            schema_hash: input.schema_hash,
+            effective_values_json: input.effective_values_json,
+            user_overrides_json: input.user_overrides_json,
+            selector_overrides_json: input.selector_overrides_json,
+            overrides_json: input.overrides_json,
+            adopts_batch_link,
+        });
+    }
+    if batch_uses.iter().any(|uses| *uses != 1) {
+        return Err(RepoError::InvalidState(
+            "overlay_draft_reference_missing".into(),
+        ));
+    }
+    Ok(committed)
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

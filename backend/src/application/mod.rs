@@ -26,6 +26,7 @@ pub mod runs;
 pub mod scheduler;
 pub mod script_contract;
 pub mod scripts;
+mod struct_overlays;
 mod study_configuration_policy;
 mod study_configurations;
 pub mod study_planning;
@@ -189,6 +190,32 @@ pub struct AppStateOptions {
 }
 
 impl AppState {
+    #[cfg(feature = "e2e-test")]
+    #[doc(hidden)]
+    pub async fn stage_struct_overlays_for_test(
+        &self,
+        user: &crate::auth::CurrentUser,
+        plans: &[PreparedStructOverlay],
+    ) -> Result<
+        (
+            Vec<crate::db::repositories::WorkflowOverlayInput>,
+            Vec<crate::db::repositories::ArtifactDraft>,
+            Vec<crate::storage::StagedArtifact>,
+        ),
+        (&'static str, String),
+    > {
+        struct_overlays::StructOverlayService::new(
+            DataResourceRepo::new(self.pool.clone()),
+            self.data_resource_service.clone(),
+            self.artifact_service.clone(),
+            self.engine_snapshot.clone(),
+        )
+        .stage_initial(user, plans)
+        .await
+        .map(struct_overlays::StagedOverlaySet::into_parts)
+        .map_err(|error| (error.code(), error.to_string()))
+    }
+
     pub fn assemble(dependencies: AppStateDependencies, options: AppStateOptions) -> Self {
         let AppStateDependencies {
             pool,
@@ -257,6 +284,12 @@ impl AppState {
             artifact_service.clone(),
             engine_snapshot.clone(),
         );
+        let struct_overlay_service = struct_overlays::StructOverlayService::new(
+            DataResourceRepo::new(pool.clone()),
+            data_resource_service.clone(),
+            artifact_service.clone(),
+            engine_snapshot.clone(),
+        );
         let upload_confirmation_service = UploadConfirmationService::new(
             DataResourceRepo::new(pool.clone()),
             UploadConfirmationRepo::new(pool.clone()),
@@ -286,7 +319,7 @@ impl AppState {
             repo: RunRepo::new(pool.clone()),
             scripts: ScriptRepo::new(pool.clone()),
             artifacts: artifact_service.clone(),
-            data_resources: data_resource_service.clone(),
+            struct_overlays: struct_overlay_service.clone(),
             engine: engine.clone(),
             scheduler: scheduler.clone(),
             messages: message_repo.clone(),
@@ -357,7 +390,7 @@ impl AppState {
             study_configuration_service.clone(),
             events.clone(),
             artifact_service.clone(),
-            data_resource_service.clone(),
+            struct_overlay_service,
             &agent_knowledge,
             script_repair_max_attempts,
             script_author.clone(),

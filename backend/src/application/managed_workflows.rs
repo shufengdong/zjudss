@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::adapters::SimEngine;
 use crate::agent::knowledge::AgentKnowledge;
@@ -15,8 +15,9 @@ use crate::engine_resources::EngineResourceSnapshot;
 use crate::storage::StageLimits;
 
 use super::opaque_token::{generate_token, hash_token, is_generated_token};
+use super::struct_overlays::StructOverlayService;
 use super::{
-    AppEvent, ArtifactMetadata, ArtifactService, DataResourceService, EventBus, RunScheduler,
+    AppEvent, ArtifactMetadata, ArtifactService, EventBus, RunScheduler,
     SessionCancellationRegistry, StudyConfigurationError, StudyConfigurationService,
     WorkflowAttemptCard, WorkflowProgressCard, ms_to_iso, now_ms,
 };
@@ -159,7 +160,7 @@ pub struct ManagedWorkflowService {
     configurations: StudyConfigurationService,
     events: EventBus,
     artifacts: ArtifactService,
-    data_resources: DataResourceService,
+    struct_overlays: StructOverlayService,
     agent_bundle_version: String,
     correction_budget: i32,
     worker: super::workflow_worker::WorkflowWorker,
@@ -170,12 +171,12 @@ pub struct ManagedWorkflowService {
 
 impl ManagedWorkflowService {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         repo: ManagedWorkflowRepo,
         configurations: StudyConfigurationService,
         events: EventBus,
         artifacts: ArtifactService,
-        data_resources: DataResourceService,
+        struct_overlays: StructOverlayService,
         knowledge: &AgentKnowledge,
         correction_budget: usize,
         author: Arc<dyn ScriptAuthor>,
@@ -210,7 +211,7 @@ impl ManagedWorkflowService {
             configurations,
             events,
             artifacts,
-            data_resources,
+            struct_overlays,
             agent_bundle_version,
             correction_budget: i32::try_from(correction_budget).unwrap_or(i32::MAX),
             worker,
@@ -360,22 +361,40 @@ impl ManagedWorkflowService {
             )
             .await
             .map_err(map_repo_error)?;
-        let overlays = self
-            .data_resources
-            .materialize_retry_struct_overlays(user, &overlay_requests)
+        let staged = self
+            .struct_overlays
+            .stage_requests(user, &overlay_requests)
             .await
             .map_err(|error| WorkflowError::Invalid(error.code(), error.to_string()))?;
-        let overlay_artifact_ids = overlays
-            .iter()
-            .filter(|overlay| overlay.owns_artifact_reference)
-            .map(|overlay| overlay.artifact_id)
-            .collect::<Vec<_>>();
+        let (inputs, drafts, mut staged_artifacts) = staged.into_parts();
+        let store = self.artifacts.store().clone();
+        let _publication_guard = self.artifacts.exclusive_publication_guard().await;
+        let publish_store = store.clone();
+        let published_new = Arc::new(Mutex::new(Vec::<String>::new()));
+        let published_by_callback = published_new.clone();
         let result = self
             .repo
-            .confirm_retry(
+            .confirm_retry_with_overlay_artifacts(
                 &user.id,
                 token_hash,
-                overlays,
+                inputs,
+                drafts,
+                move |index, path| {
+                    let existed = publish_store
+                        .resolve(path)
+                        .map_err(|error| RepoError::Storage(error.to_string()))?
+                        .is_file();
+                    publish_store
+                        .publish(&mut staged_artifacts[index], path)
+                        .map_err(|error| RepoError::Storage(error.to_string()))?;
+                    if !existed {
+                        published_by_callback
+                            .lock()
+                            .expect("published overlay paths")
+                            .push(path.to_string());
+                    }
+                    Ok(())
+                },
                 self.snapshot.id.clone(),
                 facade.contract_hash.clone(),
                 self.correction_budget,
@@ -384,11 +403,14 @@ impl ManagedWorkflowService {
                 now_ms(),
             )
             .await;
-        for artifact_id in overlay_artifact_ids {
-            let _ = self
-                .artifacts
-                .release(user.storage_scope_id, artifact_id)
-                .await;
+        if result.is_err() {
+            for path in published_new
+                .lock()
+                .expect("published overlay paths")
+                .iter()
+            {
+                let _ = store.remove(path);
+            }
         }
         let aggregate = result.map_err(map_repo_error)?;
         let workflow = view(aggregate);
@@ -430,22 +452,40 @@ impl ManagedWorkflowService {
             .configurations
             .prepare_confirmation(user, configuration_id, request.expected_revision)
             .await?;
-        let overlays = self
-            .data_resources
-            .materialize_study_struct_overlays(user, &prepared)
+        let staged = self
+            .struct_overlays
+            .stage_initial(user, &prepared.struct_overlays)
             .await
             .map_err(|error| WorkflowError::Invalid(error.code(), error.to_string()))?;
-        let overlay_artifact_ids = overlays
-            .iter()
-            .filter(|overlay| overlay.owns_artifact_reference)
-            .map(|overlay| overlay.artifact_id)
-            .collect::<Vec<_>>();
+        let (inputs, drafts, mut staged_artifacts) = staged.into_parts();
+        let store = self.artifacts.store().clone();
+        let _publication_guard = self.artifacts.exclusive_publication_guard().await;
+        let publish_store = store.clone();
+        let published_new = Arc::new(Mutex::new(Vec::<String>::new()));
+        let published_by_callback = published_new.clone();
         let result = self
             .repo
-            .confirm_and_start(
+            .confirm_and_start_with_overlay_artifacts(
                 &user.id,
                 prepared,
-                overlays,
+                inputs,
+                drafts,
+                move |index, path| {
+                    let existed = publish_store
+                        .resolve(path)
+                        .map_err(|error| RepoError::Storage(error.to_string()))?
+                        .is_file();
+                    publish_store
+                        .publish(&mut staged_artifacts[index], path)
+                        .map_err(|error| RepoError::Storage(error.to_string()))?;
+                    if !existed {
+                        published_by_callback
+                            .lock()
+                            .expect("published overlay paths")
+                            .push(path.to_string());
+                    }
+                    Ok(())
+                },
                 operation.to_string(),
                 self.correction_budget,
                 self.agent_bundle_version.clone(),
@@ -453,25 +493,18 @@ impl ManagedWorkflowService {
                 now_ms(),
             )
             .await;
+        if result.is_err() {
+            for path in published_new
+                .lock()
+                .expect("published overlay paths")
+                .iter()
+            {
+                let _ = store.remove(path);
+            }
+        }
         let (aggregate, should_start) = match result {
-            Ok(outcome) => {
-                for artifact_id in overlay_artifact_ids {
-                    let _ = self
-                        .artifacts
-                        .release(user.storage_scope_id, artifact_id)
-                        .await;
-                }
-                (outcome.aggregate, outcome.created)
-            }
-            Err(error) => {
-                for artifact_id in overlay_artifact_ids {
-                    let _ = self
-                        .artifacts
-                        .release(user.storage_scope_id, artifact_id)
-                        .await;
-                }
-                return Err(map_repo_error(error));
-            }
+            Ok(outcome) => (outcome.aggregate, outcome.created),
+            Err(error) => return Err(map_repo_error(error)),
         };
         let view = view(aggregate);
         self.publish(&view);

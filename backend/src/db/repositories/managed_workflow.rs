@@ -10,7 +10,8 @@ use crate::db::models::{
 use crate::db::{DbPool, schema};
 
 use super::{
-    ArtifactDraft, ArtifactRepo, NewRunDataset, RepoError, RepoResult, StructOverlayRequest,
+    ArtifactDraft, ArtifactRepo, CommittedOverlayInput, NewRunDataset, RepoError, RepoResult,
+    StructOverlayRequest, WorkflowOverlayInput, commit_overlay_inputs_on,
     resolve_frozen_struct_input_on,
 };
 
@@ -144,6 +145,49 @@ pub struct WorkflowStructOverlayMaterial {
     pub owns_artifact_reference: bool,
 }
 
+impl From<CommittedOverlayInput> for WorkflowStructOverlayMaterial {
+    fn from(value: CommittedOverlayInput) -> Self {
+        Self {
+            input_id: value.input_id,
+            source_resource_id: value.source_resource_id,
+            source_artifact_id: value.source_artifact_id,
+            source_content_hash: value.source_content_hash,
+            source_schema_hash: value.source_schema_hash,
+            artifact_id: value.artifact_id,
+            content_hash: value.content_hash,
+            schema_ref: value.schema_ref,
+            schema_hash: value.schema_hash,
+            effective_values_json: value.effective_values_json,
+            user_overrides_json: value.user_overrides_json,
+            selector_overrides_json: value.selector_overrides_json,
+            overrides_json: value.overrides_json,
+            owns_artifact_reference: value.adopts_batch_link,
+        }
+    }
+}
+
+fn workflow_overlay_input_from_material(
+    overlay: WorkflowStructOverlayMaterial,
+) -> WorkflowOverlayInput {
+    WorkflowOverlayInput {
+        input_id: overlay.input_id,
+        source_resource_id: overlay.source_resource_id,
+        source_artifact_id: overlay.source_artifact_id,
+        source_content_hash: overlay.source_content_hash,
+        source_schema_hash: overlay.source_schema_hash,
+        schema_ref: overlay.schema_ref,
+        schema_hash: overlay.schema_hash,
+        effective_values_json: overlay.effective_values_json,
+        user_overrides_json: overlay.user_overrides_json,
+        selector_overrides_json: overlay.selector_overrides_json,
+        overrides_json: overlay.overrides_json,
+        artifact: super::OverlayArtifactSource::Existing {
+            artifact_id: overlay.artifact_id,
+            content_hash: overlay.content_hash,
+        },
+    }
+}
+
 impl ManagedWorkflowRepo {
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -242,7 +286,7 @@ impl ManagedWorkflowRepo {
     pub async fn confirm_and_start(
         &self,
         user: &UserId,
-        mut prepared: PreparedStudyConfirmation,
+        prepared: PreparedStudyConfirmation,
         overlays: Vec<WorkflowStructOverlayMaterial>,
         client_operation_id: String,
         correction_budget: i32,
@@ -250,199 +294,252 @@ impl ManagedWorkflowRepo {
         agent_skill_refs_json: String,
         now_ms: i64,
     ) -> Result<ConfirmStartOutcome, ManagedWorkflowRepoError> {
+        let inputs = overlays
+            .into_iter()
+            .map(workflow_overlay_input_from_material)
+            .collect();
+        self.confirm_and_start_with_overlay_artifacts(
+            user,
+            prepared,
+            inputs,
+            Vec::new(),
+            |_, _| Ok(()),
+            client_operation_id,
+            correction_budget,
+            agent_bundle_version,
+            agent_skill_refs_json,
+            now_ms,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn confirm_and_start_with_overlay_artifacts<P>(
+        &self,
+        user: &UserId,
+        mut prepared: PreparedStudyConfirmation,
+        inputs: Vec<WorkflowOverlayInput>,
+        drafts: Vec<ArtifactDraft>,
+        publish: P,
+        client_operation_id: String,
+        correction_budget: i32,
+        agent_bundle_version: String,
+        agent_skill_refs_json: String,
+        now_ms: i64,
+    ) -> Result<ConfirmStartOutcome, ManagedWorkflowRepoError>
+    where
+        P: FnMut(usize, &str) -> Result<(), RepoError> + Send + 'static,
+    {
         let pool = self.pool.clone();
         let user = user.0.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool
-                .get()
-                .map_err(|error| ManagedWorkflowRepoError::Repository(RepoError::Pool(error)))?;
-            conn.immediate_transaction::<_, ManagedWorkflowRepoError, _>(|conn| {
-                let configuration = schema::study_configurations::table
-                    .inner_join(
-                        schema::sessions::table
-                            .on(schema::sessions::id.eq(schema::study_configurations::session_id)),
-                    )
-                    .filter(schema::study_configurations::id.eq(prepared.configuration_id))
-                    .filter(schema::sessions::user_id.eq(&user))
-                    .filter(schema::sessions::deletion_status.eq("live"))
-                    .select(schema::study_configurations::all_columns)
-                    .first::<crate::db::models::StudyConfigurationRecord>(conn)
-                    .optional()?
-                    .ok_or(ManagedWorkflowRepoError::Repository(RepoError::NotFound))?;
+        let scope_id = owned_scope_id(&pool, &user).await?;
+        ArtifactRepo::new(pool)
+            .commit_batch_with_publish(scope_id, drafts, publish, move |conn, artifacts| {
+                let committed = commit_overlay_inputs_on(conn, scope_id, inputs, artifacts)
+                    .map_err(configuration_artifact_error)?;
+                let adopted = committed
+                    .iter()
+                    .filter(|input| input.adopts_batch_link)
+                    .map(|input| input.artifact_id)
+                    .collect::<Vec<_>>();
+                let overlays = committed
+                    .into_iter()
+                    .map(WorkflowStructOverlayMaterial::from)
+                    .collect::<Vec<_>>();
+                let result = (|| {
+                    let configuration =
+                        schema::study_configurations::table
+                            .inner_join(schema::sessions::table.on(
+                                schema::sessions::id.eq(schema::study_configurations::session_id),
+                            ))
+                            .filter(schema::study_configurations::id.eq(prepared.configuration_id))
+                            .filter(schema::sessions::user_id.eq(&user))
+                            .filter(schema::sessions::deletion_status.eq("live"))
+                            .select(schema::study_configurations::all_columns)
+                            .first::<crate::db::models::StudyConfigurationRecord>(conn)
+                            .optional()?
+                            .ok_or(ManagedWorkflowRepoError::Repository(RepoError::NotFound))?;
 
-                if let Some(existing) = schema::managed_workflows::table
-                    .filter(schema::managed_workflows::session_id.eq(configuration.session_id))
-                    .filter(
-                        schema::managed_workflows::client_operation_id
-                            .eq(Some(client_operation_id.clone())),
-                    )
-                    .first::<ManagedWorkflowRecord>(conn)
-                    .optional()?
-                {
-                    if existing.configuration_id != Some(prepared.configuration_id)
-                        || existing.configuration_revision != Some(prepared.expected_revision)
+                    if let Some(existing) = schema::managed_workflows::table
+                        .filter(schema::managed_workflows::session_id.eq(configuration.session_id))
+                        .filter(
+                            schema::managed_workflows::client_operation_id
+                                .eq(Some(client_operation_id.clone())),
+                        )
+                        .first::<ManagedWorkflowRecord>(conn)
+                        .optional()?
                     {
-                        return Err(ManagedWorkflowRepoError::IdempotencyConflict);
-                    }
-                    return load_owned(conn, &user, existing.id).map(|aggregate| {
-                        ConfirmStartOutcome {
-                            aggregate,
-                            created: false,
+                        if existing.configuration_id != Some(prepared.configuration_id)
+                            || existing.configuration_revision != Some(prepared.expected_revision)
+                        {
+                            return Err(ManagedWorkflowRepoError::IdempotencyConflict);
                         }
-                    });
-                }
+                        return load_owned(conn, &user, existing.id).map(|aggregate| {
+                            ConfirmStartOutcome {
+                                aggregate,
+                                created: false,
+                            }
+                        });
+                    }
 
-                if configuration.revision != prepared.expected_revision
-                    || configuration.status != "ready_to_confirm"
-                    || configuration.engine_snapshot_id != prepared.expected_snapshot_id
-                    || configuration.facade_hash != prepared.locked.facade_contract_hash
-                {
-                    return Err(ManagedWorkflowRepoError::ConfigurationStale);
-                }
-                if prepared.struct_overlays.len() != overlays.len() {
-                    return Err(ManagedWorkflowRepoError::ConfigurationStale);
-                }
-                if let Some(active_id) = schema::managed_workflows::table
-                    .filter(schema::managed_workflows::session_id.eq(configuration.session_id))
-                    .filter(schema::managed_workflows::status.eq_any([
-                        "queued",
-                        "generating",
-                        "executing",
-                        "repairing",
-                    ]))
-                    .select(schema::managed_workflows::id)
-                    .first::<i32>(conn)
-                    .optional()?
-                {
-                    return Err(ManagedWorkflowRepoError::WorkflowInProgress(active_id));
-                }
+                    if configuration.revision != prepared.expected_revision
+                        || configuration.status != "ready_to_confirm"
+                        || configuration.engine_snapshot_id != prepared.expected_snapshot_id
+                        || configuration.facade_hash != prepared.locked.facade_contract_hash
+                    {
+                        return Err(ManagedWorkflowRepoError::ConfigurationStale);
+                    }
+                    if prepared.struct_overlays.len() != overlays.len() {
+                        return Err(ManagedWorkflowRepoError::ConfigurationStale);
+                    }
+                    if let Some(active_id) = schema::managed_workflows::table
+                        .filter(schema::managed_workflows::session_id.eq(configuration.session_id))
+                        .filter(schema::managed_workflows::status.eq_any([
+                            "queued",
+                            "generating",
+                            "executing",
+                            "repairing",
+                        ]))
+                        .select(schema::managed_workflows::id)
+                        .first::<i32>(conn)
+                        .optional()?
+                    {
+                        return Err(ManagedWorkflowRepoError::WorkflowInProgress(active_id));
+                    }
 
-                validate_active_model(conn, &user, configuration.session_id, &prepared)?;
+                    validate_active_model(conn, &user, configuration.session_id, &prepared)?;
 
-                let locked_json = serde_json::to_string(&prepared.locked)
-                    .map_err(|error| RepoError::Storage(error.to_string()))?;
-                diesel::insert_into(schema::managed_workflows::table)
-                    .values((
-                        schema::managed_workflows::session_id.eq(configuration.session_id),
-                        schema::managed_workflows::configuration_id.eq(Some(configuration.id)),
-                        schema::managed_workflows::configuration_revision
-                            .eq(Some(configuration.revision)),
-                        schema::managed_workflows::source_workflow_id.eq(Option::<i32>::None),
-                        schema::managed_workflows::client_operation_id
-                            .eq(Some(client_operation_id)),
-                        schema::managed_workflows::status.eq("queued"),
-                        schema::managed_workflows::intent_json.eq(&configuration.intent_json),
-                        schema::managed_workflows::locked_contract_json.eq(Some(&locked_json)),
-                        schema::managed_workflows::input_diff_json.eq(Option::<String>::None),
-                        schema::managed_workflows::engine_snapshot_id
-                            .eq(Some(&prepared.expected_snapshot_id)),
-                        schema::managed_workflows::facade_contract_hash
-                            .eq(Some(&prepared.locked.facade_contract_hash)),
-                        schema::managed_workflows::correction_budget.eq(correction_budget),
-                        schema::managed_workflows::corrections_used.eq(0),
-                        schema::managed_workflows::created_at_ms.eq(now_ms),
-                        schema::managed_workflows::updated_at_ms.eq(now_ms),
-                    ))
-                    .execute(conn)?;
-                let workflow_id = last_id(conn)?;
+                    let locked_json = serde_json::to_string(&prepared.locked)
+                        .map_err(|error| RepoError::Storage(error.to_string()))?;
+                    diesel::insert_into(schema::managed_workflows::table)
+                        .values((
+                            schema::managed_workflows::session_id.eq(configuration.session_id),
+                            schema::managed_workflows::configuration_id.eq(Some(configuration.id)),
+                            schema::managed_workflows::configuration_revision
+                                .eq(Some(configuration.revision)),
+                            schema::managed_workflows::source_workflow_id.eq(Option::<i32>::None),
+                            schema::managed_workflows::client_operation_id
+                                .eq(Some(client_operation_id)),
+                            schema::managed_workflows::status.eq("queued"),
+                            schema::managed_workflows::intent_json.eq(&configuration.intent_json),
+                            schema::managed_workflows::locked_contract_json.eq(Some(&locked_json)),
+                            schema::managed_workflows::input_diff_json.eq(Option::<String>::None),
+                            schema::managed_workflows::engine_snapshot_id
+                                .eq(Some(&prepared.expected_snapshot_id)),
+                            schema::managed_workflows::facade_contract_hash
+                                .eq(Some(&prepared.locked.facade_contract_hash)),
+                            schema::managed_workflows::correction_budget.eq(correction_budget),
+                            schema::managed_workflows::corrections_used.eq(0),
+                            schema::managed_workflows::created_at_ms.eq(now_ms),
+                            schema::managed_workflows::updated_at_ms.eq(now_ms),
+                        ))
+                        .execute(conn)?;
+                    let workflow_id = last_id(conn)?;
 
-                freeze_inputs(conn, &user, workflow_id, &mut prepared, &overlays, now_ms)?;
-                let inputs_json = serde_json::to_string(&prepared.inputs)
-                    .map_err(|error| RepoError::Storage(error.to_string()))?;
-                let engine_contract_version = schema::engine_resource_snapshots::table
-                    .find(&prepared.expected_snapshot_id)
-                    .select(schema::engine_resource_snapshots::engine_contract_version)
-                    .first::<String>(conn)?;
-                diesel::insert_into(schema::simulation_runs::table)
-                    .values((
-                        schema::simulation_runs::session_id.eq(configuration.session_id),
-                        schema::simulation_runs::model_version_id.eq(prepared
-                            .inputs
-                            .model
-                            .as_ref()
-                            .map(|model| model.model_version_id)),
-                        schema::simulation_runs::model_content_hash.eq(prepared
-                            .inputs
-                            .model
-                            .as_ref()
-                            .map(|model| model.content_hash.clone())),
-                        schema::simulation_runs::script_resource_id.eq(Option::<i32>::None),
-                        schema::simulation_runs::script_artifact_id.eq(Option::<i32>::None),
-                        schema::simulation_runs::script_content_hash.eq(Option::<String>::None),
-                        schema::simulation_runs::client_run_id.eq(format!("managed:{workflow_id}")),
-                        schema::simulation_runs::status.eq("queued"),
-                        schema::simulation_runs::stage.eq("generating"),
-                        schema::simulation_runs::engine_contract_version
-                            .eq(engine_contract_version),
-                        schema::simulation_runs::agent_bundle_version
-                            .eq(Some(agent_bundle_version)),
-                        schema::simulation_runs::agent_skill_refs_json.eq(agent_skill_refs_json),
-                        schema::simulation_runs::managed_workflow_id.eq(Some(workflow_id)),
-                        schema::simulation_runs::run_kind.eq("managed"),
-                        schema::simulation_runs::input_snapshot_json.eq(inputs_json),
-                        schema::simulation_runs::result_contract_json.eq(Some(
-                            serde_json::to_string(&prepared.locked.results).unwrap(),
-                        )),
-                        schema::simulation_runs::created_at_ms.eq(now_ms),
-                    ))
-                    .execute(conn)?;
-                let run_id = last_id(conn)?;
-                let payload = json!({
-                    "workflowId": workflow_id.to_string(),
-                    "state": "queued",
-                    "executionIndex": 0,
-                    "executionMax": correction_budget + 1,
-                    "repairIndex": 0,
-                    "repairMax": correction_budget,
-                    "elapsedMs": 0,
-                    "attempts": [],
-                    "outputDatasetIds": [],
-                })
-                .to_string();
-                diesel::insert_into(schema::messages::table)
-                    .values((
-                        schema::messages::session_id.eq(configuration.session_id),
-                        schema::messages::run_id.eq(Option::<i32>::None),
-                        schema::messages::operation_id.eq(Some(workflow_id.to_string())),
-                        schema::messages::revision.eq(1),
-                        schema::messages::role.eq("tool"),
-                        schema::messages::kind.eq("workflow-progress"),
-                        schema::messages::content.eq("研究工作流：queued"),
-                        schema::messages::payload_json.eq(Some(payload)),
-                        schema::messages::created_at_ms.eq(now_ms),
-                    ))
-                    .execute(conn)?;
-                let progress_message_id = last_id(conn)?;
-                diesel::update(schema::managed_workflows::table.find(workflow_id))
+                    freeze_inputs(conn, &user, workflow_id, &mut prepared, &overlays, now_ms)?;
+                    let inputs_json = serde_json::to_string(&prepared.inputs)
+                        .map_err(|error| RepoError::Storage(error.to_string()))?;
+                    let engine_contract_version = schema::engine_resource_snapshots::table
+                        .find(&prepared.expected_snapshot_id)
+                        .select(schema::engine_resource_snapshots::engine_contract_version)
+                        .first::<String>(conn)?;
+                    diesel::insert_into(schema::simulation_runs::table)
+                        .values((
+                            schema::simulation_runs::session_id.eq(configuration.session_id),
+                            schema::simulation_runs::model_version_id.eq(prepared
+                                .inputs
+                                .model
+                                .as_ref()
+                                .map(|model| model.model_version_id)),
+                            schema::simulation_runs::model_content_hash.eq(prepared
+                                .inputs
+                                .model
+                                .as_ref()
+                                .map(|model| model.content_hash.clone())),
+                            schema::simulation_runs::script_resource_id.eq(Option::<i32>::None),
+                            schema::simulation_runs::script_artifact_id.eq(Option::<i32>::None),
+                            schema::simulation_runs::script_content_hash.eq(Option::<String>::None),
+                            schema::simulation_runs::client_run_id
+                                .eq(format!("managed:{workflow_id}")),
+                            schema::simulation_runs::status.eq("queued"),
+                            schema::simulation_runs::stage.eq("generating"),
+                            schema::simulation_runs::engine_contract_version
+                                .eq(engine_contract_version),
+                            schema::simulation_runs::agent_bundle_version
+                                .eq(Some(agent_bundle_version)),
+                            schema::simulation_runs::agent_skill_refs_json
+                                .eq(agent_skill_refs_json),
+                            schema::simulation_runs::managed_workflow_id.eq(Some(workflow_id)),
+                            schema::simulation_runs::run_kind.eq("managed"),
+                            schema::simulation_runs::input_snapshot_json.eq(inputs_json),
+                            schema::simulation_runs::result_contract_json.eq(Some(
+                                serde_json::to_string(&prepared.locked.results).unwrap(),
+                            )),
+                            schema::simulation_runs::created_at_ms.eq(now_ms),
+                        ))
+                        .execute(conn)?;
+                    let run_id = last_id(conn)?;
+                    let payload = json!({
+                        "workflowId": workflow_id.to_string(),
+                        "state": "queued",
+                        "executionIndex": 0,
+                        "executionMax": correction_budget + 1,
+                        "repairIndex": 0,
+                        "repairMax": correction_budget,
+                        "elapsedMs": 0,
+                        "attempts": [],
+                        "outputDatasetIds": [],
+                    })
+                    .to_string();
+                    diesel::insert_into(schema::messages::table)
+                        .values((
+                            schema::messages::session_id.eq(configuration.session_id),
+                            schema::messages::run_id.eq(Option::<i32>::None),
+                            schema::messages::operation_id.eq(Some(workflow_id.to_string())),
+                            schema::messages::revision.eq(1),
+                            schema::messages::role.eq("tool"),
+                            schema::messages::kind.eq("workflow-progress"),
+                            schema::messages::content.eq("研究工作流：queued"),
+                            schema::messages::payload_json.eq(Some(payload)),
+                            schema::messages::created_at_ms.eq(now_ms),
+                        ))
+                        .execute(conn)?;
+                    let progress_message_id = last_id(conn)?;
+                    diesel::update(schema::managed_workflows::table.find(workflow_id))
+                        .set((
+                            schema::managed_workflows::progress_message_id
+                                .eq(Some(progress_message_id)),
+                            schema::managed_workflows::final_run_id.eq(Some(run_id)),
+                        ))
+                        .execute(conn)?;
+                    let updated = diesel::update(
+                        schema::study_configurations::table
+                            .find(configuration.id)
+                            .filter(
+                                schema::study_configurations::revision.eq(configuration.revision),
+                            )
+                            .filter(schema::study_configurations::status.eq("ready_to_confirm")),
+                    )
                     .set((
-                        schema::managed_workflows::progress_message_id
-                            .eq(Some(progress_message_id)),
-                        schema::managed_workflows::final_run_id.eq(Some(run_id)),
+                        schema::study_configurations::status.eq("confirmed"),
+                        schema::study_configurations::confirmed_at_ms.eq(Some(now_ms)),
+                        schema::study_configurations::updated_at_ms.eq(now_ms),
                     ))
                     .execute(conn)?;
-                let updated = diesel::update(
-                    schema::study_configurations::table
-                        .find(configuration.id)
-                        .filter(schema::study_configurations::revision.eq(configuration.revision))
-                        .filter(schema::study_configurations::status.eq("ready_to_confirm")),
-                )
-                .set((
-                    schema::study_configurations::status.eq("confirmed"),
-                    schema::study_configurations::confirmed_at_ms.eq(Some(now_ms)),
-                    schema::study_configurations::updated_at_ms.eq(now_ms),
-                ))
-                .execute(conn)?;
-                if updated != 1 {
-                    return Err(ManagedWorkflowRepoError::ConfigurationStale);
+                    if updated != 1 {
+                        return Err(ManagedWorkflowRepoError::ConfigurationStale);
+                    }
+                    load_owned(conn, &user, workflow_id).map(|aggregate| ConfirmStartOutcome {
+                        aggregate,
+                        created: true,
+                    })
+                })();
+                if result.is_ok() && !adopted.is_empty() {
+                    super::artifact_refs::release_refs(conn, scope_id, adopted, now_ms)?;
                 }
-                load_owned(conn, &user, workflow_id).map(|aggregate| ConfirmStartOutcome {
-                    aggregate,
-                    created: true,
-                })
+                result
             })
-        })
-        .await
-        .map_err(|error| ManagedWorkflowRepoError::Repository(RepoError::Join(error)))?
+            .await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -492,11 +589,64 @@ impl ManagedWorkflowRepo {
         agent_skill_refs_json: String,
         now_ms: i64,
     ) -> Result<ManagedWorkflowAggregate, ManagedWorkflowRepoError> {
+        let inputs = overlays
+            .into_iter()
+            .map(workflow_overlay_input_from_material)
+            .collect();
+        self.confirm_retry_with_overlay_artifacts(
+            user,
+            token_hash,
+            inputs,
+            Vec::new(),
+            |_, _| Ok(()),
+            engine_snapshot_id,
+            current_facade_hash,
+            correction_budget,
+            agent_bundle_version,
+            agent_skill_refs_json,
+            now_ms,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn confirm_retry_with_overlay_artifacts<P>(
+        &self,
+        user: &UserId,
+        token_hash: String,
+        inputs: Vec<WorkflowOverlayInput>,
+        drafts: Vec<ArtifactDraft>,
+        publish: P,
+        engine_snapshot_id: String,
+        current_facade_hash: String,
+        correction_budget: i32,
+        agent_bundle_version: String,
+        agent_skill_refs_json: String,
+        now_ms: i64,
+    ) -> Result<ManagedWorkflowAggregate, ManagedWorkflowRepoError>
+    where
+        P: FnMut(usize, &str) -> Result<(), RepoError> + Send + 'static,
+    {
         let pool = self.pool.clone();
         let user = user.0.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(RepoError::Pool)?;
-            conn.immediate_transaction::<ManagedWorkflowAggregate, ManagedWorkflowRepoError, _>(|conn| {
+        let scope_id = owned_scope_id(&pool, &user).await?;
+        ArtifactRepo::new(pool)
+            .commit_batch_with_publish(scope_id, drafts, publish, move |conn, artifacts| {
+                let committed = commit_overlay_inputs_on(conn, scope_id, inputs, artifacts)
+                    .map_err(|error| match error {
+                        RepoError::NotFound => ManagedWorkflowRepoError::RetryImpactChanged,
+                        error => ManagedWorkflowRepoError::Repository(error),
+                    })?;
+                let adopted = committed
+                    .iter()
+                    .filter(|input| input.adopts_batch_link)
+                    .map(|input| input.artifact_id)
+                    .collect::<Vec<_>>();
+                let overlays = committed
+                    .into_iter()
+                    .map(WorkflowStructOverlayMaterial::from)
+                    .collect::<Vec<_>>();
+                let result = (|| {
                 #[derive(QueryableByName)] struct Preview { #[diesel(sql_type=diesel::sql_types::Integer)] workflow_id: i32, #[diesel(sql_type=diesel::sql_types::Text)] impact_hash: String, #[diesel(sql_type=diesel::sql_types::Text)] impact_json: String }
                 let preview = diesel::sql_query("SELECT workflow_id,impact_hash,impact_json FROM retry_previews WHERE token_hash=?1 AND user_id=?2 AND expires_at_ms>=?3")
                     .bind::<diesel::sql_types::Text,_>(&token_hash).bind::<diesel::sql_types::Text,_>(&user).bind::<diesel::sql_types::BigInt,_>(now_ms).get_result::<Preview>(conn).optional()?.ok_or(ManagedWorkflowRepoError::InvalidRetryToken)?;
@@ -509,8 +659,13 @@ impl ManagedWorkflowRepo {
                 let aggregate = insert_retry_workflow(conn, &user, material, correction_budget, &agent_bundle_version, &agent_skill_refs_json, now_ms)?;
                 diesel::delete(schema::retry_previews::table.find(token_hash)).execute(conn)?;
                 Ok(aggregate)
+                })();
+                if result.is_ok() && !adopted.is_empty() {
+                    super::artifact_refs::release_refs(conn, scope_id, adopted, now_ms)?;
+                }
+                result
             })
-        }).await.map_err(|error| ManagedWorkflowRepoError::Repository(RepoError::Join(error)))?
+            .await
     }
 
     pub async fn retry_locked_contract(
@@ -2258,6 +2413,18 @@ fn last_id(conn: &mut SqliteConnection) -> RepoResult<i32> {
     ))
     .get_result(conn)
     .map_err(RepoError::from)
+}
+
+async fn owned_scope_id(pool: &DbPool, user: &str) -> Result<i32, ManagedWorkflowRepoError> {
+    let pool = pool.clone();
+    let user = UserId(user.to_owned());
+    tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get().map_err(RepoError::Pool)?;
+        super::artifact_refs::storage_scope_id_for_user(&mut conn, &user)
+    })
+    .await
+    .map_err(|error| ManagedWorkflowRepoError::Repository(RepoError::Join(error)))?
+    .map_err(ManagedWorkflowRepoError::Repository)
 }
 
 fn retain_artifact(

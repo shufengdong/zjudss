@@ -20,6 +20,7 @@ use super::diagnostics::{
     FailureAnalysisStatus, RunFailureDiagnosis, adapter_engine_logs, sanitize_adapter_stderr,
     sanitize_adapter_stdout,
 };
+use super::struct_overlays::{StructOverlayError, StructOverlayService};
 use super::{
     ArtifactError, ArtifactService, DataResourceError, EventBus, EventWriter, MessageRepo,
     OperationKind, OperationRef, ResultOutputRef, RunScheduler, Stage, StageStatus, ms_to_iso,
@@ -135,7 +136,7 @@ pub struct RunService {
     repo: RunRepo,
     scripts: ScriptRepo,
     artifacts: ArtifactService,
-    data_resources: super::DataResourceService,
+    struct_overlays: StructOverlayService,
     engine: Arc<dyn SimEngine>,
     scheduler: RunScheduler,
     messages: MessageRepo,
@@ -152,7 +153,7 @@ pub(crate) struct RunServiceDependencies {
     pub repo: RunRepo,
     pub scripts: ScriptRepo,
     pub artifacts: ArtifactService,
-    pub data_resources: super::DataResourceService,
+    pub struct_overlays: StructOverlayService,
     pub engine: Arc<dyn SimEngine>,
     pub scheduler: RunScheduler,
     pub messages: MessageRepo,
@@ -171,7 +172,7 @@ impl RunService {
             repo,
             scripts,
             artifacts,
-            data_resources,
+            struct_overlays,
             engine,
             scheduler,
             messages,
@@ -187,7 +188,7 @@ impl RunService {
             repo,
             scripts,
             artifacts,
-            data_resources,
+            struct_overlays,
             engine,
             scheduler,
             messages,
@@ -236,19 +237,20 @@ impl RunService {
             .repo
             .struct_overlay_requests(&user.id, script_id)
             .await?;
-        let overlays = self
-            .data_resources
-            .materialize_retry_struct_overlays(user, &overlay_requests)
+        let staged = self
+            .struct_overlays
+            .stage_requests(user, &overlay_requests)
             .await
             .map_err(map_rerun_overlay_error)?;
-        let overlay_artifact_ids = overlays
-            .iter()
-            .filter(|overlay| overlay.owns_artifact_reference)
-            .map(|overlay| overlay.artifact_id)
-            .collect::<Vec<_>>();
+        let (inputs, drafts, mut staged_artifacts) = staged.into_parts();
+        let store = self.artifacts.store().clone();
+        let _publication_guard = self.artifacts.exclusive_publication_guard().await;
+        let publish_store = store.clone();
+        let published_new = Arc::new(Mutex::new(Vec::<String>::new()));
+        let published_by_callback = published_new.clone();
         let result = self
             .repo
-            .create(
+            .create_with_overlay_artifacts(
                 &user.id,
                 CreateRun {
                     script_id,
@@ -256,14 +258,34 @@ impl RunService {
                     engine_contract_version: ENGINE_CONTRACT_VERSION.into(),
                     created_at_ms: now_ms(),
                 },
-                overlays,
+                inputs,
+                drafts,
+                move |index, path| {
+                    let existed = publish_store
+                        .resolve(path)
+                        .map_err(|error| RepoError::Storage(error.to_string()))?
+                        .is_file();
+                    publish_store
+                        .publish(&mut staged_artifacts[index], path)
+                        .map_err(|error| RepoError::Storage(error.to_string()))?;
+                    if !existed {
+                        published_by_callback
+                            .lock()
+                            .expect("published overlay paths")
+                            .push(path.to_string());
+                    }
+                    Ok(())
+                },
             )
             .await;
-        for artifact_id in overlay_artifact_ids {
-            let _ = self
-                .artifacts
-                .release(user.storage_scope_id, artifact_id)
-                .await;
+        if result.is_err() {
+            for path in published_new
+                .lock()
+                .expect("published overlay paths")
+                .iter()
+            {
+                let _ = store.remove(path);
+            }
         }
         let created = result?;
         if !created.replayed {
@@ -798,7 +820,7 @@ fn public_failure_reason(error: &RunError) -> &'static str {
     }
 }
 
-fn map_rerun_overlay_error(error: DataResourceError) -> RunError {
+fn map_rerun_overlay_error(error: StructOverlayError) -> RunError {
     if matches!(
         error.code(),
         "configuration_stale"
@@ -810,9 +832,15 @@ fn map_rerun_overlay_error(error: DataResourceError) -> RunError {
         return RunError::ConfigurationStale;
     }
     match error {
-        DataResourceError::Repository(error) => RunError::Repository(error),
-        DataResourceError::Artifact(error) => RunError::Artifact(error),
-        DataResourceError::Io(error) => RunError::Io(error),
+        StructOverlayError::Repository(error) => RunError::Repository(error),
+        StructOverlayError::Artifact(error) => RunError::Artifact(error),
+        StructOverlayError::DataResource(DataResourceError::Repository(error)) => {
+            RunError::Repository(error)
+        }
+        StructOverlayError::DataResource(DataResourceError::Artifact(error)) => {
+            RunError::Artifact(error)
+        }
+        StructOverlayError::DataResource(DataResourceError::Io(error)) => RunError::Io(error),
         error => RunError::Invalid(error.to_string()),
     }
 }
@@ -964,7 +992,7 @@ mod tests {
             DataResourceError::Invalid("structured_values_invalid", "values".into()),
         ] {
             assert!(matches!(
-                map_rerun_overlay_error(error),
+                map_rerun_overlay_error(StructOverlayError::DataResource(error)),
                 RunError::ConfigurationStale
             ));
         }

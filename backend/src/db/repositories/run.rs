@@ -3,8 +3,9 @@ use diesel::sql_types::{BigInt, Integer, Nullable, Text};
 use sha2::Digest;
 
 use super::{
-    ArtifactDraft, ArtifactRepo, RepoError, RepoResult, StateTransition, StructOverlayRequest,
-    WorkflowInputRepo, WorkflowStructOverlayMaterial, resolve_frozen_struct_input_on,
+    ArtifactDraft, ArtifactRepo, OverlayArtifactSource, RepoError, RepoResult, StateTransition,
+    StructOverlayRequest, WorkflowInputRepo, WorkflowOverlayInput, WorkflowStructOverlayMaterial,
+    commit_overlay_inputs_on, resolve_frozen_struct_input_on,
 };
 use crate::agent::FailureAnalysis;
 use crate::application::diagnostics::FailureAnalysisStatus;
@@ -230,11 +231,61 @@ impl RunRepo {
         request: CreateRun,
         overlays: Vec<WorkflowStructOverlayMaterial>,
     ) -> Result<CreatedRun, RunRepoError> {
+        let inputs = overlays
+            .into_iter()
+            .map(|overlay| WorkflowOverlayInput {
+                input_id: overlay.input_id,
+                source_resource_id: overlay.source_resource_id,
+                source_artifact_id: overlay.source_artifact_id,
+                source_content_hash: overlay.source_content_hash,
+                source_schema_hash: overlay.source_schema_hash,
+                schema_ref: overlay.schema_ref,
+                schema_hash: overlay.schema_hash,
+                effective_values_json: overlay.effective_values_json,
+                user_overrides_json: overlay.user_overrides_json,
+                selector_overrides_json: overlay.selector_overrides_json,
+                overrides_json: overlay.overrides_json,
+                artifact: OverlayArtifactSource::Existing {
+                    artifact_id: overlay.artifact_id,
+                    content_hash: overlay.content_hash,
+                },
+            })
+            .collect();
+        self.create_with_overlay_artifacts(user, request, inputs, Vec::new(), |_, _| Ok(()))
+            .await
+    }
+
+    pub async fn create_with_overlay_artifacts<P>(
+        &self,
+        user: &UserId,
+        request: CreateRun,
+        inputs: Vec<WorkflowOverlayInput>,
+        drafts: Vec<ArtifactDraft>,
+        publish: P,
+    ) -> Result<CreatedRun, RunRepoError>
+    where
+        P: FnMut(usize, &str) -> Result<(), RepoError> + Send + 'static,
+    {
         let pool = self.pool.clone();
         let user = user.0.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get().map_err(RepoError::Pool)?;
-            conn.immediate_transaction::<CreatedRun, RunRepoError, _>(|conn| {
+        let scope_id = owned_scope_id(&pool, &user).await?;
+        ArtifactRepo::new(pool)
+            .commit_batch_with_publish(scope_id, drafts, publish, move |conn, artifacts| {
+                let committed = commit_overlay_inputs_on(conn, scope_id, inputs, artifacts)
+                    .map_err(|error| match error {
+                        RepoError::NotFound => RunRepoError::ConfigurationStale,
+                        error => RunRepoError::Repository(error),
+                    })?;
+                let adopted = committed
+                    .iter()
+                    .filter(|input| input.adopts_batch_link)
+                    .map(|input| input.artifact_id)
+                    .collect::<Vec<_>>();
+                let overlays = committed
+                    .into_iter()
+                    .map(WorkflowStructOverlayMaterial::from)
+                    .collect::<Vec<_>>();
+                let result = (|| {
                 let script = schema::script_resources::table
                     .inner_join(
                         schema::sessions::table
@@ -425,10 +476,18 @@ impl RunRepo {
                     run: schema::simulation_runs::table.find(id).first(conn)?,
                     replayed: false,
                 })
+                })();
+                if result.is_ok() && !adopted.is_empty() {
+                    super::artifact_refs::release_refs(
+                        conn,
+                        scope_id,
+                        adopted,
+                        request.created_at_ms,
+                    )?;
+                }
+                result
             })
-        })
-        .await
-        .map_err(|error| RunRepoError::Repository(RepoError::Join(error)))?
+            .await
     }
 
     pub async fn find(&self, user: &UserId, id: i32) -> RepoResult<SimulationRun> {
@@ -829,6 +888,18 @@ impl RunRepo {
             })
         }).await.map_err(|error| RunRepoError::Repository(RepoError::Join(error)))?
     }
+}
+
+async fn owned_scope_id(pool: &DbPool, user: &str) -> Result<i32, RunRepoError> {
+    let pool = pool.clone();
+    let user = UserId(user.to_owned());
+    tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get().map_err(RepoError::Pool)?;
+        super::artifact_refs::storage_scope_id_for_user(&mut conn, &user)
+    })
+    .await
+    .map_err(|error| RunRepoError::Repository(RepoError::Join(error)))?
+    .map_err(RunRepoError::Repository)
 }
 
 fn scoped_run(

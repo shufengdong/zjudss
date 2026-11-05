@@ -289,6 +289,16 @@ impl ArtifactStore {
         staged.publish(&destination)
     }
 
+    #[cfg(feature = "e2e-test")]
+    #[doc(hidden)]
+    pub fn publish_for_test(
+        &self,
+        staged: &mut StagedArtifact,
+        relative_path: &str,
+    ) -> Result<(), StorageError> {
+        self.publish(staged, relative_path)
+    }
+
     pub(crate) fn remove(&self, relative_path: &str) -> Result<(), StorageError> {
         let path = self.resolve(relative_path)?;
         match std::fs::remove_file(path) {

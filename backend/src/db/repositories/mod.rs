@@ -68,7 +68,10 @@ pub use version::{
     VersionSnapshot, WorkspaceRow, WorkspaceSnapshot,
 };
 pub(crate) use workflow_input::resolve_frozen_struct_input_on;
-pub use workflow_input::{StructOverlayRequest, WorkflowInputRepo};
+pub(crate) use workflow_input::{CommittedOverlayInput, commit_overlay_inputs_on};
+pub use workflow_input::{
+    OverlayArtifactSource, StructOverlayRequest, WorkflowInputRepo, WorkflowOverlayInput,
+};
 
 #[derive(Debug)]
 pub enum RepoError {

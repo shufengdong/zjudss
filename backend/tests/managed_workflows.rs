@@ -13,10 +13,63 @@ use zjudss::application::{
     LockedStudyContract, PrepareStudyRequest, ReplacementAction, SelectStudyResultsRequest,
     StorageLimits, UpdateStudyStructRequest, WorkflowInputSnapshot,
 };
-use zjudss::db::repositories::{ManagedWorkflowRepo, ManagedWorkflowRepoError};
+use zjudss::db::repositories::{
+    ArtifactDraft, ConfirmStartOutcome, ManagedWorkflowRepo, ManagedWorkflowRepoError, RepoError,
+    WorkflowOverlayInput,
+};
+use zjudss::storage::StagedArtifact;
 use zjudss::testing::{AuthorTurn, ScriptedAuthor};
 
 use common::TestApp;
+
+type StagedOverlayParts = (
+    Vec<WorkflowOverlayInput>,
+    Vec<ArtifactDraft>,
+    Vec<StagedArtifact>,
+);
+
+async fn stage_overlays(
+    app: &TestApp,
+    user: &zjudss::auth::CurrentUser,
+    prepared: &zjudss::application::PreparedStudyConfirmation,
+) -> StagedOverlayParts {
+    app.state
+        .stage_struct_overlays_for_test(user, &prepared.struct_overlays)
+        .await
+        .unwrap()
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn confirm_staged(
+    app: &TestApp,
+    user: &zjudss::auth::CurrentUser,
+    prepared: zjudss::application::PreparedStudyConfirmation,
+    inputs: Vec<WorkflowOverlayInput>,
+    drafts: Vec<ArtifactDraft>,
+    mut staged: Vec<StagedArtifact>,
+    operation: &str,
+    now_ms: i64,
+) -> Result<ConfirmStartOutcome, ManagedWorkflowRepoError> {
+    let store = app.state.artifact_service.store().clone();
+    ManagedWorkflowRepo::new(app.pool.clone())
+        .confirm_and_start_with_overlay_artifacts(
+            &user.id,
+            prepared,
+            inputs,
+            drafts,
+            move |index, path| {
+                store
+                    .publish_for_test(&mut staged[index], path)
+                    .map_err(|error| RepoError::Storage(error.to_string()))
+            },
+            operation.into(),
+            3,
+            "test".into(),
+            "[]".into(),
+            now_ms,
+        )
+        .await
+}
 
 async fn ready_study(
     app: &TestApp,
@@ -700,17 +753,7 @@ async fn confirmation_transaction_rejects_an_active_model_changed_after_preparat
         .prepare_confirmation(&user, configuration.id, configuration.revision)
         .await
         .unwrap();
-    let overlays = app
-        .state
-        .data_resource_service
-        .materialize_study_struct_overlays(&user, &prepared)
-        .await
-        .unwrap();
-    let overlay_artifact_ids = overlays
-        .iter()
-        .filter(|overlay| overlay.owns_artifact_reference)
-        .map(|overlay| overlay.artifact_id)
-        .collect::<Vec<_>>();
+    let (inputs, drafts, staged) = stage_overlays(&app, &user, &prepared).await;
     assert_eq!(prepared.struct_overlays.len(), 1);
     let mut conn = app.pool.get().unwrap();
     diesel::sql_query("UPDATE workspaces SET active_version_id=NULL WHERE session_id=?1")
@@ -719,30 +762,22 @@ async fn confirmation_transaction_rejects_an_active_model_changed_after_preparat
         .unwrap();
     drop(conn);
 
-    let error = ManagedWorkflowRepo::new(app.pool.clone())
-        .confirm_and_start(
-            &user.id,
-            prepared,
-            overlays,
-            "active-race".into(),
-            3,
-            "test".into(),
-            "[]".into(),
-            2,
-        )
-        .await
-        .unwrap_err();
+    let error = confirm_staged(
+        &app,
+        &user,
+        prepared,
+        inputs,
+        drafts,
+        staged,
+        "active-race",
+        2,
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(
         error,
         ManagedWorkflowRepoError::ConfigurationStale
     ));
-    for artifact_id in overlay_artifact_ids {
-        app.state
-            .artifact_service
-            .release(user.storage_scope_id, artifact_id)
-            .await
-            .unwrap();
-    }
 }
 
 #[tokio::test]
@@ -768,17 +803,7 @@ async fn confirmation_missing_owned_artifact_rolls_back_without_partial_workflow
         .prepare_confirmation(&user, configuration.id, configuration.revision)
         .await
         .unwrap();
-    let overlays = app
-        .state
-        .data_resource_service
-        .materialize_study_struct_overlays(&user, &prepared)
-        .await
-        .unwrap();
-    let overlay_artifact_ids = overlays
-        .iter()
-        .filter(|overlay| overlay.owns_artifact_reference)
-        .map(|overlay| overlay.artifact_id)
-        .collect::<Vec<_>>();
+    let (inputs, drafts, staged) = stage_overlays(&app, &user, &prepared).await;
 
     let mut conn = app.pool.get().unwrap();
     let artifact_id = diesel::sql_query("SELECT d.artifact_id FROM model_dataframes d JOIN model_versions v ON v.id=d.version_id JOIN workspaces w ON w.id=v.workspace_id WHERE w.session_id=?1 ORDER BY d.id LIMIT 1")
@@ -794,19 +819,18 @@ async fn confirmation_missing_owned_artifact_rolls_back_without_partial_workflow
     .unwrap();
     drop(conn);
 
-    let error = ManagedWorkflowRepo::new(app.pool.clone())
-        .confirm_and_start(
-            &user.id,
-            prepared,
-            overlays,
-            "missing-owned-artifact".into(),
-            3,
-            "test".into(),
-            "[]".into(),
-            2,
-        )
-        .await
-        .unwrap_err();
+    let error = confirm_staged(
+        &app,
+        &user,
+        prepared,
+        inputs,
+        drafts,
+        staged,
+        "missing-owned-artifact",
+        2,
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(
         error,
         ManagedWorkflowRepoError::ConfigurationStale
@@ -836,14 +860,6 @@ async fn confirmation_missing_owned_artifact_rolls_back_without_partial_workflow
     assert_eq!(status, "ready_to_confirm");
     assert_eq!((workflow_count, run_count, input_count), (0, 0, 0));
     drop(conn);
-
-    for artifact_id in overlay_artifact_ids {
-        app.state
-            .artifact_service
-            .release(user.storage_scope_id, artifact_id)
-            .await
-            .unwrap();
-    }
 }
 
 #[tokio::test]
@@ -902,11 +918,10 @@ async fn later_overlay_failure_cleans_earlier_material() {
 
     let error = app
         .state
-        .data_resource_service
-        .materialize_study_struct_overlays(&user, &prepared)
+        .stage_struct_overlays_for_test(&user, &prepared.struct_overlays)
         .await
         .unwrap_err();
-    assert_eq!(error.code(), "configuration_stale");
+    assert_eq!(error.0, "configuration_stale");
 
     let after_usage = app
         .state
@@ -959,43 +974,25 @@ async fn private_struct_overlay_rejects_a_stale_source_hash() {
         .prepare_confirmation(&user, configuration.id, configuration.revision)
         .await
         .unwrap();
-    let mut overlays = app
-        .state
-        .data_resource_service
-        .materialize_study_struct_overlays(&user, &prepared)
-        .await
-        .unwrap();
-    let overlay_artifact_ids = overlays
-        .iter()
-        .filter(|overlay| overlay.owns_artifact_reference)
-        .map(|overlay| overlay.artifact_id)
-        .collect::<Vec<_>>();
-    overlays[0].source_content_hash = Some("0".repeat(64));
+    let (mut inputs, drafts, staged) = stage_overlays(&app, &user, &prepared).await;
+    inputs[0].source_content_hash = Some("0".repeat(64));
 
-    let error = ManagedWorkflowRepo::new(app.pool.clone())
-        .confirm_and_start(
-            &user.id,
-            prepared,
-            overlays,
-            "stale-private-overlay".into(),
-            3,
-            "test".into(),
-            "[]".into(),
-            2,
-        )
-        .await
-        .unwrap_err();
+    let error = confirm_staged(
+        &app,
+        &user,
+        prepared,
+        inputs,
+        drafts,
+        staged,
+        "stale-private-overlay",
+        2,
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(
         error,
         ManagedWorkflowRepoError::ConfigurationStale
     ));
-    for artifact_id in overlay_artifact_ids {
-        app.state
-            .artifact_service
-            .release(user.storage_scope_id, artifact_id)
-            .await
-            .unwrap();
-    }
 }
 
 #[tokio::test]
@@ -2027,69 +2024,36 @@ async fn concurrent_confirmation_replay_releases_unconsumed_private_artifact_ref
         .prepare_confirmation(&user, edited.id, edited.revision)
         .await
         .unwrap();
-    let first_overlays = app
-        .state
-        .data_resource_service
-        .materialize_study_struct_overlays(&user, &prepared)
-        .await
-        .unwrap();
-    let replay_overlays = app
-        .state
-        .data_resource_service
-        .materialize_study_struct_overlays(&user, &prepared)
-        .await
-        .unwrap();
-    let first_overlay_artifact_ids = first_overlays
-        .iter()
-        .filter(|material| material.owns_artifact_reference)
-        .map(|material| material.artifact_id)
-        .collect::<Vec<_>>();
-    let replay_overlay_artifact_ids = replay_overlays
-        .iter()
-        .filter(|material| material.owns_artifact_reference)
-        .map(|material| material.artifact_id)
-        .collect::<Vec<_>>();
-    let repo = ManagedWorkflowRepo::new(app.pool.clone());
-    let first = repo
-        .confirm_and_start(
-            &user.id,
-            prepared.clone(),
-            first_overlays,
-            "replacement-replay".into(),
-            3,
-            "test".into(),
-            "[]".into(),
-            2,
-        )
-        .await
-        .unwrap();
-    let replay = repo
-        .confirm_and_start(
-            &user.id,
-            prepared,
-            replay_overlays,
-            "replacement-replay".into(),
-            3,
-            "test".into(),
-            "[]".into(),
-            3,
-        )
-        .await
-        .unwrap();
+    let (first_inputs, first_drafts, first_staged) = stage_overlays(&app, &user, &prepared).await;
+    let (replay_inputs, replay_drafts, replay_staged) =
+        stage_overlays(&app, &user, &prepared).await;
+    let first = confirm_staged(
+        &app,
+        &user,
+        prepared.clone(),
+        first_inputs,
+        first_drafts,
+        first_staged,
+        "replacement-replay",
+        2,
+    )
+    .await
+    .unwrap();
+    let replay = confirm_staged(
+        &app,
+        &user,
+        prepared,
+        replay_inputs,
+        replay_drafts,
+        replay_staged,
+        "replacement-replay",
+        3,
+    )
+    .await
+    .unwrap();
     assert!(first.created);
     assert!(!replay.created);
     assert_eq!(first.aggregate.workflow.id, replay.aggregate.workflow.id);
-    for artifact_id in first_overlay_artifact_ids
-        .into_iter()
-        .chain(replay_overlay_artifact_ids)
-    {
-        app.state
-            .artifact_service
-            .release(user.storage_scope_id, artifact_id)
-            .await
-            .unwrap();
-    }
-
     #[derive(QueryableByName)]
     struct RefCount {
         #[diesel(sql_type = diesel::sql_types::BigInt)]

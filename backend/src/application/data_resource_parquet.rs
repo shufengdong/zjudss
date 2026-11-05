@@ -16,7 +16,7 @@ use crate::catalog::{DataFrameSchemaContract, DataTypeContract};
 
 use super::{DataResourceError, DataResourceService};
 
-pub(super) fn struct_parquet(
+pub(crate) fn struct_parquet(
     contract: &DataFrameSchemaContract,
     values: &serde_json::Map<String, Value>,
 ) -> Result<Vec<u8>, DataResourceError> {

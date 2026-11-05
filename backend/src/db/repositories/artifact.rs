@@ -58,37 +58,38 @@ impl ArtifactRepo {
             .await
     }
 
-    pub(crate) async fn commit_batch_with_publish<T, P, F>(
+    pub(crate) async fn commit_batch_with_publish<T, P, F, E>(
         &self,
         scope_id: i32,
         drafts: Vec<ArtifactDraft>,
         mut publish: P,
         finalize: F,
-    ) -> RepoResult<T>
+    ) -> Result<T, E>
     where
         T: Send + 'static,
         P: FnMut(usize, &str) -> Result<(), RepoError> + Send + 'static,
-        F: FnOnce(&mut SqliteConnection, &[Artifact]) -> RepoResult<T> + Send + 'static,
+        F: FnOnce(&mut SqliteConnection, &[Artifact]) -> Result<T, E> + Send + 'static,
+        E: From<RepoError> + From<diesel::result::Error> + Send + 'static,
     {
         let pool = self.pool.clone();
-        tokio::task::spawn_blocking(move || -> RepoResult<T> {
-            let mut conn = pool.get().map_err(RepoError::Pool)?;
+        tokio::task::spawn_blocking(move || -> Result<T, E> {
+            let mut conn = pool.get().map_err(RepoError::Pool).map_err(E::from)?;
             let mut finalize = Some(finalize);
-            conn.immediate_transaction::<T, RepoError, _>(|conn| {
+            conn.immediate_transaction::<T, E, _>(|conn| {
                 let mut artifacts = Vec::with_capacity(drafts.len());
                 for (index, draft) in drafts.iter().enumerate() {
-                    artifacts.push(commit_draft_in_transaction(
-                        conn,
-                        scope_id,
-                        draft,
-                        |path| publish(index, path),
-                    )?);
+                    artifacts.push(
+                        commit_draft_in_transaction(conn, scope_id, draft, |path| {
+                            publish(index, path)
+                        })
+                        .map_err(E::from)?,
+                    );
                 }
                 finalize.take().expect("finalize once")(conn, &artifacts)
             })
         })
         .await
-        .map_err(RepoError::Join)?
+        .map_err(|error| E::from(RepoError::Join(error)))?
     }
 
     pub async fn commit_upload_source_with_publish<F>(

@@ -7,11 +7,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::auth::{CurrentUser, UserId};
-use crate::catalog::DataFrameContractKind;
-use crate::db::repositories::{
-    DataResourceRepo, PromoteDatasetInput, RepoError, ResourcePageRow, StructOverlayRequest,
-    WorkflowStructOverlayMaterial,
-};
+use crate::db::repositories::{DataResourceRepo, PromoteDatasetInput, RepoError, ResourcePageRow};
 use crate::engine_resources::EngineResourceSnapshot;
 
 use super::dataframe_reader::{DataFrameReadError, DataFrameReadSource, ParquetDataFrameReader};
@@ -20,18 +16,14 @@ use super::resource_alias::{
 };
 use super::{ArtifactError, ArtifactService, CandidatePurpose, UploadBatchError, now_ms};
 
-#[path = "study_struct_overlays.rs"]
-pub(super) mod study_struct_overlays;
-use self::study_struct_overlays::materialize_struct_overlay;
 #[path = "data_resource_deletion.rs"]
 mod data_resource_deletion;
 #[path = "data_resource_parquet.rs"]
-mod data_resource_parquet;
+pub(crate) mod data_resource_parquet;
 #[path = "data_resource_replacement.rs"]
 mod data_resource_replacement;
 
 pub use self::data_resource_deletion::{DataResourceDeletionPreview, DeletedDataResource};
-use self::data_resource_parquet::struct_parquet;
 pub use self::data_resource_replacement::StructuredReplacementPreview;
 
 #[derive(Debug, Clone, Serialize)]
@@ -217,196 +209,6 @@ pub struct DataResourceService {
 }
 
 impl DataResourceService {
-    #[doc(hidden)]
-    pub async fn materialize_study_struct_overlays(
-        &self,
-        user: &CurrentUser,
-        prepared: &crate::application::PreparedStudyConfirmation,
-    ) -> Result<Vec<WorkflowStructOverlayMaterial>, DataResourceError> {
-        let mut materials: Vec<WorkflowStructOverlayMaterial> = Vec::new();
-        for overlay in &prepared.struct_overlays {
-            let result = async {
-                let contract = self
-                    .snapshot
-                    .schemas
-                    .resolve(&overlay.schema_ref)
-                    .map_err(|error| Self::invalid("configuration_stale", &error.to_string()))?;
-                if contract.kind != DataFrameContractKind::Struct {
-                    return Err(Self::invalid(
-                        "configuration_stale",
-                        "研究参数 schema 不再是 Struct",
-                    ));
-                }
-                let values = overlay.effective_values.as_object().ok_or_else(|| {
-                    Self::invalid("structured_values_invalid", "Struct 参数必须是对象")
-                })?;
-                let source = if let Some(source_id) = overlay.source_resource_id.as_deref() {
-                    let source = self.repo.find(&user.id, source_id, false).await?;
-                    let artifact_id = source.resource.normalized_artifact_id.ok_or_else(|| {
-                        Self::invalid("configuration_stale", "Struct 来源缺少 artifact")
-                    })?;
-                    let schema_ref = source.resource.declared_schema_ref.ok_or_else(|| {
-                        Self::invalid("configuration_stale", "Struct 来源缺少 schema")
-                    })?;
-                    if source.resource.status != "live" || schema_ref != overlay.schema_ref {
-                        return Err(Self::invalid(
-                            "configuration_stale",
-                            "Struct overlay 来源已经变化",
-                        ));
-                    }
-                    Some((
-                        source.resource.id,
-                        artifact_id,
-                        source.normalized_sha256,
-                        source.resource.schema_hash,
-                    ))
-                } else {
-                    None
-                };
-                let reusable_source = source
-                    .as_ref()
-                    .map(|(_, artifact_id, content_hash, _)| (*artifact_id, content_hash.as_str()));
-                let stored = materialize_struct_overlay(
-                    &self.artifacts,
-                    user.storage_scope_id,
-                    contract,
-                    values,
-                    reusable_source,
-                )
-                .await?;
-                Ok(WorkflowStructOverlayMaterial {
-                    input_id: overlay.input_id.clone(),
-                    source_resource_id: source.as_ref().map(|value| value.0.clone()),
-                    source_artifact_id: source.as_ref().map(|value| value.1),
-                    source_content_hash: source.as_ref().map(|value| value.2.clone()),
-                    source_schema_hash: source.as_ref().map(|value| value.3.clone()),
-                    artifact_id: stored.artifact_id,
-                    content_hash: stored.content_hash,
-                    schema_ref: overlay.schema_ref.clone(),
-                    schema_hash: contract.schema_hash.clone(),
-                    effective_values_json: overlay.effective_values.to_string(),
-                    user_overrides_json: overlay.user_overrides.to_string(),
-                    selector_overrides_json: overlay.selector_overrides.to_string(),
-                    overrides_json: overlay.overrides.to_string(),
-                    owns_artifact_reference: stored.owns_artifact_reference,
-                })
-            }
-            .await;
-            match result {
-                Ok(material) => materials.push(material),
-                Err(error) => {
-                    for material in &materials {
-                        if material.owns_artifact_reference {
-                            let _ = self
-                                .artifacts
-                                .release(user.storage_scope_id, material.artifact_id)
-                                .await;
-                        }
-                    }
-                    return Err(error);
-                }
-            }
-        }
-        Ok(materials)
-    }
-
-    #[doc(hidden)]
-    pub async fn materialize_retry_struct_overlays(
-        &self,
-        user: &CurrentUser,
-        requests: &[StructOverlayRequest],
-    ) -> Result<Vec<WorkflowStructOverlayMaterial>, DataResourceError> {
-        let mut materials: Vec<WorkflowStructOverlayMaterial> = Vec::new();
-        for request in requests {
-            let result = async {
-                let source = self
-                    .repo
-                    .find(&user.id, &request.source_resource_id, false)
-                    .await?;
-                if source.resource.normalized_artifact_id != Some(request.source_artifact_id)
-                    || source.normalized_sha256 != request.source_content_hash
-                    || source.resource.schema_hash != request.source_schema_hash
-                    || source.resource.declared_schema_ref.as_deref()
-                        != Some(request.schema_ref.as_str())
-                {
-                    return Err(Self::invalid(
-                        "configuration_stale",
-                        "Struct overlay 来源已经变化",
-                    ));
-                }
-                let page = self
-                    .rows(user, &request.source_resource_id, Some(1), None, Vec::new())
-                    .await?;
-                let row = page.rows.first().ok_or_else(|| {
-                    Self::invalid("structured_values_invalid", "Struct 参数缺少数据行")
-                })?;
-                let mut values = page
-                    .columns
-                    .iter()
-                    .cloned()
-                    .zip(row.iter().cloned())
-                    .collect::<serde_json::Map<_, _>>();
-                let overrides = request.overrides.as_object().ok_or_else(|| {
-                    Self::invalid("structured_values_invalid", "Struct 覆盖必须是对象")
-                })?;
-                for (field, value) in overrides {
-                    values.insert(field.clone(), value.clone());
-                }
-                let contract = self
-                    .snapshot
-                    .schemas
-                    .resolve(&request.schema_ref)
-                    .map_err(|error| Self::invalid("configuration_stale", &error.to_string()))?;
-                if contract.kind != DataFrameContractKind::Struct {
-                    return Err(Self::invalid(
-                        "configuration_stale",
-                        "研究参数 schema 不再是 Struct",
-                    ));
-                }
-                let stored = materialize_struct_overlay(
-                    &self.artifacts,
-                    user.storage_scope_id,
-                    contract,
-                    &values,
-                    Some((request.source_artifact_id, &request.source_content_hash)),
-                )
-                .await?;
-                Ok(WorkflowStructOverlayMaterial {
-                    input_id: request.input_id.clone(),
-                    source_resource_id: Some(request.source_resource_id.clone()),
-                    source_artifact_id: Some(request.source_artifact_id),
-                    source_content_hash: Some(request.source_content_hash.clone()),
-                    source_schema_hash: Some(request.source_schema_hash.clone()),
-                    artifact_id: stored.artifact_id,
-                    content_hash: stored.content_hash,
-                    schema_ref: request.schema_ref.clone(),
-                    schema_hash: contract.schema_hash.clone(),
-                    effective_values_json: Value::Object(values).to_string(),
-                    user_overrides_json: request.user_overrides.to_string(),
-                    selector_overrides_json: request.selector_overrides.to_string(),
-                    overrides_json: request.overrides.to_string(),
-                    owns_artifact_reference: stored.owns_artifact_reference,
-                })
-            }
-            .await;
-            match result {
-                Ok(material) => materials.push(material),
-                Err(error) => {
-                    for material in &materials {
-                        if material.owns_artifact_reference {
-                            let _ = self
-                                .artifacts
-                                .release(user.storage_scope_id, material.artifact_id)
-                                .await;
-                        }
-                    }
-                    return Err(error);
-                }
-            }
-        }
-        Ok(materials)
-    }
-
     pub(crate) fn artifact_store(&self) -> &crate::storage::ArtifactStore {
         self.artifacts.store()
     }
