@@ -73,7 +73,7 @@ fn parquet_bytes() -> Vec<u8> {
     output.into_inner()
 }
 
-async fn seed_dataset(app: &TestApp) -> (String, String, i32, i32) {
+async fn seed_dataset(app: &TestApp) -> (String, String, i32, i32, String) {
     let user = common::test_user("alice");
     let session = app
         .state
@@ -137,6 +137,7 @@ async fn seed_dataset(app: &TestApp) -> (String, String, i32, i32) {
         app.login_cookie("bob").await,
         session.id,
         dataset_id,
+        artifact.sha256,
     )
 }
 
@@ -177,7 +178,7 @@ async fn body(response: axum::response::Response) -> Value {
 #[tokio::test]
 async fn chart_routes_compile_persist_replay_survive_source_delete_and_enforce_scope() {
     let app = TestApp::spawn().await;
-    let (alice, bob, session_id, dataset_id) = seed_dataset(&app).await;
+    let (alice, bob, session_id, dataset_id, source_content_hash) = seed_dataset(&app).await;
     let capabilities_path = format!("/api/datasets/{dataset_id}/chart-capabilities");
     assert_eq!(
         request(&app, "GET", &capabilities_path, None, None)
@@ -189,6 +190,8 @@ async fn chart_routes_compile_persist_replay_survive_source_delete_and_enforce_s
     assert_eq!(capabilities.status(), StatusCode::OK);
     let capabilities = body(capabilities).await;
     assert_eq!(capabilities["datasetId"], dataset_id.to_string());
+    assert_eq!(capabilities["schemaHash"], "a".repeat(64));
+    assert_eq!(capabilities["rowCount"], 4);
     assert_eq!(capabilities["fields"].as_array().unwrap().len(), 4);
 
     for config in six_configs() {
@@ -205,6 +208,7 @@ async fn chart_routes_compile_persist_replay_survive_source_delete_and_enforce_s
         let preview = body(preview).await;
         assert_eq!(preview["kind"], kind);
         assert!(preview["viewId"].is_null());
+        assert_eq!(preview["sourceDatasetId"], dataset_id.to_string());
     }
     let count = diesel::select(diesel::dsl::sql::<diesel::sql_types::BigInt>(
         "count(*) FROM dataset_views",
@@ -231,6 +235,8 @@ async fn chart_routes_compile_persist_replay_survive_source_delete_and_enforce_s
     let mut saved_views = vec![("line".to_string(), view_id.clone())];
     assert_eq!(created["replayed"], false);
     assert_eq!(created["view"]["contractVersion"], "chart-model-v1");
+    assert_eq!(created["view"]["sourceSchemaHash"], "a".repeat(64));
+    assert_eq!(created["view"]["sourceContentHash"], source_content_hash);
     for (index, config) in six_configs().into_iter().skip(1).enumerate() {
         let kind = config["kind"].as_str().unwrap().to_string();
         let created = request(
@@ -381,7 +387,7 @@ async fn chart_routes_compile_persist_replay_survive_source_delete_and_enforce_s
 #[tokio::test]
 async fn chart_errors_have_stable_status_and_code() {
     let app = TestApp::spawn().await;
-    let (alice, _, session_id, dataset_id) = seed_dataset(&app).await;
+    let (alice, _, session_id, dataset_id, _) = seed_dataset(&app).await;
     let invalid = request(
         &app,
         "POST",

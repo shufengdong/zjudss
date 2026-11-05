@@ -64,6 +64,9 @@ impl From<ResultSourceError> for DatasetError {
         match value {
             ResultSourceError::NotFound => Self::NotFound,
             ResultSourceError::Repository(error) => error.into(),
+            ResultSourceError::Artifact(crate::application::ArtifactError::NotFound) => {
+                Self::NotFound
+            }
             ResultSourceError::Artifact(error) => Self::Storage(error.to_string()),
             ResultSourceError::Stored(message) => Self::Storage(message),
         }

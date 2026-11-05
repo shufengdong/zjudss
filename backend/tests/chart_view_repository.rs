@@ -189,3 +189,46 @@ async fn failed_artifact_finalize_rolls_back_view_and_logical_reference() {
     assert_eq!(views, 0);
     assert_eq!(links, 1);
 }
+
+#[tokio::test]
+async fn source_tombstoned_before_publish_leaves_no_view_or_artifact_reference() {
+    let (_root, pool) = database();
+    seed(&pool);
+    pool.get()
+        .unwrap()
+        .batch_execute(
+            "UPDATE result_datasets SET artifact_id=NULL,deleted_at_ms=40,tombstone_json='{}' WHERE id=1",
+        )
+        .unwrap();
+    let repo = ChartViewRepo::new(pool.clone());
+    let result = repo
+        .publish(
+            &UserId("u1".into()),
+            draft(
+                "op-after-delete",
+                "request",
+                "deleted source",
+                &"5".repeat(64),
+            ),
+            |_| panic!("a deleted source must be rejected before artifact publication"),
+        )
+        .await;
+    assert!(matches!(result, Err(RepoError::NotFound)));
+
+    #[derive(QueryableByName)]
+    struct Count {
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        count: i64,
+    }
+    let mut conn = pool.get().unwrap();
+    let views = diesel::sql_query("SELECT count(*) count FROM dataset_views")
+        .get_result::<Count>(&mut conn)
+        .unwrap()
+        .count;
+    let links = diesel::sql_query("SELECT count(*) count FROM storage_scope_artifacts")
+        .get_result::<Count>(&mut conn)
+        .unwrap()
+        .count;
+    assert_eq!(views, 0);
+    assert_eq!(links, 1, "only the original source reference remains");
+}

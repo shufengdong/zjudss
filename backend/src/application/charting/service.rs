@@ -1,19 +1,21 @@
-use std::collections::HashSet;
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::*;
 use crate::application::artifacts::{ArtifactError, ArtifactService};
-use crate::application::dataframe_reader::{
-    DataFrameColumn, DataFrameReadError, DataFrameReadSource, ParquetDataFrameReader,
-};
+use crate::application::dataframe_reader::{DataFrameColumn, ParquetDataFrameReader};
+use crate::application::result_sources::ResultSourceService;
 use crate::auth::CurrentUser;
-use crate::db::models::ChartViewRow;
-use crate::db::repositories::{
-    ArtifactDraft, ChartViewDraft, ChartViewRepo, ChartViewSummaryRow, RepoError, ResultRepo,
-};
+use crate::db::repositories::{ChartViewRepo, RepoError, ResultRepo};
 use crate::storage::ParquetInspector;
+
+mod materialization;
+mod presentation;
+mod source;
+
+use materialization::{prepare_materialized_view, prepare_request};
+use presentation::{decode_cursor, encode_cursor, frozen_model, metadata, summary};
+use source::{compile_source, map_source_artifact_error, resolve_source};
 
 #[derive(Debug)]
 pub enum ChartServiceError {
@@ -153,7 +155,7 @@ pub struct DeleteChartViewResponse {
 
 #[derive(Clone)]
 pub struct ChartService {
-    results: ResultRepo,
+    sources: ResultSourceService,
     views: ChartViewRepo,
     artifacts: ArtifactService,
     reader: ParquetDataFrameReader,
@@ -162,7 +164,7 @@ pub struct ChartService {
 impl ChartService {
     pub fn new(results: ResultRepo, views: ChartViewRepo, artifacts: ArtifactService) -> Self {
         Self {
-            results,
+            sources: ResultSourceService::new(results, artifacts.clone()),
             views,
             reader: ParquetDataFrameReader::new(artifacts.clone()),
             artifacts,
@@ -174,7 +176,7 @@ impl ChartService {
         principal: &CurrentUser,
         dataset_id: i32,
     ) -> Result<ChartCapabilities, ChartServiceError> {
-        let source = self.source(principal, dataset_id).await?;
+        let source = resolve_source(&self.sources, principal, dataset_id).await?;
         let budgets = ChartBudgets::default();
         if source.columns.len() > budgets.max_fields {
             return Err(ChartError::new(
@@ -189,9 +191,9 @@ impl ChartService {
         }
         let file = self
             .artifacts
-            .open_owned(principal.storage_scope_id, source.artifact_id)
+            .open_owned(principal.storage_scope_id, source.artifact.id)
             .await
-            .map_err(source_artifact_error)?;
+            .map_err(map_source_artifact_error)?;
         let batches = ParquetInspector::projection_file(
             file,
             &source
@@ -205,10 +207,10 @@ impl ChartService {
         .map_err(|error| ChartServiceError::Stored(error.to_string()))?;
         CapabilityInspector::inspect(
             dataset_id.to_string(),
-            source.schema_hash,
+            source.dataset.schema_hash,
             &source.columns,
             &batches,
-            source.row_count as u64,
+            source.dataset.row_count as u64,
             budgets,
         )
         .map_err(Into::into)
@@ -229,17 +231,20 @@ impl ChartService {
         dataset_id: i32,
         request: CreateChartViewRequest,
     ) -> Result<CreateChartViewResponse, ChartServiceError> {
-        validate_operation_id(&request.client_operation_id)?;
-        let normalized = normalize_create_request(request.name, request.config)?;
+        let prepared_request = prepare_request(request)?;
         if let Some(view) = self
             .views
-            .find_operation(&principal.id, dataset_id, &request.client_operation_id)
+            .find_operation(
+                &principal.id,
+                dataset_id,
+                &prepared_request.client_operation_id,
+            )
             .await?
         {
             if view.deleted_at_ms.is_some() {
                 return Err(RepoError::InvalidState("chart_operation_gone".into()).into());
             }
-            if view.request_hash != normalized.request_hash {
+            if view.request_hash != prepared_request.normalized.request_hash {
                 return Err(RepoError::IdempotencyConflict.into());
             }
             let record = self.views.find(&principal.id, view.id).await?;
@@ -248,51 +253,27 @@ impl ChartService {
                 replayed: true,
             });
         }
-        let source = self.source(principal, dataset_id).await?;
-        let compiled = self
-            .compile_source(principal, &source, &normalized.config)
-            .await?;
-        let materialized = PlotDataCodec::write_snappy(self.artifacts.store(), &compiled)?;
-        let diagnostics_json = serde_json::to_string(&compiled.diagnostics)
-            .map_err(|error| ChartServiceError::Stored(error.to_string()))?;
-        let row_count = i64::try_from(materialized.row_count)
-            .map_err(|error| ChartServiceError::Stored(error.to_string()))?;
-        let point_count = i64::try_from(materialized.point_count)
-            .map_err(|error| ChartServiceError::Stored(error.to_string()))?;
-        let size_bytes = i64::try_from(materialized.size_bytes)
-            .map_err(|error| ChartServiceError::Stored(error.to_string()))?;
+        let source = resolve_source(&self.sources, principal, dataset_id).await?;
+        let compiled = compile_source(
+            &self.reader,
+            principal,
+            &source,
+            &prepared_request.normalized.config,
+        )
+        .await?;
+        let prepared = prepare_materialized_view(
+            self.artifacts.store(),
+            dataset_id,
+            prepared_request,
+            &compiled,
+        )?;
         let published = self
             .artifacts
             .publish_chart_view(
                 self.views.clone(),
                 principal.id.clone(),
-                ChartViewDraft {
-                    source_dataset_id: dataset_id,
-                    client_operation_id: request.client_operation_id,
-                    request_hash: normalized.request_hash,
-                    name: normalized.name,
-                    kind: normalized.config.kind().as_str().into(),
-                    config_json: normalized.config_json,
-                    config_hash: normalized.config_hash,
-                    chart_contract_version: CHART_CONTRACT_VERSION.into(),
-                    diagnostics_json,
-                    plot_schema_json: materialized.schema_json,
-                    plot_schema_hash: materialized.schema_hash,
-                    plot_content_hash: materialized.content_hash.clone(),
-                    row_count,
-                    point_count,
-                    size_bytes,
-                    created_at_ms: crate::application::now_ms(),
-                    artifact: ArtifactDraft {
-                        sha256: materialized.content_hash,
-                        size_bytes,
-                        storage_path: String::new(),
-                        format: "parquet".into(),
-                        media_type: Some("application/vnd.apache.parquet".into()),
-                        created_at_ms: crate::application::now_ms(),
-                    },
-                },
-                materialized.staged,
+                prepared.draft,
+                prepared.staged,
             )
             .await
             .map_err(|error| match error {
@@ -401,406 +382,7 @@ impl ChartService {
         dataset_id: i32,
         config: &ChartConfig,
     ) -> Result<CompiledChart, ChartServiceError> {
-        let source = self.source(principal, dataset_id).await?;
-        self.compile_source(principal, &source, config).await
+        let source = resolve_source(&self.sources, principal, dataset_id).await?;
+        compile_source(&self.reader, principal, &source, config).await
     }
-
-    async fn compile_source(
-        &self,
-        principal: &CurrentUser,
-        source: &Source,
-        config: &ChartConfig,
-    ) -> Result<CompiledChart, ChartServiceError> {
-        let columns = referenced_columns(config);
-        if let Some(missing) = columns
-            .iter()
-            .find(|name| !source.columns.iter().any(|column| column.name == ***name))
-        {
-            return Err(ChartError::new("chart_column_missing", "图表字段不存在")
-                .with_details(serde_json::json!({"column": missing}))
-                .into());
-        }
-        let batches = self
-            .reader
-            .collect_projected_batches(
-                principal,
-                &source.read_source,
-                &columns,
-                ChartBudgets::default().max_scan_rows as usize,
-            )
-            .await
-            .map_err(|error| match error {
-                DataFrameReadError::TooManyRows(limit) => ChartServiceError::Chart(
-                    ChartError::new("chart_too_large", "DataFrame 扫描行数超过图表预算")
-                        .with_details(serde_json::json!({"limit": limit})),
-                ),
-                DataFrameReadError::NotFound => source_deleted_error(),
-                other => ChartServiceError::Stored(other.to_string()),
-            })?;
-        ChartCompiler::compile(
-            config,
-            &ChartSource::new(
-                source.dataset_id.to_string(),
-                source.columns.clone(),
-                batches,
-            ),
-        )
-        .map_err(Into::into)
-    }
-
-    async fn source(
-        &self,
-        principal: &CurrentUser,
-        dataset_id: i32,
-    ) -> Result<Source, ChartServiceError> {
-        let dataset = self.results.find_live(&principal.id, dataset_id).await?;
-        let artifact_id = dataset.artifact_id.ok_or(RepoError::NotFound)?;
-        let artifact = self
-            .artifacts
-            .find_owned(principal.storage_scope_id, artifact_id)
-            .await
-            .map_err(source_artifact_error)?;
-        let columns = serde_json::from_str::<Vec<DataFrameColumn>>(&dataset.schema_json)
-            .map_err(|error| ChartServiceError::Stored(error.to_string()))?;
-        Ok(Source {
-            dataset_id,
-            artifact_id,
-            schema_hash: dataset.schema_hash.clone(),
-            row_count: dataset.row_count,
-            columns,
-            read_source: DataFrameReadSource {
-                resource_key: format!("dataset:{dataset_id}"),
-                artifact_id,
-                schema_json: dataset.schema_json,
-                row_count: dataset.row_count,
-                content_hash: artifact.sha256,
-            },
-        })
-    }
-}
-
-fn source_artifact_error(error: ArtifactError) -> ChartServiceError {
-    match error {
-        ArtifactError::NotFound => source_deleted_error(),
-        other => ChartServiceError::Artifact(other),
-    }
-}
-
-fn source_deleted_error() -> ChartServiceError {
-    ChartServiceError::Chart(ChartError::new(
-        "chart_source_deleted",
-        "首次校验后来源结果已被删除",
-    ))
-}
-
-struct Source {
-    dataset_id: i32,
-    artifact_id: i32,
-    schema_hash: String,
-    row_count: i64,
-    columns: Vec<DataFrameColumn>,
-    read_source: DataFrameReadSource,
-}
-
-fn referenced_columns(config: &ChartConfig) -> Vec<String> {
-    let fields: Vec<&ChartFieldRef> = match config {
-        ChartConfig::Line {
-            x,
-            measures,
-            split_by,
-            ..
-        }
-        | ChartConfig::Bar {
-            x,
-            measures,
-            split_by,
-            ..
-        }
-        | ChartConfig::Scatter {
-            x,
-            measures,
-            split_by,
-            ..
-        } => std::iter::once(x)
-            .chain(measures.iter())
-            .chain(split_by.iter())
-            .collect(),
-        ChartConfig::Heatmap { x, y, value, .. } => vec![x, y, value],
-        ChartConfig::Boxplot {
-            category,
-            value,
-            split_by,
-            ..
-        } => std::iter::once(category)
-            .chain(std::iter::once(value))
-            .chain(split_by.iter())
-            .collect(),
-        ChartConfig::Histogram { value, .. } => vec![value],
-    };
-    let mut seen = HashSet::new();
-    fields
-        .into_iter()
-        .map(|field| field.column.clone())
-        .filter(|column| seen.insert(column.clone()))
-        .collect()
-}
-
-fn metadata(
-    row: ChartViewRow,
-    source_deleted: bool,
-) -> Result<ChartViewMetadata, ChartServiceError> {
-    let config = serde_json::from_str::<ChartConfig>(&row.config_json)
-        .map_err(|error| ChartServiceError::Stored(error.to_string()))?;
-    Ok(ChartViewMetadata {
-        summary: summary(ChartViewSummaryRow {
-            id: row.id,
-            session_id: row.session_id,
-            source_dataset_id: row.source_dataset_id,
-            source_name: row.source_name.clone(),
-            source_deleted,
-            name: row.name.clone(),
-            kind: row.kind.clone(),
-            point_count: row.point_count,
-            size_bytes: row.size_bytes,
-            created_at_ms: row.created_at_ms,
-        })?,
-        contract_version: row.chart_contract_version,
-        config,
-        config_hash: row.config_hash,
-        source_schema: parse_json(&row.source_schema_json)?,
-        source_schema_hash: row.source_schema_hash,
-        source_content_hash: row.source_content_hash,
-        plot_schema: parse_json(&row.plot_schema_json)?,
-        plot_schema_hash: row.plot_schema_hash,
-        plot_content_hash: row.plot_content_hash,
-        diagnostics: parse_json(&row.diagnostics_json)?,
-    })
-}
-
-fn summary(row: ChartViewSummaryRow) -> Result<ChartViewSummary, ChartServiceError> {
-    let kind = serde_json::from_value(Value::String(row.kind))
-        .map_err(|error| ChartServiceError::Stored(error.to_string()))?;
-    Ok(ChartViewSummary {
-        id: row.id.to_string(),
-        session_id: row.session_id.to_string(),
-        source_dataset_id: row.source_dataset_id.to_string(),
-        source_name: row.source_name,
-        source_deleted: row.source_deleted,
-        name: row.name,
-        kind,
-        point_count: row.point_count,
-        size_bytes: row.size_bytes,
-        created_at: crate::application::ms_to_iso(row.created_at_ms),
-    })
-}
-
-fn frozen_model(row: &ChartViewRow, source_deleted: bool) -> Result<ChartModel, ChartServiceError> {
-    let config: ChartConfig = parse_json(&row.config_json)?;
-    let schema: Vec<DataFrameColumn> = parse_json(&row.source_schema_json)?;
-    let diagnostics = parse_json(&row.diagnostics_json)?;
-    let base = ChartModelBase {
-        contract_version: row.chart_contract_version.clone(),
-        view_id: Some(row.id.to_string()),
-        source_dataset_id: row.source_dataset_id.to_string(),
-        source_deleted,
-        name: Some(row.name.clone()),
-        title: config_title(&config),
-        config_hash: row.config_hash.clone(),
-        diagnostics,
-    };
-    let unit = |field: &ChartFieldRef| {
-        schema
-            .iter()
-            .find(|column| column.name == field.column)
-            .and_then(|column| column.unit.clone())
-    };
-    Ok(match config {
-        ChartConfig::Line {
-            presentation,
-            x,
-            x_axis_mode,
-            measures,
-            order,
-            aggregation,
-            ..
-        } => ChartModel::Line {
-            base,
-            presentation,
-            order,
-            aggregation,
-            x_axis: MixedAxis {
-                r#type: x_axis_mode,
-                name: x.display_name(),
-                unit: unit(&x),
-            },
-            y_axis: ValueAxis {
-                name: (measures.len() == 1).then(|| measures[0].display_name()),
-                unit: unit(&measures[0]),
-            },
-            series: Vec::new(),
-        },
-        ChartConfig::Bar {
-            presentation,
-            x,
-            measures,
-            ..
-        } => ChartModel::Bar {
-            base,
-            presentation,
-            x_axis: CategoryAxis {
-                r#type: CategoryAxisType::Category,
-                name: x.display_name(),
-                unit: unit(&x),
-            },
-            y_axis: ValueAxis {
-                name: (measures.len() == 1).then(|| measures[0].display_name()),
-                unit: unit(&measures[0]),
-            },
-            categories: Vec::new(),
-            series: Vec::new(),
-        },
-        ChartConfig::Scatter {
-            presentation,
-            x,
-            measures,
-            ..
-        } => ChartModel::Scatter {
-            base,
-            presentation,
-            x_axis: MixedAxis {
-                r#type: AxisMode::Value,
-                name: x.display_name(),
-                unit: unit(&x),
-            },
-            y_axis: ValueAxis {
-                name: (measures.len() == 1).then(|| measures[0].display_name()),
-                unit: unit(&measures[0]),
-            },
-            series: Vec::new(),
-        },
-        ChartConfig::Heatmap {
-            presentation,
-            x,
-            y,
-            value,
-            aggregation,
-            ..
-        } => ChartModel::Heatmap {
-            base,
-            presentation,
-            x_axis: NamedCategoryAxis {
-                name: x.display_name(),
-                categories: Vec::new(),
-            },
-            y_axis: NamedCategoryAxis {
-                name: y.display_name(),
-                categories: Vec::new(),
-            },
-            x_categories: Vec::new(),
-            y_categories: Vec::new(),
-            value: HeatmapValue {
-                name: value.display_name(),
-                unit: (aggregation != HeatmapAggregation::Count)
-                    .then(|| unit(&value))
-                    .flatten(),
-                min: 0.0,
-                max: 0.0,
-            },
-            cells: Vec::new(),
-        },
-        ChartConfig::Boxplot {
-            presentation,
-            category,
-            value,
-            ..
-        } => ChartModel::Boxplot {
-            base,
-            presentation,
-            category_axis: NamedCategoryAxis {
-                name: category.display_name(),
-                categories: Vec::new(),
-            },
-            value_axis: NamedValueAxis {
-                name: value.display_name(),
-                unit: unit(&value),
-            },
-            series: Vec::new(),
-        },
-        ChartConfig::Histogram {
-            presentation,
-            value,
-            ..
-        } => ChartModel::Histogram {
-            base,
-            presentation,
-            value: HistogramValue {
-                name: value.display_name(),
-                unit: unit(&value),
-            },
-            bins: Vec::new(),
-        },
-    })
-}
-
-fn config_title(config: &ChartConfig) -> Option<String> {
-    match config {
-        ChartConfig::Line { title, .. }
-        | ChartConfig::Bar { title, .. }
-        | ChartConfig::Scatter { title, .. }
-        | ChartConfig::Heatmap { title, .. }
-        | ChartConfig::Boxplot { title, .. }
-        | ChartConfig::Histogram { title, .. } => title.clone(),
-    }
-}
-
-fn parse_json<T: serde::de::DeserializeOwned>(value: &str) -> Result<T, ChartServiceError> {
-    serde_json::from_str(value).map_err(|error| ChartServiceError::Stored(error.to_string()))
-}
-
-fn validate_operation_id(value: &str) -> Result<(), ChartServiceError> {
-    let valid = value.len() == 36
-        && value
-            .chars()
-            .enumerate()
-            .all(|(index, character)| match index {
-                8 | 13 | 18 | 23 => character == '-',
-                _ => character.is_ascii_hexdigit(),
-            });
-    if valid {
-        Ok(())
-    } else {
-        Err(ChartError::new("chart_config_invalid", "clientOperationId 必须为 UUID").into())
-    }
-}
-
-fn encode_cursor(principal: &CurrentUser, session_id: i32, created_at: i64, id: i32) -> String {
-    hex::encode(format!(
-        "v1|{}|{session_id}|{created_at}|{id}",
-        principal.id.0
-    ))
-}
-
-fn decode_cursor(
-    cursor: &str,
-    principal: &CurrentUser,
-    session_id: i32,
-) -> Result<(i64, i32), ChartServiceError> {
-    let bytes = hex::decode(cursor).map_err(|_| ChartServiceError::InvalidCursor)?;
-    let value = String::from_utf8(bytes).map_err(|_| ChartServiceError::InvalidCursor)?;
-    let parts = value.split('|').collect::<Vec<_>>();
-    if parts.len() != 5
-        || parts[0] != "v1"
-        || parts[1] != principal.id.0
-        || parts[2] != session_id.to_string()
-    {
-        return Err(ChartServiceError::InvalidCursor);
-    }
-    Ok((
-        parts[3]
-            .parse()
-            .map_err(|_| ChartServiceError::InvalidCursor)?,
-        parts[4]
-            .parse()
-            .map_err(|_| ChartServiceError::InvalidCursor)?,
-    ))
 }

@@ -31,7 +31,6 @@ pub(crate) struct ResultSource {
     pub dataset: RunDataset,
     pub session_id: i32,
     pub artifact: ArtifactRef,
-    #[allow(dead_code)] // consumed by chart compilation in Task 6
     pub columns: Vec<DataFrameColumn>,
     pub read_source: DataFrameReadSource,
 }
@@ -121,10 +120,7 @@ fn repository_error(error: RepoError) -> ResultSourceError {
 }
 
 fn artifact_error(error: ArtifactError) -> ResultSourceError {
-    match error {
-        ArtifactError::NotFound => ResultSourceError::NotFound,
-        other => ResultSourceError::Artifact(other),
-    }
+    ResultSourceError::Artifact(error)
 }
 
 #[cfg(test)]
@@ -198,6 +194,14 @@ mod tests {
         assert!(matches!(
             ResultSource::from_parts(malformed, 3, artifact()),
             Err(ResultSourceError::Stored(_))
+        ));
+    }
+
+    #[test]
+    fn artifact_not_found_remains_distinguishable_from_dataset_not_found() {
+        assert!(matches!(
+            artifact_error(ArtifactError::NotFound),
+            ResultSourceError::Artifact(ArtifactError::NotFound)
         ));
     }
 }
