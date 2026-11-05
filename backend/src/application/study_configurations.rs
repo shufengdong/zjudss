@@ -247,6 +247,7 @@ pub struct PreparedStructOverlay {
 #[serde(rename_all = "camelCase")]
 pub struct PreparedStudyConfirmation {
     pub configuration_id: i32,
+    pub session_id: i32,
     pub expected_revision: i64,
     pub expected_snapshot_id: String,
     pub struct_overlays: Vec<PreparedStructOverlay>,
@@ -842,6 +843,7 @@ impl StudyConfigurationService {
             .collect();
         Ok(PreparedStudyConfirmation {
             configuration_id,
+            session_id: aggregate.configuration.session_id,
             expected_revision,
             expected_snapshot_id: self.snapshot.id.clone(),
             struct_overlays,

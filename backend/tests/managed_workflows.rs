@@ -51,10 +51,13 @@ async fn confirm_staged(
     now_ms: i64,
 ) -> Result<ConfirmStartOutcome, ManagedWorkflowRepoError> {
     let store = app.state.artifact_service.store().clone();
+    let command = prepared
+        .into_start_command(operation.into(), 3, "test".into(), "[]".into(), now_ms)
+        .unwrap();
     ManagedWorkflowRepo::new(app.pool.clone())
         .confirm_and_start_with_overlay_artifacts(
             &user.id,
-            prepared,
+            command,
             inputs,
             drafts,
             move |index, path| {
@@ -62,11 +65,6 @@ async fn confirm_staged(
                     .publish_for_test(&mut staged[index], path)
                     .map_err(|error| RepoError::Storage(error.to_string()))
             },
-            operation.into(),
-            3,
-            "test".into(),
-            "[]".into(),
-            now_ms,
         )
         .await
 }

@@ -8,8 +8,8 @@ use crate::agent::knowledge::AgentKnowledge;
 use crate::agent::{FailureAnalysis, FailureAnalyzer, ScriptAuthor};
 use crate::auth::CurrentUser;
 use crate::db::repositories::{
-    ManagedWorkflowAggregate, ManagedWorkflowRepo, ManagedWorkflowRepoError, NewWorkflowCandidate,
-    RepoError, ScriptRepo,
+    ManagedWorkflowAggregate, ManagedWorkflowRepo, ManagedWorkflowRepoError,
+    ManagedWorkflowStartCommand, NewWorkflowCandidate, RepoError, ScriptRepo,
 };
 use crate::engine_resources::EngineResourceSnapshot;
 use crate::storage::StageLimits;
@@ -39,6 +39,35 @@ pub struct RetryStudyRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConfirmRetryRequest {
     pub confirmed: bool,
+}
+
+impl super::PreparedStudyConfirmation {
+    pub fn into_start_command(
+        self,
+        client_operation_id: String,
+        correction_budget: i32,
+        agent_bundle_version: String,
+        agent_skill_refs_json: String,
+        created_at_ms: i64,
+    ) -> Result<ManagedWorkflowStartCommand, serde_json::Error> {
+        let facade_contract_hash = self.locked.facade_contract_hash.clone();
+        Ok(ManagedWorkflowStartCommand {
+            configuration_id: self.configuration_id,
+            session_id: self.session_id,
+            configuration_revision: self.expected_revision,
+            engine_snapshot_id: self.expected_snapshot_id,
+            facade_contract_hash,
+            locked_contract_json: serde_json::to_string(&self.locked)?,
+            frozen_inputs_json: serde_json::to_string(&self.inputs)?,
+            struct_overlays_json: serde_json::to_string(&self.struct_overlays)?,
+            result_contract_json: serde_json::to_string(&self.locked.results)?,
+            client_operation_id,
+            correction_budget,
+            agent_bundle_version,
+            agent_skill_refs_json,
+            created_at_ms,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -457,6 +486,16 @@ impl ManagedWorkflowService {
             .stage_initial(user, &prepared.struct_overlays)
             .await
             .map_err(|error| WorkflowError::Invalid(error.code(), error.to_string()))?;
+        let created_at_ms = now_ms();
+        let command = prepared
+            .into_start_command(
+                operation.to_string(),
+                self.correction_budget,
+                self.agent_bundle_version.clone(),
+                serde_json::to_string(&["study-planning@1.5.0"]).unwrap(),
+                created_at_ms,
+            )
+            .map_err(|error| WorkflowError::Repository(RepoError::Storage(error.to_string())))?;
         let (inputs, drafts, mut staged_artifacts) = staged.into_parts();
         let store = self.artifacts.store().clone();
         let _publication_guard = self.artifacts.exclusive_publication_guard().await;
@@ -467,7 +506,7 @@ impl ManagedWorkflowService {
             .repo
             .confirm_and_start_with_overlay_artifacts(
                 &user.id,
-                prepared,
+                command,
                 inputs,
                 drafts,
                 move |index, path| {
@@ -486,11 +525,6 @@ impl ManagedWorkflowService {
                     }
                     Ok(())
                 },
-                operation.to_string(),
-                self.correction_budget,
-                self.agent_bundle_version.clone(),
-                serde_json::to_string(&["study-planning@1.5.0"]).unwrap(),
-                now_ms(),
             )
             .await;
         if result.is_err() {
@@ -823,5 +857,114 @@ fn progress_card(view: &ManagedWorkflowView) -> WorkflowProgressCard {
             .and_then(|value| value.get("code"))
             .and_then(Value::as_str)
             .map(str::to_string),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::application::{
+        CanonicalStructValue, FrozenModelInput, FrozenResultContract, FrozenStudyInput,
+        LockedStudyContract, PreparedStructOverlay, PreparedStudyConfirmation,
+        WorkflowInputSnapshot,
+    };
+
+    #[test]
+    fn start_command_preserves_every_locked_confirmation_field() {
+        let prepared = PreparedStudyConfirmation {
+            configuration_id: 17,
+            session_id: 23,
+            expected_revision: 5,
+            expected_snapshot_id: "snapshot-7".into(),
+            struct_overlays: vec![PreparedStructOverlay {
+                input_id: "para".into(),
+                input_alias: "para".into(),
+                source_resource_id: Some("resource-11".into()),
+                schema_ref: "frames.para".into(),
+                effective_values: json!({"max_iter": 31}),
+                user_overrides: json!({"max_iter": 31}),
+                selector_overrides: json!({}),
+                overrides: json!({"max_iter": 31}),
+            }],
+            locked: LockedStudyContract {
+                configuration_id: 17,
+                facade_id: "static_power_flow_newton".into(),
+                function: "power_flow".into(),
+                facade_contract_hash: "facade-hash".into(),
+                engine_snapshot_id: "snapshot-7".into(),
+                input_aliases: vec!["bus".into(), "para".into()],
+                structs: vec![CanonicalStructValue {
+                    input_id: "para".into(),
+                    schema_ref: "frames.para".into(),
+                    fields: json!({"max_iter": 31}),
+                    resource_id: Some("resource-11".into()),
+                    resource_content_hash: Some("source-hash".into()),
+                    resource_diff: json!({"max_iter": 31}),
+                }],
+                results: vec![FrozenResultContract {
+                    name: "bus_voltage".into(),
+                    schema_ref: "results.bus_voltage".into(),
+                }],
+            },
+            inputs: WorkflowInputSnapshot {
+                model: Some(FrozenModelInput {
+                    model_version_id: 29,
+                    content_hash: "model-hash".into(),
+                    tables: vec!["bus".into()],
+                }),
+                resources: vec![FrozenStudyInput {
+                    input_id: "para".into(),
+                    alias: "para".into(),
+                    resource_alias: "para".into(),
+                    kind: "struct".into(),
+                    resource_id: Some("resource-11".into()),
+                    schema_ref: "frames.para".into(),
+                    schema_hash: "schema-hash".into(),
+                    content_hash: "source-hash".into(),
+                }],
+            },
+        };
+        let expected_locked = serde_json::to_value(&prepared.locked).unwrap();
+        let expected_inputs = serde_json::to_value(&prepared.inputs).unwrap();
+        let expected_overlays = serde_json::to_value(&prepared.struct_overlays).unwrap();
+
+        let command = prepared
+            .into_start_command(
+                "operation-13".into(),
+                3,
+                "bundle-4".into(),
+                "[\"skill@1\"]".into(),
+                101,
+            )
+            .unwrap();
+
+        assert_eq!(command.configuration_id, 17);
+        assert_eq!(command.session_id, 23);
+        assert_eq!(command.configuration_revision, 5);
+        assert_eq!(command.engine_snapshot_id, "snapshot-7");
+        assert_eq!(command.facade_contract_hash, "facade-hash");
+        assert_eq!(
+            serde_json::from_str::<Value>(&command.locked_contract_json).unwrap(),
+            expected_locked
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&command.frozen_inputs_json).unwrap(),
+            expected_inputs
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&command.struct_overlays_json).unwrap(),
+            expected_overlays
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&command.result_contract_json).unwrap(),
+            json!([{"name":"bus_voltage","schemaRef":"results.bus_voltage"}])
+        );
+        assert_eq!(command.client_operation_id, "operation-13");
+        assert_eq!(command.correction_budget, 3);
+        assert_eq!(command.agent_bundle_version, "bundle-4");
+        assert_eq!(command.agent_skill_refs_json, "[\"skill@1\"]");
+        assert_eq!(command.created_at_ms, 101);
     }
 }
