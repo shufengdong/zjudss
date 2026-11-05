@@ -26,6 +26,7 @@ pub mod runs;
 pub mod scheduler;
 pub mod script_contract;
 pub mod scripts;
+mod study_configuration_policy;
 mod study_configurations;
 pub mod study_planning;
 pub(crate) mod upload_candidate_policy;

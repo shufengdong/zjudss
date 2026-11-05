@@ -1424,6 +1424,17 @@ async fn changed_inputs_require_confirmation_and_freeze_the_new_active_model() {
     assert!(preview.workflow.is_none());
     assert!(!preview.changes.as_array().unwrap().is_empty());
     let token = preview.retry_preview_id.unwrap();
+    let malformed = app
+        .state
+        .managed_workflow_service
+        .confirm_retry(
+            &user,
+            &token.to_ascii_uppercase(),
+            ConfirmRetryRequest { confirmed: true },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(malformed.code(), "invalid_retry_preview");
     let retry = app
         .state
         .managed_workflow_service

@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::Digest;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -15,6 +14,7 @@ use crate::db::repositories::{
 use crate::engine_resources::EngineResourceSnapshot;
 use crate::storage::StageLimits;
 
+use super::opaque_token::{generate_token, hash_token, is_generated_token};
 use super::{
     AppEvent, ArtifactMetadata, ArtifactService, DataResourceService, EventBus, RunScheduler,
     SessionCancellationRegistry, StudyConfigurationError, StudyConfigurationService,
@@ -277,10 +277,8 @@ impl ManagedWorkflowService {
                 "研究门面合同已变化".into(),
             ));
         }
-        let mut token_bytes = [0_u8; 32];
-        getrandom::fill(&mut token_bytes).expect("operating system random source unavailable");
-        let token = hex::encode(token_bytes);
-        let token_hash = hex::encode(sha2::Sha256::digest(token.as_bytes()));
+        let token = generate_token();
+        let token_hash = hash_token(&token);
         let now = now_ms();
         let expires = now + 5 * 60 * 1000;
         let outcome = self
@@ -322,13 +320,13 @@ impl ManagedWorkflowService {
         retry_preview_id: &str,
         request: ConfirmRetryRequest,
     ) -> Result<ManagedWorkflowView, WorkflowError> {
-        if !request.confirmed || retry_preview_id.len() != 64 {
+        if !request.confirmed || !is_generated_token(retry_preview_id) {
             return Err(WorkflowError::Invalid(
                 "invalid_retry_preview",
                 "重新尝试确认无效".into(),
             ));
         }
-        let token_hash = hex::encode(sha2::Sha256::digest(retry_preview_id.as_bytes()));
+        let token_hash = hash_token(retry_preview_id);
         let locked_json = self
             .repo
             .retry_locked_contract(&user.id, &token_hash)

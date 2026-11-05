@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::auth::CurrentUser;
-use crate::catalog::{DataFrameSchemaContract, DataTypeContract, SchemaFieldContract};
+use crate::catalog::{DataFrameSchemaContract, SchemaFieldContract};
 use crate::db::models::{
     StudyInputBindingRecord, StudyResultSelectionRecord, StudyStructValueRecord,
 };
@@ -19,6 +19,10 @@ use crate::engine_resources::{
 };
 
 use super::now_ms;
+use super::study_configuration_policy::{
+    apply_result_selector_overrides, json_values_equivalent, preserve_protected_fields,
+    result_selector_fields, validate_struct_values,
+};
 use super::{ColumnMapping, CreateMappedResourceRequest, DataMappingService};
 use super::{DataResourceError, DataResourceService};
 
@@ -504,12 +508,12 @@ impl StudyConfigurationService {
             .and_then(|value| serde_json::from_str::<Value>(value).ok())
             .and_then(|value| value.get("baselineValues").cloned());
         let mut values = request.values;
-        preserve_fields(
+        preserve_protected_fields(
             &mut values,
             baseline.as_ref().unwrap_or(&stored_values),
             &selector_fields,
         )?;
-        validate_struct_values(Some(self.schema(&input.schema_ref)?), &values)?;
+        validate_struct_values(&self.snapshot, &input.schema_ref, &values, &selector_fields)?;
         binding.mapping_json =
             Some(struct_metadata(baseline.as_ref().unwrap_or(&stored_values)).to_string());
         aggregate
@@ -785,7 +789,12 @@ impl StudyConfigurationService {
                     merged_overrides.insert(field.clone(), value.clone());
                 }
                 let overrides = Value::Object(merged_overrides);
-                validate_struct_values(Some(self.schema(&input.schema_ref)?), &effective_fields)?;
+                validate_struct_values(
+                    &self.snapshot,
+                    &input.schema_ref,
+                    &effective_fields,
+                    &selector_fields,
+                )?;
                 let frozen = frozen_resources
                     .iter()
                     .find(|resource| resource.input_id == input.id);
@@ -1133,7 +1142,7 @@ impl StudyConfigurationService {
             .zip(page.rows[0].iter().cloned())
             .collect::<serde_json::Map<_, _>>();
         let values = Value::Object(values);
-        validate_struct_values(Some(self.schema(&input.schema_ref)?), &values)?;
+        validate_struct_values(&self.snapshot, &input.schema_ref, &values, &[])?;
         Ok(values)
     }
 
@@ -1307,87 +1316,6 @@ fn struct_user_overrides(
     Ok(Value::Object(overrides))
 }
 
-fn json_values_equivalent(left: &Value, right: &Value) -> bool {
-    if left == right {
-        return true;
-    }
-    let (Some(left), Some(right)) = (left.as_number(), right.as_number()) else {
-        return false;
-    };
-    if let (Some(left), Some(right)) = (left.as_i64(), right.as_i64()) {
-        return left == right;
-    }
-    if let (Some(left), Some(right)) = (left.as_u64(), right.as_u64()) {
-        return left == right;
-    }
-    left.as_f64()
-        .zip(right.as_f64())
-        .is_some_and(|(left, right)| left == right)
-}
-
-pub(crate) fn result_selector_fields(
-    facade: &FacadeContract,
-    input: &FacadeInputContract,
-) -> Result<Vec<String>, StudyConfigurationError> {
-    let mut fields = Vec::new();
-    for constraint in &facade.result_constraints {
-        let ResultSelectionRule::OrderedUniqueSelection { selector, .. } = constraint else {
-            continue;
-        };
-        let Some((selector_input, field)) = selector.split_once('.') else {
-            return Err(StudyConfigurationService::invalid(
-                "configuration_stale",
-                "结果选择器格式无效",
-            ));
-        };
-        if selector_input == input.alias || selector_input == input.id {
-            fields.push(field.to_string());
-        }
-    }
-    fields.sort();
-    fields.dedup();
-    Ok(fields)
-}
-
-pub(crate) fn apply_result_selector_overrides(
-    facade: &FacadeContract,
-    input: &FacadeInputContract,
-    fields: &mut Value,
-    selected_results: &[String],
-) -> Result<Value, StudyConfigurationError> {
-    let object = fields.as_object_mut().ok_or_else(|| {
-        StudyConfigurationService::invalid("struct_values_invalid", "Struct 参数必须是对象")
-    })?;
-    let mut overrides = serde_json::Map::new();
-    for field in result_selector_fields(facade, input)? {
-        let value = Value::String(selected_results.join(","));
-        object.insert(field.clone(), value.clone());
-        overrides.insert(field, value);
-    }
-    Ok(Value::Object(overrides))
-}
-
-fn preserve_fields(
-    values: &mut Value,
-    baseline: &Value,
-    fields: &[String],
-) -> Result<(), StudyConfigurationError> {
-    let object = values.as_object_mut().ok_or_else(|| {
-        StudyConfigurationService::invalid("struct_values_invalid", "Struct 参数必须是对象")
-    })?;
-    let baseline = baseline.as_object().ok_or_else(|| {
-        StudyConfigurationService::invalid("configuration_stale", "Struct 参数基线无效")
-    })?;
-    for field in fields {
-        if let Some(value) = baseline.get(field) {
-            object.insert(field.clone(), value.clone());
-        } else {
-            object.remove(field);
-        }
-    }
-    Ok(())
-}
-
 fn fold_selector_only_resources(
     resources: Vec<crate::db::models::DataResourceRecord>,
     selector_fields: &[String],
@@ -1495,6 +1423,7 @@ fn configuration_status(
             FacadeInputKind::Model => binding.model_table_name.is_some(),
             FacadeInputKind::Data => binding.resource_id.is_some() || !input.required,
             FacadeInputKind::Struct => {
+                let selector_fields = result_selector_fields(facade, input)?;
                 let values = structs
                     .iter()
                     .find(|value| value.input_name == input.id)
@@ -1506,7 +1435,12 @@ fn configuration_status(
                 let values_valid = values.is_some_and(|mut values| {
                     apply_result_selector_overrides(facade, input, &mut values, &selected_results)
                         .and_then(|_| {
-                            validate_struct_values(service.schema(&input.schema_ref).ok(), &values)
+                            validate_struct_values(
+                                &service.snapshot,
+                                &input.schema_ref,
+                                &values,
+                                &selector_fields,
+                            )
                         })
                         .is_ok()
                 });
@@ -1525,111 +1459,6 @@ fn configuration_status(
     }
     validate_results(facade, results)?;
     Ok(StudyConfigurationState::ReadyToConfirm)
-}
-
-fn validate_struct_values(
-    schema: Option<&DataFrameSchemaContract>,
-    values: &Value,
-) -> Result<(), StudyConfigurationError> {
-    let schema = schema.ok_or_else(|| {
-        StudyConfigurationService::invalid("study_schema_unavailable", "Struct schema 不可用")
-    })?;
-    let object = values.as_object().ok_or_else(|| {
-        StudyConfigurationService::invalid("struct_values_invalid", "Struct 参数必须是对象")
-    })?;
-    let known = schema
-        .fields
-        .iter()
-        .map(|field| field.name.as_str())
-        .collect::<BTreeSet<_>>();
-    if object.keys().any(|name| !known.contains(name.as_str())) {
-        return Err(StudyConfigurationService::invalid(
-            "struct_values_invalid",
-            "Struct 参数包含未知字段",
-        ));
-    }
-    for field in &schema.fields {
-        let value = object.get(&field.name);
-        if field.required && value.is_none() {
-            return Err(StudyConfigurationService::invalid(
-                "struct_values_invalid",
-                "Struct 参数缺少必填字段",
-            ));
-        }
-        if let Some(value) = value {
-            validate_field(field, value)?;
-        }
-    }
-    Ok(())
-}
-
-fn validate_field(
-    field: &SchemaFieldContract,
-    value: &Value,
-) -> Result<(), StudyConfigurationError> {
-    if value.is_null() && field.nullable {
-        return Ok(());
-    }
-    let valid_type = match &field.dtype {
-        DataTypeContract::Primitive { name } | DataTypeContract::Semantic { name } => {
-            match name.as_str() {
-                "str" | "string" => value.is_string(),
-                "bool" => value.is_boolean(),
-                name if name.starts_with('u') || name.starts_with('i') => {
-                    value.as_i64().is_some() || value.as_u64().is_some()
-                }
-                _ => value.is_number(),
-            }
-        }
-        DataTypeContract::Constructor { .. } => value.is_array(),
-    };
-    if !valid_type {
-        return Err(StudyConfigurationService::invalid(
-            "struct_values_invalid",
-            "Struct 参数类型不匹配",
-        ));
-    }
-    if let Some(card) = &field.card {
-        if card.enum_values.state == "values"
-            && !card.enum_values.values.iter().any(|candidate| {
-                candidate == value
-                    || (card.enum_values.case_insensitive
-                        && candidate
-                            .as_str()
-                            .zip(value.as_str())
-                            .is_some_and(|(left, right)| left.eq_ignore_ascii_case(right)))
-            })
-        {
-            return Err(StudyConfigurationService::invalid(
-                "struct_values_invalid",
-                "Struct 参数不在允许枚举中",
-            ));
-        }
-        if card.range.state == "bounded" {
-            let number = value.as_f64().ok_or_else(|| {
-                StudyConfigurationService::invalid("struct_values_invalid", "范围约束要求数值")
-            })?;
-            if let Some(minimum) = card.range.minimum.as_ref().and_then(Value::as_f64) {
-                let inclusive = card.range.minimum_inclusive.unwrap_or(true);
-                if number < minimum || (!inclusive && number == minimum) {
-                    return Err(StudyConfigurationService::invalid(
-                        "struct_values_invalid",
-                        "Struct 参数低于最小值",
-                    ));
-                }
-            }
-            if let Some(maximum) = card.range.maximum.as_ref().and_then(Value::as_f64) {
-                let inclusive = card.range.maximum_inclusive.unwrap_or(true);
-                if number > maximum || (!inclusive && number == maximum) {
-                    return Err(StudyConfigurationService::invalid(
-                        "struct_values_invalid",
-                        "Struct 参数高于最大值",
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 fn validate_results(
