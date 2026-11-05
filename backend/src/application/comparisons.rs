@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use serde_json::{Value, json};
 
 use crate::application::{
@@ -8,6 +6,12 @@ use crate::application::{
 use crate::auth::CurrentUser;
 use crate::db::models::{NewRunComparison, RunComparison};
 use crate::db::repositories::{ComparisonRepo, MessageRepo, ResultRepo, RunDataset, RunRepo};
+
+mod compatibility;
+mod script;
+
+use compatibility::Compatibility;
+use script::render_script;
 
 #[derive(Debug)]
 pub struct ComparisonError {
@@ -101,16 +105,18 @@ impl ComparisonService {
             .list_run(&principal.id, candidate_run_id)
             .await
             .map_err(|_| ComparisonError::new("not_found", "资源不存在"))?;
-        let (left, right, compatibility) = compatible_pair(left, right)?;
+        let pair = Compatibility::select(left, right)?;
+        let compatibility =
+            serde_json::to_value(&pair.facts).expect("compatibility facts are serializable");
         let analysis = self.analysis.run(AnalysisRequest {
             principal: principal.clone(),
             session_id,
             request_message_id,
             intent: json!({"kind":"run_comparison","baselineRunId":baseline_run_id.to_string(),"candidateRunId":candidate_run_id.to_string(),"compatibility":compatibility}),
-            script: comparison_script(&compatibility),
+            script: render_script(&pair.facts),
             inputs: vec![
-                AnalysisInput { source: crate::application::AnalysisInputSource::DatasetId(left.id), alias: "baseline".into() },
-                AnalysisInput { source: crate::application::AnalysisInputSource::DatasetId(right.id), alias: "candidate".into() },
+                AnalysisInput { source: crate::application::AnalysisInputSource::DatasetId(pair.baseline.id), alias: "baseline".into() },
+                AnalysisInput { source: crate::application::AnalysisInputSource::DatasetId(pair.candidate.id), alias: "candidate".into() },
             ],
             expected_outputs: vec!["result".into()],
             skill_refs,
@@ -186,245 +192,6 @@ fn run_snapshot(run: &crate::db::models::SimulationRun) -> String {
     .to_string()
 }
 
-fn compatible_pair(
-    left: Vec<RunDataset>,
-    right: Vec<RunDataset>,
-) -> Result<(RunDataset, RunDataset, Value), ComparisonError> {
-    let by_name = right
-        .into_iter()
-        .map(|dataset| (dataset.result_name.clone(), dataset))
-        .collect::<HashMap<_, _>>();
-    for baseline in left {
-        let Some(candidate) = by_name.get(&baseline.result_name) else {
-            continue;
-        };
-        let baseline_columns: Vec<crate::application::datasets::DatasetColumn> =
-            serde_json::from_str(&baseline.schema_json).unwrap_or_default();
-        let candidate_columns: Vec<crate::application::datasets::DatasetColumn> =
-            serde_json::from_str(&candidate.schema_json).unwrap_or_default();
-        let candidate_by_name = candidate_columns
-            .iter()
-            .map(|column| (column.name.as_str(), column))
-            .collect::<HashMap<_, _>>();
-        let mut keys = baseline_columns
-            .iter()
-            .filter(|column| {
-                let name = column.name.to_ascii_lowercase();
-                (name == "id"
-                    || name == "key"
-                    || name.ends_with("_id")
-                    || name == "name"
-                    || name == "bus"
-                    || name == "kind"
-                    || name == "time"
-                    || name == "time_s")
-                    && rss_identifier(&column.name)
-                    && candidate_by_name
-                        .get(column.name.as_str())
-                        .is_some_and(|other| other.dtype == column.dtype)
-            })
-            .map(|column| column.name.clone())
-            .collect::<Vec<_>>();
-        if keys.is_empty() {
-            continue;
-        }
-        keys.sort();
-        let mut values = Vec::new();
-        for column in &baseline_columns {
-            if keys.contains(&column.name)
-                || !numeric(&column.dtype)
-                || !rss_identifier(&column.name)
-            {
-                continue;
-            }
-            let Some(other) = candidate_by_name.get(column.name.as_str()) else {
-                continue;
-            };
-            if other.dtype != column.dtype {
-                continue;
-            }
-            if other.unit != column.unit {
-                return Err(ComparisonError::new(
-                    "comparison_incompatible",
-                    "同名数值列单位不兼容",
-                ));
-            }
-            values.push(json!({"column":column.name,"dtype":column.dtype,"unit":column.unit}));
-        }
-        if values.is_empty() {
-            continue;
-        }
-        let compatibility = json!({
-            "baselineDatasetId": baseline.id.to_string(),
-            "candidateDatasetId": candidate.id.to_string(),
-            "resultName": baseline.result_name,
-            "stableKeys": keys,
-            "values": values,
-            "baselineSchema": baseline_columns,
-            "candidateSchema": candidate_columns,
-            "dimensions": {"baselineRows":baseline.row_count,"candidateRows":candidate.row_count},
-        });
-        return Ok((baseline, candidate.clone(), compatibility));
-    }
-    Err(ComparisonError::new(
-        "comparison_incompatible",
-        "找不到具有稳定键、兼容数值列和单位的数据集",
-    ))
-}
-
-fn numeric(value: &str) -> bool {
-    ["Int", "UInt", "Float", "Decimal"]
-        .iter()
-        .any(|prefix| value.starts_with(prefix))
-        || value == "int64"
-        || value == "float64"
-}
-
-fn rss_identifier(value: &str) -> bool {
-    let mut chars = value.chars();
-    chars
-        .next()
-        .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
-        && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
-}
-
-fn comparison_script(compatibility: &Value) -> String {
-    let keys = compatibility
-        .get("stableKeys")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect::<Vec<_>>();
-    let values = compatibility
-        .get("values")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|value| value.get("column").and_then(Value::as_str))
-        .collect::<Vec<_>>();
-    let baseline_projection = keys
-        .iter()
-        .map(|column| format!("    col({column})"))
-        .chain(
-            values
-                .iter()
-                .map(|column| format!("    alias(col({column}), baseline_{column})")),
-        )
-        .collect::<Vec<_>>()
-        .join(",\n");
-    let candidate_projection = keys
-        .iter()
-        .map(|column| format!("    col({column})"))
-        .chain(
-            values
-                .iter()
-                .map(|column| format!("    alias(col({column}), candidate_{column})")),
-        )
-        .collect::<Vec<_>>()
-        .join(",\n");
-    let key_list = format!("[{}]", keys.join(", "));
-    let deltas = values
-        .iter()
-        .map(|column| {
-            format!("    alias(col(candidate_{column}) - col(baseline_{column}), delta_{column})")
-        })
-        .collect::<Vec<_>>()
-        .join(",\n");
-    format!(
-        "baseline_selected = select(\n{baseline_projection},\n    baseline\n);\n\
-candidate_selected = select(\n{candidate_projection},\n    candidate\n);\n\
-aligned = join(baseline_selected, candidate_selected, {key_list}, {key_list}, \"full\");\n\
-result = with_columns(\n{deltas},\n    aligned\n);\n"
-    )
-}
-
 fn result_ref(dataset: &RunDataset) -> ResultOutputRef {
     ResultOutputRef::from_dataset(dataset)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{comparison_script, compatible_pair};
-    use crate::db::repositories::RunDataset;
-    use serde_json::json;
-
-    fn dataset(id: i32, unit: Option<&str>, include_value: bool) -> RunDataset {
-        let mut columns = vec![json!({
-            "name":"bus","dtype":"Utf8","nullable":false,"unit":null
-        })];
-        if include_value {
-            columns.push(json!({
-                "name":"load","dtype":"Float64","nullable":false,"unit":unit
-            }));
-            columns.push(json!({
-                "name":"bad-name","dtype":"Float64","nullable":false,"unit":unit
-            }));
-        }
-        RunDataset {
-            id,
-            run_id: Some(id),
-            analysis_run_id: None,
-            artifact_id: Some(id),
-            result_name: "result".into(),
-            schema_json: serde_json::to_string(&columns).unwrap(),
-            schema_hash: format!("schema-{id}"),
-            row_count: 2,
-            size_bytes: 10,
-            created_at_ms: 1,
-            deleted_at_ms: None,
-            tombstone_json: None,
-        }
-    }
-
-    #[test]
-    fn comparison_script_uses_supported_frame_functions() {
-        let script = comparison_script(&json!({
-            "stableKeys": ["bus", "phase"],
-            "values": [
-                {"column":"v_re","dtype":"Float64","unit":"V"},
-                {"column":"v_im","dtype":"Float64","unit":"V"}
-            ]
-        }));
-
-        assert!(script.contains("baseline_selected = select("));
-        assert!(script.contains("candidate_selected = select("));
-        assert!(script.contains("aligned = join("));
-        assert!(script.contains("result = with_columns("));
-        assert!(script.contains("delta_v_re"));
-        assert!(script.contains("delta_v_im"));
-        assert!(!script.contains("compare_frames"));
-        assert!(script.trim_end().ends_with(';'));
-    }
-
-    #[test]
-    fn compatibility_selects_stable_keys_and_excludes_invalid_rss_identifiers() {
-        let (baseline, candidate, facts) = compatible_pair(
-            vec![dataset(1, Some("MW"), true)],
-            vec![dataset(2, Some("MW"), true)],
-        )
-        .unwrap();
-
-        assert_eq!((baseline.id, candidate.id), (1, 2));
-        assert_eq!(facts["stableKeys"], json!(["bus"]));
-        assert_eq!(
-            facts["values"],
-            json!([{"column":"load","dtype":"Float64","unit":"MW"}])
-        );
-    }
-
-    #[test]
-    fn compatibility_rejects_unit_mismatch_and_missing_numeric_values() {
-        let unit_error = compatible_pair(
-            vec![dataset(1, Some("MW"), true)],
-            vec![dataset(2, Some("kW"), true)],
-        )
-        .unwrap_err();
-        assert_eq!(unit_error.code, "comparison_incompatible");
-
-        let empty_error =
-            compatible_pair(vec![dataset(1, None, false)], vec![dataset(2, None, false)])
-                .unwrap_err();
-        assert_eq!(empty_error.code, "comparison_incompatible");
-    }
 }
