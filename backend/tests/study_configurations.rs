@@ -359,6 +359,7 @@ async fn selector_values_are_server_owned_while_user_overrides_remain_private() 
     let baseline_result = card.values.get("result").cloned();
     let mut forged = card.values.clone();
     forged["result"] = json!("forged_result");
+    forged["base_frequency_hz"] = json!(50);
     let next_max_iter = forged["max_iter"].as_i64().unwrap() + 1;
     forged["max_iter"] = json!(next_max_iter);
 

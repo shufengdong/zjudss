@@ -393,6 +393,10 @@ async fn result_contract_rejection_repairs_without_publishing_partial_results() 
     assert_eq!(terminal.status, "succeeded", "{terminal:?}");
     assert_eq!(terminal.corrections_used, 1);
     assert_eq!(terminal.attempts[0].status, "result_rejected");
+    assert_eq!(
+        terminal.attempts[0].diagnostic.as_ref().unwrap()["code"],
+        "result_contract_invalid"
+    );
     assert_eq!(engine.calls().len(), 2);
     let datasets = app
         .state
@@ -405,7 +409,7 @@ async fn result_contract_rejection_repairs_without_publishing_partial_results() 
 }
 
 #[tokio::test]
-async fn cancellation_interrupts_the_author_without_creating_a_candidate() {
+async fn cancellation_during_generation_execution_and_repair_stops_future_work() {
     let author = Arc::new(ScriptedAuthor::default());
     let engine = Arc::new(ScenarioEngine::default());
     author.enqueue(AuthorTurn::Wait("author-blocked".into()));
@@ -449,6 +453,129 @@ async fn cancellation_interrupts_the_author_without_creating_a_candidate() {
     assert_eq!(terminal.status, "cancelled_by_user");
     assert!(terminal.attempts.is_empty());
     assert!(engine.calls().is_empty());
+    assert!(terminal.final_script_resource_id.is_none());
+    assert!(terminal.script_message_id.is_none());
+
+    let author = Arc::new(ScriptedAuthor::default());
+    let engine = Arc::new(ScenarioEngine::default());
+    author.enqueue(script_turn("result = test(table, para);"));
+    author.enqueue(script_turn("result = test(table, para);"));
+    engine.enqueue(EngineScenario::Cancelled {
+        barrier_id: "engine-blocked".into(),
+    });
+    engine.enqueue(success());
+    let app = TestApp::builder()
+        .engine(engine.clone())
+        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
+        .script_author(author.clone())
+        .failure_analyzer(author.clone())
+        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
+    let user = common::test_user("alice@example.com");
+    let workflow = confirm(&app, &user, "cancel-engine").await;
+    let service = app.state.managed_workflow_service.clone();
+    let principal = user.clone();
+    let workflow_id = workflow.id;
+    let running = tokio::spawn(async move {
+        service
+            .execute_confirmed(&principal, workflow_id)
+            .await
+            .unwrap();
+    });
+    assert!(engine.wait_until_blocked("engine-blocked").await);
+    app.state
+        .managed_workflow_service
+        .cancel(&user, workflow.id)
+        .await
+        .unwrap();
+    running.await.unwrap();
+    let terminal = app
+        .state
+        .managed_workflow_service
+        .get(&user, workflow.id)
+        .await
+        .unwrap();
+    assert_eq!(terminal.status, "cancelled_by_user");
+    assert_eq!(engine.calls().len(), 1);
+    assert_eq!(author.trace(), vec!["generate"]);
+    assert!(terminal.final_script_resource_id.is_some());
+    assert!(terminal.script_message_id.is_some());
+    assert!(
+        app.state
+            .run_service
+            .datasets(&user, terminal.run_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let author = Arc::new(ScriptedAuthor::default());
+    let engine = Arc::new(ScenarioEngine::default());
+    author.enqueue(script_turn("result = test(table, para);"));
+    author.enqueue(AuthorTurn::Wait("repair-blocked".into()));
+    author.enqueue(script_turn("result = test(table, para);"));
+    author.enqueue_analysis(Ok(FailureAnalysis {
+        summary: "引擎拒绝当前脚本".into(),
+        facts: vec![],
+        possible_causes: vec![],
+        unknowns: vec![],
+        recommendations: vec!["修复脚本".into()],
+    }));
+    engine.enqueue(EngineScenario::Failure {
+        code: "engine_exit_nonzero".into(),
+        stderr: b"parse failed".to_vec(),
+        exit_code: 7,
+    });
+    engine.enqueue(success());
+    let app = TestApp::builder()
+        .engine(engine.clone())
+        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
+        .script_author(author.clone())
+        .failure_analyzer(author.clone())
+        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
+    let user = common::test_user("alice@example.com");
+    let workflow = confirm(&app, &user, "cancel-repair").await;
+    let service = app.state.managed_workflow_service.clone();
+    let principal = user.clone();
+    let workflow_id = workflow.id;
+    let running = tokio::spawn(async move {
+        service
+            .execute_confirmed(&principal, workflow_id)
+            .await
+            .unwrap();
+    });
+    assert!(author.wait_until_blocked("repair-blocked").await);
+    app.state
+        .managed_workflow_service
+        .cancel(&user, workflow.id)
+        .await
+        .unwrap();
+    running.await.unwrap();
+    let terminal = app
+        .state
+        .managed_workflow_service
+        .get(&user, workflow.id)
+        .await
+        .unwrap();
+    assert_eq!(terminal.status, "cancelled_by_user");
+    assert_eq!(engine.calls().len(), 1);
+    assert_eq!(
+        author.trace(),
+        vec!["generate", "analyze_failure", "repair"]
+    );
+    assert!(terminal.final_script_resource_id.is_some());
+    assert!(terminal.script_message_id.is_some());
+    assert!(
+        app.state
+            .run_service
+            .datasets(&user, terminal.run_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]

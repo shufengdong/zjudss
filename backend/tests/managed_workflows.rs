@@ -847,6 +847,102 @@ async fn confirmation_missing_owned_artifact_rolls_back_without_partial_workflow
 }
 
 #[tokio::test]
+async fn later_overlay_failure_cleans_earlier_material() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "later overlay cleanup", 1)
+        .await
+        .unwrap();
+    let configuration = ready_study(&app, &user, session.id).await;
+    let mut prepared = app
+        .state
+        .study_configuration_service
+        .prepare_confirmation(&user, configuration.id, configuration.revision)
+        .await
+        .unwrap();
+    let mut invalid_later_overlay = prepared.struct_overlays[0].clone();
+    invalid_later_overlay.input_id = "invalid-later-overlay".into();
+    invalid_later_overlay.schema_ref = "frames.missing".into();
+    prepared.struct_overlays.push(invalid_later_overlay);
+
+    let before_usage = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
+    let before_counts = {
+        let mut conn = app.pool.get().unwrap();
+        (
+            zjudss::db::schema::storage_scope_artifacts::table
+                .filter(
+                    zjudss::db::schema::storage_scope_artifacts::storage_scope_id
+                        .eq(user.storage_scope_id),
+                )
+                .count()
+                .get_result::<i64>(&mut conn)
+                .unwrap(),
+            zjudss::db::schema::managed_workflows::table
+                .count()
+                .get_result::<i64>(&mut conn)
+                .unwrap(),
+            zjudss::db::schema::simulation_runs::table
+                .count()
+                .get_result::<i64>(&mut conn)
+                .unwrap(),
+            zjudss::db::schema::workflow_input_snapshots::table
+                .count()
+                .get_result::<i64>(&mut conn)
+                .unwrap(),
+        )
+    };
+
+    let error = app
+        .state
+        .data_resource_service
+        .materialize_study_struct_overlays(&user, &prepared)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "configuration_stale");
+
+    let after_usage = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
+    let mut conn = app.pool.get().unwrap();
+    let after_counts = (
+        zjudss::db::schema::storage_scope_artifacts::table
+            .filter(
+                zjudss::db::schema::storage_scope_artifacts::storage_scope_id
+                    .eq(user.storage_scope_id),
+            )
+            .count()
+            .get_result::<i64>(&mut conn)
+            .unwrap(),
+        zjudss::db::schema::managed_workflows::table
+            .count()
+            .get_result::<i64>(&mut conn)
+            .unwrap(),
+        zjudss::db::schema::simulation_runs::table
+            .count()
+            .get_result::<i64>(&mut conn)
+            .unwrap(),
+        zjudss::db::schema::workflow_input_snapshots::table
+            .count()
+            .get_result::<i64>(&mut conn)
+            .unwrap(),
+    );
+    assert_eq!(after_counts, before_counts);
+    assert_eq!(after_usage.used_artifacts, before_usage.used_artifacts);
+    assert_eq!(after_usage.used_bytes, before_usage.used_bytes);
+}
+
+#[tokio::test]
 async fn private_struct_overlay_rejects_a_stale_source_hash() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
@@ -1397,6 +1493,7 @@ async fn rerun_rejects_same_alias_resource_for_struct_snapshot_without_effective
         )
         .await
         .unwrap_err();
+    assert_eq!(error.to_string(), "冻结输入的来源已经变化");
     assert!(matches!(
         error,
         zjudss::application::RunError::ConfigurationStale
@@ -1530,6 +1627,7 @@ async fn private_struct_override_keeps_the_facade_alias_for_engine_injection() {
         )
         .await
         .unwrap_err();
+    assert_eq!(unrelated_error.to_string(), "冻结输入的来源已经变化");
     assert!(matches!(
         unrelated_error,
         zjudss::application::RunError::ConfigurationStale

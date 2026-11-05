@@ -16,7 +16,7 @@ use zjudss::agent::{
 use zjudss::application::{CreateScriptRequest, PublishDraftRequest, ScriptSource};
 
 #[cfg(feature = "e2e-test")]
-use zjudss::testing::{EngineScenario, ScenarioEngine, ScriptedAuthor};
+use zjudss::testing::{EngineScenario, IdDatasetFixture, ScenarioEngine, ScriptedAuthor};
 
 #[cfg(feature = "e2e-test")]
 #[derive(Default)]
@@ -938,12 +938,35 @@ async fn runs_and_result_lists_are_session_and_user_scoped() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
+    let foreign_replay = post_run(&app, &foreign, &script_id, "scope-run").await;
+    assert_eq!(foreign_replay.status(), StatusCode::NOT_FOUND);
+    let owner_replay = post_run(&app, &cookie, &script_id, "scope-run").await;
+    assert_eq!(owner_replay.status(), StatusCode::OK);
+    let owner_replay: Value = serde_json::from_slice(
+        &to_bytes(owner_replay.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(owner_replay["run"]["id"], run_id);
+    assert_eq!(owner_replay["replayed"], true);
     let _ = user;
 }
 
 #[tokio::test]
 async fn manual_script_runs_once_without_an_active_model_and_freezes_its_message_anchor() {
-    let app = TestApp::spawn().await;
+    let engine = Arc::new(ScenarioEngine::default());
+    engine.enqueue(EngineScenario::IdSuccess(vec![
+        IdDatasetFixture {
+            name: "result".into(),
+            ids: vec!["row-1".into()],
+        },
+        IdDatasetFixture {
+            name: "manual_extra".into(),
+            ids: vec!["row-1".into()],
+        },
+    ]));
+    let app = TestApp::builder().engine(engine).spawn().await;
     let user = common::test_user("alice@example.com");
     let cookie = app.login_cookie("alice@example.com").await;
     let session = app
@@ -991,4 +1014,8 @@ async fn manual_script_runs_once_without_an_active_model_and_freezes_its_message
     .unwrap();
     assert_eq!(run.status, "succeeded", "{:?}", run.error_json);
     assert_eq!(run.run_kind, "manual");
+    let datasets = app.state.run_service.datasets(&user, run.id).await.unwrap();
+    assert_eq!(datasets.len(), 2);
+    assert_eq!(datasets[0].result_name, "manual_extra");
+    assert_eq!(datasets[1].result_name, "result");
 }
