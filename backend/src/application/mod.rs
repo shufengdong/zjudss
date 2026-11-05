@@ -173,6 +173,7 @@ pub struct AppStateDependencies {
     pub pool: DbPool,
     pub engine: Arc<dyn SimEngine>,
     pub agent_factory: Arc<dyn AgentFactory>,
+    pub agent_knowledge: Arc<AgentKnowledge>,
     pub auth: AuthService,
     pub scheduler: RunScheduler,
 }
@@ -226,6 +227,7 @@ impl AppState {
             pool,
             engine,
             agent_factory,
+            agent_knowledge,
             auth,
             scheduler,
         } = dependencies;
@@ -353,9 +355,6 @@ impl AppState {
             ResultRepo::new(pool.clone()),
             ChartViewRepo::new(pool.clone()),
             artifact_service.clone(),
-        );
-        let agent_knowledge = Arc::new(
-            AgentKnowledge::load_embedded("v4.4.0").expect("内置 agent knowledge 已在构建时校验"),
         );
         let analysis_service = AnalysisService::new(
             AnalysisRepo::new(pool.clone()),

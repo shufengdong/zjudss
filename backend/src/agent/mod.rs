@@ -4,9 +4,6 @@
 //! preamble / tools / temperature 都在分支之外，保证多个 provider 共用同一份组装逻辑。
 //! 流式驱动（`run_channel`）在 `application::chat` 层做（architecture §8）。
 
-use rig::Agent;
-use rig::tool::RegisteredTool;
-
 mod factory;
 mod failure_analyzer;
 pub mod knowledge;
@@ -22,9 +19,6 @@ pub use script_author::{
     EngineDocRef, LlmScriptAuthor, ScriptAuthor, ScriptAuthorError, ScriptGenerationRequest,
     ScriptRepairRequest,
 };
-
-const SYSTEM_PROMPT: &str = include_str!("../../resources/agent/v4/system.md");
-const SKILL_INDEX: &str = include_str!("../../resources/agent/v4/skill-index.json");
 
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
@@ -82,19 +76,3 @@ impl std::fmt::Display for LlmError {
 }
 
 impl std::error::Error for LlmError {}
-
-/// 依据 `config.provider` 选择模型，然后在 provider 无关的公共逻辑里组装 agent。
-pub fn build_agent_with_prompt(
-    config: &LlmConfig,
-    tools: Vec<RegisteredTool>,
-    prompt: String,
-) -> Result<Agent, LlmError> {
-    LlmAgentFactory::new(config.clone()).build(AgentBuildRequest {
-        tools,
-        system_prompt: prompt,
-    })
-}
-
-pub fn build_agent(config: &LlmConfig, tools: Vec<RegisteredTool>) -> Result<Agent, LlmError> {
-    build_agent_with_prompt(config, tools, format!("{SYSTEM_PROMPT}\n\n{SKILL_INDEX}"))
-}

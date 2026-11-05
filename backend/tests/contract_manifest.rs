@@ -137,19 +137,49 @@ fn contract_manifest_contains_all_public_enums() {
         ]
     );
     assert_eq!(manifest.tool_names.len(), 23);
-    assert!(!manifest.tool_names.contains(&"create_dataset_view"));
-    assert!(manifest.tool_names.contains(&"publish_model_version"));
-    assert!(!manifest.tool_names.contains(&"create_script"));
-    assert!(manifest.tool_names.contains(&"search_study_facades"));
-    assert!(manifest.tool_names.contains(&"prepare_study"));
-    assert!(manifest.tool_names.contains(&"update_study_results"));
+    assert!(
+        !manifest
+            .tool_names
+            .iter()
+            .any(|tool| tool == "create_dataset_view")
+    );
+    assert!(
+        manifest
+            .tool_names
+            .iter()
+            .any(|tool| tool == "publish_model_version")
+    );
+    assert!(
+        !manifest
+            .tool_names
+            .iter()
+            .any(|tool| tool == "create_script")
+    );
+    assert!(
+        manifest
+            .tool_names
+            .iter()
+            .any(|tool| tool == "search_study_facades")
+    );
+    assert!(
+        manifest
+            .tool_names
+            .iter()
+            .any(|tool| tool == "prepare_study")
+    );
+    assert!(
+        manifest
+            .tool_names
+            .iter()
+            .any(|tool| tool == "update_study_results")
+    );
     for tool in [
         "list_data_resources",
         "read_data_resource",
         "update_data_resource_alias",
         "promote_result_dataset",
     ] {
-        assert!(manifest.tool_names.contains(&tool));
+        assert!(manifest.tool_names.iter().any(|name| name == tool));
     }
     assert_eq!(
         manifest.skill_ids,

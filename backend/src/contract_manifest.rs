@@ -3,7 +3,6 @@ use serde::Serialize;
 use crate::agent::knowledge::{AgentKnowledge, KnowledgeError};
 use crate::api::{RouteContract, route_manifest};
 use crate::application::{MESSAGE_TYPES, charting::VISUALIZATION_KINDS};
-use crate::tools::registered_tool_names;
 
 pub const UPLOAD_FORMATS: &[&str] = &[
     "dss",
@@ -188,7 +187,7 @@ pub struct ContractManifest {
     pub changes: Vec<&'static str>,
     pub routes: Vec<RouteContract>,
     pub message_types: Vec<&'static str>,
-    pub tool_names: Vec<&'static str>,
+    pub tool_names: Vec<String>,
     pub skill_ids: Vec<String>,
     pub upload_sources: Vec<&'static str>,
     pub visualization_kinds: Vec<&'static str>,
@@ -220,7 +219,7 @@ pub fn contract_manifest() -> Result<ContractManifest, KnowledgeError> {
         ],
         routes: route_manifest(),
         message_types: MESSAGE_TYPES.to_vec(),
-        tool_names: registered_tool_names().to_vec(),
+        tool_names: knowledge.manifest.allowed_tools.clone(),
         skill_ids,
         upload_sources: UPLOAD_FORMATS.to_vec(),
         visualization_kinds: VISUALIZATION_KINDS.to_vec(),

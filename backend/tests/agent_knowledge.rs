@@ -192,6 +192,25 @@ fn preflight_rejects_missing_tampered_or_unsafe_skills() {
 }
 
 #[test]
+fn preflight_rejects_duplicate_allowed_tools() {
+    let content = "skill".to_string();
+    let files = BTreeMap::from([("skills/a.md".to_string(), content.clone())]);
+    let index = json!({
+        "bundleVersion":"test",
+        "skills":[skill("a", "skills/a.md", "known_tool", &content)]
+    });
+    let (manifest, index, system, files) = fixture(index, files);
+    let mut manifest: Value = serde_json::from_str(&manifest).unwrap();
+    manifest["allowedTools"] = json!(["known_tool", "known_tool"]);
+
+    let error =
+        AgentKnowledge::load_from_parts("test", &manifest.to_string(), &index, &system, files)
+            .unwrap_err();
+
+    assert_eq!(error.code(), "duplicate_allowed_tool");
+}
+
+#[test]
 fn preflight_rejects_bundle_and_engine_contract_mismatch() {
     let content = "skill".to_string();
     let files = BTreeMap::from([("skills/a.md".to_string(), content.clone())]);

@@ -40,6 +40,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let process_engine = adapters::ProcessEngine::from_env()?;
     let binary_sha256 = process_engine.binary_sha256().to_string();
     let knowledge = AgentKnowledge::load_embedded(&runtime.agent_bundle_version)?;
+    zjudss::tools::validate_tool_catalog(&knowledge.manifest)?;
     let engine_resources = EngineResourceRegistry::load(&runtime.sparrowzz_dir)?;
     let (engine_resources, snapshot_path) =
         EngineResourceRegistry::publish(engine_resources, &runtime.data_dir)?;
@@ -68,6 +69,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     );
     eprintln!("[config] tensoreval sha256 = {binary_sha256}");
 
+    let knowledge = std::sync::Arc::new(knowledge);
     let storage_limits = StorageLimits {
         artifact_limit: i64::try_from(runtime.user_artifact_limit)?,
         byte_limit: i64::try_from(runtime.user_storage_limit_bytes)?,
@@ -115,6 +117,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             pool,
             engine,
             agent_factory: std::sync::Arc::new(LlmAgentFactory::new(llm)),
+            agent_knowledge: knowledge,
             auth,
             scheduler,
         },

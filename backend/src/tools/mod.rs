@@ -7,7 +7,6 @@
 //! 收敛，以落实 AGENTS.md 的边界约束。
 
 pub mod compare_simulations;
-pub mod create_script;
 pub mod get_storage_usage;
 pub mod inspect_example;
 pub mod inspect_workspace;
@@ -39,11 +38,11 @@ use rig::tool::{RegisteredTool, Tool};
 use tokio::sync::{Mutex, Semaphore};
 
 use crate::adapters::SimEngine;
-use crate::agent::knowledge::AgentKnowledge;
+use crate::agent::knowledge::{AgentKnowledge, AgentManifest};
 use crate::application::{
     AnalysisService, ArtifactService, ComparisonService, DataResourceService, DatasetService,
     EventWriter, HistoryService, ModelDataFrameReadService, ModelPatchService, RunService,
-    ScriptService, StudyConfigurationService, VersionService,
+    StudyConfigurationService, VersionService,
 };
 use crate::auth::{CurrentUser, UserId};
 use crate::db::models::DraftRef;
@@ -62,7 +61,6 @@ pub struct ToolServices {
     pub principal: CurrentUser,
     pub model_patch: ModelPatchService,
     pub model_dataframes: ModelDataFrameReadService,
-    pub scripts: ScriptService,
     pub versions: VersionService,
     pub runs: RunService,
     pub engine_snapshot: Arc<EngineResourceSnapshot>,
@@ -269,24 +267,109 @@ impl ToolServices {
     }
 }
 
-macro_rules! define_tool_registry {
-    ($( $module:ident :: $tool:ident ),+ $(,)?) => {
-        pub fn registered_tool_names() -> &'static [&'static str] {
-            &[$(<$module::$tool as Tool>::NAME),+]
-        }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCatalogError {
+    code: &'static str,
+    tool: String,
+}
 
-        /// 每请求装配一套有状态工具（§5）。
-        pub fn build_tools(services: Arc<ToolServices>) -> Vec<RegisteredTool> {
-            vec![$(
-                RegisteredTool::from_tool(support::DomainToolAdapter::new(
-                    $module::$tool::new(services.clone())
-                ))
+impl ToolCatalogError {
+    fn new(code: &'static str, tool: impl Into<String>) -> Self {
+        Self {
+            code,
+            tool: tool.into(),
+        }
+    }
+
+    pub fn code(&self) -> &'static str {
+        self.code
+    }
+}
+
+impl std::fmt::Display for ToolCatalogError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.code, self.tool)
+    }
+}
+
+impl std::error::Error for ToolCatalogError {}
+
+#[derive(Clone, Copy)]
+struct ToolDefinition {
+    name: &'static str,
+    build: fn(Arc<ToolServices>) -> RegisteredTool,
+}
+
+macro_rules! define_tool_catalog {
+    ($( $module:ident :: $tool:ident ),+ $(,)?) => {
+        fn tool_definitions() -> &'static [ToolDefinition] {
+            &[$(
+                ToolDefinition {
+                    name: <$module::$tool as Tool>::NAME,
+                    build: |services| RegisteredTool::from_tool(
+                        support::DomainToolAdapter::new($module::$tool::new(services))
+                    ),
+                }
             ),+]
         }
     };
 }
 
-define_tool_registry!(
+pub fn tool_implementation_names() -> Vec<&'static str> {
+    tool_definitions()
+        .iter()
+        .map(|definition| definition.name)
+        .collect()
+}
+
+pub fn validate_tool_catalog(manifest: &AgentManifest) -> Result<(), ToolCatalogError> {
+    let mut implementations = BTreeSet::new();
+    for definition in tool_definitions() {
+        if !implementations.insert(definition.name) {
+            return Err(ToolCatalogError::new(
+                "agent_tool_implementation_duplicate",
+                definition.name,
+            ));
+        }
+    }
+    let allowed = manifest
+        .allowed_tools
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if let Some(tool) = allowed.difference(&implementations).next() {
+        return Err(ToolCatalogError::new(
+            "agent_tool_implementation_missing",
+            *tool,
+        ));
+    }
+    if let Some(tool) = implementations.difference(&allowed).next() {
+        return Err(ToolCatalogError::new(
+            "agent_tool_manifest_entry_missing",
+            *tool,
+        ));
+    }
+    Ok(())
+}
+
+/// 每请求按已经校验的 manifest 顺序装配一套有状态工具（§5）。
+pub fn build_tools(services: Arc<ToolServices>) -> Vec<RegisteredTool> {
+    services
+        .agent_knowledge
+        .manifest
+        .allowed_tools
+        .iter()
+        .map(|name| {
+            let definition = tool_definitions()
+                .iter()
+                .find(|definition| definition.name == name)
+                .expect("agent tool catalog was validated during startup");
+            (definition.build)(services.clone())
+        })
+        .collect()
+}
+
+define_tool_catalog!(
     inspect_workspace::InspectWorkspaceTool,
     read_model_dataframe::ReadModelDataFrameTool,
     search_study_facades::SearchStudyFacadesTool,

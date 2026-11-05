@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::adapters::SimEngine;
+use crate::agent::knowledge::AgentKnowledge;
 use crate::agent::{AgentFactory, FailureAnalyzer, ScriptAuthor};
 use crate::application::{
     AppState, AppStateDependencies, AppStateOptions, RunScheduler, StorageLimits,
@@ -32,6 +33,7 @@ pub struct E2eAppDependencies {
     pub engine: Arc<dyn SimEngine>,
     pub auth: AuthService,
     pub engine_snapshot: Arc<EngineResourceSnapshot>,
+    pub agent_knowledge: Arc<AgentKnowledge>,
 }
 
 pub struct E2eAppOptions {
@@ -52,6 +54,11 @@ pub fn build_e2e_app(
     options: E2eAppOptions,
 ) -> AppState {
     let (engine_snapshot, _) = prepare_engine_fixture(&data_dir, options.catalog_mode);
+    let agent_knowledge = Arc::new(
+        AgentKnowledge::load_embedded("v4.4.0").expect("load embedded agent knowledge for E2E"),
+    );
+    crate::tools::validate_tool_catalog(&agent_knowledge.manifest)
+        .expect("validate embedded agent tool catalog for E2E");
     assemble_e2e_app(
         E2eAppDependencies {
             pool,
@@ -60,6 +67,7 @@ pub fn build_e2e_app(
             engine,
             auth,
             engine_snapshot,
+            agent_knowledge,
         },
         options,
     )
@@ -73,6 +81,7 @@ pub fn assemble_e2e_app(dependencies: E2eAppDependencies, options: E2eAppOptions
         engine,
         auth,
         engine_snapshot,
+        agent_knowledge,
     } = dependencies;
     let (
         storage_limits,
@@ -133,6 +142,7 @@ pub fn assemble_e2e_app(dependencies: E2eAppDependencies, options: E2eAppOptions
             pool,
             engine,
             agent_factory,
+            agent_knowledge,
             auth,
             scheduler: options.scheduler,
         },

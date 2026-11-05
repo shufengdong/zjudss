@@ -134,8 +134,18 @@ impl AgentKnowledge {
             skill_index_json.as_bytes(),
             &manifest.skill_index_sha256,
         )?;
-        let allowed_tools: HashSet<&str> =
-            manifest.allowed_tools.iter().map(String::as_str).collect();
+        let mut allowed_tools = HashSet::new();
+        for tool in &manifest.allowed_tools {
+            if tool.trim().is_empty() {
+                return Err(KnowledgeError::new(
+                    "allowed_tool_invalid",
+                    "工具名称不能为空",
+                ));
+            }
+            if !allowed_tools.insert(tool.as_str()) {
+                return Err(KnowledgeError::new("duplicate_allowed_tool", tool));
+            }
+        }
         let mut ids = HashSet::new();
         let mut skills = BTreeMap::new();
         for metadata in index.skills {

@@ -32,7 +32,6 @@ fn tool_services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
         principal,
         model_patch: app.state.model_patch_service.clone(),
         model_dataframes: app.state.model_dataframe_read_service.clone(),
-        scripts: app.state.script_service.clone(),
         versions: app.state.version_service.clone(),
         runs: app.state.run_service.clone(),
         engine_snapshot: app.state.engine_snapshot.clone(),

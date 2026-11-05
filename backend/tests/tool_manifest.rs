@@ -48,7 +48,6 @@ fn services_for_session(
         principal,
         model_patch: app.state.model_patch_service.clone(),
         model_dataframes: app.state.model_dataframe_read_service.clone(),
-        scripts: app.state.script_service.clone(),
         versions: app.state.version_service.clone(),
         runs: app.state.run_service.clone(),
         engine_snapshot: app.state.engine_snapshot.clone(),
@@ -196,11 +195,9 @@ async fn data_resource_tools_list_read_rename_and_promote_owned_session_resource
 
 #[test]
 fn manifest_allowed_tools_equal_runtime_registry() {
-    let mut manifest = AgentKnowledge::load_embedded("v4.4.0")
-        .unwrap()
-        .manifest
-        .allowed_tools;
-    let mut runtime = tools::registered_tool_names()
+    let knowledge = AgentKnowledge::load_embedded("v4.4.0").unwrap();
+    let mut manifest = knowledge.manifest.allowed_tools.clone();
+    let mut runtime = tools::tool_implementation_names()
         .iter()
         .map(|name| (*name).to_string())
         .collect::<Vec<_>>();
@@ -222,6 +219,36 @@ fn manifest_allowed_tools_equal_runtime_registry() {
         manifest, runtime,
         "manifest and runtime tool registries must be bidirectionally equal"
     );
+}
+
+#[test]
+fn tool_catalog_rejects_a_manifest_tool_without_an_implementation() {
+    let mut knowledge = AgentKnowledge::load_embedded("v4.4.0").unwrap();
+    knowledge
+        .manifest
+        .allowed_tools
+        .push("missing_implementation".into());
+
+    let error = tools::validate_tool_catalog(&knowledge.manifest).unwrap_err();
+
+    assert_eq!(error.code(), "agent_tool_implementation_missing");
+}
+
+#[tokio::test]
+async fn tool_registration_follows_manifest_order() {
+    let app = TestApp::spawn().await;
+    let mut knowledge = (*app.state.agent_knowledge).clone();
+    knowledge.manifest.allowed_tools.reverse();
+    let expected = knowledge.manifest.allowed_tools.clone();
+    let mut services = services(&app, principal("alice"));
+    Arc::get_mut(&mut services).unwrap().agent_knowledge = Arc::new(knowledge);
+
+    let actual = tools::build_tools(services)
+        .iter()
+        .map(|tool| tool.name().to_string())
+        .collect::<Vec<_>>();
+
+    assert_eq!(actual, expected);
 }
 
 #[tokio::test]

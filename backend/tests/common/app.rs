@@ -110,8 +110,12 @@ impl TestAppBuilder {
             Some(live_engine_root.clone()),
         )
         .expect("build isolated test config");
-        AgentKnowledge::load_embedded(&config.agent_bundle_version)
-            .expect("preflight embedded agent knowledge");
+        let agent_knowledge = Arc::new(
+            AgentKnowledge::load_embedded(&config.agent_bundle_version)
+                .expect("preflight embedded agent knowledge"),
+        );
+        zjudss::tools::validate_tool_catalog(&agent_knowledge.manifest)
+            .expect("preflight embedded agent tool catalog");
 
         let pool = db::establish_pool(&config.database_url).expect("create test database pool");
         {
@@ -145,6 +149,7 @@ impl TestAppBuilder {
                 agent_factory: self.agent_factory,
                 auth: AuthService::new(pool.clone(), self.ttl, self.secure),
                 engine_snapshot,
+                agent_knowledge,
             },
             E2eAppOptions {
                 scheduler,
