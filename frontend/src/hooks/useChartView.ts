@@ -1,29 +1,28 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ApiError, getChartViewData } from '../api/client'
 import type { ChartModel } from '../types'
+import { useRequestGate } from './useRequestGate'
 
 export function useChartView(id: string | null) {
   const [data, setData] = useState<ChartModel | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const generation = useRef(0)
+  const { begin, isCurrent } = useRequestGate()
   useEffect(() => {
-    const request = ++generation.current
-    const controller = new AbortController()
+    const request = begin()
     setData(null)
     setError(null)
     setLoading(Boolean(id))
-    if (!id) return () => controller.abort()
-    void getChartViewData(id, controller.signal).then(value => {
-      if (generation.current === request) setData(value)
+    if (!id) return
+    void getChartViewData(id, request.signal).then(value => {
+      if (isCurrent(request)) setData(value)
     }).catch(value => {
-      if (generation.current !== request || controller.signal.aborted) return
+      if (!isCurrent(request)) return
       const detail = value instanceof ApiError && value.details ? `（${JSON.stringify(value.details)}）` : ''
       setError((value instanceof Error ? value.message : '图表加载失败') + detail)
     }).finally(() => {
-      if (generation.current === request) setLoading(false)
+      if (isCurrent(request)) setLoading(false)
     })
-    return () => controller.abort()
-  }, [id])
+  }, [begin, id, isCurrent])
   return { data, error, loading }
 }

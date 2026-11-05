@@ -39,4 +39,16 @@ describe('useDataResources', () => {
     expect(listDataResources).toHaveBeenLastCalledWith('s', { cursor: 'cursor-2', limit: 50 })
     expect(result.current.resources.map(value => value.id)).toEqual(['a', 'b'])
   })
+
+  it('lets an explicit reload supersede an older request in the same session', async () => {
+    let release!: (value: Awaited<ReturnType<typeof listDataResources>>) => void
+    vi.mocked(listDataResources)
+      .mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+      .mockResolvedValueOnce({ resources: [resource('current', 's')], nextCursor: null })
+    const { result } = renderHook(() => useDataResources('s'))
+    await act(async () => result.current.reload())
+    expect(result.current.resources.map(value => value.id)).toEqual(['current'])
+    await act(async () => release({ resources: [resource('obsolete', 's')], nextCursor: null }))
+    expect(result.current.resources.map(value => value.id)).toEqual(['current'])
+  })
 })

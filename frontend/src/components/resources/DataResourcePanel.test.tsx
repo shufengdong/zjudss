@@ -50,6 +50,24 @@ describe('DataResourcePanel', () => {
     await waitFor(() => expect(deleteDataResource).toHaveBeenCalledWith('curve', 'token'))
   })
 
+  it('refreshes deletion impact after a stale token and retries with the new token', async () => {
+    const preview = (impactToken:string,pendingConfigurationCount:number) => ({
+      impactToken, resourceId: 'curve', displayName: '负荷曲线', alias: 'load_curve', sizeBytes: 20,
+      pendingConfigurationCount, frozenReferenceCount: 2, historicalReferenceCount: 3, expiresAtMs: 10,
+    })
+    vi.mocked(previewDataResourceDeletion).mockResolvedValueOnce(preview('old-token',1)).mockResolvedValueOnce(preview('new-token',4))
+    vi.mocked(deleteDataResource).mockRejectedValueOnce(new Error('删除影响已变化')).mockResolvedValueOnce({ resourceId: 'curve', tombstone: {} })
+    render(<DataResourcePanel sessionId="s" batches={[]} notify={vi.fn()} onChanged={vi.fn()} />)
+    const curve = (await screen.findByText('负荷曲线')).closest('article')!
+    fireEvent.click(within(curve).getByRole('button', { name: '删除' }))
+    expect(await screen.findByRole('dialog',{name:'删除数据文件'})).toHaveTextContent('1 个未确认配置')
+    fireEvent.click(screen.getByRole('button',{name:'确认删除'}))
+    expect(await screen.findByRole('alert')).toHaveTextContent('删除影响已变化')
+    await waitFor(()=>expect(screen.getByRole('dialog',{name:'删除数据文件'})).toHaveTextContent('4 个未确认配置'))
+    fireEvent.click(screen.getByRole('button',{name:'确认删除'}))
+    await waitFor(()=>expect(deleteDataResource).toHaveBeenLastCalledWith('curve','new-token'))
+  })
+
   it('requires one of the three explicit actions for a replacement batch', async () => {
     const actions = {
       updateParseSettings: vi.fn(), updateCandidates: vi.fn().mockResolvedValue(undefined),

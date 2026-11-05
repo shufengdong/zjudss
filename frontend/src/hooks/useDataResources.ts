@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listDataResources } from '../api/client'
+import { mergeByStableId } from '../state/mergeByStableId'
 import type { DataResourceView } from '../types'
-
-const mergeResources = (previous: DataResourceView[], next: DataResourceView[]) => {
-  const values = new Map(previous.map(resource => [resource.id, resource]))
-  next.forEach(resource => values.set(resource.id, resource))
-  return Array.from(values.values())
-}
 
 export function useDataResources(sessionId: string | null) {
   const [resources, setResources] = useState<DataResourceView[]>([])
@@ -17,13 +12,13 @@ export function useDataResources(sessionId: string | null) {
 
   const load = useCallback(async (cursor?: string, append = false) => {
     if (!sessionId) return
-    const current = generation.current
+    const current = append ? generation.current : ++generation.current
     setLoading(true)
     setError(null)
     try {
       const page = await listDataResources(sessionId, { cursor, limit: 50 })
       if (generation.current !== current) return
-      setResources(previous => append ? mergeResources(previous, page.resources) : page.resources)
+      setResources(previous => append ? mergeByStableId(previous, page.resources) : page.resources)
       setNextCursor(page.nextCursor)
     } catch (cause) {
       if (generation.current === current) setError(cause instanceof Error ? cause.message : '数据文件加载失败')

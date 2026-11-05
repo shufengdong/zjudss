@@ -15,7 +15,7 @@ describe('DataResourceWorkbench',()=>{
     expect(await screen.findByText('负荷预测')).toBeInTheDocument()
     expect(screen.getByText('1')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button',{name:'加载更多'}))
-    await waitFor(()=>expect(getDataResourceRows).toHaveBeenLastCalledWith('r',{cursor:'next',limit:100}))
+    await waitFor(()=>expect(getDataResourceRows).toHaveBeenLastCalledWith('r',{cursor:'next',limit:100},expect.any(AbortSignal)))
     expect(screen.getByText('2')).toBeInTheDocument()
   })
 })

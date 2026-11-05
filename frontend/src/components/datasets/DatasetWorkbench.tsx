@@ -1,8 +1,8 @@
-import{useEffect,useState}from'react';import{downloadDataset}from'../../api/client';import{useDataset}from'../../hooks/useDataset';import{useDatasetView}from'../../hooks/useDatasetView'
+import{useEffect,useState}from'react';import{downloadDataset}from'../../api/client';import{useDataset}from'../../hooks/useDataset';import{useChartView}from'../../hooks/useChartView'
 import DatasetTable from'./DatasetTable';import ChartRenderer from'./ChartRenderer';import ChartBuilder from'./ChartBuilder'
 export default function DatasetWorkbench({datasetId,onClose,onDeleted,onOpenChart,notify=()=>{}}:{datasetId:string;onClose:()=>void;onDeleted?:()=>void;onOpenChart?:(viewId:string)=>void;notify?:(text:string)=>void}){
   const[selectedColumns,setSelectedColumns]=useState<string[]|null>(null)
-  const{metadata,page,loading,error,loadMore,remove,reload}=useDataset(datasetId,selectedColumns??undefined),[viewId,setViewId]=useState<string|null>(null),[builder,setBuilder]=useState(false),view=useDatasetView(viewId)
+  const{metadata,page,loading,error,loadMore,remove,reload}=useDataset(datasetId,selectedColumns??undefined),[viewId,setViewId]=useState<string|null>(null),[builder,setBuilder]=useState(false),view=useChartView(viewId)
   useEffect(()=>{setSelectedColumns(null);setViewId(null);setBuilder(false)},[datasetId])
   const toggleColumn=(name:string)=>{if(!metadata)return;const all=metadata.columns.map(column=>column.name),current=selectedColumns??all
     const next=current.includes(name)?current.filter(column=>column!==name):all.filter(column=>column===name||current.includes(column))

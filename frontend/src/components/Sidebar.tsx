@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Session, SessionDeletionPreview, SessionStatus } from '../types'
+import ImpactConfirmationDialog from './common/ImpactConfirmationDialog'
 import { MoreIcon, PanelLeftIcon, PencilIcon, PlusIcon, TrashIcon } from './icons'
 
 interface SidebarProps {
@@ -61,15 +62,7 @@ export default function Sidebar({
   const [deletionPreview, setDeletionPreview] = useState<SessionDeletionPreview | null>(null)
   const [deletionError, setDeletionError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
-
-  useEffect(() => {
-    if (!pendingDelete) return
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPendingDelete(null)
-    }
-    document.addEventListener('keydown', closeOnEscape)
-    return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [pendingDelete])
+  const deletionGeneration = useRef(0)
 
   const groups = useMemo(() => {
     const order: Group[] = ['今天', '昨天', '更早']
@@ -92,18 +85,23 @@ export default function Sidebar({
   }
 
   const loadDeletionPreview = async (session:Session) => {
+    const generation=++deletionGeneration.current
     setPendingDelete(session);setDeletionPreview(null);setDeletionError(null)
-    try { setDeletionPreview(await onPreviewDelete(session.id)) }
-    catch(error) { setDeletionError(error instanceof Error?error.message:'无法读取删除影响') }
+    try { const preview=await onPreviewDelete(session.id);if(deletionGeneration.current===generation)setDeletionPreview(preview) }
+    catch(error) { if(deletionGeneration.current===generation)setDeletionError(error instanceof Error?error.message:'无法读取删除影响') }
   }
+
+  const closeDeletion=()=>{deletionGeneration.current+=1;setPendingDelete(null);setDeletionPreview(null);setDeletionError(null)}
 
   const confirmDelete = async () => {
     if(!pendingDelete||!deletionPreview||deleting)return
     setDeleting(true);setDeletionError(null)
-    try { await onDelete(pendingDelete.id,deletionPreview.impactToken);setPendingDelete(null);setDeletionPreview(null) }
+    try { await onDelete(pendingDelete.id,deletionPreview.impactToken);closeDeletion() }
     catch(error) {
       setDeletionError(error instanceof Error?error.message:'删除失败')
-      try { setDeletionPreview(await onPreviewDelete(pendingDelete.id)) } catch { setDeletionPreview(null) }
+      const generation=++deletionGeneration.current
+      setDeletionPreview(null)
+      try { const preview=await onPreviewDelete(pendingDelete.id);if(deletionGeneration.current===generation)setDeletionPreview(preview) } catch { if(deletionGeneration.current===generation)setDeletionPreview(null) }
     } finally { setDeleting(false) }
   }
 
@@ -240,53 +238,17 @@ export default function Sidebar({
         {footer}
       </div>
     </aside>
-    {pendingDelete && (
-      <div
-        className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4"
-        onMouseDown={(event) => {
-          if (event.target === event.currentTarget) setPendingDelete(null)
-        }}
-      >
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="delete-session-title"
-          className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
-        >
-          <h2 id="delete-session-title" className="text-base font-semibold text-slate-900">删除会话</h2>
-          <p className="mt-3 text-sm leading-6 text-slate-600">
+    {pendingDelete && <ImpactConfirmationDialog title="删除会话" loading={!deletionPreview} error={deletionError} busy={deleting} confirmDisabled={!deletionPreview} onCancel={closeDeletion} onConfirm={()=>void confirmDelete()}>
+          <p className="text-sm leading-6 text-slate-600">
             确定删除“{sessionTitle(pendingDelete)}”吗？该操作无法恢复。
           </p>
-          {!deletionPreview&&!deletionError&&<p className="mt-3 text-sm text-slate-500">正在计算删除影响…</p>}
           {deletionPreview&&<ul className="mt-3 space-y-1 text-sm text-slate-600">
             <li>{deletionPreview.modelCount} 个模型版本</li><li>{deletionPreview.dataResourceCount} 个数据资源</li>
             <li>{deletionPreview.scriptCount} 个脚本</li><li>{deletionPreview.runCount} 条运行记录</li>
             <li>{deletionPreview.resultCount} 个结果数据集</li><li>{deletionPreview.analysisArtifactCount} 个分析产物</li>
             <li>{Math.ceil(deletionPreview.logicalBytes/1024)} KB 逻辑空间</li>
           </ul>}
-          {deletionError&&<p role="alert" className="mt-3 text-sm text-red-600">{deletionError}</p>}
-          <div className="mt-6 flex justify-end gap-2">
-            <button
-              type="button"
-              autoFocus
-              disabled={deleting}
-              onClick={() => setPendingDelete(null)}
-              className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              disabled={!deletionPreview||deleting}
-              onClick={() => void confirmDelete()}
-              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
-            >
-              {deleting?'正在删除…':'确认删除'}
-            </button>
-          </div>
-        </div>
-      </div>
-    )}
+    </ImpactConfirmationDialog>}
     </>
   )
 }

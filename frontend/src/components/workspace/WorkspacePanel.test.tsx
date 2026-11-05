@@ -1,4 +1,4 @@
-import{act,fireEvent,render,screen,waitFor}from'@testing-library/react';import{beforeEach,describe,expect,it,vi}from'vitest';import type{ModelVersion,UploadBatchActions,UploadBatchView,Workspace}from'../../types';import WorkspacePanel from'./WorkspacePanel';import{listVersions,publishDraft}from'../../api/client'
+import{act,fireEvent,render,screen,waitFor}from'@testing-library/react';import{beforeEach,describe,expect,it,vi}from'vitest';import type{ModelVersion,UploadBatchActions,UploadBatchView,Workspace}from'../../types';import WorkspacePanel from'./WorkspacePanel';import{deleteVersion,listVersions,previewVersionDeletion,publishDraft}from'../../api/client'
 vi.mock('../../api/client',()=>({listVersions:vi.fn().mockResolvedValue([]),publishDraft:vi.fn(),activateVersion:vi.fn(),previewVersionDeletion:vi.fn(),deleteVersion:vi.fn()}))
 const populatedWorkspace=(sessionId='s'):Workspace=>({id:'w',sessionId,active:{id:'v1',workspaceId:'w',contentHash:'vh',description:'默认说明',sourceSummary:{},engineContractVersion:'e',createdAt:'x',tables:[{id:'a1',tableName:'bus',artifactId:'a',schema:[{}],rowCount:3000,contentHash:'h'},{id:'a2',tableName:'line',artifactId:'a',schema:[],rowCount:2,contentHash:'h2'}]},draft:{id:'d1',workspaceId:'w',baseVersionId:'v1',revision:3,diagnostics:{},createdAt:'x',updatedAt:'x',tables:[{id:'d2',tableName:'load',artifactId:'a',schema:[{},{}],rowCount:4,contentHash:'h'}]}})
 const caseBatch=(status:UploadBatchView['status']='ready_to_confirm'):UploadBatchView=>({id:'case-batch',sessionId:'s',clientBatchId:'client-case',sourceKind:'case',status,modelPublishStatus:'ready',resourcePublishStatus:'ready',parseSettings:{},diagnostics:status==='failed'?[{message:'案例解析失败'}]:[],reservedBytes:10,expiresAtMs:10,revision:2,candidates:[{id:'bus',displayName:'bus',proposedAlias:'bus',purpose:'model_table',evidence:{},selected:true}]})
@@ -82,6 +82,24 @@ describe('WorkspacePanel',()=>{
     fireEvent.click(view)
     expect(open).toHaveBeenCalledWith({kind:'model-version',dataframeId:'h1',versionId:'v9',tableName:'line'})
     expect(screen.queryByText('版本 v9 · 1 表')).not.toBeNull()
+  })
+  it('deletes a version only with the current impact token and refreshes changed impact',async()=>{
+    const version:ModelVersion={id:'v9',workspaceId:'w',contentHash:'vh',description:'历史说明',sourceSummary:{},engineContractVersion:'e',createdAt:'x',tables:[]}
+    vi.mocked(listVersions).mockResolvedValue([version])
+    vi.mocked(previewVersionDeletion)
+      .mockResolvedValueOnce({impactToken:'old-token',runCount:2,resultCount:3,reclaimableBytes:1024,expiresAt:'x'})
+      .mockResolvedValueOnce({impactToken:'new-token',runCount:4,resultCount:5,reclaimableBytes:2048,expiresAt:'y'})
+    vi.mocked(deleteVersion).mockRejectedValueOnce(new Error('删除影响已变化')).mockResolvedValueOnce(undefined)
+    render(<WorkspacePanel sessionId="s" workspace={populatedWorkspace()} onReload={vi.fn()} notify={vi.fn()}/>)
+
+    fireEvent.click(await screen.findByRole('button',{name:'删除版本 v9'}))
+    expect(await screen.findByRole('dialog',{name:'删除模型版本'})).toHaveTextContent('2 个运行')
+    fireEvent.click(screen.getByRole('button',{name:'确认删除'}))
+    expect(await screen.findByRole('alert')).toHaveTextContent('删除影响已变化')
+    await waitFor(()=>expect(previewVersionDeletion).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('dialog',{name:'删除模型版本'})).toHaveTextContent('4 个运行')
+    fireEvent.click(screen.getByRole('button',{name:'确认删除'}))
+    await waitFor(()=>expect(deleteVersion).toHaveBeenLastCalledWith('v9','new-token'))
   })
   it('shows only non-terminal case import cards with their diagnostics',()=>{
     const{rerender}=render(<WorkspacePanel sessionId="s" workspace={populatedWorkspace()} batches={[caseBatch('failed')]} batchActions={batchActions} onReload={vi.fn()} notify={vi.fn()}/>)

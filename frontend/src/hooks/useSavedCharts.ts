@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listChartViews } from '../api/client'
+import { mergeByStableId } from '../state/mergeByStableId'
 import type { ChartViewSummary } from '../types'
-
-const mergeViews=(current:ChartViewSummary[],next:ChartViewSummary[])=>{
-  const byId=new Map(current.map(view=>[view.id,view]));next.forEach(view=>byId.set(view.id,view));return[...byId.values()]
-}
 
 export function useSavedCharts(sessionId:string|null,externalRevision=0){
   const[state,setState]=useState<{sessionId:string|null;views:ChartViewSummary[];cursor:string|null;error:string|null}>({sessionId:null,views:[],cursor:null,error:null})
@@ -18,7 +15,7 @@ export function useSavedCharts(sessionId:string|null,externalRevision=0){
   },[sessionId,externalRevision,revision])
   const loadMore=useCallback(async()=>{if(!sessionId||state.sessionId!==sessionId||!state.cursor||paging.current)return
     const request=generation.current,cursor=state.cursor;paging.current=true;setLoading(true)
-    try{const page=await listChartViews(sessionId,{cursor});if(generation.current===request)setState(current=>({...current,views:mergeViews(current.views,page.views),cursor:page.nextCursor,error:null}))}
+    try{const page=await listChartViews(sessionId,{cursor});if(generation.current===request)setState(current=>({...current,views:mergeByStableId(current.views,page.views),cursor:page.nextCursor,error:null}))}
     catch(value){if(generation.current===request)setState(current=>({...current,error:value instanceof Error?value.message:'图表列表加载失败'}))}
     finally{if(generation.current===request){setLoading(false);paging.current=false}}
   },[sessionId,state.sessionId,state.cursor])

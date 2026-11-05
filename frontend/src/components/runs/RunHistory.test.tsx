@@ -68,6 +68,20 @@ describe('RunHistory', () => {
     expect(onRunDeleted).toHaveBeenCalledWith('9',['1','2'])
   })
 
+  it('refreshes run deletion impact after a stale token',async()=>{
+    const preview=(impactToken:string,resultCount:number)=>({impactToken,status:'succeeded',resultCount,resultBytes:1024,derivedReferenceCount:1,promotedReferenceCount:1,resultIds:[1,2],expiresAt:'x'})
+    const previewDeletion=vi.fn().mockResolvedValueOnce(preview('old-token',2)).mockResolvedValueOnce(preview('new-token',4))
+    const deleteRun=vi.fn().mockRejectedValueOnce(new Error('删除影响已变化')).mockResolvedValueOnce(undefined)
+    render(<RunHistory history={state([historyRun()],{previewDeletion,deleteRun})} datasetRevision={0} onOpenDataset={vi.fn()}/>)
+    fireEvent.click(screen.getByRole('button',{name:'删除运行 9'}))
+    expect(await screen.findByRole('dialog',{name:'删除运行记录'})).toHaveTextContent('2 个直接结果')
+    fireEvent.click(screen.getByRole('button',{name:'确认删除'}))
+    expect(await screen.findByRole('alert')).toHaveTextContent('删除影响已变化')
+    await waitFor(()=>expect(screen.getByRole('dialog',{name:'删除运行记录'})).toHaveTextContent('4 个直接结果'))
+    fireEvent.click(screen.getByRole('button',{name:'确认删除'}))
+    await waitFor(()=>expect(deleteRun).toHaveBeenLastCalledWith('9','new-token'))
+  })
+
   it('focuses the deletion dialog and cancellation performs no mutation',async()=>{
     const previewDeletion=vi.fn().mockResolvedValue({impactToken:'token',status:'failed',resultCount:0,resultBytes:0,derivedReferenceCount:0,promotedReferenceCount:0,resultIds:[],expiresAt:'x'}),deleteRun=vi.fn()
     render(<RunHistory history={state([historyRun({status:'failed'})],{previewDeletion,deleteRun})} datasetRevision={0} onOpenDataset={vi.fn()}/>)
