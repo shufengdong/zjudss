@@ -90,4 +90,3 @@ pub(crate) fn recover_interrupted_workflows(
     }
     Ok(())
 }
-

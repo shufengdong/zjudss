@@ -305,4 +305,3 @@ impl StudyConfigurationService {
         self.view(user, updated).await
     }
 }
-

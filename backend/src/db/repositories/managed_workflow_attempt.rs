@@ -642,4 +642,3 @@ fn retain_artifact(
     super::artifact_refs::retain_ref_count(conn, scope_id, artifact_id, count)?;
     Ok(())
 }
-

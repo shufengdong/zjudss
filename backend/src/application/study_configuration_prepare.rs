@@ -169,4 +169,3 @@ impl StudyConfigurationService {
         Ok((bindings, structs, results, status))
     }
 }
-

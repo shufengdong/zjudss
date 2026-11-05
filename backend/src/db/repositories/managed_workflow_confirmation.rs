@@ -619,4 +619,3 @@ fn configuration_artifact_error(error: RepoError) -> ManagedWorkflowRepoError {
         error => ManagedWorkflowRepoError::Repository(error),
     }
 }
-
