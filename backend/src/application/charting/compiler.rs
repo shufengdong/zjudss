@@ -7,33 +7,26 @@ use super::contracts::normalize_chart_config;
 use super::{
     Aggregation, AxisMode, BarSeries, BoxplotOutlier, BoxplotSeries, CHART_CONTRACT_VERSION,
     CategoryAxis, CategoryAxisType, CategoryValue, ChartBudgets, ChartConfig, ChartDiagnostics,
-    ChartError, ChartFieldRef, ChartModel, ChartModelBase, ChartOrder, ChartSampling,
-    HeatmapAggregation, HeatmapCell, HeatmapValue, HistogramBin, HistogramValue, LinePoint,
-    LineSeries, LineXValue, MixedAxis, NamedCategoryAxis, NamedValueAxis, NumericPoint,
-    ResolvedField, ScatterSeries, ValueAxis,
+    ChartError, ChartFieldRef, ChartModel, ChartModelBase, ChartOrder, ChartPresentation,
+    ChartSampling, HeatmapAggregation, HeatmapCell, HeatmapValue, HistogramBin, HistogramValue,
+    LineChartPresentation, LinePoint, LineSeries, LineXValue, MixedAxis, NamedCategoryAxis,
+    NamedValueAxis, NumericPoint, ResolvedField, ScatterSeries, ValueAxis, lttb,
 };
 use crate::application::dataframe_reader::DataFrameColumn;
 
-#[derive(Debug, Clone)]
-pub struct ChartSource {
-    pub dataset_id: String,
-    pub columns: Vec<DataFrameColumn>,
-    pub batches: Vec<RecordBatch>,
-}
+mod bar;
+mod boxplot;
+mod common;
+mod heatmap;
+mod histogram;
+mod line;
+mod scatter;
+mod schema;
+mod source;
 
-impl ChartSource {
-    pub fn new(
-        dataset_id: impl Into<String>,
-        columns: Vec<DataFrameColumn>,
-        batches: Vec<RecordBatch>,
-    ) -> Self {
-        Self {
-            dataset_id: dataset_id.into(),
-            columns,
-            batches,
-        }
-    }
-}
+use common::*;
+use schema::*;
+pub use source::ChartSource;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlotData {
@@ -168,7 +161,7 @@ impl ChartCompiler {
                     &mut diagnostics,
                     budgets,
                 )?;
-                compile_line(
+                line::compile(
                     source,
                     title,
                     presentation,
@@ -204,7 +197,7 @@ impl ChartCompiler {
                     &mut diagnostics,
                     budgets,
                 )?;
-                compile_bar(
+                bar::compile(
                     source,
                     title,
                     presentation,
@@ -235,7 +228,7 @@ impl ChartCompiler {
                     &mut diagnostics,
                     budgets,
                 )?;
-                compile_scatter(
+                scatter::compile(
                     source,
                     title,
                     presentation,
@@ -255,7 +248,7 @@ impl ChartCompiler {
                 value,
                 aggregation,
                 ..
-            } => compile_heatmap(
+            } => heatmap::compile(
                 source,
                 title,
                 presentation,
@@ -276,7 +269,7 @@ impl ChartCompiler {
                 split_by,
                 show_outliers,
                 ..
-            } => compile_boxplot(
+            } => boxplot::compile(
                 source,
                 title,
                 presentation,
@@ -295,7 +288,7 @@ impl ChartCompiler {
                 value,
                 bins,
                 ..
-            } => compile_histogram(
+            } => histogram::compile(
                 source,
                 title,
                 presentation,
@@ -381,6 +374,21 @@ struct Candidate {
     split: Option<CategoryValue>,
     x: LineXValue,
     y: f64,
+    ordinal: u64,
+}
+
+#[derive(Debug, Clone)]
+struct HeatCandidate {
+    x: CategoryValue,
+    y: CategoryValue,
+    value: f64,
+}
+
+#[derive(Debug, Clone)]
+struct BoxCandidate {
+    category: CategoryValue,
+    split: Option<CategoryValue>,
+    value: f64,
     ordinal: u64,
 }
 
@@ -473,205 +481,6 @@ fn extract_candidates(
     Ok(candidates)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn compile_line(
-    source: &ChartSource,
-    title: Option<String>,
-    presentation: super::LineChartPresentation,
-    x: &ChartFieldRef,
-    x_axis_mode: AxisMode,
-    measures: Vec<ChartFieldRef>,
-    fields: BoundFields<'_>,
-    order: ChartOrder,
-    aggregation: Aggregation,
-    sampling: ChartSampling,
-    candidates: Vec<Candidate>,
-    config_hash: String,
-    mut diagnostics: ChartDiagnostics,
-    budgets: ChartBudgets,
-) -> Result<CompiledChart, ChartError> {
-    let unit = common_unit(fields.measures)?;
-    let mut candidates = aggregate_candidates(candidates, aggregation, &mut diagnostics)?;
-    order_candidates(&mut candidates, order);
-    if x_axis_mode == AxisMode::Category {
-        let category_count = candidates
-            .iter()
-            .map(|candidate| x_key(&candidate.x))
-            .collect::<HashSet<_>>()
-            .len();
-        enforce_budget("categories", category_count, budgets.max_categories)?;
-    }
-    let series_keys = series_keys(&candidates);
-    enforce_budget("series", series_keys.len(), budgets.max_series)?;
-    let names = series_names(&series_keys, &measures)?;
-    let mut series = Vec::with_capacity(series_keys.len());
-    for (series_index, key) in series_keys.iter().enumerate() {
-        let mut points = candidates
-            .iter()
-            .filter(|candidate| series_key(candidate) == *key)
-            .map(|candidate| LinePoint {
-                x: candidate.x.clone(),
-                y: candidate.y,
-                ordinal: candidate.ordinal,
-            })
-            .collect::<Vec<_>>();
-        if let ChartSampling::Lttb {
-            max_points_per_series,
-        } = sampling
-        {
-            if max_points_per_series >= points.len() {
-                return Err(ChartError::new(
-                    "chart_config_invalid",
-                    "maxPointsPerSeries 必须小于每个系列的输入点数",
-                ));
-            }
-            let numeric = points
-                .iter()
-                .map(|point| NumericPoint {
-                    x: match point.x {
-                        LineXValue::Number(value) => value,
-                        LineXValue::Category(_) => {
-                            unreachable!("normalization rejects category LTTB")
-                        }
-                    },
-                    y: point.y,
-                    ordinal: point.ordinal,
-                })
-                .collect::<Vec<_>>();
-            let sampled = super::lttb(&numeric, max_points_per_series);
-            diagnostics.sampled_points += (numeric.len() - sampled.len()) as u64;
-            points = sampled
-                .into_iter()
-                .map(|point| LinePoint {
-                    x: LineXValue::Number(point.x),
-                    y: point.y,
-                    ordinal: point.ordinal,
-                })
-                .collect();
-        }
-        series.push(LineSeries {
-            name: names[series_index].clone(),
-            points,
-        });
-    }
-    diagnostics.output_points = series.iter().map(|item| item.points.len() as u64).sum();
-    ensure_output(&diagnostics)?;
-    enforce_budget(
-        "points",
-        diagnostics.output_points as usize,
-        budgets.max_points,
-    )?;
-    let base = model_base(source, title, config_hash, diagnostics.clone());
-    let model = ChartModel::Line {
-        base,
-        presentation,
-        order,
-        aggregation,
-        x_axis: MixedAxis {
-            r#type: x_axis_mode,
-            name: x.display_name(),
-            unit: fields.x.unit.clone(),
-        },
-        y_axis: ValueAxis {
-            name: (measures.len() == 1).then(|| measures[0].display_name()),
-            unit,
-        },
-        series,
-    };
-    Ok(compiled_from_model(model, diagnostics))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn compile_bar(
-    source: &ChartSource,
-    title: Option<String>,
-    presentation: super::ChartPresentation,
-    measures: Vec<ChartFieldRef>,
-    fields: BoundFields<'_>,
-    order: ChartOrder,
-    aggregation: Aggregation,
-    candidates: Vec<Candidate>,
-    config_hash: String,
-    mut diagnostics: ChartDiagnostics,
-    budgets: ChartBudgets,
-) -> Result<CompiledChart, ChartError> {
-    let unit = common_unit(fields.measures)?;
-    if aggregation == Aggregation::None && has_duplicate_keys(&candidates) {
-        return Err(ChartError::new(
-            "chart_duplicate_requires_aggregation",
-            "柱状图存在重复类别，必须显式选择聚合方式",
-        ));
-    }
-    let candidates = aggregate_candidates(candidates, aggregation, &mut diagnostics)?;
-    let series_keys = series_keys(&candidates);
-    enforce_budget("series", series_keys.len(), budgets.max_series)?;
-    let names = series_names(&series_keys, &measures)?;
-    let mut categories = Vec::<CategoryValue>::new();
-    let mut seen = HashSet::new();
-    for candidate in &candidates {
-        let LineXValue::Category(category) = &candidate.x else {
-            unreachable!("bar uses category x")
-        };
-        if seen.insert(category_key(category)) {
-            categories.push(category.clone());
-        }
-    }
-    match order {
-        ChartOrder::Source => {}
-        ChartOrder::XAsc => categories.sort_by(compare_categories),
-        ChartOrder::XDesc => categories.sort_by(|left, right| compare_categories(right, left)),
-    }
-    enforce_budget("categories", categories.len(), budgets.max_categories)?;
-    let mut series = Vec::with_capacity(series_keys.len());
-    for (series_index, key) in series_keys.iter().enumerate() {
-        let by_category = candidates
-            .iter()
-            .filter(|candidate| series_key(candidate) == *key)
-            .map(|candidate| {
-                let LineXValue::Category(category) = &candidate.x else {
-                    unreachable!()
-                };
-                (category_key(category), candidate.y)
-            })
-            .collect::<HashMap<_, _>>();
-        series.push(BarSeries {
-            name: names[series_index].clone(),
-            values: categories
-                .iter()
-                .map(|category| by_category.get(&category_key(category)).copied())
-                .collect(),
-        });
-    }
-    diagnostics.output_points = series
-        .iter()
-        .flat_map(|item| item.values.iter())
-        .filter(|value| value.is_some())
-        .count() as u64;
-    ensure_output(&diagnostics)?;
-    enforce_budget(
-        "points",
-        diagnostics.output_points as usize,
-        budgets.max_points,
-    )?;
-    let base = model_base(source, title, config_hash, diagnostics.clone());
-    let model = ChartModel::Bar {
-        base,
-        presentation,
-        x_axis: CategoryAxis {
-            r#type: CategoryAxisType::Category,
-            name: fields.x.reference.display_name(),
-            unit: fields.x.unit.clone(),
-        },
-        y_axis: ValueAxis {
-            name: (measures.len() == 1).then(|| measures[0].display_name()),
-            unit,
-        },
-        categories,
-        series,
-    };
-    Ok(compiled_from_model(model, diagnostics))
-}
-
 fn has_duplicate_keys(candidates: &[Candidate]) -> bool {
     let mut keys = HashSet::new();
     candidates.iter().any(|candidate| {
@@ -685,411 +494,6 @@ fn has_duplicate_keys(candidates: &[Candidate]) -> bool {
             x_key(&candidate.x),
         ))
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn compile_scatter(
-    source: &ChartSource,
-    title: Option<String>,
-    presentation: super::ChartPresentation,
-    measures: Vec<ChartFieldRef>,
-    fields: BoundFields<'_>,
-    candidates: Vec<Candidate>,
-    config_hash: String,
-    mut diagnostics: ChartDiagnostics,
-    budgets: ChartBudgets,
-) -> Result<CompiledChart, ChartError> {
-    let unit = common_unit(fields.measures)?;
-    let series_keys = series_keys(&candidates);
-    enforce_budget("series", series_keys.len(), budgets.max_series)?;
-    let names = series_names(&series_keys, &measures)?;
-    let series = series_keys
-        .iter()
-        .enumerate()
-        .map(|(series_index, key)| ScatterSeries {
-            name: names[series_index].clone(),
-            points: candidates
-                .iter()
-                .filter(|candidate| series_key(candidate) == *key)
-                .map(|candidate| NumericPoint {
-                    x: match candidate.x {
-                        LineXValue::Number(value) => value,
-                        LineXValue::Category(_) => unreachable!("scatter uses numeric x"),
-                    },
-                    y: candidate.y,
-                    ordinal: candidate.ordinal,
-                })
-                .collect(),
-        })
-        .collect::<Vec<_>>();
-    diagnostics.output_points = series.iter().map(|item| item.points.len() as u64).sum();
-    ensure_output(&diagnostics)?;
-    enforce_budget(
-        "points",
-        diagnostics.output_points as usize,
-        budgets.max_points,
-    )?;
-    let base = model_base(source, title, config_hash, diagnostics.clone());
-    let model = ChartModel::Scatter {
-        base,
-        presentation,
-        x_axis: MixedAxis {
-            r#type: AxisMode::Value,
-            name: fields.x.reference.display_name(),
-            unit: fields.x.unit.clone(),
-        },
-        y_axis: ValueAxis {
-            name: (measures.len() == 1).then(|| measures[0].display_name()),
-            unit,
-        },
-        series,
-    };
-    Ok(compiled_from_model(model, diagnostics))
-}
-
-#[derive(Debug, Clone)]
-struct HeatCandidate {
-    x: CategoryValue,
-    y: CategoryValue,
-    value: f64,
-}
-
-#[allow(clippy::too_many_arguments)]
-fn compile_heatmap(
-    source: &ChartSource,
-    title: Option<String>,
-    presentation: super::ChartPresentation,
-    x: ChartFieldRef,
-    y: ChartFieldRef,
-    value: ChartFieldRef,
-    aggregation: HeatmapAggregation,
-    fields: &[ResolvedField],
-    config_hash: String,
-    mut diagnostics: ChartDiagnostics,
-    budgets: ChartBudgets,
-) -> Result<CompiledChart, ChartError> {
-    let raw_values = source.batches.iter().map(RecordBatch::num_rows).sum();
-    enforce_budget("rawValues", raw_values, budgets.max_raw_values)?;
-    diagnostics.candidate_points = raw_values as u64;
-    let mut candidates = Vec::with_capacity(raw_values);
-    for batch in &source.batches {
-        for row in 0..batch.num_rows() {
-            let values = [
-                fields[0].read(batch, row)?,
-                fields[1].read(batch, row)?,
-                fields[2].read(batch, row)?,
-            ];
-            if !candidate_values_are_valid(&values, &mut diagnostics) {
-                continue;
-            }
-            candidates.push(HeatCandidate {
-                x: values[0].as_category()?,
-                y: values[1].as_category()?,
-                value: values[2].as_number()?,
-            });
-        }
-    }
-    if candidates.is_empty() {
-        return Err(no_data());
-    }
-    let x_categories = distinct_categories(candidates.iter().map(|candidate| &candidate.x));
-    let y_categories = distinct_categories(candidates.iter().map(|candidate| &candidate.y));
-    enforce_budget("categories", x_categories.len(), budgets.max_categories)?;
-    enforce_budget("categories", y_categories.len(), budgets.max_categories)?;
-    let x_indices = category_indices(&x_categories);
-    let y_indices = category_indices(&y_categories);
-    let mut positions = HashMap::<(String, String), usize>::new();
-    let mut groups = Vec::<(HeatCandidate, usize, f64, f64, f64)>::new();
-    for candidate in candidates {
-        let key = (category_key(&candidate.x), category_key(&candidate.y));
-        if let Some(position) = positions.get(&key).copied() {
-            let group = &mut groups[position];
-            group.1 += 1;
-            group.2 += candidate.value;
-            group.3 = group.3.min(candidate.value);
-            group.4 = group.4.max(candidate.value);
-        } else {
-            let position = groups.len();
-            positions.insert(key, position);
-            let observed = candidate.value;
-            groups.push((candidate, 1, observed, observed, observed));
-        }
-    }
-    diagnostics.aggregated_groups = groups.iter().filter(|group| group.1 > 1).count() as u64;
-    enforce_budget("heatmapCells", groups.len(), budgets.max_heatmap_cells)?;
-    let cells = groups
-        .into_iter()
-        .map(|(candidate, count, sum, min, max)| HeatmapCell {
-            x_index: x_indices[&category_key(&candidate.x)],
-            y_index: y_indices[&category_key(&candidate.y)],
-            value: match aggregation {
-                HeatmapAggregation::Mean => sum / count as f64,
-                HeatmapAggregation::Min => min,
-                HeatmapAggregation::Max => max,
-                HeatmapAggregation::Sum => sum,
-                HeatmapAggregation::Count => count as f64,
-            },
-        })
-        .collect::<Vec<_>>();
-    diagnostics.output_points = cells.len() as u64;
-    let min = cells
-        .iter()
-        .map(|cell| cell.value)
-        .min_by(f64::total_cmp)
-        .expect("non-empty heatmap");
-    let max = cells
-        .iter()
-        .map(|cell| cell.value)
-        .max_by(f64::total_cmp)
-        .expect("non-empty heatmap");
-    let base = model_base(source, title, config_hash, diagnostics.clone());
-    let model = ChartModel::Heatmap {
-        base,
-        presentation,
-        x_axis: NamedCategoryAxis {
-            name: x.display_name(),
-            categories: x_categories.clone(),
-        },
-        y_axis: NamedCategoryAxis {
-            name: y.display_name(),
-            categories: y_categories.clone(),
-        },
-        x_categories,
-        y_categories,
-        value: HeatmapValue {
-            name: value.display_name(),
-            unit: if aggregation == HeatmapAggregation::Count {
-                None
-            } else {
-                fields[2].unit.clone()
-            },
-            min,
-            max,
-        },
-        cells,
-    };
-    Ok(compiled_from_model(model, diagnostics))
-}
-
-#[derive(Debug, Clone)]
-struct BoxCandidate {
-    category: CategoryValue,
-    split: Option<CategoryValue>,
-    value: f64,
-    ordinal: u64,
-}
-
-#[allow(clippy::too_many_arguments)]
-fn compile_boxplot(
-    source: &ChartSource,
-    title: Option<String>,
-    presentation: super::ChartPresentation,
-    category: ChartFieldRef,
-    value: ChartFieldRef,
-    split_by: Option<ChartFieldRef>,
-    show_outliers: bool,
-    fields: &[ResolvedField],
-    config_hash: String,
-    mut diagnostics: ChartDiagnostics,
-    budgets: ChartBudgets,
-) -> Result<CompiledChart, ChartError> {
-    if split_by.as_ref().is_some_and(|field| field.path.is_some()) {
-        return Err(incompatible("splitBy 只能引用标量类别字段"));
-    }
-    let raw_values = source.batches.iter().map(RecordBatch::num_rows).sum();
-    enforce_budget("rawValues", raw_values, budgets.max_raw_values)?;
-    diagnostics.candidate_points = raw_values as u64;
-    let mut candidates = Vec::with_capacity(raw_values);
-    let mut ordinal = 0u64;
-    for batch in &source.batches {
-        for row in 0..batch.num_rows() {
-            let category_value = fields[0].read(batch, row)?;
-            let value_value = fields[1].read(batch, row)?;
-            let split_value = fields
-                .get(2)
-                .map(|field| field.read(batch, row))
-                .transpose()?;
-            let mut values = vec![category_value, value_value];
-            if let Some(split_value) = split_value {
-                values.push(split_value);
-            }
-            if !candidate_values_are_valid(&values, &mut diagnostics) {
-                ordinal += 1;
-                continue;
-            }
-            let split = if values.len() == 3 {
-                let split = values[2].as_category()?;
-                if matches!(split, CategoryValue::Number { .. }) {
-                    return Err(incompatible("splitBy 只允许字符串、布尔或整数类别字段"));
-                }
-                Some(split)
-            } else {
-                None
-            };
-            candidates.push(BoxCandidate {
-                category: values[0].as_category()?,
-                split,
-                value: values[1].as_number()?,
-                ordinal,
-            });
-            ordinal += 1;
-        }
-    }
-    if candidates.is_empty() {
-        return Err(no_data());
-    }
-    let categories = distinct_categories(candidates.iter().map(|candidate| &candidate.category));
-    enforce_budget("categories", categories.len(), budgets.max_categories)?;
-    let category_indices = category_indices(&categories);
-    let series_keys = box_series_keys(&candidates);
-    enforce_budget("series", series_keys.len(), budgets.max_series)?;
-    let names = box_series_names(&series_keys, &value)?;
-    let mut grouped = HashMap::<(Option<String>, String), Vec<f64>>::new();
-    for candidate in &candidates {
-        grouped
-            .entry((
-                candidate.split.as_ref().map(category_key),
-                category_key(&candidate.category),
-            ))
-            .or_default()
-            .push(candidate.value);
-    }
-    diagnostics.aggregated_groups =
-        grouped.values().filter(|values| values.len() > 1).count() as u64;
-    let mut series = Vec::with_capacity(series_keys.len());
-    for (series_index, key) in series_keys.iter().enumerate() {
-        let mut boxes = vec![None; categories.len()];
-        let mut outliers = Vec::new();
-        for category_value in &categories {
-            let Some(values) = grouped.get(&(key.clone(), category_key(category_value))) else {
-                continue;
-            };
-            let (summary, observed_outliers) = box_summary(values);
-            let category_index = category_indices[&category_key(category_value)];
-            boxes[category_index] = Some(summary);
-            if show_outliers {
-                outliers.extend(observed_outliers.into_iter().map(|value| BoxplotOutlier {
-                    category_index,
-                    value,
-                }));
-            }
-        }
-        series.push(BoxplotSeries {
-            name: names[series_index].clone(),
-            values: boxes,
-            outliers,
-        });
-    }
-    diagnostics.output_points = series
-        .iter()
-        .flat_map(|series| series.values.iter())
-        .filter(|value| value.is_some())
-        .count() as u64;
-    ensure_output(&diagnostics)?;
-    enforce_budget(
-        "points",
-        diagnostics.output_points as usize,
-        budgets.max_points,
-    )?;
-    let base = model_base(source, title, config_hash, diagnostics.clone());
-    let model = ChartModel::Boxplot {
-        base,
-        presentation,
-        category_axis: NamedCategoryAxis {
-            name: category.display_name(),
-            categories: categories.clone(),
-        },
-        value_axis: NamedValueAxis {
-            name: value.display_name(),
-            unit: fields[1].unit.clone(),
-        },
-        series,
-    };
-    Ok(compiled_from_model(model, diagnostics))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn compile_histogram(
-    source: &ChartSource,
-    title: Option<String>,
-    presentation: super::ChartPresentation,
-    value: ChartFieldRef,
-    bin_count: u16,
-    field: &ResolvedField,
-    config_hash: String,
-    mut diagnostics: ChartDiagnostics,
-    budgets: ChartBudgets,
-) -> Result<CompiledChart, ChartError> {
-    let raw_values = source.batches.iter().map(RecordBatch::num_rows).sum();
-    enforce_budget("rawValues", raw_values, budgets.max_raw_values)?;
-    diagnostics.candidate_points = raw_values as u64;
-    let mut values = Vec::with_capacity(raw_values);
-    for batch in &source.batches {
-        for row in 0..batch.num_rows() {
-            let observed = field.read(batch, row)?;
-            if !candidate_values_are_valid(std::slice::from_ref(&observed), &mut diagnostics) {
-                continue;
-            }
-            values.push(observed.as_number()?);
-        }
-    }
-    if values.is_empty() {
-        return Err(no_data());
-    }
-    let minimum = values
-        .iter()
-        .copied()
-        .min_by(f64::total_cmp)
-        .expect("non-empty histogram");
-    let maximum = values
-        .iter()
-        .copied()
-        .max_by(f64::total_cmp)
-        .expect("non-empty histogram");
-    let bins = if minimum == maximum {
-        vec![HistogramBin {
-            start: minimum,
-            end: maximum,
-            count: values.len() as u64,
-            includes_end: true,
-        }]
-    } else {
-        let count = usize::from(bin_count);
-        let width = (maximum - minimum) / count as f64;
-        let mut counts = vec![0u64; count];
-        for observed in values {
-            let index = (((observed - minimum) / width).floor() as usize).min(count - 1);
-            counts[index] += 1;
-        }
-        counts
-            .into_iter()
-            .enumerate()
-            .map(|(index, count)| HistogramBin {
-                start: minimum + index as f64 * width,
-                end: if index + 1 == usize::from(bin_count) {
-                    maximum
-                } else {
-                    minimum + (index + 1) as f64 * width
-                },
-                count,
-                includes_end: index + 1 == usize::from(bin_count),
-            })
-            .collect()
-    };
-    diagnostics.aggregated_groups = bins.iter().filter(|bin| bin.count > 1).count() as u64;
-    diagnostics.output_points = bins.len() as u64;
-    enforce_budget("points", bins.len(), budgets.max_points)?;
-    let base = model_base(source, title, config_hash, diagnostics.clone());
-    let model = ChartModel::Histogram {
-        base,
-        presentation,
-        value: HistogramValue {
-            name: value.display_name(),
-            unit: field.unit.clone(),
-        },
-        bins,
-    };
-    Ok(compiled_from_model(model, diagnostics))
 }
 
 fn candidate_values_are_valid(
@@ -1208,231 +612,6 @@ fn quantile_r7(sorted: &[f64], probability: f64) -> f64 {
     let lower = position.floor() as usize;
     let fraction = position - lower as f64;
     sorted[lower] + fraction * (sorted[(lower + 1).min(sorted.len() - 1)] - sorted[lower])
-}
-
-fn aggregate_candidates(
-    candidates: Vec<Candidate>,
-    aggregation: Aggregation,
-    diagnostics: &mut ChartDiagnostics,
-) -> Result<Vec<Candidate>, ChartError> {
-    let mut positions = HashMap::<(usize, String, String), usize>::new();
-    let mut groups = Vec::<(Candidate, usize, f64, f64, f64)>::new();
-    for candidate in candidates {
-        let key = (
-            candidate.measure_index,
-            candidate
-                .split
-                .as_ref()
-                .map(category_key)
-                .unwrap_or_default(),
-            x_key(&candidate.x),
-        );
-        if let Some(position) = positions.get(&key).copied() {
-            if aggregation == Aggregation::None {
-                groups.push((candidate, 1, 0.0, 0.0, 0.0));
-                continue;
-            }
-            let group = &mut groups[position];
-            group.1 += 1;
-            group.2 += candidate.y;
-            group.3 = group.3.min(candidate.y);
-            group.4 = group.4.max(candidate.y);
-        } else {
-            let position = groups.len();
-            positions.insert(key, position);
-            let value = candidate.y;
-            groups.push((candidate, 1, value, value, value));
-        }
-    }
-    if aggregation == Aggregation::None {
-        return Ok(groups.into_iter().map(|group| group.0).collect());
-    }
-    diagnostics.aggregated_groups += groups.iter().filter(|group| group.1 > 1).count() as u64;
-    Ok(groups
-        .into_iter()
-        .map(|(mut candidate, count, sum, min, max)| {
-            candidate.y = match aggregation {
-                Aggregation::None => unreachable!(),
-                Aggregation::Mean => sum / count as f64,
-                Aggregation::Min => min,
-                Aggregation::Max => max,
-                Aggregation::Sum => sum,
-            };
-            candidate
-        })
-        .collect())
-}
-
-fn order_candidates(candidates: &mut [Candidate], order: ChartOrder) {
-    match order {
-        ChartOrder::Source => candidates.sort_by_key(|candidate| candidate.ordinal),
-        ChartOrder::XAsc => candidates.sort_by(compare_candidate_x),
-        ChartOrder::XDesc => candidates.sort_by(|left, right| {
-            compare_x(&right.x, &left.x).then_with(|| left.ordinal.cmp(&right.ordinal))
-        }),
-    }
-}
-
-fn compare_candidate_x(left: &Candidate, right: &Candidate) -> Ordering {
-    compare_x(&left.x, &right.x).then_with(|| left.ordinal.cmp(&right.ordinal))
-}
-
-fn compare_x(left: &LineXValue, right: &LineXValue) -> Ordering {
-    match (left, right) {
-        (LineXValue::Number(left), LineXValue::Number(right)) => left.total_cmp(right),
-        (LineXValue::Category(left), LineXValue::Category(right)) => {
-            compare_categories(left, right)
-        }
-        (LineXValue::Category(_), LineXValue::Number(_)) => Ordering::Less,
-        (LineXValue::Number(_), LineXValue::Category(_)) => Ordering::Greater,
-    }
-}
-
-fn compare_categories(left: &CategoryValue, right: &CategoryValue) -> Ordering {
-    match (left, right) {
-        (CategoryValue::String { value: left }, CategoryValue::String { value: right }) => {
-            left.cmp(right)
-        }
-        (CategoryValue::Boolean { value: left }, CategoryValue::Boolean { value: right }) => {
-            left.cmp(right)
-        }
-        (CategoryValue::Integer { value: left }, CategoryValue::Integer { value: right }) => left
-            .parse::<i128>()
-            .expect("validated integer")
-            .cmp(&right.parse::<i128>().expect("validated integer")),
-        (CategoryValue::Number { value: left }, CategoryValue::Number { value: right }) => {
-            left.total_cmp(right)
-        }
-        _ => category_rank(left).cmp(&category_rank(right)),
-    }
-}
-
-fn category_rank(value: &CategoryValue) -> u8 {
-    match value {
-        CategoryValue::String { .. } => 0,
-        CategoryValue::Boolean { .. } => 1,
-        CategoryValue::Integer { .. } => 2,
-        CategoryValue::Number { .. } => 3,
-    }
-}
-
-fn series_keys(candidates: &[Candidate]) -> Vec<(usize, Option<String>)> {
-    let mut split_first = HashMap::<String, u64>::new();
-    for candidate in candidates {
-        if let Some(split) = &candidate.split {
-            split_first
-                .entry(category_key(split))
-                .or_insert(candidate.ordinal);
-        }
-    }
-    let mut keys = candidates.iter().map(series_key).collect::<Vec<_>>();
-    keys.sort_by(|left, right| {
-        left.0.cmp(&right.0).then_with(|| {
-            let left_rank = left
-                .1
-                .as_ref()
-                .and_then(|key| split_first.get(key))
-                .copied()
-                .unwrap_or(0);
-            let right_rank = right
-                .1
-                .as_ref()
-                .and_then(|key| split_first.get(key))
-                .copied()
-                .unwrap_or(0);
-            left_rank.cmp(&right_rank)
-        })
-    });
-    keys.dedup();
-    keys
-}
-
-fn series_key(candidate: &Candidate) -> (usize, Option<String>) {
-    (
-        candidate.measure_index,
-        candidate.split.as_ref().map(category_key),
-    )
-}
-
-fn series_names(
-    keys: &[(usize, Option<String>)],
-    measures: &[ChartFieldRef],
-) -> Result<Vec<String>, ChartError> {
-    let split_values = keys
-        .iter()
-        .filter_map(|(_, key)| key.as_ref())
-        .map(|key| serde_json::from_str::<CategoryValue>(key).expect("canonical category key"))
-        .collect::<Vec<_>>();
-    let mut split_index = 0;
-    let mut names = Vec::with_capacity(keys.len());
-    for (measure_index, split) in keys {
-        let mut name = measures[*measure_index].display_name();
-        if split.is_some() {
-            name.push_str(" · ");
-            name.push_str(&category_display(&split_values[split_index]));
-            split_index += 1;
-        }
-        names.push(name);
-    }
-    let mut unique = HashSet::new();
-    if names.iter().any(|name| !unique.insert(name.clone())) {
-        return Err(ChartError::new(
-            "chart_series_name_conflict",
-            "图表系列名称冲突，请调整 label",
-        ));
-    }
-    Ok(names)
-}
-
-fn common_unit(fields: &[ResolvedField]) -> Result<Option<String>, ChartError> {
-    let first = fields.first().and_then(|field| field.unit.clone());
-    if fields.iter().any(|field| field.unit != first) {
-        return Err(ChartError::new(
-            "chart_unit_conflict",
-            "多个 measure 的单位不一致",
-        ));
-    }
-    Ok(first)
-}
-
-fn category_key(value: &CategoryValue) -> String {
-    serde_json::to_string(value).expect("CategoryValue serialization is infallible")
-}
-
-fn x_key(value: &LineXValue) -> String {
-    match value {
-        LineXValue::Category(value) => category_key(value),
-        LineXValue::Number(value) => {
-            let normalized = if *value == 0.0 { 0.0 } else { *value };
-            format!("n:{:016x}", normalized.to_bits())
-        }
-    }
-}
-
-fn category_display(value: &CategoryValue) -> String {
-    match value {
-        CategoryValue::String { value } | CategoryValue::Integer { value } => value.clone(),
-        CategoryValue::Boolean { value } => value.to_string(),
-        CategoryValue::Number { value } => value.to_string(),
-    }
-}
-
-fn model_base(
-    source: &ChartSource,
-    title: Option<String>,
-    config_hash: String,
-    diagnostics: ChartDiagnostics,
-) -> ChartModelBase {
-    ChartModelBase {
-        contract_version: CHART_CONTRACT_VERSION.into(),
-        view_id: None,
-        source_dataset_id: source.dataset_id.clone(),
-        source_deleted: false,
-        name: None,
-        title,
-        config_hash,
-        diagnostics,
-    }
 }
 
 fn compiled_from_model(model: ChartModel, diagnostics: ChartDiagnostics) -> CompiledChart {
@@ -1567,77 +746,6 @@ fn compiled_from_model(model: ChartModel, diagnostics: ChartDiagnostics) -> Comp
             model,
             diagnostics,
         },
-    }
-}
-
-fn line_plot_schema() -> Vec<DataFrameColumn> {
-    vec![
-        plot_column("ordinal", "UInt64", false),
-        plot_column("x_kind", "Utf8", false),
-        plot_column("x_category_json", "Utf8", true),
-        plot_column("x_value", "Float64", true),
-        plot_column("series", "Utf8", false),
-        plot_column("value", "Float64", false),
-    ]
-}
-
-fn bar_plot_schema() -> Vec<DataFrameColumn> {
-    vec![
-        plot_column("category_index", "UInt64", false),
-        plot_column("category_json", "Utf8", false),
-        plot_column("series", "Utf8", false),
-        plot_column("value", "Float64", true),
-    ]
-}
-
-fn scatter_plot_schema() -> Vec<DataFrameColumn> {
-    vec![
-        plot_column("ordinal", "UInt64", false),
-        plot_column("series", "Utf8", false),
-        plot_column("x", "Float64", false),
-        plot_column("y", "Float64", false),
-    ]
-}
-
-fn heatmap_plot_schema() -> Vec<DataFrameColumn> {
-    vec![
-        plot_column("x_index", "UInt64", false),
-        plot_column("x_category_json", "Utf8", false),
-        plot_column("y_index", "UInt64", false),
-        plot_column("y_category_json", "Utf8", false),
-        plot_column("value", "Float64", false),
-    ]
-}
-
-fn boxplot_plot_schema() -> Vec<DataFrameColumn> {
-    vec![
-        plot_column("category_index", "UInt64", false),
-        plot_column("category_json", "Utf8", false),
-        plot_column("series", "Utf8", false),
-        plot_column("min", "Float64", false),
-        plot_column("q1", "Float64", false),
-        plot_column("median", "Float64", false),
-        plot_column("q3", "Float64", false),
-        plot_column("max", "Float64", false),
-        plot_column("outliers", "Utf8", false),
-    ]
-}
-
-fn histogram_plot_schema() -> Vec<DataFrameColumn> {
-    vec![
-        plot_column("bin_index", "UInt64", false),
-        plot_column("bin_start", "Float64", false),
-        plot_column("bin_end", "Float64", false),
-        plot_column("count", "UInt64", false),
-    ]
-}
-
-fn plot_column(name: &str, dtype: &str, nullable: bool) -> DataFrameColumn {
-    DataFrameColumn {
-        name: name.into(),
-        dtype: dtype.into(),
-        nullable,
-        unit: None,
     }
 }
 
