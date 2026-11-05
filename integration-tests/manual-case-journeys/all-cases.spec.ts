@@ -41,8 +41,12 @@ async function agentBundleEvidence() {
   }
   const manifest = JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8')) as {
     agentBundleVersion: string
+    allowedTools: string[]
   }
-  return { version: manifest.agentBundleVersion, sha256: hash.digest('hex') }
+  if (manifest.allowedTools.length === 0 || new Set(manifest.allowedTools).size !== manifest.allowedTools.length) {
+    throw new Error('manual_case_agent_tools_invalid')
+  }
+  return { version: manifest.agentBundleVersion, sha256: hash.digest('hex'), allowedTools: manifest.allowedTools }
 }
 
 function parseCsvRecords(text: string): string[][] {
@@ -146,7 +150,9 @@ test('manually runs every selected case through import, natural-language publish
     try {
       await casePage.goto('/')
       await expect(casePage.getByRole('button', { name: '新建仿真' })).toBeVisible()
-      const evidence = await runCaseJourney(casePage, api, discovered.engineResourceSnapshot, example)
+      const evidence = await runCaseJourney(
+        casePage, api, discovered.engineResourceSnapshot, example, bundle.allowedTools,
+      )
       const passed: ManualCaseResult = {
         exampleId: example.exampleId,
         bundlePath: example.bundlePath,

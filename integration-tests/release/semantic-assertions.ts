@@ -129,15 +129,6 @@ interface AgentTurnMessage {
   status?: string
 }
 
-const allowedTools = new Set([
-  'inspect_workspace', 'read_model_dataframe', 'search_study_facades', 'prepare_study', 'update_study_results',
-  'search_examples', 'inspect_example', 'modify_model', 'publish_model_version',
-  'list_result_datasets',
-  'run_result_analysis', 'compare_simulations',
-  'list_simulation_history', 'search_chat_history', 'read_chat_context', 'get_storage_usage',
-  'load_agent_skill', 'search_engine_docs', 'read_engine_doc_section',
-  'list_data_resources', 'read_data_resource', 'update_data_resource_alias', 'promote_result_dataset',
-])
 const sideEffectTools = new Set([
   'prepare_study', 'update_study_results', 'modify_model', 'publish_model_version', 'update_data_resource_alias', 'promote_result_dataset',
   'run_result_analysis', 'compare_simulations',
@@ -189,8 +180,17 @@ function assertStableIds(call: ToolTraceEntry) {
   visit(call.args)
 }
 
-export function expectToolTrace(trace: ToolTraceEntry[], expectedDependencies: ExpectedToolDependencies) {
+export function expectToolTrace(
+  trace: ToolTraceEntry[],
+  expectedDependencies: ExpectedToolDependencies,
+  runtimeAllowedTools: readonly string[],
+) {
   invariant(trace.length > 0, 'tool trace is empty')
+  const allowedTools = new Set(runtimeAllowedTools)
+  invariant(allowedTools.size > 0 && allowedTools.size === runtimeAllowedTools.length,
+    'runtime allowed tools are empty or duplicated')
+  invariant(runtimeAllowedTools.every(tool => typeof tool === 'string' && tool.trim() === tool && tool.length > 0),
+    'runtime allowed tools contain an invalid name')
   for (const call of trace) {
     invariant(allowedTools.has(call.toolName), `tool trace contains disallowed tool ${call.toolName}`)
     assertStableIds(call)

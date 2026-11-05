@@ -141,6 +141,7 @@ export async function runCaseJourney(
   api: APIRequestContext,
   engineResourceSnapshot: string,
   example: DiscoveredExample,
+  allowedTools: string[],
 ): Promise<JourneyEvidence> {
   const phaseDurationsMs: Record<string, number> = {}
   let sessionId = ''
@@ -199,7 +200,7 @@ export async function runCaseJourney(
     expectToolTrace(turn.trace, {
       requiredTools: ['load_agent_skill', 'inspect_workspace', 'search_study_facades', 'prepare_study'],
       gatedTools: { prepare_study: ['study-planning'] },
-    })
+    }, allowedTools)
     const explicitSearch = turn.trace.some(call => call.toolName === 'search_study_facades'
       && call.status === 'success' && call.args.explicitFunction === example.targetFunction)
     if (!explicitSearch) throw coded('study_facade_mismatch')

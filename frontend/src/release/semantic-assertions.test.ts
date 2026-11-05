@@ -2,16 +2,30 @@ import { describe, expect, test } from 'vitest'
 import {
   agentTurnCompleted,
   expectEngineReleaseEvidence,
-  expectToolTrace,
+  expectToolTrace as expectManifestToolTrace,
   readAllMessages,
+  type ExpectedToolDependencies,
   type ToolTraceEntry,
 } from '../../../integration-tests/release/semantic-assertions'
+import manifest from '../../../backend/resources/agent/v4/manifest.json'
 
 const call = (toolName: string, status: ToolTraceEntry['status'], args: Record<string, unknown> = {}): ToolTraceEntry => ({
   callId: `${toolName}-${status}`, toolName, status, args,
 })
+const expectToolTrace = (trace: ToolTraceEntry[], expected: ExpectedToolDependencies) => (
+  expectManifestToolTrace(trace, expected, manifest.allowedTools)
+)
 
 describe('release semantic assertions', () => {
+  test('uses the supplied manifest policy instead of a baked-in tool registry', () => {
+    expect(() => expectManifestToolTrace([
+      call('manifest_only_tool', 'success'),
+    ], { requiredTools: ['manifest_only_tool'] }, ['manifest_only_tool'])).not.toThrow()
+    expect(() => expectManifestToolTrace([
+      call('manifest_only_tool', 'success'),
+    ], { requiredTools: ['manifest_only_tool'] }, ['inspect_workspace'])).toThrow(/disallowed/)
+  })
+
   test('accepts the bundle-only engine report and rejects inconsistent counts', () => {
     const caseProjections = Array.from({ length: 103 }, (_, index) => ({
       exampleId: `ex_${index.toString(16).padStart(8, '0')}`,

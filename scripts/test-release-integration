@@ -3,6 +3,7 @@ set -eu
 
 # real LLM provider and tensoreval complete the V4 semantic release journey
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export AGENT_MANIFEST_PATH="$repo_root/backend/resources/agent/v4/manifest.json"
 if [ "${ZJUDSS_SKIP_DOTENV:-0}" != "1" ] && [ -f "$repo_root/backend/.env" ]; then
   set -a
   # shellcheck disable=SC1091
@@ -125,6 +126,7 @@ node -e '
   const fs = require("node:fs");
   const report = JSON.parse(fs.readFileSync(process.env.RELEASE_LLM_REPORT, "utf8"));
   const engineReport = JSON.parse(fs.readFileSync(process.env.RELEASE_ENGINE_REPORT, "utf8"));
+  const manifest = JSON.parse(fs.readFileSync(process.env.AGENT_MANIFEST_PATH, "utf8"));
   const text = JSON.stringify(report);
   const credentials = [...new Set([process.env.DEEPSEEK_API_KEY, process.env.BAILIAN_API_KEY].flatMap((value) => {
     if (!value) return [];
@@ -138,7 +140,7 @@ node -e '
   const expectedProvider = process.env.LLM_PROVIDER?.trim() || "deepseek";
   if (report.provider !== expectedProvider) process.exit(1);
   if (process.env.LLM_MODEL?.trim() && report.model !== process.env.LLM_MODEL.trim()) process.exit(1);
-  if (report.agentBundleVersion !== "v4.2.0" || !/^[a-f0-9]{64}$/.test(report.agentBundleSha256 ?? "")) process.exit(1);
+  if (report.agentBundleVersion !== manifest.agentBundleVersion || !/^[a-f0-9]{64}$/.test(report.agentBundleSha256 ?? "")) process.exit(1);
   if (!/^[a-f0-9]{64}$/.test(report.userSeedSha256 ?? "") || !(report.userCount > 0)) process.exit(1);
   if (!["ENGINE-RELEASE-001", "REAL-RELEASE-001", "AGENT-STUDY-PLANNING-001"].every((id) => report.testIds?.includes(id))) process.exit(1);
   if (!/^[a-f0-9]{64}$/.test(report.engineBinarySha256 ?? "") || !report.engineContract) process.exit(1);

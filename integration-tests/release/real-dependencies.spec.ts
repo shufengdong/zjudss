@@ -47,8 +47,13 @@ async function agentBundleEvidence() {
     const bytes = await readFile(join(root, relative))
     hash.update(relative).update('\0').update(bytes).update('\0')
   }
-  const manifest = JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8'))
-  return { version: manifest.agentBundleVersion as string, sha256: hash.digest('hex') }
+  const manifest = JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8')) as {
+    agentBundleVersion: string
+    allowedTools: string[]
+  }
+  expect(manifest.allowedTools.length).toBeGreaterThan(0)
+  expect(new Set(manifest.allowedTools).size).toBe(manifest.allowedTools.length)
+  return { version: manifest.agentBundleVersion, sha256: hash.digest('hex'), allowedTools: manifest.allowedTools }
 }
 
 function parseCsvRecords(text: string): string[][] {
@@ -142,7 +147,13 @@ async function sendAndCollect(page: Page, api: APIRequestContext, sessionId: str
   return trace
 }
 
-async function importAndPublish(page: Page, api: APIRequestContext, sessionId: string, report: AttemptReport) {
+async function importAndPublish(
+  page: Page,
+  api: APIRequestContext,
+  sessionId: string,
+  report: AttemptReport,
+  allowedTools: string[],
+) {
   const directory = process.env.RELEASE_DATAFRAME_DIR
   if (!directory) throw new Error('release_dataframe_fixture_missing')
   const required = new Set([
@@ -185,7 +196,7 @@ async function importAndPublish(page: Page, api: APIRequestContext, sessionId: s
     requiredTools: ['load_agent_skill', 'inspect_workspace', 'publish_model_version'],
     allowedTools: ['load_agent_skill', 'inspect_workspace', 'publish_model_version'],
     gatedTools: { publish_model_version: ['model-intake'] },
-  })
+  }, allowedTools)
   report.segments.push(summarizeTrace('natural_language_model_publish', trace))
   return waitFor(async () => {
     const workspace = await apiJson(api, `/api/sessions/${sessionId}/workspace`)
@@ -203,7 +214,7 @@ async function clickRunAndWait(page: Page, api: APIRequestContext, sessionId: st
   })
 }
 
-async function runJourney(browser: Browser, baseURL: string, report: AttemptReport) {
+async function runJourney(browser: Browser, baseURL: string, report: AttemptReport, allowedTools: string[]) {
   const context = await browser.newContext({ baseURL })
   const page = await context.newPage()
   const api = context.request
@@ -222,7 +233,7 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
       return sessions.find(session => !existingIds.has(String(session.id)))
     })
     const sessionId = String(created.id)
-    const workspace = await importAndPublish(page, api, sessionId, report)
+    const workspace = await importAndPublish(page, api, sessionId, report, allowedTools)
     const versionId = String(workspace.active.id)
 
     let trace = await sendAndCollect(page, api, sessionId, '求解牛顿法潮流', ['prepare_study'])
@@ -230,7 +241,7 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
       requiredTools: ['inspect_workspace', 'load_agent_skill', 'search_study_facades', 'prepare_study'],
       allowedTools: ['inspect_workspace', 'load_agent_skill', 'search_study_facades', 'prepare_study'],
       gatedTools: { prepare_study: ['study-planning'] },
-    })
+    }, allowedTools)
     report.segments.push(summarizeTrace('managed_study_power_flow', trace))
     const configuration = page.getByRole('article', { name: '研究配置卡' }).last()
     await expect(configuration).toBeVisible({ timeout: 120_000 })
@@ -292,7 +303,7 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
     expectToolTrace(trace, {
       requiredTools: ['list_result_datasets', 'load_agent_skill', 'run_result_analysis'],
       gatedTools: { run_result_analysis: ['result-analysis'] },
-    })
+    }, allowedTools)
     report.segments.push(summarizeTrace('result_analysis', trace))
 
     trace = await sendAndCollect(page, api, sessionId,
@@ -301,7 +312,7 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
     expectToolTrace(trace, {
       requiredTools: ['load_agent_skill', 'compare_simulations'],
       gatedTools: { compare_simulations: ['comparison'] },
-    })
+    }, allowedTools)
     report.segments.push(summarizeTrace('comparison', trace))
 
     const deleted = await api.delete(`/api/datasets/${voltage.id}`)
@@ -339,12 +350,13 @@ test('real DeepSeek and tensoreval complete the V4 semantic release journey', as
   let finalState: unknown = null
   let managedWorkflow: unknown = null
   let success = false
+  const agentBundle = await agentBundleEvidence()
   try {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       const attemptReport: AttemptReport = { attempt, outcome: 'failed', segments: [] }
       attempts.push(attemptReport)
       try {
-        const result = await runJourney(browser, baseURL, attemptReport)
+        const result = await runJourney(browser, baseURL, attemptReport, agentBundle.allowedTools)
         finalState = result.finalState
         managedWorkflow = result.managedWorkflow
         attemptReport.outcome = 'passed'
@@ -366,7 +378,6 @@ test('real DeepSeek and tensoreval complete the V4 semantic release journey', as
     const engineReportPath = process.env.RELEASE_ENGINE_REPORT
     const engineReport = engineReportPath ? JSON.parse(await readFile(engineReportPath, 'utf8')) : null
     expectEngineReleaseEvidence(engineReport)
-    const agentBundle = await agentBundleEvidence()
     const seed = await fixedUserSeed()
     const llm = resolveLlmEvidence(process.env)
     await writeFile(reportPath, JSON.stringify({
