@@ -32,6 +32,16 @@ list_data_resources     read_data_resource       update_data_resource_alias
 promote_result_dataset
 ```
 
+`backend/resources/agent/v4/manifest.json` 的 `allowedTools` 是工具暴露集合与注册顺序的唯一权威来源。服务先校验
+bundle version、system/skill hash、skill requiredTools、工具名非空且唯一，再把 manifest 与 Rust 私有实现 catalog
+双向核对；缺实现、额外实现或重复实现都会阻止启动。每次对话按已校验 manifest 顺序装配工具，Rust catalog 只保存
+静态类型构造器，不再定义第二份权限清单。Prompt 中的 skill index 和 `/api/contracts` 工具清单也读取同一个已校验
+`AgentKnowledge`。
+
+V4 源码不再保留已撤权的 `create_script` 工具实现，也没有直接拼接原始 system/skill-index 的旧 Agent 构造入口。
+对话 Agent 始终经 `AgentKnowledge -> PromptAssembler -> AgentFactory` 装配；通用脚本上传、固定 UI、隔离的
+ScriptAuthor 和 FailureAnalyzer 边界不变。
+
 Agent 可以检查工作区、查询普通数据资源、按用户明确要求修改 alias、把用户明确选定的结果提升为普通资源、修改
 draft、读取运行/结果并创建派生分析或比较。图表不是模型权限：对话 Agent 没有创建、修改、复制或删除图表的工具，
 也不生成 ECharts JSON；图表只由用户在结果工作台选择受控配置并通过固定 API 预览、保存。规划或分析普通 Data/Struct 输入前必须先列出资源，再按稳定

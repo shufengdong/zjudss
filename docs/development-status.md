@@ -156,6 +156,18 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 机械审计和合同 diff 确认本阶段没有新增/修改公共路由、DTO、消息、稳定错误码、migration、图表合同、功能目录或
 Agent bundle/权限；没有 adapter 外进程启动，也没有把任意 ECharts option 或物理路径带入公共边界。
 
+2026-11-05 的 Agent、工具、Prompt 与知识资源维护阶段（8.7）已经完成；设计/计划提交为 `ef1dbd2`，实施提交为
+`d7d706d`、`e0e34d9`：
+
+- V4 manifest `allowedTools` 现在实际决定每次对话的工具暴露集合与顺序；Rust 私有 catalog 只映射静态实现构造器，
+  启动和装配均双向拒绝缺实现、额外实现与重复实现；
+- `AgentKnowledge` 在 hash、bundle/engine contract 和 skill requiredTools 之外，继续拒绝空白、空集合和重复工具名；
+  Prompt skill index 与 contract manifest 都读取同一个已校验 knowledge 对象；
+- 生产 main 预检得到的 knowledge 直接注入 `AppState`，不再在 application 层硬编码重载 bundle；源码删除未注册的
+  `create_script` 实现、对应 service 依赖，以及直接拼接未校验 system/skill-index 的旧 Agent 构造入口；
+- 公开工具仍为 23 个、skills 仍为 5 个，bundle 保持 `v4.4.0`；HTTP/SSE、数据库、稳定错误码、运行 provenance、
+  ScriptAuthor/FailureAnalyzer 隔离和功能目录均未改变。
+
 ## Hard boundaries
 
 所有 tensoreval 调用必须经过 adapter；所有 repository 查询带 `UserId`；所有模型和结果正文使用 Snappy Parquet；浏览器与
@@ -268,3 +280,9 @@ retry/rerun 对底层 lineage helper 的直接调用，以及 adapter 外的进�
 目录条目，追溯率 100%。本机没有配置候选发布要求的 `TENSOREVAL_BIN`、`SPARROWZZ_DIR`、真实 LLM secret、
 `INIT_USERS_CSV` 或 `target/eig-rs`，因此没有把未运行的真实 binary 构建和 LLM 发布全旅程记为通过；相邻资源树七案例
 状态仍是外部兼容性阻塞，候选发布仍未标记为全绿。
+
+2026-11-05 的 8.7 阶段通过后端格式、全 target/all feature 零警告 Clippy，以及 Agent knowledge、factory、tool
+manifest、contract manifest 聚焦测试。完整 `cargo test --features e2e-test` 仍只在同一
+`current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count` 外部资源断言报告相同 7 个
+`case_projection_invalid`；精确跳过且仅跳过该断言后，其余完整 Rust 套件通过。8.7 没有修改前端或公共合同，前端与
+功能覆盖将在 8.8/8.9 全局门禁统一复验。
