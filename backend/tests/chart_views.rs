@@ -228,8 +228,27 @@ async fn chart_routes_compile_persist_replay_survive_source_delete_and_enforce_s
     assert_eq!(created.status(), StatusCode::CREATED);
     let created = body(created).await;
     let view_id = created["view"]["id"].as_str().unwrap().to_string();
+    let mut saved_views = vec![("line".to_string(), view_id.clone())];
     assert_eq!(created["replayed"], false);
     assert_eq!(created["view"]["contractVersion"], "chart-model-v1");
+    for (index, config) in six_configs().into_iter().skip(1).enumerate() {
+        let kind = config["kind"].as_str().unwrap().to_string();
+        let created = request(
+            &app,
+            "POST",
+            &format!("/api/datasets/{dataset_id}/views"),
+            Some(&alice),
+            Some(json!({
+                "clientOperationId":format!("3f6d0000-0000-4000-8000-00000000000{}", index + 2),
+                "name":format!("saved {kind}"),
+                "config":config,
+            })),
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::CREATED, "save {kind}");
+        let created = body(created).await;
+        saved_views.push((kind, created["view"]["id"].as_str().unwrap().to_string()));
+    }
     let replay = request(
         &app,
         "POST",
@@ -307,18 +326,21 @@ async fn chart_routes_compile_persist_replay_survive_source_delete_and_enforce_s
         .status(),
         StatusCode::OK
     );
-    let persisted = body(
-        request(
-            &app,
-            "GET",
-            &format!("/api/dataset-views/{view_id}/data"),
-            Some(&alice),
-            None,
+    for (kind, saved_view_id) in &saved_views {
+        let persisted = body(
+            request(
+                &app,
+                "GET",
+                &format!("/api/dataset-views/{saved_view_id}/data"),
+                Some(&alice),
+                None,
+            )
+            .await,
         )
-        .await,
-    )
-    .await;
-    assert_eq!(persisted["sourceDeleted"], true);
+        .await;
+        assert_eq!(persisted["kind"], *kind);
+        assert_eq!(persisted["sourceDeleted"], true);
+    }
     let replay_after_source_delete = request(
         &app,
         "POST",

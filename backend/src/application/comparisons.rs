@@ -345,8 +345,37 @@ fn result_ref(dataset: &RunDataset) -> ResultOutputRef {
 
 #[cfg(test)]
 mod tests {
-    use super::comparison_script;
+    use super::{comparison_script, compatible_pair};
+    use crate::db::repositories::RunDataset;
     use serde_json::json;
+
+    fn dataset(id: i32, unit: Option<&str>, include_value: bool) -> RunDataset {
+        let mut columns = vec![json!({
+            "name":"bus","dtype":"Utf8","nullable":false,"unit":null
+        })];
+        if include_value {
+            columns.push(json!({
+                "name":"load","dtype":"Float64","nullable":false,"unit":unit
+            }));
+            columns.push(json!({
+                "name":"bad-name","dtype":"Float64","nullable":false,"unit":unit
+            }));
+        }
+        RunDataset {
+            id,
+            run_id: Some(id),
+            analysis_run_id: None,
+            artifact_id: Some(id),
+            result_name: "result".into(),
+            schema_json: serde_json::to_string(&columns).unwrap(),
+            schema_hash: format!("schema-{id}"),
+            row_count: 2,
+            size_bytes: 10,
+            created_at_ms: 1,
+            deleted_at_ms: None,
+            tombstone_json: None,
+        }
+    }
 
     #[test]
     fn comparison_script_uses_supported_frame_functions() {
@@ -366,5 +395,36 @@ mod tests {
         assert!(script.contains("delta_v_im"));
         assert!(!script.contains("compare_frames"));
         assert!(script.trim_end().ends_with(';'));
+    }
+
+    #[test]
+    fn compatibility_selects_stable_keys_and_excludes_invalid_rss_identifiers() {
+        let (baseline, candidate, facts) = compatible_pair(
+            vec![dataset(1, Some("MW"), true)],
+            vec![dataset(2, Some("MW"), true)],
+        )
+        .unwrap();
+
+        assert_eq!((baseline.id, candidate.id), (1, 2));
+        assert_eq!(facts["stableKeys"], json!(["bus"]));
+        assert_eq!(
+            facts["values"],
+            json!([{"column":"load","dtype":"Float64","unit":"MW"}])
+        );
+    }
+
+    #[test]
+    fn compatibility_rejects_unit_mismatch_and_missing_numeric_values() {
+        let unit_error = compatible_pair(
+            vec![dataset(1, Some("MW"), true)],
+            vec![dataset(2, Some("kW"), true)],
+        )
+        .unwrap_err();
+        assert_eq!(unit_error.code, "comparison_incompatible");
+
+        let empty_error =
+            compatible_pair(vec![dataset(1, None, false)], vec![dataset(2, None, false)])
+                .unwrap_err();
+        assert_eq!(empty_error.code, "comparison_incompatible");
     }
 }

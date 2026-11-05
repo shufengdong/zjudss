@@ -161,6 +161,20 @@ async fn request(
 async fn deleting_one_result_hides_content_releases_quota_and_keeps_run() {
     let app = TestApp::spawn().await;
     let (user, cookie, run_id, dataset_id) = create_completed_run(&app).await;
+    let foreign_cookie = app.login_cookie("bob@example.com").await;
+    for suffix in ["", "/rows"] {
+        assert_eq!(
+            request(
+                &app,
+                &foreign_cookie,
+                "GET",
+                format!("/api/datasets/{dataset_id}{suffix}"),
+            )
+            .await
+            .status(),
+            StatusCode::NOT_FOUND,
+        );
+    }
     let before = app
         .state
         .artifact_service
@@ -404,6 +418,17 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
     );
     assert_eq!(derived["lineage"][0]["deleted"], true);
     assert_eq!(derived["lineage"][0]["name"], source.name);
+    assert_eq!(
+        derived["lineage"][0]["schema"],
+        serde_json::to_value(&source.columns).unwrap()
+    );
+    assert_eq!(derived["lineage"][0]["schemaHash"], source.schema_hash);
+    assert_eq!(derived["lineage"][0]["contentHash"], source.schema_hash);
+    assert_eq!(
+        derived["lineage"][0]["producer"]["runId"],
+        run_id.to_string()
+    );
+    assert!(derived["lineage"][0]["tombstone"].is_object());
 
     let new_analysis = app
         .state

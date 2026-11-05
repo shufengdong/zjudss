@@ -1717,6 +1717,28 @@ mod tests {
     }
 
     #[test]
+    fn empty_batches_return_no_data_instead_of_panicking() {
+        let source = ChartSource::new(
+            "7",
+            vec![column("bus", "Utf8", None), column("load", "Float64", None)],
+            vec![],
+        );
+        let chart_config = config(json!({
+            "version":1,"kind":"line","presentation":line_presentation(),
+            "x":{"column":"bus"},"xAxisMode":"category",
+            "measures":[{"column":"load"}],"order":"source",
+            "aggregation":"none","sampling":{"mode":"none"}
+        }));
+
+        assert_eq!(
+            ChartCompiler::compile(&chart_config, &source)
+                .unwrap_err()
+                .code,
+            "chart_no_data"
+        );
+    }
+
+    #[test]
     fn three_phase_lines_expand_components_and_preserve_source_order() {
         let mut phases = LargeListBuilder::new(Float64Builder::new());
         phases.values().append_slice(&[1.01, 1.02, 1.03]);
