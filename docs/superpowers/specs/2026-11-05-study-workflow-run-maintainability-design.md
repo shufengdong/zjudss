@@ -2,7 +2,12 @@
 
 **日期：** 2026-11-05  
 **阶段：** 仓库整理路线 8.5  
-**状态：** 设计草案，待审批
+**状态：** 已实施并完成确定性验证；当前候选发布仍受既有外部 eig-rs 资源合同阻塞
+
+**实施证据：** `67e2d34..317bf6b` 依次完成行为刻画、策略/token、冻结输入、原子 overlay、仓储事务、application
+编排、共享执行安全原语和状态机隔离。2026-11-05 后端格式、全 target/all feature Clippy、精确过滤唯一外部资源断言后的
+完整 `e2e-test`、50/50 文件 265/265 Vitest、生产构建、31/31 Playwright、350/350 功能证据与 297/297 公共合同均通过。
+未过滤后端测试仍只报告既有 7 个 `case_projection_invalid`，没有放宽合同或误标候选发布全绿。
 
 ## 1. 背景与意图
 
@@ -359,7 +364,7 @@ cd ..
 - 更新 `docs/development-status.md` 的模块所有权和实际验证证据；
 - 如事务所有权描述变化，更新 `docs/db-design.md`；
 - 如内部流程描述更清晰，更新 `docs/api-design.md` 和 `docs/integration-testing-design.md`，但不复制精确枚举；
-- 公共行为不变时不修改 `docs/frontend-design.md` 和 `integration-tests/catalog/features.yaml`；
+- 公共行为不变时不修改 `docs/frontend-design.md`；功能目录只在测试符号合并后同步证据引用，不改变 feature/contract 集合；
 - 若实施发现必须改变路由、DTO、错误码、schema、消息、工具或 UI，停止当前计划，先修订本设计并补功能目录与行为测试。
 
 ## 12. 实施边界与提交顺序

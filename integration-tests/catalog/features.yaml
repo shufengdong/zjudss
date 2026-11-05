@@ -1028,7 +1028,7 @@
       name: result_contract_rejection_repairs_without_publishing_partial_results
     - runner: rust
       file: backend/tests/script_repair.rs
-      name: cancellation_interrupts_the_author_without_creating_a_candidate
+      name: cancellation_during_generation_execution_and_repair_stops_future_work
   assertions: [initial generation runs immediately, each candidate and parent attempt is durable, structural contract violations never reach tensoreval, repair candidates consume the configured budget, three repairs permit at most four engine calls, nonzero exits and result contract violations are repairable, timeout monitor path quota and infrastructure failures stop immediately, stderr sent to the model is sanitized and bounded while raw retained bytes remain audit only, failure analysis is bounded and cannot hide logs when unavailable, identical parent and repair hashes are reported as no substantive change, cancellation interrupts author or engine work, exact result names and schemas publish atomically without partial datasets]
   fixtures: [minimal dynamic facade, frozen model and Struct resource, scripted author, scenario engine]
   contracts:
@@ -1204,7 +1204,7 @@
       name: unchanged_private_overlay_retry_reuses_the_effective_artifact
     - runner: rust
       file: backend/tests/workflow_retries.rs
-      name: retry_replays_user_and_selector_overrides_on_explicit_replacement_descendant
+      name: retry_and_rerun_resolve_the_same_struct_successor_matrix
     - runner: rust
       file: backend/tests/workflow_retries.rs
       name: retry_rejects_same_alias_resource_without_replacement_lineage

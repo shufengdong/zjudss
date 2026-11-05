@@ -27,6 +27,13 @@
 当前确定性基线为 50 个 Vitest 文件/265 条用例、生产构建和 31 条 Playwright 旅程；Rust 全量套件的真实 eig-rs
 验收断言若失败，必须单独报告实际无效案例，不能通过共享夹具自动跳过或改写资源合同。
 
+研究/workflow/run 维护性回归以公共 service/API 和真实 SQLite transaction 为证据：`managed_workflows.rs` 与
+`workflow_retries.rs` 覆盖 overlay 第 N 项失败清理、幂等/并发 replay 不消费 staging、source-less/unchanged/replacement/
+legacy/same-alias/cycle/超深 lineage 的 retry/rerun 同义矩阵；`script_repair.rs` 用 barrier 覆盖 generation、engine、repair
+三处取消和最多 3 次修正/4 次执行；`simulation_runs.rs` 覆盖 manual open contract、Agent frozen contract 终态失败且不 repair、
+失败诊断 enrichment 与用户作用域；`result_deletion.rs` 覆盖脚本、输入和全部直接结果引用在墓碑事务中原子释放。
+共享执行单元测试只证明输入树、物理 Snappy Parquet 读取和脱敏诊断，不能代替 managed/ordinary 各自的结果策略行为测试。
+
 ## Coverage matrix
 
 功能目录 `integration-tests/catalog/features.yaml` 是机器可读追溯源。每项包含 source、layers、lanes、真实
@@ -154,5 +161,10 @@ manifest schema v2 案例，要求不可导入案例为零，并对每个案例�
 不允许 `skip`、`ignore` 或 manual-only 填补覆盖。失败先保留 trace/screenshot/log，按最窄层复现，再运行全量。
 当前引擎不兼容不能通过放宽校验解决；应修复当前 eig-rs 或正式更新应用 contract 和全部证据。服务不会自动
 改写引擎工作树；资源或 binary 更新后必须重启并重新生成运行时证据。
+
+2026-11-05 全仓门禁再次确认：后端格式与全 target/all feature Clippy 通过，跳过且仅跳过
+`current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count` 后完整 `e2e-test` 通过；未过滤运行仍只报告既有
+四个 DistanceRelays、GFL IEEE123、InductionMachine 和 59NRelayDemo 共 7 个 `case_projection_invalid`。前端 50/50 个
+Vitest 文件、265/265 用例、生产构建、31/31 Playwright，以及 350/350 功能证据、297/297 公共合同和 100% PR 追溯通过。
 
 案例库应用以整体切换验收：准备阶段不发布，确认后 active 为新建或复用的模型版本、draft 为空、上一案例配套资源退出 live 集合，历史资源引用保留。`case_import` 行为测试覆盖重复案例去重、资源切换、资源发布失败回滚、用户资源 alias 冲突保护和过期确认基线；浏览器案例旅程覆盖“确认切换案例”与自动激活。独立全案例人工旅程在确认后验证 active，不再额外请求 Agent 发布同一案例。

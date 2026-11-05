@@ -71,6 +71,13 @@ draft ID 和 revision：只有已确认属于当前用户的资源才可返回 r
 现有 artifact，不更新 active 指针、draft revision、artifact 引用或任何业务表；所有权校验与打开文件在
 ArtifactService 的 read gate 内完成，release/GC 使用 write gate，避免已校验读取与并发回收竞争。本功能不增加 migration。
 
+研究/workflow/run 仓储继续以 `ManagedWorkflowRepo`、`WorkflowInputRepo` 和 `RunRepo` 作为稳定 facade，但事务实现按所有权拆分。
+`workflow_input.rs` 唯一解析冻结 Struct snapshot、replacement successor 和 legacy overrides；managed workflow 的确认、retry、
+attempt/终态及恢复分别在 `managed_workflow_confirmation.rs`、`managed_workflow_retry.rs`、
+`managed_workflow_attempt.rs`、`managed_workflow_recovery.rs` 中实现，共用同一用户作用域 aggregate loader。
+`run_deletion.rs` 独占 run 删除 preview/token/impact/tombstone 事务。子模块只接收稳定 ID、hash、冻结 JSON 和显式 command，
+不会接收 application service DTO，也不会拆开原 immediate transaction。
+
 ## Artifact references
 
 `artifact.rs` 的 `commit_draft_in_transaction` 是唯一 CAS commit 算法：在一个 immediate
@@ -150,7 +157,9 @@ Snappy Parquet。`effective` 同时记录完整 `values`、`userOverrides`、`se
 列映射先按目标 schema 在应用层生成 Snappy Parquet，再通过统一上传候选事务发布新 `data_resources` 行；发布时即
 写入 `source_kind=mapping` 和源资源/目标 schema/列映射血缘，避免发布后修改不可变 payload。配置确认事务重新校验
 revision/snapshot/hash，在同一事务内确认配置、新增 workflow/provisional run、逐项冻结私有 Struct 输入
-artifact 并建立持久进度消息。`client_operation_id` 在会话内唯一，确保重复确认不重复工作；partial unique index 保证
+artifact 并建立持久进度消息。需要新物化的 Struct overlay 先由 application 只写 staging；仓储通过统一 artifact batch
+在上述同一事务中创建 CAS/link、解析 batch index 并写入 frozen input。重放、竞争或任一校验失败都不会提交未消费 staging、
+artifact link、配额、workflow/run 或 input snapshot。`client_operation_id` 在会话内唯一，确保重复确认不重复工作；partial unique index 保证
 每会话只有一个非终态 workflow。
 
 首次受管 run 在脚本尚未产生时允许脚本资源/artifact/hash 三列同时为空；该例外只适用于 `run_kind=managed`。一旦候选

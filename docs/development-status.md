@@ -123,6 +123,23 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 本轮上传/模型版本/数据资源所有权整理同样不改变 HTTP 路由、JSON DTO、稳定错误码、数据库 schema 或前端交互；
 `frontend-design.md` 和功能目录因此无需行为性修改。
 
+2026-11-05 的研究配置、受管工作流与普通运行所有权整理已经完成：
+
+- `StudyConfigurationService` 保持 facade，准备、输入编辑、确认快照与纯策略分别由
+  `study_configuration_prepare.rs`、`study_configuration_inputs.rs`、`study_confirmation.rs` 和
+  `study_configuration_policy.rs` 拥有；
+- `WorkflowInputRepo` 是 retry/rerun 解析冻结 Struct 输入、显式 replacement 血缘和 legacy overrides 的唯一仓储边界，
+  `StructOverlayService` 只 staging 私有 Parquet，artifact/link 与 workflow/run 输入在原事务内一并提交；
+- `ManagedWorkflowRepo` facade 下的确认、retry、attempt/终态和恢复事务分别位于独立子模块，repository 只接收
+  `ManagedWorkflowStartCommand`，不依赖 application DTO；
+- `execution_input_tree.rs`、`execution_results.rs` 和 `execution_failure.rs` 只共享安全输入树、物理 Parquet 事实和有界脱敏诊断；
+  `WorkflowWorker` 仍独占 author/repair、修正预算、managed strict contract 与终态发布；
+- `RunService` facade 下的单次执行、open/frozen 结果策略与发布、删除编排分别由 `run_execution.rs`、
+  `run_results.rs` 和 `run_deletion.rs` 拥有，普通运行没有 repair 路径；run 删除 token/影响/墓碑事务也已从主仓储文件拆出。
+
+该整理不改变 REST/SSE、JSON DTO、稳定错误码、数据库 schema、Agent bundle/权限或前端流程。功能目录只把两条已合并的
+行为测试引用更新为当前测试符号，没有新增或删除公共合同。
+
 ## Hard boundaries
 
 所有 tensoreval 调用必须经过 adapter；所有 repository 查询带 `UserId`；所有模型和结果正文使用 Snappy Parquet；浏览器与
@@ -219,3 +236,10 @@ tombstone 边界保持不变。本阶段通过后端格式与全 feature 零警�
 以及版本删除与 artifact 引用释放的事务原子性。最终全仓验证已执行：前端 50 个文件 265 项测试与生产构建通过，
 功能覆盖 350/350、公共契约 297/297；后端跳过已知外部资源断言后的 `e2e-test` 全套通过。未跳过运行仍只受上文
 同一真实 eig-rs 资源树断言及 7 个外部 `case_projection_invalid` 阻塞，本阶段未放宽该合同，也不将候选发布标记为全绿。
+
+2026-11-05 的研究/workflow/run 所有权整理以 `67e2d34..317bf6b` 八个独立提交完成。机械审计确认旧
+`study_struct_overlays`/`materialize_*` 路径、repository 对 `PreparedStudyConfirmation` 的依赖、retry 私有随机/hash 实现、
+retry/rerun 对底层 lineage helper 的直接调用，以及 adapter 外的进程启动均不存在。后端格式和全 target/all feature
+零警告 Clippy 通过；精确跳过唯一外部资源断言后完整 `e2e-test` 通过；前端 50/50 文件、265/265 Vitest、生产构建、
+31/31 Playwright、350/350 功能证据、297/297 公共合同和 100% PR 追溯通过。未过滤后端测试仍只报告上文同一断言和
+同一 7 个 `case_projection_invalid`，因此候选发布状态仍未标记为全绿。
