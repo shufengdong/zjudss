@@ -6,9 +6,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::application::ArtifactService;
-use crate::application::dataframe_reader::{
-    DataFrameReadError, DataFrameReadSource, ParquetDataFrameReader,
-};
+use crate::application::dataframe_reader::{DataFrameReadError, ParquetDataFrameReader};
+use crate::application::result_sources::{ResultSourceError, ResultSourceService};
 use crate::auth::CurrentUser;
 use crate::db::repositories::{
     DeleteResultError, LineageRow, RepoError, ResultRepo, ResultViewRow, RunDataset,
@@ -57,6 +56,16 @@ impl From<DataFrameReadError> for DatasetError {
                 Self::Storage(format!("DataFrame 扫描行数超过限制 {limit}"))
             }
             DataFrameReadError::Storage(message) => Self::Storage(message),
+        }
+    }
+}
+impl From<ResultSourceError> for DatasetError {
+    fn from(value: ResultSourceError) -> Self {
+        match value {
+            ResultSourceError::NotFound => Self::NotFound,
+            ResultSourceError::Repository(error) => error.into(),
+            ResultSourceError::Artifact(error) => Self::Storage(error.to_string()),
+            ResultSourceError::Stored(message) => Self::Storage(message),
         }
     }
 }
@@ -123,6 +132,7 @@ pub struct DatasetService {
     repo: ResultRepo,
     artifacts: ArtifactService,
     reader: ParquetDataFrameReader,
+    sources: ResultSourceService,
     messages: crate::db::repositories::MessageRepo,
     events: crate::application::EventBus,
 }
@@ -134,10 +144,12 @@ impl DatasetService {
         events: crate::application::EventBus,
     ) -> Self {
         let reader = ParquetDataFrameReader::new(artifacts.clone());
+        let sources = ResultSourceService::new(repo.clone(), artifacts.clone());
         Self {
             repo,
             artifacts,
             reader,
+            sources,
             messages,
             events,
         }
@@ -208,13 +220,6 @@ impl DatasetService {
             lineage,
         })
     }
-    #[allow(dead_code)]
-    async fn file(&self, p: &CurrentUser, d: &RunDataset) -> Result<File, DatasetError> {
-        self.reader
-            .open_owned(p, d.artifact_id.ok_or(DatasetError::NotFound)?)
-            .await
-            .map_err(Into::into)
-    }
     pub async fn page(
         &self,
         p: &CurrentUser,
@@ -223,22 +228,10 @@ impl DatasetService {
         cursor: Option<&str>,
         columns: &[String],
     ) -> Result<DatasetPage, DatasetError> {
-        let d = self.repo.find_live(&p.id, id).await?;
+        let source = self.sources.resolve(p, id).await?;
         let page = self
             .reader
-            .page(
-                p,
-                &DataFrameReadSource {
-                    resource_key: format!("dataset:{id}"),
-                    artifact_id: d.artifact_id.ok_or(DatasetError::NotFound)?,
-                    schema_json: d.schema_json,
-                    row_count: d.row_count,
-                    content_hash: d.schema_hash,
-                },
-                limit,
-                cursor,
-                columns,
-            )
+            .page(p, &source.read_source, limit, cursor, columns)
             .await?;
         Ok(DatasetPage {
             dataset_id: id.to_string(),
@@ -253,19 +246,13 @@ impl DatasetService {
         p: &CurrentUser,
         id: i32,
     ) -> Result<DatasetDownload, DatasetError> {
-        let d = self.repo.find_live(&p.id, id).await?;
+        let source = self.sources.resolve(p, id).await?;
         let file = self
             .reader
             .download(
                 p,
-                &DataFrameReadSource {
-                    resource_key: format!("dataset:{id}"),
-                    artifact_id: d.artifact_id.ok_or(DatasetError::NotFound)?,
-                    schema_json: d.schema_json,
-                    row_count: d.row_count,
-                    content_hash: d.schema_hash,
-                },
-                format!("{}-{}", d.id, d.result_name),
+                &source.read_source,
+                format!("{}-{}", source.dataset.id, source.dataset.result_name),
             )
             .await?;
         Ok(DatasetDownload {

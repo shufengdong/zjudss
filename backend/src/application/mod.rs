@@ -25,6 +25,7 @@ pub mod model_dataframes;
 pub mod model_patch;
 mod opaque_token;
 mod resource_alias;
+mod result_sources;
 mod run_results;
 pub mod runs;
 pub mod scheduler;
