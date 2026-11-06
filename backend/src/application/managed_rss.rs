@@ -15,6 +15,7 @@ pub enum Token {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssignmentCall {
     pub targets: Vec<String>,
+    pub targets_bracketed: bool,
     pub callee: String,
     pub arguments: Vec<String>,
 }
@@ -187,7 +188,12 @@ fn split_statements(tokens: &[Token]) -> Vec<&[Token]> {
 
 fn parse_direct_assignment_call(statement: &[Token]) -> Option<AssignmentCall> {
     let equal = statement.iter().position(|token| token == &Token::Equal)?;
-    let targets = parse_ident_list(&statement[..equal])?;
+    let target_tokens = &statement[..equal];
+    let targets_bracketed = matches!(
+        (target_tokens.first(), target_tokens.last()),
+        (Some(Token::LBracket), Some(Token::RBracket))
+    );
+    let targets = parse_ident_list(target_tokens)?;
     let rhs = &statement[equal + 1..];
     let (Token::Ident(callee), Some(Token::LParen), Some(Token::RParen)) =
         (rhs.first()?, rhs.get(1), rhs.last())
@@ -197,6 +203,7 @@ fn parse_direct_assignment_call(statement: &[Token]) -> Option<AssignmentCall> {
     let arguments = parse_ident_list(&rhs[2..rhs.len() - 1])?;
     Some(AssignmentCall {
         targets,
+        targets_bracketed,
         callee: callee.clone(),
         arguments,
     })
@@ -236,6 +243,7 @@ mod tests {
             direct_assignment_calls(&tokens),
             vec![AssignmentCall {
                 targets: vec!["a".into(), "b".into()],
+                targets_bracketed: true,
                 callee: "solve".into(),
                 arguments: vec!["table".into(), "para".into()],
             }]

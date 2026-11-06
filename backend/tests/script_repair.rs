@@ -163,7 +163,7 @@ async fn nonzero_exit_is_sanitized_repaired_and_then_succeeds() {
     let author = Arc::new(ScriptedAuthor::default());
     let engine = Arc::new(ScenarioEngine::default());
     author.enqueue(script_turn("result = test(table, para);"));
-    author.enqueue(script_turn("result = test(table, para);"));
+    author.enqueue(script_turn("result = test(table, para); // repaired"));
     author.enqueue_analysis(Ok(FailureAnalysis {
         summary: "引擎拒绝了当前脚本对应的求解条件".into(),
         facts: vec![FailureAnalysisEvidence {
@@ -219,7 +219,7 @@ async fn nonzero_exit_is_sanitized_repaired_and_then_succeeds() {
     );
     assert_eq!(terminal.attempts[0].engine_logs[0].stream, "stderr");
     assert_eq!(terminal.attempts[0].script_changed_from_parent, None);
-    assert_eq!(terminal.attempts[1].script_changed_from_parent, Some(false));
+    assert_eq!(terminal.attempts[1].script_changed_from_parent, Some(true));
     assert_eq!(engine.calls().len(), 2);
     let prompt = serde_json::to_string(&author.repair_requests()[0]).unwrap();
     assert!(prompt.contains("只输出修改后的完整脚本，不要解释"));
@@ -363,7 +363,9 @@ async fn repair_budget_allows_at_most_four_engine_calls() {
     let author = Arc::new(ScriptedAuthor::default());
     let engine = Arc::new(ScenarioEngine::default());
     for index in 0..4 {
-        author.enqueue(script_turn("result = test(table, para);"));
+        author.enqueue(script_turn(&format!(
+            "result = test(table, para); // attempt {index}"
+        )));
         engine.enqueue(EngineScenario::Failure {
             code: "engine_exit_nonzero".into(),
             stderr: format!("failure {index}").into_bytes(),
@@ -401,11 +403,61 @@ async fn repair_budget_allows_at_most_four_engine_calls() {
 }
 
 #[tokio::test]
+async fn unchanged_repairs_are_audited_without_reexecuting_engine() {
+    let author = Arc::new(ScriptedAuthor::default());
+    let engine = Arc::new(ScenarioEngine::default());
+    for _ in 0..4 {
+        author.enqueue(script_turn("result = test(table, para);"));
+        engine.enqueue(EngineScenario::Failure {
+            code: "engine_exit_nonzero".into(),
+            stderr: b"parse failed".to_vec(),
+            exit_code: 7,
+        });
+    }
+    let app = TestApp::builder()
+        .engine(engine.clone())
+        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
+        .script_author(author.clone())
+        .failure_analyzer(author)
+        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
+    let user = common::test_user("alice@example.com");
+    let workflow = confirm(&app, &user, "unchanged-repair").await;
+
+    app.state
+        .managed_workflow_service
+        .execute_confirmed(&user, workflow.id)
+        .await
+        .unwrap();
+
+    let terminal = app
+        .state
+        .managed_workflow_service
+        .get(&user, workflow.id)
+        .await
+        .unwrap();
+    assert_eq!(terminal.status, "failed");
+    assert_eq!(terminal.corrections_used, 3);
+    assert_eq!(terminal.attempts.len(), 4);
+    assert_eq!(engine.calls().len(), 1);
+    for attempt in &terminal.attempts[1..] {
+        assert_eq!(attempt.status, "contract_rejected");
+        assert_eq!(attempt.script_changed_from_parent, Some(false));
+        assert_eq!(
+            attempt.diagnostic.as_ref().unwrap()["code"],
+            "repair_contract_violated"
+        );
+    }
+    assert_eq!(terminal.error.unwrap()["code"], "repair_exhausted");
+}
+
+#[tokio::test]
 async fn result_contract_rejection_repairs_without_publishing_partial_results() {
     let author = Arc::new(ScriptedAuthor::default());
     let engine = Arc::new(ScenarioEngine::default());
     author.enqueue(script_turn("result = test(table, para);"));
-    author.enqueue(script_turn("result = test(table, para);"));
+    author.enqueue(script_turn("result = test(table, para); // repaired"));
     engine.enqueue(EngineScenario::IdSuccess(vec![
         IdDatasetFixture {
             name: "result".into(),

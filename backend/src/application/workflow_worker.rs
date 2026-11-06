@@ -282,8 +282,45 @@ impl WorkflowWorker {
                 .last()
                 .cloned()
                 .ok_or("candidate attempt missing")?;
+            let unchanged_from_parent = phase == "repair"
+                && attempt
+                    .parent_attempt_id
+                    .and_then(|parent_id| {
+                        aggregate
+                            .attempts
+                            .iter()
+                            .find(|candidate| candidate.id == parent_id)
+                    })
+                    .and_then(|parent| parent.script_content_hash.as_ref())
+                    .zip(attempt.script_content_hash.as_ref())
+                    .is_some_and(|(parent_hash, current_hash)| parent_hash == current_hash);
             parent_attempt_id = Some(attempt.id);
             current_script = script;
+
+            if unchanged_from_parent {
+                let diagnostic = serde_json::json!({
+                    "code": "repair_contract_violated",
+                    "message": "修正脚本与上一候选完全相同，必须实际修改后再执行",
+                    "reason": "unchanged_script",
+                });
+                aggregate = self
+                    .update_attempt(
+                        user,
+                        workflow_id,
+                        attempt.id,
+                        "contract_rejected",
+                        "repairing",
+                        None,
+                        None,
+                        None,
+                        Some(diagnostic.clone()),
+                    )
+                    .await?;
+                repair_stderr.clear();
+                repair_diagnostic = Some(diagnostic);
+                phase = "repair";
+                continue;
+            }
 
             if let Err(violation) =
                 ScriptContractInspector::inspect_candidate(&current_script, &locked)

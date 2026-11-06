@@ -88,6 +88,17 @@ impl ScriptContractInspector {
             .iter()
             .map(|result| result.name.clone())
             .collect::<Vec<_>>();
+        if expected.len() > 1 && !call.targets_bracketed {
+            return Err(ContractViolation {
+                fields: vec!["results".into()],
+                diagnostic: json!({
+                    "code":"repair_contract_violated",
+                    "message":"多个结果必须使用方括号解构绑定",
+                    "expected": expected,
+                    "actual": call.targets,
+                }),
+            });
+        }
         if call.targets != expected {
             return Err(ContractViolation {
                 fields: vec!["results".into()],
@@ -119,6 +130,10 @@ mod tests {
     use crate::application::FrozenResultContract;
 
     fn locked() -> LockedStudyContract {
+        locked_with_results(&["result"])
+    }
+
+    fn locked_with_results(names: &[&str]) -> LockedStudyContract {
         LockedStudyContract {
             configuration_id: 1,
             facade_id: "study".into(),
@@ -127,10 +142,13 @@ mod tests {
             engine_snapshot_id: "snapshot".into(),
             input_aliases: vec!["table".into(), "para".into()],
             structs: vec![],
-            results: vec![FrozenResultContract {
-                name: "result".into(),
-                schema_ref: "result_frames.result".into(),
-            }],
+            results: names
+                .iter()
+                .map(|name| FrozenResultContract {
+                    name: (*name).into(),
+                    schema_ref: format!("result_frames.{name}"),
+                })
+                .collect(),
         }
     }
 
@@ -152,5 +170,28 @@ mod tests {
         ] {
             assert!(ScriptContractInspector::inspect_candidate(source, &locked()).is_err());
         }
+    }
+
+    #[test]
+    fn requires_bracketed_binding_for_multiple_results() {
+        let locked = locked_with_results(&["first", "second"]);
+        ScriptContractInspector::inspect_candidate(
+            "[first, second] = solve(table, para);",
+            &locked,
+        )
+        .unwrap();
+
+        let violation = ScriptContractInspector::inspect_candidate(
+            "first, second = solve(table, para);",
+            &locked,
+        )
+        .unwrap_err();
+        assert_eq!(violation.diagnostic["code"], "repair_contract_violated");
+        assert!(
+            violation.diagnostic["message"]
+                .as_str()
+                .unwrap()
+                .contains("方括号")
+        );
     }
 }
