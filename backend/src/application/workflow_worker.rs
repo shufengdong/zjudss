@@ -227,6 +227,7 @@ impl WorkflowWorker {
                     diagnostic: repair_diagnostic.clone(),
                     locked_contract: locked.clone(),
                     inputs: inputs.clone(),
+                    engine_docs: self.engine_docs(&locked.function),
                     instruction: "必须依据 diagnostic 和 sanitizedStderr 修改 currentScript；冻结 alias 已由运行环境注入，不得读取、构造或重新赋值。只输出修改后的完整脚本，不要解释".into(),
                 };
                 tokio::select! {
@@ -473,7 +474,7 @@ impl WorkflowWorker {
     fn engine_docs(&self, function: &str) -> Vec<EngineDocRef> {
         self.snapshot
             .knowledge
-            .search(function, 6_000)
+            .script_author_docs(function, 6_000)
             .into_iter()
             .map(|hit| EngineDocRef {
                 id: format!("{}#{}", hit.doc_id, hit.section_id),

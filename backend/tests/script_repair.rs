@@ -268,6 +268,56 @@ async fn initial_contract_rejection_does_not_execute_and_repair_consumes_budget(
 }
 
 #[tokio::test]
+async fn generation_and_repair_receive_required_rss_syntax_docs() {
+    let author = Arc::new(ScriptedAuthor::default());
+    let engine = Arc::new(ScenarioEngine::default());
+    author.enqueue(script_turn(
+        "x = import_dss(\"model.dss\"); result = test(table);",
+    ));
+    author.enqueue(script_turn("result = test(table, para);"));
+    engine.enqueue(success());
+    let app = TestApp::builder()
+        .engine(engine)
+        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
+        .script_author(author.clone())
+        .failure_analyzer(author.clone())
+        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
+        .spawn()
+        .await;
+    let user = common::test_user("alice@example.com");
+    let workflow = confirm(&app, &user, "syntax-docs").await;
+
+    app.state
+        .managed_workflow_service
+        .execute_confirmed(&user, workflow.id)
+        .await
+        .unwrap();
+
+    let generation = serde_json::to_value(&author.generation_requests()[0]).unwrap();
+    let repair = serde_json::to_value(&author.repair_requests()[0]).unwrap();
+    for request in [generation, repair] {
+        let excerpts = request["engineDocs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|value| value["excerpt"].as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            excerpts
+                .iter()
+                .any(|excerpt| excerpt.contains("Every statement is a named declaration")),
+            "missing top-level syntax docs: {request}"
+        );
+        assert!(
+            excerpts
+                .iter()
+                .any(|excerpt| excerpt.contains("[first, second] = function")),
+            "missing multi-result syntax docs: {request}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn timeout_is_not_repaired() {
     let author = Arc::new(ScriptedAuthor::default());
     let engine = Arc::new(ScenarioEngine::default());

@@ -37,7 +37,14 @@ pub fn prepare_engine_fixture(
                 .0
         }
         E2eCatalogMode::Minimal => {
-            EngineResourceSnapshot::minimal("e2e-snapshot", "e2e-contract", engine_root.join("dss"))
+            let mut snapshot = EngineResourceSnapshot::minimal(
+                "e2e-snapshot",
+                "e2e-contract",
+                engine_root.join("dss"),
+            );
+            snapshot.documents = loaded.documents;
+            snapshot.knowledge = loaded.knowledge;
+            snapshot
         }
     };
     SchemaCatalog::from_value(&snapshot.contract_version, &snapshot.catalog_json)
@@ -74,9 +81,14 @@ fn write_catalog(dss_root: &Path) {
     }
     std::fs::write(
         dss_root.join("docs/guide.md"),
-        b"# Test engine guide\nfixture content\n",
+        b"# Test engine guide\nThe test facade executes injected frames.\n",
     )
     .expect("write e2e guide");
+    std::fs::write(
+        dss_root.join("docs/rss_language_reference.md"),
+        b"# RSS language reference\n## 1.1 \xe9\xa1\xb6\xe5\xb1\x82\xe7\xa8\x8b\xe5\xba\x8f\xe7\xba\xa6\xe6\x9d\x9f\xef\xbc\x88MUST\xef\xbc\x89\nEvery statement is a named declaration.\n### 3.2 \xe5\xa4\x9a\xe7\xbb\x93\xe6\x9e\x9c\xe5\xa3\xb0\xe6\x98\x8e\nUse [first, second] = function(...); for multiple results.\n",
+    )
+    .expect("write e2e RSS language reference");
 }
 
 fn write_dependency_fixture(engine_root: &Path, dss_root: &Path) {

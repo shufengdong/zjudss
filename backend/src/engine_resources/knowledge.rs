@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -98,6 +100,36 @@ impl EngineKnowledge {
         hits
     }
 
+    pub fn script_author_docs(&self, function: &str, max_chars: usize) -> Vec<DocSearchHit> {
+        if max_chars == 0 {
+            return Vec::new();
+        }
+
+        let mut remaining = max_chars;
+        let mut seen = HashSet::new();
+        let mut hits = Vec::new();
+        for title_fragment in ["顶层程序约束", "多结果声明"] {
+            let mut required = self
+                .sections
+                .iter()
+                .filter(|section| section.title.contains(title_fragment))
+                .collect::<Vec<_>>();
+            required.sort_by(|left, right| left.section_id.cmp(&right.section_id));
+            for section in required {
+                push_search_hit(section, &mut remaining, &mut seen, &mut hits);
+            }
+        }
+        for hit in self.search(function, max_chars) {
+            if remaining == 0 || !seen.insert(hit.section_id.clone()) {
+                continue;
+            }
+            let snippet = hit.snippet.chars().take(remaining).collect::<String>();
+            remaining = remaining.saturating_sub(snippet.chars().count());
+            hits.push(DocSearchHit { snippet, ..hit });
+        }
+        hits
+    }
+
     pub fn read(&self, section_id: &str, max_chars: usize) -> Option<DocSection> {
         self.sections
             .iter()
@@ -108,6 +140,30 @@ impl EngineKnowledge {
                 section
             })
     }
+}
+
+fn push_search_hit(
+    section: &DocSection,
+    remaining: &mut usize,
+    seen: &mut HashSet<String>,
+    hits: &mut Vec<DocSearchHit>,
+) {
+    if *remaining == 0 || !seen.insert(section.section_id.clone()) {
+        return;
+    }
+    let snippet = section
+        .content
+        .chars()
+        .take((*remaining).min(320))
+        .collect::<String>();
+    *remaining = remaining.saturating_sub(snippet.chars().count());
+    hits.push(DocSearchHit {
+        doc_id: section.doc_id.clone(),
+        section_id: section.section_id.clone(),
+        hash: section.hash.clone(),
+        title: section.title.clone(),
+        snippet,
+    });
 }
 
 fn push_section(

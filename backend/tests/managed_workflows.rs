@@ -2166,6 +2166,7 @@ async fn scripted_author_sequences_generation_and_repair() {
             diagnostic: None,
             locked_contract: locked,
             inputs,
+            engine_docs: vec![],
             instruction: "只输出修改后的完整脚本，不要解释".into(),
         })
         .await

@@ -29,6 +29,7 @@ struct Inner {
     turns: Mutex<VecDeque<AuthorTurn>>,
     barriers: Mutex<HashMap<String, Arc<AuthorBarrier>>>,
     trace: Mutex<Vec<String>>,
+    generation_requests: Mutex<Vec<ScriptGenerationRequest>>,
     repair_requests: Mutex<Vec<ScriptRepairRequest>>,
     analysis_results: Mutex<VecDeque<Result<FailureAnalysis, String>>>,
 }
@@ -111,6 +112,14 @@ impl ScriptedAuthor {
             .clone()
     }
 
+    pub fn generation_requests(&self) -> Vec<ScriptGenerationRequest> {
+        self.inner
+            .generation_requests
+            .lock()
+            .expect("author generation requests")
+            .clone()
+    }
+
     async fn next(&self, operation: &str) -> Result<String, ScriptAuthorError> {
         self.inner
             .trace
@@ -154,8 +163,13 @@ impl ScriptedAuthor {
 impl ScriptAuthor for ScriptedAuthor {
     async fn generate(
         &self,
-        _request: ScriptGenerationRequest,
+        request: ScriptGenerationRequest,
     ) -> Result<String, ScriptAuthorError> {
+        self.inner
+            .generation_requests
+            .lock()
+            .expect("author generation requests")
+            .push(request);
         self.next("generate").await
     }
 

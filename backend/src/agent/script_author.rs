@@ -12,6 +12,7 @@ use super::{AgentBuildRequest, AgentFactory, LlmAgentFactory, LlmConfig};
 const SCRIPT_AUTHOR_RULES: &str = r#"你是受控 RSS 脚本作者。请求 JSON 中 locked/lockedContract 是不可改变的冻结合同。
 运行环境已经按 locked.inputAliases 注入全部 DataFrame，包括 Struct DataFrame；不得读取、导入、构造、重新赋值或重命名这些变量。
 完整脚本只写一条直接结果绑定：左侧严格使用 locked.results 中的 name，右侧严格调用一次 locked.function，实参严格按 locked.inputAliases 的原顺序逐项引用。
+单结果左值必须写成 name = function(...);。多结果左值必须用方括号解构，写成 [name1, name2] = function(...);；禁止写 name1, name2 = ... 或 (name1, name2) = ...。
 不得使用 read_table、read、read_csv、read_parquet、import_dss、struct、print 或其他辅助函数，不得追加裸变量表达式。
 只输出纯 RSS 源码，不要解释，不要使用 Markdown 代码围栏。修正脚本时必须按 diagnostic 和 sanitizedStderr 修复 currentScript，不得原样返回已被拒绝的脚本。"#;
 
@@ -55,6 +56,7 @@ pub struct ScriptRepairRequest {
     pub diagnostic: Option<Value>,
     pub locked_contract: LockedStudyContract,
     pub inputs: WorkflowInputSnapshot,
+    pub engine_docs: Vec<EngineDocRef>,
     pub instruction: String,
 }
 
@@ -174,6 +176,8 @@ mod tests {
             "locked.inputAliases",
             "locked.results",
             "locked.function",
+            "多结果左值必须用方括号解构",
+            "禁止写 name1, name2",
             "不得使用 read_table",
             "不要使用 Markdown 代码围栏",
             "不得原样返回",
