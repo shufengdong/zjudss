@@ -87,9 +87,11 @@ shell 命令和任意图表 option。用户配置图表不进入 Agent prompt �
 `update_study_results` 只接收十进制字符串 `configurationId`、正整数 `expectedRevision` 和有序唯一 `results`；比较使用两个 run ID。模型范围不存在、查询无效、输出过大、草稿 revision
 冲突和表不存在分别使用稳定错误码，工具响应不包含 artifact 路径。
 
-配置确认后的脚本由独立无工具 ScriptAuthor 处理，不把脚本生成能力重新开放给对话 Agent。generation 请求只含冻结合同、
-冻结输入快照和按函数检索的有界引擎文档片段；repair 请求固定包含当前脚本全文、脱敏且最多 64 KiB 的 stderr、结构/结果
-诊断与冻结合同，并明确要求“只输出修改后的完整脚本，不要解释”。原始 stderr、服务器路径和 secret 不进入 LLM。
+配置确认后的脚本由独立无工具 ScriptAuthor 处理，不把脚本生成能力重新开放给对话 Agent。generation 和 repair 请求都包含冻结合同、
+冻结输入快照，以及从本次启动发布的不可变 snapshot 中有界选取的引擎文档；RSS 顶层程序约束和多结果声明优先于按函数检索的章节。
+repair 还固定包含当前脚本全文、脱敏且最多 64 KiB 的 stderr 与结构/结果诊断，并明确要求“只输出修改后的完整脚本，不要解释”。
+ScriptAuthor 合同明确单结果使用 `name = function(...)`，多结果必须使用 `[name1, name2] = function(...)`，禁止无方括号或圆括号左值。
+原始 stderr、服务器路径和 secret 不进入 LLM。
 
 ## Engine knowledge
 
@@ -108,8 +110,10 @@ V4 动态目录基础已经实现：`functions.json=2`、`study_facades.json=1`�
 `StudyPlanningService::search/get` 与 `StudyConfigurationService` 直接查询当前 snapshot 的门面注册表。显式函数选择只返回该函数，不根据网络拓扑改写；候选较多时向用户展示目录中的 `differences`。配置服务按目录合同生成 revisioned 卡片；用户确认后由 `ManagedWorkflowService` 原子冻结合同、输入和 provisional run。
 
 脚本生成使用独立 `ScriptAuthor`，不注册聊天工具，也不复用对话 Agent 的授权面。generation/repair 请求只包含冻结合同、
-冻结输入、允许的引擎文档和明确指令；外部模型传输失败按 `AGENT_MODEL_RETRY_MAX` 独立重试，不创建 attempt。每份成功
-返回的完整脚本先作为不可变 candidate artifact 持久化并记录父 attempt，执行与修正循环由后续 worker 使用。
+冻结输入、同一组“RSS 必需语法优先、函数章节随后”的有界引擎文档和明确指令；外部模型传输失败按 `AGENT_MODEL_RETRY_MAX`
+独立重试，不创建 attempt。每份成功返回的完整脚本先作为不可变 candidate artifact 持久化并记录父 attempt。结构合同在 adapter
+之前拒绝错误函数/输入/结果绑定，并对两个及以上结果强制方括号解构；repair 候选若与父候选 hash 相同，仍保留审计 attempt 并消耗
+修正预算，但以 `repair_contract_violated` 直接进入下一轮，不重复调用 tensoreval。
 
 引擎失败分析由独立 `FailureAnalyzer` 边界提供，研究工作流和普通运行使用同一 prompt、有界 JSON 解析和日志证据校验，不与脚本生成/
 repair 接口绑定。请求只接收当前脚本、可选冻结合同/输入、受控 diagnostic 和已脱敏 stdout/stderr；普通运行的合同/输入为空。

@@ -106,8 +106,10 @@ async fn failed_source(
     author: &ScriptedAuthor,
     engine: &ScenarioEngine,
 ) -> zjudss::application::ManagedWorkflowView {
-    for _ in 0..4 {
-        author.enqueue(AuthorTurn::Script("result = test(table, para);".into()));
+    for index in 0..4 {
+        author.enqueue(AuthorTurn::Script(format!(
+            "result = test(table, para); // source attempt {index}"
+        )));
         engine.enqueue(failure());
     }
     let source = confirmed_workflow(app, user).await;

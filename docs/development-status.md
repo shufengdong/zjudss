@@ -21,7 +21,7 @@
 | Task 5：独立数据资源发布与管理 | complete | model/resource 双子事务、普通 Data/Struct 资源、替换/删除/提升、资源分析、4 个 Agent 工具 |
 | Task 6：目录驱动研究配置 | complete | revision 状态机、动态 model/Data/Struct/结果卡、唯一资源自动绑定与真实多资源消歧、server-owned 结果 selector、受控列映射、待确认结果可继续编辑、最终确认准备合同、3 个 Agent 工具 |
 | Task 9：受管工作流状态机 | complete | 原子确认、用户参数与结果 selector 私有 overlay、可空 source/effective 冻结输入且不发布 Struct 资源、provisional run、专用 ScriptAuthor、candidate/父 attempt、查询/取消 API、启动恢复 |
-| Task 10：脚本生成、执行与自动修正 | complete | 结构合同检查、冻结输入树、共享调度与会话取消、tensoreval 立即执行、3 次修正/4 次执行上限、64 KiB 脱敏 stdout/stderr、带日志引用的结构化失败分析、无实质修改识别、精确结果合同、独占原子结果发布与崩溃孤儿回收 |
+| Task 10：脚本生成、执行与自动修正 | complete | RSS 必需语法章节优先注入 generation/repair、结构合同强制多结果方括号解构、冻结输入树、共享调度与会话取消、tensoreval 立即执行、3 次修正/4 次执行上限、原样修复只审计不重跑、64 KiB 脱敏 stdout/stderr、带日志引用的结构化失败分析、精确结果合同、独占原子结果发布与崩溃孤儿回收 |
 | Task 11：脚本重跑、失败重试与运行删除 | complete | 最新所需输入冻结、用户/selector overlay 按显式 replacement 血缘跨 retry/rerun 重建、source-less 与旧 snapshot 兼容、开放/精确结果合同、派生 retry workflow、输入差异确认、普通 run 持久失败日志/智能分析、run/result 原子 tombstone、artifact 引用释放 |
 | Task 7：durable 消息、历史锚定与会话删除 | complete | 3 种 revisioned 操作卡、`messageId:revision` SSE、连续 around window、影响 token 删除与统一取消 |
 | Task 8：V4 Agent bundle 与受控工具 | complete | `v4.4.0`、5 个按需 skills（`study-planning@1.5.0`）、23 个对话工具；研究配置包含模型生成的详细说明和服务端权威页脚；明确自然语言可发布精确草稿并自动激活，也可按当前卡片精确 revision 修改结果；无聊天脚本创建、图表创建、自动确认或旧规划权限 |
@@ -71,7 +71,7 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
   唯一资源自动绑定且只有真实多资源才要求选择，列映射发布带血缘的新 Parquet 资源。Struct 资源只作为参数模板；用户字段和结果 selector 都不修改长期资源，而是在 workflow 私有 Snappy Parquet 中分类冻结，无来源时从目录默认值建立私有输入；
   `ready_to_confirm` 卡仍可从 UI 或 skill-gated `update_study_results` 修改结果，二者都只递增 revision，最终确认仍只由固定按钮完成。
   `prepare_confirmation` 重新检查 revision、snapshot、门面 hash、active 模型和资源内容，生成 Task 9 原子事务使用的
-  locked contract/input snapshot/private Struct overlays；confirm 公共路由原子创建受管 workflow 与 provisional run，并由无工具 ScriptAuthor 生成候选。retry/rerun 只跟随最多 64 层显式 replacement 血缘，拒绝同 alias 冒充、循环和超深链；source-less 输入复用冻结 artifact，旧 snapshot 回退到合并 overrides。候选先经过只证明冻结函数、alias 顺序和结果绑定未变化的结构合同检查，再通过统一 adapter 调用 tensoreval。非零退出或可修正的结果限制/合同错误最多修正 3 次；超时、监控、路径、配额和基础设施错误立即失败。成功仅在全部结果名称、列顺序、逻辑 dtype、实际非空值和可用 unit 元数据满足 Snappy Parquet 结果合同时原子发布。
+  locked contract/input snapshot/private Struct overlays；confirm 公共路由原子创建受管 workflow 与 provisional run，并由无工具 ScriptAuthor 生成候选。generation/repair 都优先取得当前 snapshot 的 RSS 顶层和多结果声明，再附加函数章节；多结果必须使用方括号解构。retry/rerun 只跟随最多 64 层显式 replacement 血缘，拒绝同 alias 冒充、循环和超深链；source-less 输入复用冻结 artifact，旧 snapshot 回退到合并 overrides。候选先经过冻结函数、alias 顺序、精确结果名与多结果解构结构合同检查，再通过统一 adapter 调用 tensoreval；与父候选 hash 相同的 repair 仍记录 attempt 和预算，但不重复执行。非零退出或可修正的结果限制/合同错误最多修正 3 次；超时、监控、路径、配额和基础设施错误立即失败。成功仅在全部结果名称、列顺序、逻辑 dtype、实际非空值和可用 unit 元数据满足 Snappy Parquet 结果合同时原子发布。
 - 模型表读取：active、准确 draft revision 和历史版本均支持元数据、分页投影与 Parquet 下载；Agent 可通过
   有界等值查询读取实际行后再修改，读取不改变模型生命周期。
 - 用户配置图表：固定 API 从仿真/分析 DataFrame 发现标量及最多四层数值 List 分量，服务端校验六类受控配置并编译

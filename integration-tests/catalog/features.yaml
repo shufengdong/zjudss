@@ -1013,6 +1013,9 @@
       name: generated_script_executes_immediately_and_publishes_exact_results
     - runner: rust
       file: backend/tests/script_repair.rs
+      name: generation_and_repair_receive_required_rss_syntax_docs
+    - runner: rust
+      file: backend/tests/script_repair.rs
       name: nonzero_exit_is_sanitized_repaired_and_then_succeeds
     - runner: rust
       file: backend/tests/script_repair.rs
@@ -1025,11 +1028,17 @@
       name: repair_budget_allows_at_most_four_engine_calls
     - runner: rust
       file: backend/tests/script_repair.rs
+      name: unchanged_repairs_are_audited_without_reexecuting_engine
+    - runner: rust
+      file: backend/tests/script_repair.rs
       name: result_contract_rejection_repairs_without_publishing_partial_results
     - runner: rust
       file: backend/tests/script_repair.rs
       name: cancellation_during_generation_execution_and_repair_stops_future_work
-  assertions: [initial generation runs immediately, each candidate and parent attempt is durable, structural contract violations never reach tensoreval, repair candidates consume the configured budget, three repairs permit at most four engine calls, nonzero exits and result contract violations are repairable, timeout monitor path quota and infrastructure failures stop immediately, stderr sent to the model is sanitized and bounded while raw retained bytes remain audit only, failure analysis is bounded and cannot hide logs when unavailable, identical parent and repair hashes are reported as no substantive change, cancellation interrupts author or engine work, exact result names and schemas publish atomically without partial datasets]
+    - runner: rust
+      file: backend/src/application/script_contract.rs
+      name: requires_bracketed_binding_for_multiple_results
+  assertions: [initial generation runs immediately, generation and repair receive required RSS syntax before function-specific docs, each candidate and parent attempt is durable, structural contract violations including unbracketed multi-result bindings never reach tensoreval, repair candidates consume the configured budget, three changed repairs permit at most four engine calls, nonzero exits and result contract violations are repairable, timeout monitor path quota and infrastructure failures stop immediately, stderr sent to the model is sanitized and bounded while raw retained bytes remain audit only, failure analysis is bounded and cannot hide logs when unavailable, identical parent and repair hashes remain audited without another engine call, cancellation interrupts author or engine work, exact result names and schemas publish atomically without partial datasets]
   fixtures: [minimal dynamic facade, frozen model and Struct resource, scripted author, scenario engine]
   contracts:
     - "error:repair_contract_violated"
