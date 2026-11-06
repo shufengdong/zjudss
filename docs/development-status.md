@@ -45,7 +45,7 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 | 统一上传 | complete | DSS/ZIP/CSV/Excel/Parquet/案例的可恢复候选、解析设置/用途确认、model/resource 双发布、部分成功重试与确认幂等 |
 | 独立数据资源 | complete | 会话唯一 alias、原文件/规范 Parquet、Struct 覆盖预览、重新上传替换、删除影响、结果提升和分析输入 |
 | 草稿与版本 | complete | expected revision、整表覆盖、显式发布/激活、影响预览删除 |
-| 案例库 | complete | schema v2 manifest 与 projection profile 严格匹配；最后一次已接受的候选证据中 144/144 案例通过受控 projector 转成目录声明的 Model/Data/Struct 候选，diagnostic 不进入输入；当前相邻资源树状态单独见 Verification |
+| 案例库 | complete | schema v2 manifest 与 projection profile 严格匹配；2026-11-06 当前候选 150/150 案例通过受控 projector 转成目录声明的 Model/Data/Struct 候选，diagnostic 不进入输入；原生结果允许包含未进入受管有序子集的附加结果 |
 | 脚本与运行 | complete | 受管 Agent 脚本已实现候选持久化、直接执行、自动修正和冻结结果合同；普通运行与工作流共用脱敏日志/失败分析器，失败进度卡可恢复展示诊断；成功脚本单次运行读取最新所需输入，失败脚本可比较输入后派生“重新尝试”，手写/上传脚本开放结果合同且不修正；终态 run 支持影响预览和原子删除 |
 | 结果与派生 | complete | 单结果删除、分析、用户配置图表、比较、tombstone 血缘；图表冻结来源快照与自己的 Plot Data，来源删除后仍可发现和读取 |
 | 前端 | complete | 三列/窄屏、模型详细说明先于研究配置卡、配置卡按浏览器会话记忆收起状态且错误自动展开、Struct 参数显示只读模板身份与本次运行覆盖、运行摘要与失败原因/耗时/全结果选择、普通运行与研究工作流共用失败诊断面板、成功研究的脚本/运行结果成果归组与脚本锚定、pending-only 轮询、结果数据表、用户配置图表工作台、active/draft/历史模型表只读工作台、登录用户菜单 |
@@ -208,9 +208,9 @@ token 删除整个会话。删除确认后先隐藏会话并取消其 Agent/engi
 无需重启，下一次调用直接使用路径上的当前普通文件，只有文件不存在或不再是普通文件时才拒绝。资源扫描限制为 512 篇
 Markdown、单篇 4 MiB、文档合计 64 MiB、2,048 个案例、每案例 10,000 文件/2 GiB、依赖深度 64；变更资源树
 后也必须重启。案例只发现 `SPARROWZZ_DIR/dss/rssbundle` 下直接含 manifest 的 `.rssbundle` 目录；运行时允许没有案例。
-manifest 只有逐字段匹配启用的 snapshot projection profile 才可导入；最后一次已接受的候选快照中 144 个案例全部满足。候选发布门禁要求
-不可导入案例为零，对全部 144 个案例逐一真实运行 projector 并验证目录声明的 Model/Data/Struct/diagnostic 输出；
-该已接受证据为 144/144 成功、0 失败，不代表下述当前相邻 eig-rs 工作树。之后仅对每个被案例引用的 projection profile 选择一个成功代表，运行只接受
+manifest 只有逐字段匹配启用的 snapshot projection profile 才可导入；2026-11-06 已接受的候选快照中 150 个案例全部满足。候选发布门禁要求
+不可导入案例为零，对全部 150 个案例逐一真实运行 projector 并验证目录声明的 Model/Data/Struct/diagnostic 输出；
+该已接受证据为 150/150 成功、0 失败。之后仅对每个被案例引用的 projection profile 选择一个成功代表，运行只接受
 DataFrame 命名输入的 `managed.rss`，当前为 6 个代表。当前 profile 和案例分布见 `docs/v4-deployment.md`。
 
 ## Reset and operation
@@ -275,8 +275,8 @@ tombstone 边界保持不变。本阶段通过后端格式与全 feature 零警�
 独立的 `./scripts/test-manual-case-journeys` 可由测试人员显式选择运行当前 snapshot 的全部可导入案例，或以
 `CASE_JOURNEY_EXAMPLE_ID`、`CASE_JOURNEY_FACADE`、`CASE_JOURNEY_RESUME_REPORT` 聚焦/续跑。它逐案例验证导入确认、
 自然语言发布、手册原文提示词、研究确认、脚本/修正、运行和结果，并增量写入 `target/manual-case-journeys/report.json`；
-该长测不属于 PR、日常回归或候选发布门禁。已接受快照的 144/144 只证明 projector 发布门禁，只有一次显式完整长测的报告全部通过，
-才能声明 144 个案例的自然语言全链路通过。
+该长测不属于 PR、日常回归或候选发布门禁。已接受快照的 150/150 只证明 projector 发布门禁，只有一次显式完整长测的报告全部通过，
+才能声明 150 个案例的自然语言全链路通过。
 
 案例库确认已切换为当前会话案例整体替换：单事务发布/激活模型版本与配套资源，普通上传仍保持双子事务；确认卡展示影响并保护准备后的并发变更。旧协议的部分发布案例批次需重新准备，不自动补齐为案例切换。验证以本次 case_import、data_resources、workspace_versions 和浏览器案例旅程为准。
 
@@ -320,4 +320,18 @@ manifest、contract manifest 聚焦测试。完整 `cargo test --features e2e-te
 `case_projection_invalid`，`engine_resources` 其余 32/32 通过；跳过且仅跳过该断言后其余完整 `e2e-test` 通过。
 前端 54/54 文件、285/285 Vitest、生产构建和 31/31 Playwright 通过；PR 功能门禁为 350/350 功能证据、
 297/297 公共合同、30/30 目录条目和 100% 追溯。本机未配置 `TENSOREVAL_BIN`、`SPARROWZZ_DIR`、真实 LLM secret、
-`INIT_USERS_CSV` 或 `target/eig-rs`，因此真实候选发布 lane 未执行；候选发布仍受相邻资源树七案例阻塞，未标记为全绿。
+`INIT_USERS_CSV` 或 `target/eig-rs`，因此真实候选发布 lane 未执行；当时候选发布仍受相邻资源树七案例阻塞，未标记为全绿。
+
+2026-11-06 eig-rs `4f191f05c` 与 sparrowzz `86c5b92` 完成 Dynamic V13 Monitor 合同后，zjudss 将
+`resultSelector.valueSource` 切换为 `profile.resultMap(manifest.projection.results)`，并把受管结果校验为原生
+`study.results` 的非空、唯一、有序子集，同时继续精确校验 profile 映射、target 和 binding。新增行为测试证明
+16 个原生结果/15 个受管结果可导入，而未知、重复、重排和错误映射仍失败关闭；release wrapper 也会在 Cargo 启动前
+删除旧报告，失败候选不再复用历史证据。
+
+本轮通过后端格式、全 target/all feature 零警告 Clippy，以及允许本机回环后的未过滤完整
+`cargo test --features e2e-test`；`engine_resources` 为 35/35，`process_engine_v4` 普通套件为 18/18。
+真实 `scripts/test-release-engine` 使用 binary SHA-256
+`c7dce676f954d090780a6f9ff7b4f81382e4d16e047d8292169c74cb0742a369` 和 snapshot
+`ers_7d30a9cba13a8bf2ba4741e4fa2010df`，通过 19/19 ProcessEngine、150/150 案例 projector、0 失败，
+并通过 6/6 被引用 profile 的代表运行。先前 7 个 `case_projection_invalid` 外部阻塞已经关闭；这不等同于尚未运行的
+150 案例自然语言全链路长测，也不替代下一次 binary/snapshot 的新报告。

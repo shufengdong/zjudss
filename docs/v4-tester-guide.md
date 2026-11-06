@@ -100,17 +100,17 @@ Data/Struct 输入、结果和可用函数均以本次启动加载的 eig-rs 动
 - 确认后模型表进入草稿，Data/Struct 进入“数据文件”，两侧部分失败时可只重试失败侧；
 - 导入完成后，模型表和数据资源均能查看，且案例仍可由用户继续修改后再研究。
 
-当前发布基线有 144 个可导入案例，自动发布门禁必须逐个执行投影并达到 144/144、零失败。人工测试不要求逐个
-执行 144 个案例，但至少应按当前案例覆盖的每种研究族抽取一个代表：
+2026-11-06 当前发布基线有 150 个可导入案例，自动发布门禁必须逐个执行投影并达到 150/150、零失败。人工测试不要求逐个
+执行 150 个案例，但至少应按当前案例覆盖的每种研究族抽取一个代表：
 
 | 研究族 | 当前目标门面 | 当前案例数 |
 |---|---|---:|
 | Newton 潮流 | `ds_newton_raphson_pf` | 1 |
-| 径向执行计划 | `ds_radial_execution_plan` | 121 |
-| Newton 执行计划 | `ds_newton_raphson_execution_plan` | 10 |
+| 径向执行计划 | `ds_radial_execution_plan` | 123 |
+| Newton 执行计划 | `ds_newton_raphson_execution_plan` | 13 |
 | 短路研究 | `ds_fault_study` | 3 |
 | 谐波执行计划 | `ds_harmonic_execution_plan` | 3 |
-| 网络动态 | `ds_network_dynamics` | 6 |
+| 网络动态 | `ds_network_dynamics` | 7 |
 
 上述数量是当前 snapshot 的证据，不是永久写死的产品合同。若本轮 snapshot 的数量变化，以发布报告为准。案例覆盖的
 研究族不等于动态目录中的全部门面；对其他启用门面，应使用与目录 schema 兼容的模型和资源另行抽测。
@@ -124,7 +124,7 @@ Data/Struct 输入、结果和可用函数均以本次启动加载的 eig-rs 动
 覆盖前会保留原报告副本。测试代码原样使用下文带标记的六条手册提示词。
 
 若提示词导致门面不匹配、资源缺失、配置无法完成或 workflow 失败，应保留脱敏报告，由测试人员审阅并修改对应提示词资料和
-本手册，然后筛选重跑；不允许让 LLM 自动改写提示词并静默重试。144/144 projector 成功只证明导入投影，不能据此宣称
+本手册，然后筛选重跑；不允许让 LLM 自动改写提示词并静默重试。150/150 projector 成功只证明导入投影，不能据此宣称
 全部案例的自然语言链路通过；只有一次默认全量执行全部通过才可作该结论。
 
 ### 3.3 手动上传与重新上传
@@ -299,18 +299,18 @@ Data/Struct 输入、结果和可用函数均以本次启动加载的 eig-rs 动
     ```
     <!-- CASE_JOURNEY_PROMPT:ds_harmonic_execution_plan:end -->
 
-#### 144 个发布案例对应的提示词
+#### 150 个发布案例对应的提示词
 
-案例与提示词的对应关系以各案例 `manifest.json` 中的 `projection.target_function` 为准。当前 144 个案例只覆盖
+案例与提示词的对应关系以各案例 `manifest.json` 中的 `projection.target_function` 为准。当前 150 个案例只覆盖
 6 个门面，其余 12 个门面没有发布案例可直接导入：
 
 | 提示词 | 目标门面 | 案例数 |
 |---:|---|---:|
 | 2 | `ds_newton_raphson_pf` | 1 |
 | 6 | `ds_fault_study` | 3 |
-| 14 | `ds_network_dynamics` | 6 |
-| 16 | `ds_radial_execution_plan` | 121 |
-| 17 | `ds_newton_raphson_execution_plan` | 10 |
+| 14 | `ds_network_dynamics` | 7 |
+| 16 | `ds_radial_execution_plan` | 123 |
+| 17 | `ds_newton_raphson_execution_plan` | 13 |
 | 18 | `ds_harmonic_execution_plan` | 3 |
 
 测试人员应先导入下列案例并完成模型/资源确认，再使用其所在分组标注的提示词。路径从案例库根目录开始；同名案例
@@ -337,13 +337,14 @@ IEEETestCases/ShortCircuitCases/ieee37_SC_Currents.rssbundle
 </details>
 
 <details>
-<summary>提示词 14：ds_network_dynamics（6 个）</summary>
+<summary>提示词 14：ds_network_dynamics（7 个）</summary>
 
 ```text
 Examples/DistanceRelays/DistanceRelayTest.rssbundle
 Examples/DistanceRelays/ReverseDistanceRelayTest.rssbundle
 Examples/DistanceRelays/ReverseTD21RelayTest.rssbundle
 Examples/DistanceRelays/TD21RelayTest.rssbundle
+Examples/IBRDynamics_Cases/GFL_IEEE123/Run_IEEE123Bus_GFLDaily.rssbundle
 Examples/InductionMachine/Run.rssbundle
 Examples/Scripts/59NRelayDemo.rssbundle
 ```
@@ -351,11 +352,12 @@ Examples/Scripts/59NRelayDemo.rssbundle
 </details>
 
 <details>
-<summary>提示词 16：ds_radial_execution_plan（121 个）</summary>
+<summary>提示词 16：ds_radial_execution_plan（123 个）</summary>
 
 ```text
 EPRITestCircuits/epri_dpv/J1/Master_noPV.rssbundle
 EPRITestCircuits/epri_dpv/J1/Master_withPV.rssbundle
+Examples/AutoTrans/AutoHLT.rssbundle
 Examples/InverterModels/PVSystem/InvControl/DRC/Daily_DRC-2.rssbundle
 Examples/InverterModels/PVSystem/InvControl/DRC/Daily_DRC_avg-2.rssbundle
 Examples/InverterModels/PVSystem/InvControl/DRC/Daily_DRC_kVAlimitation_P-2.rssbundle
@@ -474,19 +476,23 @@ IEEETestCases/4Bus-GrdYD-Bal/4Bus-GrdYD-Bal.rssbundle
 IEEETestCases/4Bus-OYOD-Bal/4Bus-OYOD-Bal.rssbundle
 IEEETestCases/4Bus-YD-Bal/4Bus-YD-Bal.rssbundle
 IEEETestCases/4Bus-YY-Bal/4Bus-YY-Bal.rssbundle
+IEEETestCases/8500-Node/P174_Run_360kW_PV.rssbundle
 IEEETestCases/LVTestCase/Master.rssbundle
 ```
 
 </details>
 
 <details>
-<summary>提示词 17：ds_newton_raphson_execution_plan（10 个）</summary>
+<summary>提示词 17：ds_newton_raphson_execution_plan（13 个）</summary>
 
 ```text
+EPRITestCircuits/ckt7/RunDSS_ckt7.rssbundle
 Examples/Microgrid/GridFormingInverter/GFM_IEEE123/Run_IEEE123Bus_GFMSnap-A.rssbundle
+Examples/Microgrid/GridFormingInverter/GFM_IEEE123/Run_IEEE123Bus_GFMSnap-B.rssbundle
 Examples/Microgrid/GridFormingInverter/GFM_IEEE8500/Run_8500Node_Unbal.rssbundle
 Examples/Microgrid/GridFormingInverter/GFM_IEEE8500/Run_RecloserSiting.rssbundle
 Examples/StoCtrl_Current_PeakShave/master.rssbundle
+Examples/Stevenson/StevensonPflow-3ph.rssbundle
 IEEETestCases/123Bus/RevRegTest.rssbundle
 IEEETestCases/4Bus-YYD/YYD-Master-step1.rssbundle
 IEEETestCases/8500-Node/P174_Run_Voltage_Profile.rssbundle
@@ -612,4 +618,4 @@ Examples/HarmonicsVariableLoad/IEEE_519.rssbundle
 - 验收报告保存版本与 snapshot 证据，但不保存 secret、密码、Cookie、物理路径、原始 stderr 或完整脚本正文。
 
 自动化的 100% 功能追溯与人工业务验收是互补关系：自动化门禁通过不能替代人工交互和数值合理性检查，人工抽测也不能
-替代 144 个案例投影、公共合同和回归测试门禁。
+替代 150 个案例投影、公共合同和回归测试门禁。

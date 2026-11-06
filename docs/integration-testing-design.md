@@ -143,7 +143,7 @@ cd ..
 案例。套件使用独立临时 SQLite/`DATA_DIR`、单 worker 和多小时 timeout，逐案例原子写入脱敏的
 `target/manual-case-journeys/report.json`；浏览器痕迹也只写入本次临时目录，结束后一并清理。续跑前校验 engine snapshot、
 Agent bundle 和发现/选择的案例集合；输入与输出为同一路径时先保留原报告副本。失败提示词由人审阅修改映射与测试手册，再筛选重跑；
-测试不会让 LLM 自动改写提示词。完整执行前不得根据 `--list`、聚焦案例或 144/144 projector 报告声称全案例语义链路通过。
+测试不会让 LLM 自动改写提示词。完整执行前不得根据 `--list`、聚焦案例或仅有 projector 报告声称全案例语义链路通过。
 
 候选发布执行 `scripts/test-release-integration`。脚本缺省使用 DeepSeek，也可通过 `LLM_PROVIDER=bailian`、
 `LLM_MODEL`、`BAILIAN_API_KEY` 和 `BAILIAN_BASE_URL` 切换到百炼；endpoint 与 API Key 必须同地域。报告记录测试 ID、Agent bundle hash、用户 seed hash/数量、engine
@@ -152,10 +152,13 @@ Agent bundle 版本和完整工具权限只从 `backend/resources/agent/v4/manif
 `allowedTools` 传给语义轨迹断言，发布 shell 直接比较报告版本与同一 manifest，不维护第二份工具全集或版本常量。
 真实门禁必须覆盖模型导入/发布、目录驱动的研究门面检索、配置卡准备与最终确认、Agent 创建受管研究脚本、自动执行、结果分析/比较和只使用稳定 ID。门禁扫描全部
 manifest schema v2 案例，要求不可导入案例为零，并对每个案例真实执行其 projector，逐项验证有序 Snappy Parquet
-输出及 Model/Data/Struct/diagnostic 分类。2026-10-30 最后一次已接受的候选证据为 144/144 成功；每次候选仍必须以本次
+输出及 Model/Data/Struct/diagnostic 分类。2026-10-30 历史候选证据为 144/144 成功；2026-11-06 当前候选以
+snapshot `ers_7d30a9cba13a8bf2ba4741e4fa2010df` 重新证明 150/150 成功、0 失败。每次候选仍必须以本次
 动态 snapshot 重新生成报告，并以 `projectedExamples`、
 `projectionFailures` 和逐案例 `caseProjections` 固化该门禁，任一案例失败都使候选发布失败。
-随后对每个被案例引用的 profile 选择一个投影成功的代表，以其命名 Parquet 输入执行 `managed.rss`；上次证据为 6 个代表，
+manifest `study.results` 是原生结果全集，`projection.results` 是受管结果的有序子集；selector 只映射后者，
+但 unknown、duplicate、reorder、target 或 binding 漂移仍使案例不可导入。随后对每个被案例引用的 profile 选择一个
+投影成功的代表，以其命名 Parquet 输入执行 `managed.rss`；当前证据为 6 个代表，
 同时覆盖全部 study family。projector 输出缺失、重复、多余、顺序合同不一致或 manifest/profile 不一致均原子失败。
 没有案例引用的 disabled profile 可以保留稳定诊断，但不能被 manifest 使用。历史证据分布见 `docs/v4-deployment.md`；
 数量不是未来 snapshot 的固定接收条件。
@@ -170,5 +173,9 @@ manifest schema v2 案例，要求不可导入案例为零，并对每个案例�
 `current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count` 后完整 `e2e-test` 通过；未过滤运行仍只报告既有
 四个 DistanceRelays、GFL IEEE123、InductionMachine 和 59NRelayDemo 共 7 个 `case_projection_invalid`。前端 50/50 个
 Vitest 文件、265/265 用例、生产构建、31/31 Playwright，以及 350/350 功能证据、297/297 公共合同和 100% PR 追溯通过。
+
+2026-11-06 eig-rs/sparrowzz 发布 Dynamic V13 完整合同后，zjudss 未过滤 `cargo test --features e2e-test`
+在允许本机回环监听的环境中通过；真实 release-engine 同时通过 19/19 ProcessEngine 测试、150/150 案例 projector
+和 6/6 profile 代表运行。上述 7 个 `case_projection_invalid` 已由资源合同修复并关闭，不再是当前阻塞。
 
 案例库应用以整体切换验收：准备阶段不发布，确认后 active 为新建或复用的模型版本、draft 为空、上一案例配套资源退出 live 集合，历史资源引用保留。`case_import` 行为测试覆盖重复案例去重、资源切换、资源发布失败回滚、用户资源 alias 冲突保护和过期确认基线；浏览器案例旅程覆盖“确认切换案例”与自动激活。独立全案例人工旅程在确认后验证 active，不再额外请求 Agent 发布同一案例。
