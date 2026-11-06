@@ -329,7 +329,7 @@
       "resultSelector": {
         "input": "para",
         "field": "result",
-        "valueSource": "profile.resultMap(manifest.study.results)"
+        "valueSource": "profile.resultMap(manifest.projection.results)"
       },
       "bundleResultMap": {
         "voltage": "bus_phase"

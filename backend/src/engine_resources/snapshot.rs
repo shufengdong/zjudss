@@ -145,7 +145,7 @@ impl EngineResourceSnapshot {
                 "results":study_facades_json["facades"][0]["results"],
                 "sourceResults":["result"], "resultMap":{"result":"result"},
                 "bundleResultMap":{"result":"result"},
-                "resultSelector":{"input":"para","field":"result","valueSource":"profile.resultMap(manifest.study.results)"}
+                "resultSelector":{"input":"para","field":"result","valueSource":"profile.resultMap(manifest.projection.results)"}
             }]
         });
         let mut schemas = SchemaRegistry::from_catalog(&catalog_json)

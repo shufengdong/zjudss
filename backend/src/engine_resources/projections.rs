@@ -342,7 +342,7 @@ fn parse_profile(
         .ok_or("resultSelector 引用未知输入")?;
     if selector_input.kind != FacadeInputKind::Struct
         || !safe_symbol(&result_selector.field)
-        || result_selector.value_source != "profile.resultMap(manifest.study.results)"
+        || result_selector.value_source != "profile.resultMap(manifest.projection.results)"
     {
         return Err("resultSelector 合同无效".to_string());
     }
