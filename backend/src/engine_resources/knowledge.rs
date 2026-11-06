@@ -187,3 +187,41 @@ fn stable_id(prefix: &str, bytes: &[u8]) -> String {
     let hash = hex::encode(Sha256::digest(bytes));
     format!("{prefix}_{}", &hash[..20])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn script_author_docs_are_required_first_deduplicated_and_bounded() {
+        let knowledge = EngineKnowledge::from_documents(&[
+            (
+                "docs/rss.md".into(),
+                "# RSS\n## 1.1 顶层程序约束（MUST）\ntop-level rule\n### 3.2 多结果声明\n[one, two] = solve(input);\n"
+                    .into(),
+            ),
+            (
+                "docs/solve.md".into(),
+                "# solve\nsolve function contract and arguments\n".into(),
+            ),
+        ]);
+
+        let max_chars = 80;
+        let hits = knowledge.script_author_docs("solve", max_chars);
+
+        assert_eq!(hits[0].title, "1.1 顶层程序约束（MUST）");
+        assert_eq!(hits[1].title, "3.2 多结果声明");
+        let unique = hits
+            .iter()
+            .map(|hit| hit.section_id.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(unique.len(), hits.len());
+        assert!(
+            hits.iter()
+                .map(|hit| hit.snippet.chars().count())
+                .sum::<usize>()
+                <= max_chars
+        );
+        assert!(hits.iter().any(|hit| hit.title == "solve"));
+    }
+}
