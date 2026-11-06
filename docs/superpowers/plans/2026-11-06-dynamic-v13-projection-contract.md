@@ -93,4 +93,3 @@
 - [ ] Update current documents with the selector/subset semantics and exact fresh report counts/hashes, retaining old 144/144 values only as dated history.
 - [ ] Run `git diff --check` and the relevant documentation/functional coverage gate; expect PASS.
 - [ ] Commit current verification evidence as `docs: record Dynamic V13 release evidence`.
-

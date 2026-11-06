@@ -39,4 +39,3 @@ the real candidate gate succeeds.
 - Do not loosen profile/facade input, result, schema, hash, file, or projector-output validation.
 - Do not change REST/SSE DTOs, database schema, Agent tools, frontend behavior, or ECharts contracts.
 - Do not edit eig-rs or its sparrowzz resource tree from zjudss.
-
