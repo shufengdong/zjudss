@@ -916,6 +916,57 @@ fn release_script_fails_closed_with_stable_preflight_reasons() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn release_script_removes_stale_report_before_cargo_runs() {
+    let repository_script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("scripts/test-release-engine");
+    let root = tempfile::tempdir().unwrap();
+    let script_dir = root.path().join("scripts");
+    let fake_bin = root.path().join("bin");
+    let sparrowzz = root.path().join("sparrowzz");
+    let report = root
+        .path()
+        .join("target/release-integration/engine-report.json");
+    std::fs::create_dir_all(&script_dir).unwrap();
+    std::fs::create_dir_all(&fake_bin).unwrap();
+    std::fs::create_dir_all(&sparrowzz).unwrap();
+    std::fs::create_dir_all(report.parent().unwrap()).unwrap();
+    std::fs::write(&report, "stale release evidence").unwrap();
+    let script = script_dir.join("test-release-engine");
+    write_executable(
+        &script,
+        &std::fs::read_to_string(repository_script).unwrap(),
+    );
+    let tensoreval = fake_bin.join("tensoreval");
+    write_executable(
+        &tensoreval,
+        "#!/bin/sh\nprintf '%s\\n' '--result-dir --output-format parquet --input NAME=FILE'\n",
+    );
+    write_executable(&fake_bin.join("cargo"), "#!/bin/sh\nexit 42\n");
+    let path = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = Command::new(&script)
+        .env("PATH", path)
+        .env("ZJUDSS_SKIP_DOTENV", "1")
+        .env("TENSOREVAL_BIN", &tensoreval)
+        .env("SPARROWZZ_DIR", &sparrowzz)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        !report.exists(),
+        "failed candidate must not retain stale release evidence"
+    );
+}
+
 #[cfg(feature = "release-test")]
 #[tokio::test]
 async fn real_tensoreval_smoke_writes_snappy_parquet() {

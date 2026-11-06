@@ -48,6 +48,7 @@ esac
 report_dir="$repo_root/target/release-integration"
 mkdir -p "$report_dir"
 export RELEASE_ENGINE_REPORT="$report_dir/engine-report.json"
+rm -f "$RELEASE_ENGINE_REPORT"
 
 cargo test \
   --manifest-path "$repo_root/backend/Cargo.toml" \
