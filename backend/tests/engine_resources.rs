@@ -637,6 +637,121 @@ fn supported_manifest_unknown_fields_are_ignored_but_contract_mismatches_are_inv
 }
 
 #[test]
+fn accepts_native_results_not_selected_by_the_managed_projection() {
+    let fixture = fixture();
+    rewrite_catalog(&fixture, "case_projections.json", |root| {
+        root["profiles"][0]["bundleResultMap"]["native_monitor"] = json!("bus_phase");
+    });
+    let main = b"model = import_dss(\"dss/model.dss\");\n";
+    let model = b"new circuit.demo basekv=12.47\n";
+    let mut manifest = valid_manifest(main, model);
+    manifest["study"]["results"] = json!(["voltage", "native_monitor"]);
+    write_case(
+        &fixture
+            .dss()
+            .join("rssbundle/Contracts/native-superset.rssbundle"),
+        &manifest,
+    );
+
+    let snapshot = fixture.load();
+    let example = snapshot
+        .examples
+        .iter()
+        .find(|item| item.title == "native-superset")
+        .unwrap();
+
+    assert!(example.importable, "{:?}", example.diagnostics);
+}
+
+#[test]
+fn rejects_malformed_native_and_managed_result_relationships() {
+    let fixture = fixture();
+    rewrite_catalog(&fixture, "case_projections.json", |root| {
+        root["profiles"][0]["bundleResultMap"]["native_monitor"] = json!("bus_phase");
+    });
+    let main = b"model = import_dss(\"dss/model.dss\");\n";
+    let model = b"new circuit.demo basekv=12.47\n";
+    let root = fixture.dss().join("rssbundle/Contracts");
+    let projection = |source: &str, target: &str, binding: &str| json!({"source":source,"target":target,"binding":binding});
+    let cases = [
+        (
+            "unknown-native",
+            json!(["voltage", "unknown"]),
+            json!([projection("voltage", "bus_phase", "result_voltage")]),
+        ),
+        (
+            "managed-not-native",
+            json!(["voltage"]),
+            json!([projection(
+                "native_monitor",
+                "bus_phase",
+                "result_native_monitor"
+            )]),
+        ),
+        (
+            "managed-reordered",
+            json!(["voltage", "native_monitor"]),
+            json!([
+                projection("native_monitor", "bus_phase", "result_native_monitor"),
+                projection("voltage", "bus_phase", "result_voltage")
+            ]),
+        ),
+        (
+            "native-duplicate",
+            json!(["voltage", "voltage"]),
+            json!([projection("voltage", "bus_phase", "result_voltage")]),
+        ),
+        (
+            "managed-duplicate",
+            json!(["voltage", "native_monitor"]),
+            json!([
+                projection("voltage", "bus_phase", "result_voltage"),
+                projection("voltage", "bus_phase", "result_voltage")
+            ]),
+        ),
+        (
+            "wrong-target",
+            json!(["voltage"]),
+            json!([projection("voltage", "wrong", "result_voltage")]),
+        ),
+        (
+            "wrong-binding",
+            json!(["voltage"]),
+            json!([projection("voltage", "bus_phase", "wrong")]),
+        ),
+    ];
+    for (name, study_results, projection_results) in cases {
+        let mut manifest = valid_manifest(main, model);
+        manifest["study"]["results"] = study_results;
+        manifest["projection"]["results"] = projection_results;
+        write_case(&root.join(format!("{name}.rssbundle")), &manifest);
+    }
+
+    let snapshot = fixture.load();
+    for name in [
+        "unknown-native",
+        "managed-not-native",
+        "managed-reordered",
+        "native-duplicate",
+        "managed-duplicate",
+        "wrong-target",
+        "wrong-binding",
+    ] {
+        let example = snapshot
+            .examples
+            .iter()
+            .find(|item| item.title == name)
+            .unwrap();
+        assert!(!example.importable, "{name}");
+        assert_eq!(
+            example.diagnostics,
+            ["PSA.DSS.PROJECTION.INVALID: projection_contract_mismatch"],
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn bundle_manifest_rejects_duplicate_missing_unsafe_and_hash_mismatch_files() {
     let fixture = fixture();
     let main = b"model = import_dss(\"dss/model.dss\");\n";

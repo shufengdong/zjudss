@@ -469,19 +469,29 @@ fn projection_matches(manifest: &ExampleManifest, profile: &CaseProjectionProfil
         || projection.managed_entry != profile.managed_entry
         || projection.status != "enabled"
         || projection.stable_diagnostic != profile.stable_diagnostic
-        || projection.results.len() != manifest.study.results.len()
+        || manifest.study.results.is_empty()
+        || projection.results.is_empty()
     {
         return false;
     }
-    projection
-        .results
-        .iter()
-        .zip(&manifest.study.results)
-        .all(|(result, source)| {
-            result.source == *source
-                && profile.bundle_result_map.get(source) == Some(&result.target)
-                && result.binding == format!("result_{source}")
-        })
+    let mut native_sources = HashSet::new();
+    if !manifest.study.results.iter().all(|source| {
+        native_sources.insert(source.as_str()) && profile.bundle_result_map.contains_key(source)
+    }) {
+        return false;
+    }
+    let mut managed_sources = HashSet::new();
+    let mut remaining_native = manifest.study.results.iter();
+    projection.results.iter().all(|result| {
+        if !managed_sources.insert(result.source.as_str()) {
+            return false;
+        }
+        let Some(source) = remaining_native.find(|source| **source == result.source) else {
+            return false;
+        };
+        profile.bundle_result_map.get(source) == Some(&result.target)
+            && result.binding == format!("result_{source}")
+    })
 }
 
 fn invalid_example(
