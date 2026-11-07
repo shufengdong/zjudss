@@ -707,6 +707,12 @@ impl EventWriter {
         content: String,
         payload: &T,
     ) -> Result<AppEvent, RepoError> {
+        #[cfg(feature = "e2e-test")]
+        if crate::testing::FaultInjector.take(crate::testing::FaultPoint::EventCommit) {
+            return Err(RepoError::Storage(
+                "injected event commit failure".to_string(),
+            ));
+        }
         let (msg, changed) = self
             .message_repo
             .upsert_operation_with_status(

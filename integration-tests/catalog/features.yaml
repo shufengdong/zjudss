@@ -171,10 +171,13 @@
     - runner: rust
       file: backend/tests/sse_recovery.rs
       name: durable_operation_messages_upsert_by_stable_id_and_replay_each_revision
+    - runner: rust
+      file: backend/tests/sse_recovery.rs
+      name: delayed_configuration_and_workflow_cards_cannot_regress_current_facts
     - runner: vitest
       file: frontend/src/state/sessionFeed.test.ts
       name: keeps an anchored context window separate while live events update the latest cache
-  assertions: [messages append only, the first user message updates the visible session title without refresh, every public message type has a renderer, terminal results reconcile stale progress snapshots]
+  assertions: [messages append only, the first user message updates the visible session title without refresh, every public message type has a renderer, terminal results reconcile stale progress snapshots, study configuration cards advance to terminal state at the same configuration revision and reject delayed regressions]
   fixtures: [scripted agent]
   contracts:
     - "route:GET /api/sessions/{id}/messages"
@@ -752,10 +755,16 @@
     - runner: rust
       file: backend/tests/scripted_agent.rs
       name: conversational_agent_cannot_create_a_generic_script
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: confirmed_configuration_is_not_injected_as_current_agent_context
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: agent_history_uses_the_latest_owned_mutable_configuration
     - runner: release
       file: scripts/test-release-integration
       name: real LLM provider and tensoreval complete the V4 semantic release journey
-  assertions: [tool calls are controlled and persisted, skills are loaded on demand, prepare_study validates and persists the bounded model-generated explanation plus a server-authored title and configuration ID footer before its configuration card and suppresses the later provider tail, prepare_study is a durable success even if provider finalization fails, conversational tools cannot create or run scripts]
+  assertions: [tool calls are controlled and persisted, skills are loaded on demand, prepare_study validates and persists the bounded model-generated explanation plus a server-authored title and configuration ID footer before its configuration card and suppresses the later provider tail, prepare_study is a durable success even if provider finalization fails, conversational tools cannot create or run scripts, Agent history injects only the latest owned mutable configuration and never revives terminal or foreign configuration cards from stale message payloads]
   fixtures: [embedded V4 agent bundle]
   contracts:
     - "tool:load_agent_skill"
@@ -821,6 +830,9 @@
       name: keeps terminal configuration cards compact without a collapse control
     - runner: vitest
       file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
+      name: applies same-revision confirmed events without allowing a delayed ready card to regress
+    - runner: vitest
+      file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
       name: hides server-managed result selector fields from Struct editing
     - runner: vitest
       file: frontend/src/components/messages/StudyConfigurationCard.test.tsx
@@ -882,7 +894,13 @@
     - runner: rust
       file: backend/tests/scripted_agent.rs
       name: natural_language_result_selection_updates_the_durable_card_without_starting_work
-  assertions: [explicit functions are never topology-rewritten, prepare_study requires a bounded nonblank model explanation and persists it before the durable configuration card, model inputs come only from active tables declared by the selected facade, para remains an independent Struct template, exactly one compatible resource binds automatically while real ambiguity requires user selection, result selector fields are server-owned and hidden from Struct editing, all editable Struct changes are run-private and need no replacement action, source-less Struct values come from catalog defaults, selector-only legacy children fold only with a valid live source, resolved inputs render compactly without redundant confirmation, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, mutable cards start expanded and remember their collapsed state per configuration in the current browser session while mutation errors force them open, terminal cards stay compact, ready-to-confirm cards label Struct differences as run overrides and keep result editing beside the final confirmation gate, natural-language result updates require the planning skill and exact current card revision, result updates revise the same durable card without creating scripts workflows or runs, final confirmation remains a fixed UI action]
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: confirmed_configuration_is_not_injected_as_current_agent_context
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: agent_history_uses_the_latest_owned_mutable_configuration
+  assertions: [explicit functions are never topology-rewritten, prepare_study requires a bounded nonblank model explanation and persists it before the durable configuration card, model inputs come only from active tables declared by the selected facade, para remains an independent Struct template, exactly one compatible resource binds automatically while real ambiguity requires user selection, result selector fields are server-owned and hidden from Struct editing, all editable Struct changes are run-private and need no replacement action, source-less Struct values come from catalog defaults, selector-only legacy children fold only with a valid live source, resolved inputs render compactly without redundant confirmation, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, mutable cards start expanded and remember their collapsed state per configuration in the current browser session while mutation errors force them open, terminal cards stay compact and consume same-revision terminal events without accepting delayed regressions, ready-to-confirm cards label Struct differences as run overrides and keep result editing beside the final confirmation gate, natural-language result updates require the planning skill and exact current card revision, result updates revise the same durable card without creating scripts workflows or runs, Agent history selects only the latest owned mutable configuration, final confirmation remains a fixed UI action]
   fixtures: [current engine facade catalog, imported active model plus independent para resource, ambiguous compatible resources]
   contracts:
     - "route:GET /api/study-configurations/{id}"
@@ -959,6 +977,12 @@
       name: confirmation_is_idempotent_and_creates_one_provisional_run
     - runner: rust
       file: backend/tests/managed_workflows.rs
+      name: confirm_route_updates_durable_study_configuration_card_to_confirmed
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
+      name: confirm_route_replay_repairs_a_failed_terminal_card_without_duplicate_work
+    - runner: rust
+      file: backend/tests/managed_workflows.rs
       name: one_live_workflow_per_session_and_cancel_is_idempotent
     - runner: rust
       file: backend/tests/managed_workflows.rs
@@ -984,7 +1008,7 @@
     - runner: rust
       file: backend/tests/managed_workflows.rs
       name: scripted_author_sequences_generation_and_repair
-  assertions: [confirmation and frozen inputs commit atomically, user parameters and result selectors freeze as categorized private source/effective Struct overlays without publishing or aliasing a data resource, source-less Struct inputs own a private artifact, byte-identical overlays reuse the source artifact and stale source hashes are rejected without leaks, one session has at most one nonterminal workflow, operation IDs are idempotent before materialization, a managed run may remain scriptless until the first candidate exists, candidate artifacts and parent attempts are immutable, successful workflows visually group the exact managed script before run results while preserving the durable script message anchor, failure cards show sanitized logs and bounded evidence-citing analysis while repair history stays collapsed, cancellation and restart converge deterministically, resources and workflows are user scoped]
+  assertions: [confirmation and frozen inputs commit atomically, user parameters and result selectors freeze as categorized private source/effective Struct overlays without publishing or aliasing a data resource, source-less Struct inputs own a private artifact, byte-identical overlays reuse the source artifact and stale source hashes are rejected without leaks, one session has at most one nonterminal workflow, operation IDs are idempotent before materialization, confirmation updates the same durable configuration card to confirmed and same-operation replay repairs a failed card publication without duplicating the workflow or run, a managed run may remain scriptless until the first candidate exists, candidate artifacts and parent attempts are immutable, successful workflows visually group the exact managed script before run results while preserving the durable script message anchor, failure cards show sanitized logs and bounded evidence-citing analysis while repair history stays collapsed, cancellation and restart converge deterministically, resources and workflows are user scoped]
   fixtures: [ready study configuration, imported active model and para resource, temporary V4 database]
   contracts:
     - "route:POST /api/study-configurations/{id}/confirm"

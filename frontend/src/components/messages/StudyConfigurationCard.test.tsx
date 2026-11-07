@@ -111,6 +111,21 @@ describe('StudyConfigurationCard', () => {
     expect(screen.queryByRole('button', { name: /研究配置/ })).not.toBeInTheDocument()
   })
 
+  it('applies same-revision confirmed events without allowing a delayed ready card to regress', () => {
+    const ready = configuration({ status: 'ready_to_confirm' })
+    const view = render(<StudyConfigurationCard message={message(ready)} notify={vi.fn()} />)
+    expect(screen.getByRole('button', { name: '确认并生成脚本' })).toBeInTheDocument()
+
+    const confirmed = configuration({ status: 'confirmed', revision: ready.revision })
+    view.rerender(<StudyConfigurationCard message={message(confirmed)} notify={vi.fn()} />)
+    expect(screen.getByText('研究配置 #41：已确认')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '确认并生成脚本' })).not.toBeInTheDocument()
+
+    view.rerender(<StudyConfigurationCard message={message(ready)} notify={vi.fn()} />)
+    expect(screen.getByText('研究配置 #41：已确认')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '确认并生成脚本' })).not.toBeInTheDocument()
+  })
+
   it('explains the selected facade differences and sends the current revision', async () => {
     const next = configuration({ status: 'collecting_inputs', revision: 8 })
     vi.mocked(selectStudyFacade).mockResolvedValue(next)

@@ -37,7 +37,7 @@ snapshot 目录的 bool/number/enum/string/date、单位、默认值和范围合
 尾声不再追加为迟到消息，因此即使用户立即确认，也保持“AI 说明、配置卡、工作流”的因果顺序。
 参数卡从服务端 `baselineValues` 恢复模板基线；刷新后仍显示尚未确认的运行覆盖，不把当前草稿值误作新的模板基线。
 提交载荷只包含可编辑字段，服务端管理的 selector 不进入请求。非终态配置卡首次出现时展开，标题栏始终显示实际研究标题、revision、状态和“收起/展开研究配置”开关；收起后卸载输入与确认控件，只保留继续配置提示。
-收起偏好以 `study-configuration:<configurationId>:collapsed` 保存在当前浏览器会话的 `sessionStorage`，因此刷新、revision 更新和切换会话后仍保持；任一 mutation 错误会清除偏好并自动展开以显示错误。已确认或已取消卡片保持紧凑终态，不显示开关。
+收起偏好以 `study-configuration:<configurationId>:collapsed` 保存在当前浏览器会话的 `sessionStorage`，因此刷新、revision 更新和切换会话后仍保持；任一 mutation 错误会清除偏好并自动展开以显示错误。确认不改变冻结的 configuration revision，前端仍接受同 revision 的状态前进事件并拒绝迟到状态回退；已确认或已取消卡片立即切换为紧凑终态，不显示开关。
 
 所有 mutation 携带当前 `expectedRevision`。服务端返回 `configuration_stale` 时刷新整张卡并要求用户基于新 revision
 重试，浏览器不合并旧输入。结果选择卡在 `collecting_inputs` 和 `ready_to_confirm` 都保持可编辑；达到

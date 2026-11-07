@@ -287,21 +287,31 @@ async fn delayed_configuration_and_workflow_cards_cannot_regress_current_facts()
             configuration_id: "configuration-1".into(),
             revision: 2,
             state: "ready_to_confirm".into(),
-            action_card: serde_json::json!({"revision":2}),
+            action_card: serde_json::json!({"revision":2,"status":"ready_to_confirm"}),
+        })
+        .await
+        .unwrap();
+    let confirmed_configuration = writer
+        .study_config(StudyConfigCard {
+            configuration_id: "configuration-1".into(),
+            revision: 2,
+            state: "confirmed".into(),
+            action_card: serde_json::json!({"revision":2,"status":"confirmed"}),
         })
         .await
         .unwrap();
     let delayed_configuration = writer
         .study_config(StudyConfigCard {
             configuration_id: "configuration-1".into(),
-            revision: 1,
-            state: "collecting_inputs".into(),
-            action_card: serde_json::json!({"revision":1}),
+            revision: 2,
+            state: "ready_to_confirm".into(),
+            action_card: serde_json::json!({"revision":2,"status":"ready_to_confirm"}),
         })
         .await
         .unwrap();
     assert_eq!(configuration.revision(), 1);
-    assert_eq!(delayed_configuration.revision(), 1);
+    assert_eq!(confirmed_configuration.revision(), 2);
+    assert_eq!(delayed_configuration.revision(), 2);
 
     let workflow = writer
         .workflow_progress(WorkflowProgressCard {
@@ -350,7 +360,7 @@ async fn delayed_configuration_and_workflow_cards_cannot_regress_current_facts()
             && message
                 .payload_json
                 .as_deref()
-                .is_some_and(|payload| payload.contains("ready_to_confirm"))
+                .is_some_and(|payload| payload.contains("confirmed"))
     }));
     assert!(stored.iter().any(|message| {
         message.kind == "workflow-progress"

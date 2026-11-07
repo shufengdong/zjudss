@@ -732,6 +732,117 @@ async fn confirmed_configuration_is_not_injected_as_current_agent_context() {
 }
 
 #[tokio::test]
+async fn agent_history_uses_the_latest_owned_mutable_configuration() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let app = TestApp::builder()
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
+    let session = create_session(&app).await;
+    let session_id = session.parse().unwrap();
+    let user = common::test_user("instance");
+    import_agent_study_case(&app, &user, session_id).await;
+    let first = app
+        .state
+        .study_configuration_service
+        .prepare(
+            &user,
+            session_id,
+            PrepareStudyRequest {
+                facade_id: "static_power_flow_newton".into(),
+                intent: json!({"request":"第一次潮流"}),
+                derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let latest = app
+        .state
+        .study_configuration_service
+        .prepare(
+            &user,
+            session_id,
+            PrepareStudyRequest {
+                facade_id: "static_power_flow_newton".into(),
+                intent: json!({"request":"第二次潮流"}),
+                derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let foreign_user = common::test_user("bob@example.com");
+    let foreign_session = app
+        .state
+        .session_repo
+        .create(&foreign_user.id, "foreign", 1)
+        .await
+        .unwrap();
+    let foreign = app
+        .state
+        .study_configuration_service
+        .prepare(
+            &foreign_user,
+            foreign_session.id,
+            PrepareStudyRequest {
+                facade_id: "static_power_flow_newton".into(),
+                intent: json!({"request":"外部潮流"}),
+                derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    let writer = EventWriter::new(
+        user.id.clone(),
+        session_id,
+        app.state.message_repo.clone(),
+        app.state.events.clone(),
+    );
+    for configuration in [&first, &latest] {
+        let action_card = serde_json::to_value(configuration).unwrap();
+        writer
+            .study_config(StudyConfigCard {
+                configuration_id: configuration.id.to_string(),
+                revision: configuration.revision,
+                state: action_card["status"].as_str().unwrap().into(),
+                action_card,
+            })
+            .await
+            .unwrap();
+    }
+    let foreign_action_card = serde_json::to_value(&foreign).unwrap();
+    writer
+        .study_config(StudyConfigCard {
+            configuration_id: foreign.id.to_string(),
+            revision: foreign.revision,
+            state: foreign_action_card["status"].as_str().unwrap().into(),
+            action_card: foreign_action_card,
+        })
+        .await
+        .unwrap();
+    factory.enqueue(ScriptScenario {
+        id: "latest-owned-configuration".into(),
+        expected_prompt: Some("更新当前配置".into()),
+        turns: vec![ScriptTurn::Text {
+            text: "已读取当前配置。".into(),
+        }],
+    });
+
+    assert_eq!(
+        post_and_wait(&app, &session, "更新当前配置").await,
+        StatusCode::ACCEPTED
+    );
+    let history = factory.trace()[0].calls[0].history.to_string();
+    let history_json: Value = serde_json::from_str(&history).unwrap();
+    let context_text = history_json[0]["content"][0]["text"].as_str().unwrap();
+    let context: Value = serde_json::from_str(context_text).unwrap();
+    assert_eq!(
+        context["currentStudyConfiguration"]["configurationId"],
+        latest.id.to_string(),
+        "{history}"
+    );
+}
+
+#[tokio::test]
 async fn prepared_configuration_survives_provider_finalization_failure() {
     let factory = Arc::new(ScriptedAgentFactory::default());
     let app = TestApp::builder()

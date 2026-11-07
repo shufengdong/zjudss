@@ -18,7 +18,7 @@ use zjudss::db::repositories::{
     WorkflowOverlayInput,
 };
 use zjudss::storage::StagedArtifact;
-use zjudss::testing::{AuthorTurn, ScriptedAuthor};
+use zjudss::testing::{AuthorTurn, FaultInjector, FaultPoint, ScriptedAuthor};
 
 use common::TestApp;
 
@@ -1197,6 +1197,99 @@ async fn confirm_route_updates_durable_study_configuration_card_to_confirmed() {
     assert_eq!(payload["configurationId"], configuration.id.to_string());
     assert_eq!(payload["state"], "confirmed");
     assert_eq!(payload["actionCard"]["status"], "confirmed");
+}
+
+#[tokio::test]
+async fn confirm_route_replay_repairs_a_failed_terminal_card_without_duplicate_work() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "confirm card recovery", 1)
+        .await
+        .unwrap();
+    let configuration = ready_study(&app, &user, session.id).await;
+    let cookie = app.login_cookie("alice@example.com").await;
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/study-configurations/{}", configuration.id))
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json!({
+        "expectedRevision": configuration.revision,
+        "clientOperationId": "confirm-card-recovery"
+    })
+    .to_string();
+
+    FaultInjector.fail_next(FaultPoint::EventCommit);
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/study-configurations/{}/confirm",
+                configuration.id
+            ))
+            .header("cookie", &cookie)
+            .header("content-type", "application/json")
+            .body(Body::from(body.clone()))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/study-configurations/{}/confirm",
+                configuration.id
+            ))
+            .header("cookie", &cookie)
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let mut connection = app.pool.get().unwrap();
+    let workflows =
+        diesel::sql_query("SELECT count(*) count FROM managed_workflows WHERE session_id = ?1")
+            .bind::<diesel::sql_types::Integer, _>(session.id)
+            .get_result::<common::CountRow>(&mut connection)
+            .unwrap();
+    let runs =
+        diesel::sql_query("SELECT count(*) count FROM simulation_runs WHERE session_id = ?1")
+            .bind::<diesel::sql_types::Integer, _>(session.id)
+            .get_result::<common::CountRow>(&mut connection)
+            .unwrap();
+    assert_eq!(workflows.count, 1);
+    assert_eq!(runs.count, 1);
+    let messages = app
+        .state
+        .message_repo
+        .list_by_session(&user.id, session.id)
+        .await
+        .unwrap();
+    let cards = messages
+        .iter()
+        .filter(|message| message.kind == "study-config")
+        .collect::<Vec<_>>();
+    assert_eq!(cards.len(), 1);
+    let payload: Value = serde_json::from_str(cards[0].payload_json.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["state"], "confirmed");
 }
 
 #[tokio::test]
