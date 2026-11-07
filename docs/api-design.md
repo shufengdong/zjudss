@@ -205,8 +205,9 @@ Data 输入的 mapping 只接受源列到目标列的受控映射。服务端按
 artifact，不创建或修改 `data_resources` 行；有效值与模板字节一致时可复用模板 artifact。工作流输入以可空 `resourceId`
 和 `source` 标识长期模板：有模板时冻结其 ID/alias/artifact/schema/content hash，无模板时两者为 `null`；顶层
 `artifactId/contentHash` 与 `effective` 指向实际执行文件，并冻结 `values`、`userOverrides`、`selectorOverrides` 以及兼容旧记录的
-合并 `overrides`。随后确认配置、创建 managed workflow、持久进度消息和 provisional run。相同操作
-ID 幂等返回同一 workflow/run；同一操作 ID 配合不同请求返回 `idempotency_conflict`。按钮固定为“确认并生成脚本”。
+合并 `overrides`。随后确认配置、创建 managed workflow、持久进度消息和 provisional run。确认路由在领域事务成功后读取权威配置，
+以同一 configuration ID 原位发布 `confirmed` 的 `study-config` 卡；重试仍按相同操作 ID 幂等返回同一 workflow/run，并补写当前终态，
+不会创建重复卡片或 workflow。同一操作 ID 配合不同请求返回 `idempotency_conflict`。按钮固定为“确认并生成脚本”。
 
 `GET /api/workflows/{id}` 返回工作流、修正预算、run、可空脚本消息锚点和脱敏 attempt 摘要。每个 attempt 还返回
 `durationMs`、按 `stdout|stderr` 区分的 `engineLogs`、可空 `failureAnalysis` 和
@@ -317,7 +318,8 @@ tensoreval 以非零状态退出时保留实际退出码。原始有界 stderr �
 持久消息类型是 `user`、`assistant`、`tool-call`、`progress`、`result`、`attachment`、`model-status`、
 `comparison`、`script`、`upload-batch`、`study-config`、`workflow-progress`。普通对话消息追加写入；后三种操作卡按
 `sessionId + kind + operationId` 更新同一稳定消息 ID，内容变化时递增正整数 `revision`，相同终态重放保持原 revision。
-上传卡携带数据库单调 `batchRevision`；仓储拒绝低于或等于已保存 batch/config revision、低于执行轮次的延迟状态，也不允许已经落库的终态被另一状态覆盖；GET upload/config
+上传卡携带数据库单调 `batchRevision`；仓储拒绝低于已保存 config revision 的更新，同 revision 只允许配置状态向前推进，
+并继续拒绝低于或等于已保存 batch revision、低于执行轮次的延迟状态，也不允许已经落库的终态被另一状态覆盖；GET upload/config
 会幂等补写当前事实，以修复领域事务成功而消息写入中断的窗口。EventWriter 必须先提交数据库再广播。SSE `id` 为
 `messageId:revision`，重连时同时按消息 ID 和 revision 去重；补发除游标后的普通消息外，还返回当前最新操作卡，即使该卡的
 稳定消息 ID 早于游标，避免错过旧卡的新 revision。旧的纯数字 `Last-Event-ID` 仍按 revision 1 解释。卡片只携稳定 ID、
@@ -327,8 +329,9 @@ tensoreval 以非零状态退出时保留实际退出码。原始有界 stderr �
 成功后的 provider 尾声不再写入，provider 收尾失败也不追加通用 Agent 失败，因此用户立即确认时工作流仍严格位于说明和配置之后。
 自然语言修改结果时，`update_study_results` 使用当前 durable 卡的精确 ID/revision 原位更新该卡；成功后的 assistant 只说明
 结果已更新并提醒用户仍需点击“确认并生成脚本”，不会把自然语言肯定解释为最终确认。
-Agent 历史仅附带当前会话最新一张未确认研究配置的有界摘要（配置 ID、revision、状态、门面 ID、已选结果、可选结果 ID），
-不附带完整 action card、路径或已终态配置；工具仍在服务端重新校验用户、会话、revision 和结果合同。
+Agent 历史先以当前用户和会话查询权威配置状态，仅附带最新一张仍可编辑研究配置的有界摘要（配置 ID、revision、状态、门面 ID、
+已选结果、可选结果 ID），不因消息 payload 滞后而注入已终态配置，也不附带完整 action card 或路径；工具仍在服务端重新校验用户、
+会话、revision 和结果合同。
 Agent 在完成配置前耗尽单轮模型调用预算时，assistant 明确提示本轮尚未完成配置并可重新发送请求；后台日志记录
 session ID 和失败类别，消息正文不暴露 provider 诊断。
 

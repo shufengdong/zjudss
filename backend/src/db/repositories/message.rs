@@ -254,7 +254,21 @@ fn keep_existing_operation(existing: &Message, incoming: &NewMessage) -> bool {
         "study-config" => {
             let existing_revision = existing_payload.get("revision").and_then(Value::as_i64);
             let incoming_revision = incoming_payload.get("revision").and_then(Value::as_i64);
-            matches!((existing_revision, incoming_revision), (Some(old), Some(new)) if new <= old)
+            match (existing_revision, incoming_revision) {
+                (Some(old), Some(new)) if new < old => true,
+                (Some(old), Some(new)) if new == old => {
+                    let existing_state = existing_payload.get("state").and_then(Value::as_str);
+                    let incoming_state = incoming_payload.get("state").and_then(Value::as_str);
+                    match (existing_state, incoming_state) {
+                        (Some(old), Some(new)) => {
+                            study_configuration_state_rank(new)
+                                <= study_configuration_state_rank(old)
+                        }
+                        _ => true,
+                    }
+                }
+                _ => false,
+            }
         }
         "upload-batch" => {
             let existing_revision = existing_payload
@@ -297,6 +311,16 @@ fn keep_existing_operation(existing: &Message, incoming: &NewMessage) -> bool {
             }
         }
         _ => false,
+    }
+}
+
+fn study_configuration_state_rank(state: &str) -> u8 {
+    match state {
+        "choosing_facade" => 0,
+        "collecting_inputs" => 1,
+        "ready_to_confirm" => 2,
+        "confirmed" | "invalidated" | "cancelled" => 3,
+        _ => 0,
     }
 }
 

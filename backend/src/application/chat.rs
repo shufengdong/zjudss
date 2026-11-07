@@ -208,20 +208,22 @@ impl ChatService {
             .list_by_session(&self.principal.id, session_id)
             .await
             .unwrap_or_default();
-        let latest_configuration_message_id =
+        let latest_mutable_configuration_id = self
+            .study_configurations
+            .latest_mutable_id(&self.principal, session_id)
+            .await
+            .unwrap_or(None);
+        let latest_configuration_message_id = latest_mutable_configuration_id.and_then(|id| {
             msgs.iter()
                 .filter(|message| message.id < prompt_id && message.kind == "study-config")
                 .filter_map(|message| {
                     let card = message.payload_json.as_deref().and_then(|payload| {
                         serde_json::from_str::<StudyConfigCard>(payload).ok()
                     })?;
-                    matches!(
-                        card.state.as_str(),
-                        "collecting_inputs" | "ready_to_confirm"
-                    )
-                    .then_some(message.id)
+                    (card.configuration_id.parse::<i32>().ok() == Some(id)).then_some(message.id)
                 })
-                .max();
+                .max()
+        });
         msgs.into_iter()
             .filter(|m| m.id < prompt_id)
             .filter_map(|m| match m.role.as_str() {

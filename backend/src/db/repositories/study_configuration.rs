@@ -90,6 +90,35 @@ impl StudyConfigurationRepo {
         .map_err(RepoError::Join)?
     }
 
+    pub async fn latest_mutable_id(
+        &self,
+        user: &UserId,
+        session_id: i32,
+    ) -> RepoResult<Option<i32>> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            ensure_session(&mut conn, &user, session_id)?;
+            schema::study_configurations::table
+                .filter(schema::study_configurations::session_id.eq(session_id))
+                .filter(
+                    schema::study_configurations::status
+                        .eq_any(["collecting_inputs", "ready_to_confirm"]),
+                )
+                .order((
+                    schema::study_configurations::updated_at_ms.desc(),
+                    schema::study_configurations::id.desc(),
+                ))
+                .select(schema::study_configurations::id)
+                .first::<i32>(&mut conn)
+                .optional()
+                .map_err(Into::into)
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
     pub async fn latest_confirmed_resource(
         &self,
         user: &UserId,

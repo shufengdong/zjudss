@@ -10,8 +10,8 @@ use diesel::{RunQueryDsl, sql_query};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use zjudss::application::{
-    CandidateDecision, CandidatePurpose, EventWriter, PrepareStudyRequest, PublishDraftRequest,
-    StudyConfigCard, StudyConfigurationState,
+    CandidateDecision, CandidatePurpose, ConfirmStudyRequest, EventWriter, PrepareStudyRequest,
+    PublishDraftRequest, StudyConfigCard, StudyConfigurationState,
 };
 use zjudss::auth::CurrentUser;
 use zjudss::db::models::DraftRef;
@@ -658,6 +658,77 @@ async fn natural_language_result_selection_updates_the_durable_card_without_star
         .get_result::<common::CountRow>(&mut connection)
         .unwrap();
     assert_eq!(workflows.count, 0);
+}
+
+#[tokio::test]
+async fn confirmed_configuration_is_not_injected_as_current_agent_context() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let app = TestApp::builder()
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
+    let session = create_session(&app).await;
+    let session_id = session.parse().unwrap();
+    let user = common::test_user("instance");
+    import_agent_study_case(&app, &user, session_id).await;
+    let configuration = app
+        .state
+        .study_configuration_service
+        .prepare(
+            &user,
+            session_id,
+            PrepareStudyRequest {
+                facade_id: "static_power_flow_newton".into(),
+                intent: json!({"request":"求解牛顿法潮流"}),
+                derived_from_workflow_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    EventWriter::new(
+        user.id.clone(),
+        session_id,
+        app.state.message_repo.clone(),
+        app.state.events.clone(),
+    )
+    .study_config(StudyConfigCard {
+        configuration_id: configuration.id.to_string(),
+        revision: configuration.revision,
+        state: "ready_to_confirm".into(),
+        action_card: serde_json::to_value(&configuration).unwrap(),
+    })
+    .await
+    .unwrap();
+    app.state
+        .managed_workflow_service
+        .confirm_configuration_and_start(
+            &user,
+            configuration.id,
+            ConfirmStudyRequest {
+                expected_revision: configuration.revision,
+                client_operation_id: "confirm-before-next-agent-turn".into(),
+            },
+        )
+        .await
+        .unwrap();
+    factory.enqueue(ScriptScenario {
+        id: "confirmed-configuration-not-current".into(),
+        expected_prompt: Some("再次求解牛顿法潮流".into()),
+        turns: vec![ScriptTurn::Text {
+            text: "将重新准备研究配置。".into(),
+        }],
+    });
+
+    assert_eq!(
+        post_and_wait(&app, &session, "再次求解牛顿法潮流").await,
+        StatusCode::ACCEPTED
+    );
+    let trace = factory.trace();
+    let history = trace[0].calls[0].history.to_string();
+    assert!(
+        !history.contains("currentStudyConfiguration"),
+        "confirmed configuration leaked into agent history: {history}"
+    );
 }
 
 #[tokio::test]

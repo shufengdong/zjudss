@@ -69,7 +69,9 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 - 研究配置：`search_study_facades` 按当前 snapshot 返回目录门面、方法差异和禁用诊断，显式函数不会被拓扑改写；
   `prepare_study` 要求 1..=4000 个 Unicode 字符的模型说明，持久化“详细说明 + 服务端实际标题/配置 ID 页脚”后再持久化 revisioned 配置卡。model 输入仅绑定 active 的实际门面表，Struct/Data 绑定普通资源，
   唯一资源自动绑定且只有真实多资源才要求选择，列映射发布带血缘的新 Parquet 资源。Struct 资源只作为参数模板；用户字段和结果 selector 都不修改长期资源，而是在 workflow 私有 Snappy Parquet 中分类冻结，无来源时从目录默认值建立私有输入；
-  `ready_to_confirm` 卡仍可从 UI 或 skill-gated `update_study_results` 修改结果，二者都只递增 revision，最终确认仍只由固定按钮完成。
+  `ready_to_confirm` 卡仍可从 UI 或 skill-gated `update_study_results` 修改结果，二者都只递增 revision，最终确认仍只由固定按钮完成；
+  确认成功会以同一配置 ID 原位发布 `confirmed` 卡片，Agent 历史按用户、会话和数据库权威状态筛选最新可编辑配置，不会把滞后的
+  `study-config` 消息重新解释为当前待确认配置。
   `prepare_confirmation` 重新检查 revision、snapshot、门面 hash、active 模型和资源内容，生成 Task 9 原子事务使用的
   locked contract/input snapshot/private Struct overlays；confirm 公共路由原子创建受管 workflow 与 provisional run，并由无工具 ScriptAuthor 生成候选。generation/repair 都优先取得当前 snapshot 的 RSS 顶层和多结果声明，再附加函数章节；多结果必须使用方括号解构。retry/rerun 只跟随最多 64 层显式 replacement 血缘，拒绝同 alias 冒充、循环和超深链；source-less 输入复用冻结 artifact，旧 snapshot 回退到合并 overrides。候选先经过冻结函数、alias 顺序、精确结果名与多结果解构结构合同检查，再通过统一 adapter 调用 tensoreval；与父候选 hash 相同的 repair 仍记录 attempt 和预算，但不重复执行。非零退出或可修正的结果限制/合同错误最多修正 3 次；超时、监控、路径、配额和基础设施错误立即失败。成功仅在全部结果名称、列顺序、逻辑 dtype、实际非空值和可用 unit 元数据满足 Snappy Parquet 结果合同时原子发布。
 - 模型表读取：active、准确 draft revision 和历史版本均支持元数据、分页投影与 Parquet 下载；Agent 可通过

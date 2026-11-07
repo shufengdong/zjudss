@@ -56,8 +56,9 @@ draft、读取运行/结果并创建派生分析或比较。图表不是模型�
 `update_study_results` 是唯一新增的研究配置写工具。它必须在当前消息加载 `study-planning` 后，以当前 durable 卡的精确
 十进制字符串 ID、revision 和门面内结果 ID 调用；只允许当前会话的未确认配置。它不具备门面、输入、Struct 参数或最终确认权限，
 也不会生成脚本、workflow 或 run。`configuration_stale` 后必须刷新卡片，不得猜测新 revision 或切换到另一张配置。
-构建 Agent 历史时，服务只额外注入当前会话最新一张未确认配置的有界摘要：配置 ID、revision、状态、门面 ID、已选结果和
-可选结果 ID；不会注入完整卡片、服务器路径或已终态配置。这样模型可以准确提交并发保护参数，同时保持上下文最小化。
+构建 Agent 历史时，服务先按当前用户和会话查询 `study_configurations` 的权威状态，只额外注入数据库中最新一张仍可编辑配置的
+有界摘要：配置 ID、revision、状态、门面 ID、已选结果和可选结果 ID；持久消息中的旧 payload 不能单独把已确认、已失效或已取消
+配置恢复为当前配置，也不会注入完整卡片或服务器路径。这样模型可以准确提交并发保护参数，同时保持上下文最小化。
 
 该发布授权同时由工具运行时强制执行：授权只来自当前 request message，且本轮 `inspect_workspace` 记录的 draft ref
 必须与 `expectedDraft` 完全一致。缺少明确发布意图或本轮检查分别返回 `publish_authorization_required`、

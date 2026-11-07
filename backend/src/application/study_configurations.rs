@@ -344,6 +344,17 @@ impl StudyConfigurationService {
         self.view(user, self.repo.find(&user.id, id).await?).await
     }
 
+    pub(crate) async fn latest_mutable_id(
+        &self,
+        user: &CurrentUser,
+        session_id: i32,
+    ) -> Result<Option<i32>, StudyConfigurationError> {
+        self.repo
+            .latest_mutable_id(&user.id, session_id)
+            .await
+            .map_err(Into::into)
+    }
+
     pub async fn cancel(
         &self,
         user: &CurrentUser,

@@ -97,12 +97,13 @@ pub async fn confirm(
     Path(id): Path<i32>,
     Json(body): Json<ConfirmStudyRequest>,
 ) -> Result<Json<ManagedWorkflowView>, ApiError> {
-    Ok(Json(
-        state
-            .managed_workflow_service
-            .confirm_configuration_and_start(&user, id, body)
-            .await?,
-    ))
+    let workflow = state
+        .managed_workflow_service
+        .confirm_configuration_and_start(&user, id, body)
+        .await?;
+    let configuration = state.study_configuration_service.get(&user, id).await?;
+    publish(&state, &user, &configuration).await?;
+    Ok(Json(workflow))
 }
 
 #[derive(Deserialize)]

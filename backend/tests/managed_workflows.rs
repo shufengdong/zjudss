@@ -1134,6 +1134,72 @@ async fn workflow_routes_are_scoped_and_return_stable_conflicts() {
 }
 
 #[tokio::test]
+async fn confirm_route_updates_durable_study_configuration_card_to_confirmed() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "confirm card", 1)
+        .await
+        .unwrap();
+    let configuration = ready_study(&app, &user, session.id).await;
+    let cookie = app.login_cookie("alice@example.com").await;
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/study-configurations/{}", configuration.id))
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/study-configurations/{}/confirm",
+                configuration.id
+            ))
+            .header("cookie", &cookie)
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "expectedRevision": configuration.revision,
+                    "clientOperationId": "confirm-and-update-card"
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let messages = app
+        .state
+        .message_repo
+        .list_by_session(&user.id, session.id)
+        .await
+        .unwrap();
+    let cards = messages
+        .iter()
+        .filter(|message| message.kind == "study-config")
+        .collect::<Vec<_>>();
+    assert_eq!(cards.len(), 1, "confirmation must update the existing card");
+    let payload: Value = serde_json::from_str(cards[0].payload_json.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["configurationId"], configuration.id.to_string());
+    assert_eq!(payload["state"], "confirmed");
+    assert_eq!(payload["actionCard"]["status"], "confirmed");
+}
+
+#[tokio::test]
 async fn confirm_route_preserves_study_configuration_error_contracts() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
