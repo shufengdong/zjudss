@@ -23,12 +23,12 @@ cookie = "0.18"
 calamine = "0.37.0"
 csv = "1.4.0"
 diesel = { version = "2.3", features = ["sqlite", "r2d2"] }
+libsqlite3-sys = { version = "0.38", features = ["bundled"] }
 diesel_migrations = "2.3"
 dotenvy = "0.15"
 futures = "0.3"
 getrandom = "0.4.3"
 hex = "0.4.3"
-nix = { version = "0.31.3", features = ["process", "signal"] }
 parquet = { version = "60.0.0", features = ["arrow"] }
 rig = { version = "0.45.0", features = ["test-utils"] }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -41,6 +41,9 @@ zip = { version = "9.1.0", default-features = false, features = ["deflate"] }
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31.3", features = ["process", "signal"] }
 
 [[bin]]
 name = "e2e-server"

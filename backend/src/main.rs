@@ -20,7 +20,9 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    dotenvy::dotenv().ok();
+    if let Err(err) = dotenvy::dotenv() {
+        eprintln!("[dotenv] warning: {err}");
+    }
     if std::env::args().nth(1).as_deref() == Some("rebuild-search-index") {
         let database_url =
             std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://backend.db".into());
