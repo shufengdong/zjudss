@@ -1,3 +1,9 @@
+//! 普通脚本运行的创建、查询、结果发现与删除 HTTP 边界。
+//!
+//! handler 按当前用户映射稳定 script/run ID、幂等 client run ID、分页和删除 token。输入冻结、
+//! scheduler、adapter 调用、结果发布、失败诊断与 tombstone 事务由 run/dataset service 拥有；
+//! API 出网前再次收敛和脱敏运行错误。
+
 use super::ApiError;
 use crate::agent::{FailureAnalysis, validate_failure_analysis};
 use crate::application::diagnostics::sanitize_text;
@@ -9,6 +15,11 @@ use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+/// `POST /api/scripts/{id}/runs`：显式创建一次脚本运行。
+///
+/// 请求只含幂等 `clientRunId`；service 按脚本类型冻结当前输入并调度执行。首次提交返回 202，
+/// 同一操作重放返回 200 和原 run，不重复执行；队列满返回 429 `run_queue_full`，输入/合同冲突
+/// 返回稳定 409/422，跨用户与不存在脚本统一返回 404。
 pub async fn create(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -28,6 +39,10 @@ pub async fn create(
         ),
     ))
 }
+/// `GET /api/runs/{id}`：读取当前用户的冻结运行快照。
+///
+/// 成功返回 200、不可变脚本名/输入合同、阶段、时间和受控失败诊断；读取不重启或重试运行。
+/// 跨用户、已 tombstone 与不存在运行统一返回 404。
 pub async fn get(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -41,6 +56,10 @@ pub async fn get(
 pub struct ListQuery {
     limit: Option<i64>,
 }
+/// `GET /api/sessions/{id}/runs`：列出当前用户会话的运行摘要。
+///
+/// `limit` 缺省 50 并由 service 限界；成功返回 200，包含每个运行冻结的脚本名与公开状态，不
+/// 返回原始 stderr 或物理路径。跨用户与不存在会话统一返回 404。
 pub async fn list(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -55,6 +74,10 @@ pub async fn list(
         json!({"runs":runs.into_iter().map(run_json).collect::<Vec<_>>() }),
     ))
 }
+/// `GET /api/runs/{id}/datasets`：列出运行当前仍存活的全部结果。
+///
+/// handler 先校验当前用户拥有 run，再返回 200 和结果元数据；已删除的单结果不再出现，该读取
+/// 不扫描其他运行或创建派生资源。跨用户、已删除与不存在运行统一返回 404。
 pub async fn datasets(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -65,6 +88,10 @@ pub async fn datasets(
         json!({"datasets":state.dataset_service.list(&user,id).await?}),
     ))
 }
+/// `POST /api/runs/{id}/deletion-preview`：生成终态运行删除影响与短期 token。
+///
+/// 成功返回 200，冻结直接结果和派生引用影响；排队/运行中返回 409 `run_busy`，被分析消费的
+/// 结果返回 409 `result_busy`。该操作不删除 run，跨用户与不存在运行统一返回 404。
 pub async fn deletion_preview(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -80,6 +107,11 @@ pub async fn deletion_preview(
 pub struct DeleteQuery {
     impact_token: String,
 }
+/// `DELETE /api/runs/{id}?impactToken=...`：确认删除终态运行及其直接结果。
+///
+/// token 必须来自当前未过期预览且影响未变化；成功在一个事务内 tombstone run 和所有存活
+/// 直接结果、释放直接 artifact 引用并返回 204。无效 token、影响变化或 busy 返回稳定 409，
+/// 跨用户与不存在运行统一返回 404。
 pub async fn delete(
     State(state): State<AppState>,
     user: CurrentUser,

@@ -1,3 +1,8 @@
+//! 已持久化分析运行及其不可变输出的只读 HTTP 投影。
+//!
+//! 分析创建由受控 Agent/application 工具链拥有；本模块只按当前用户读取稳定 analysis ID，
+//! 组合冻结运行记录与仍存活的结果数据集，不执行脚本、SQL 或任意查询。
+
 use super::ApiError;
 use crate::{
     application::{AppState, ms_to_iso},
@@ -27,6 +32,10 @@ pub struct AnalysisDto {
     finished_at: Option<String>,
     datasets: Vec<crate::application::datasets::DatasetMetadata>,
 }
+/// `GET /api/analysis-runs/{id}`：读取当前用户的分析记录与输出。
+///
+/// 成功返回 200、冻结 intent/provenance、状态、受控错误和存活数据集；读取不重跑分析，也不
+/// 依赖 live 来源。跨用户、已删除与不存在分析统一返回 404。
 pub async fn get(
     State(s): State<AppState>,
     p: CurrentUser,

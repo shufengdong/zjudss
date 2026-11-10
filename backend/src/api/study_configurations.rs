@@ -1,3 +1,10 @@
+//! revisioned 研究配置卡与固定按钮确认的 HTTP 边界。
+//!
+//! 所有 handler 按当前用户解析配置，并把精确 `expectedRevision` 交给 study/workflow service。
+//! 输入绑定、Struct 私有覆盖、结果约束、确认事务与执行调度由 application 层拥有；本模块在
+//! 每次成功读取或变更后同步 durable `study-config` 卡片。最终确认只对应固定按钮路由，不是
+//! 对话 Agent 的隐式动作。
+
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
@@ -11,6 +18,10 @@ use crate::auth::CurrentUser;
 
 use super::ApiError;
 
+/// `GET /api/study-configurations/{id}`：读取当前用户的研究配置卡。
+///
+/// 成功返回 200 和权威 revision/status，并幂等同步 durable 卡片；不会确认配置或启动执行。
+/// 跨用户与不存在配置统一返回 404。
 pub async fn get(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -21,6 +32,11 @@ pub async fn get(
     Ok(Json(view))
 }
 
+/// `PUT /api/study-configurations/{id}/facade`：按 revision 更换目录门面。
+///
+/// 请求携带精确 `expectedRevision` 和稳定 facade ID；成功重建受控输入/结果卡、递增 revision、
+/// 同步 durable 卡片并返回 200。过期 revision 返回 409 `configuration_stale`，禁用或不兼容
+/// 门面返回受控 422，跨用户与不存在配置统一返回 404。
 pub async fn select_facade(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -35,6 +51,11 @@ pub async fn select_facade(
     Ok(Json(view))
 }
 
+/// `PUT /api/study-configurations/{id}/bindings/{inputId}`：选择或清除普通资源绑定。
+///
+/// 请求必须携带精确 revision，并只接受当前用户的稳定 resource ID；成功递增 revision、同步
+/// 卡片并返回 200。资源不兼容或选择无效返回受控 422，过期 revision 返回 409，跨用户与不
+/// 存在资源/配置统一返回 404。
 pub async fn bind_resource(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -49,6 +70,11 @@ pub async fn bind_resource(
     Ok(Json(view))
 }
 
+/// `POST /api/study-configurations/{id}/bindings/{inputId}/mapping`：映射并绑定派生资源。
+///
+/// 请求携带精确 revision、稳定来源资源 ID 与受控列映射；成功发布带血缘的不可变 Parquet
+/// 资源、绑定它、递增配置 revision 并返回 200。失败不改写来源资源；过期 revision 返回 409，
+/// 非法映射返回受控 422，跨用户与不存在资源统一返回 404。
 pub async fn map_resource(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -63,6 +89,11 @@ pub async fn map_resource(
     Ok(Json(view))
 }
 
+/// `PUT /api/study-configurations/{id}/structs/{inputId}`：更新本次研究的 Struct 参数覆盖。
+///
+/// 请求携带精确 revision 与受控字段值；成功只更新配置私有覆盖、递增 revision、同步卡片并
+/// 返回 200，不修改长期 Struct 资源。过期 revision 返回 409，字段/类型错误返回受控 422，
+/// 跨用户与不存在配置统一返回 404。
 pub async fn update_struct(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -77,6 +108,11 @@ pub async fn update_struct(
     Ok(Json(view))
 }
 
+/// `PUT /api/study-configurations/{id}/results`：更新有序结果选择。
+///
+/// 请求必须匹配当前 revision，结果需唯一且满足门面 fixed/minimum/conditional 约束；成功按
+/// 请求顺序持久化、递增 revision、同步卡片并返回 200，不确认配置。过期 revision 返回 409，
+/// 非法集合返回 422 `result_selection_invalid`，跨用户与不存在配置统一返回 404。
 pub async fn select_results(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -91,6 +127,12 @@ pub async fn select_results(
     Ok(Json(view))
 }
 
+/// `POST /api/study-configurations/{id}/confirm`：固定按钮确认配置并启动受管工作流。
+///
+/// 请求仅含精确 `expectedRevision` 与幂等 `clientOperationId`。service 在事务内重验当前模型、
+/// 资源、engine snapshot 和结果合同，确认配置并创建 workflow/provisional run；handler 再同步
+/// confirmed 卡片，成功或幂等重放返回 200。同一操作不同请求、过期 revision 或会话已有执行
+/// 返回稳定 409，跨用户与不存在配置统一返回 404。
 pub async fn confirm(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -112,6 +154,11 @@ pub struct CancelQuery {
     expected_revision: i64,
 }
 
+/// `DELETE /api/study-configurations/{id}?expectedRevision=...`：取消未确认配置。
+///
+/// query revision 必须精确匹配；成功递增 revision、同步 cancelled 卡片并返回 200，不创建
+/// workflow 或 run。过期或已终态配置返回 409 `configuration_stale`，跨用户与不存在配置
+/// 统一返回 404。
 pub async fn cancel(
     State(state): State<AppState>,
     user: CurrentUser,
