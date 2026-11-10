@@ -90,7 +90,6 @@ pub fn assemble_e2e_app(dependencies: E2eAppDependencies, options: E2eAppOptions
         upload_staging_ttl_hours,
         script_repair_max_attempts,
         agent_model_retry_max,
-        managed_engine_timeout,
         managed_result_max_file_bytes,
         archive_limits,
     ) = match options.profile {
@@ -105,7 +104,6 @@ pub fn assemble_e2e_app(dependencies: E2eAppDependencies, options: E2eAppOptions
             24,
             3,
             2,
-            std::time::Duration::from_secs(120),
             512 * 1024 * 1024,
             ArchiveLimits {
                 max_entries: 100,
@@ -127,7 +125,6 @@ pub fn assemble_e2e_app(dependencies: E2eAppDependencies, options: E2eAppOptions
             config.upload_staging_ttl_hours,
             config.script_repair_max_attempts,
             config.agent_model_retry_max,
-            std::time::Duration::from_millis(config.tensoreval_timeout_ms),
             config.result_max_file_bytes,
             ArchiveLimits {
                 max_entries: config.archive_max_entries,
@@ -155,7 +152,6 @@ pub fn assemble_e2e_app(dependencies: E2eAppDependencies, options: E2eAppOptions
             upload_staging_ttl_hours,
             script_repair_max_attempts,
             agent_model_retry_max,
-            managed_engine_timeout,
             managed_result_max_file_bytes,
             script_author_override: options.script_author,
             failure_analyzer_override: options.failure_analyzer,

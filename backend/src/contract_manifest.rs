@@ -156,7 +156,6 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "facade_contract_invalid",
     "facade_schema_invalid",
     "facade_unsupported_input_kind",
-    "engine_timeout",
     "result_monitor_failed",
     "result_file_limit",
     "result_file_too_large",

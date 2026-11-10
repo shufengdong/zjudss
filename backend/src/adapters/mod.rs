@@ -7,7 +7,6 @@ mod stub;
 
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use sha2::Digest;
@@ -30,7 +29,6 @@ pub enum ErrorCategory {
     Solver,
     Io,
     Internal,
-    Timeout,
 }
 impl ErrorCategory {
     pub fn as_str(self) -> &'static str {
@@ -39,7 +37,6 @@ impl ErrorCategory {
             Self::Solver => "solver",
             Self::Io => "io",
             Self::Internal => "internal",
-            Self::Timeout => "timeout",
         }
     }
 }
@@ -90,7 +87,6 @@ pub struct InspectOutcome {
 pub struct InspectSpec {
     pub input_tree: PathBuf,
     pub model_path: PathBuf,
-    pub timeout: Duration,
 }
 impl InspectSpec {
     pub fn validate(&self) -> Result<(), AdapterError> {
@@ -113,14 +109,13 @@ pub struct NamedInput {
 }
 
 #[derive(Debug, Clone)]
-/// 声明一次受控引擎执行所需的模式、输入、结果目录和超时。
+/// 声明一次受控引擎执行所需的模式、输入和结果目录。
 pub struct RunSpec {
     pub mode: RunMode,
     pub input_tree: PathBuf,
     pub script_path: PathBuf,
     pub named_inputs: Vec<NamedInput>,
     pub result_dir: PathBuf,
-    pub timeout: Duration,
 }
 impl RunSpec {
     pub fn validate(&self) -> Result<(), AdapterError> {

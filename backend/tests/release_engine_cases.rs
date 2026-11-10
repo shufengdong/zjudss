@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use arrow_array::{Float64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
@@ -215,7 +214,6 @@ async fn verify_model_import_profiles(engine: &ProcessEngine, root: &Path) -> (b
         let inspection = engine
             .inspect_model_import(ImportInspectSpec {
                 input_tree: input_tree.clone(),
-                timeout: Duration::from_secs(30),
             })
             .await
             .unwrap_or_else(|error| panic!("release_engine_import_inspect_failed:{}", error.code));
@@ -225,7 +223,6 @@ async fn verify_model_import_profiles(engine: &ProcessEngine, root: &Path) -> (b
                 input_tree,
                 entry_candidate_id: inspection.entry_candidates[0].id.clone(),
                 result_dir: root.join(format!("import-{name}-results")),
-                timeout: Duration::from_secs(120),
             })
             .await
             .unwrap_or_else(|error| {
@@ -267,7 +264,6 @@ async fn verify_expr_df(
                 relative_path: "input.parquet".into(),
             }],
             result_dir: root.join("expr-df-results"),
-            timeout: Duration::from_secs(30),
         })
         .await
         .unwrap_or_else(|error| panic!("release_engine_expr_df_failed:{}", error.code));
@@ -298,7 +294,6 @@ async fn verify_expr_df(
                 relative_path: "input.parquet".into(),
             }],
             result_dir: root.join("invalid-results"),
-            timeout: Duration::from_secs(30),
         })
         .await
         .expect_err("invalid expr_df must fail");
@@ -446,7 +441,6 @@ async fn project_example(
                 })
                 .collect(),
             result_dir: root.join(format!("projection-results-{}", example.id)),
-            timeout: Duration::from_secs(120),
         })
         .await
     {
@@ -568,7 +562,6 @@ async fn inject_manifest_result_selector(
                 relative_path: relative_input.clone(),
             }],
             result_dir: root.join(format!("selector-results-{}", example.id)),
-            timeout: Duration::from_secs(30),
         })
         .await?;
     let selected_input = output
@@ -621,7 +614,6 @@ async fn run_representative(
         script_path: manifest.projection.managed_entry.clone().into(),
         named_inputs: prepared.named_inputs.clone(),
         result_dir: root.join(format!("results-{}", example.id)),
-        timeout: Duration::from_secs(120),
     };
     let result = engine.run_dataframe(spec).await;
     match result {
@@ -671,7 +663,7 @@ async fn run_representative(
 async fn real_engine_projects_all_examples_and_runs_representative_studies() {
     let binary = required_path("TENSOREVAL_BIN");
     let sparrowzz_dir = required_path("SPARROWZZ_DIR");
-    let config = EngineConfig::probe(binary.clone(), Duration::from_secs(120))
+    let config = EngineConfig::probe(binary.clone())
         .unwrap_or_else(|error| panic!("release_engine_capability_mismatch:{}", error.code));
     assert_eq!(
         config.capabilities.contract_version,

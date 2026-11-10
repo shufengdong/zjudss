@@ -298,7 +298,6 @@ impl RunService {
                 script_path: tree.script_path.clone(),
                 named_inputs: tree.named_inputs.clone(),
                 result_dir: tree.result_dir.clone(),
-                timeout: self.engine_timeout,
             })
             .await
             .map_err(map_engine_run_error)?;

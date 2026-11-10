@@ -208,7 +208,6 @@ impl UploadProcessor {
                     })
                     .collect(),
                 result_dir: results,
-                timeout: std::time::Duration::ZERO,
             })
             .await
             .map_err(|error| UploadBatchError::Invalid(error.code.clone(), error.to_string()))?;
@@ -384,7 +383,6 @@ impl UploadProcessor {
             .engine
             .inspect_model_import(crate::adapters::ImportInspectSpec {
                 input_tree: input.clone(),
-                timeout: std::time::Duration::ZERO,
             })
             .await
             .map_err(|e| UploadBatchError::Invalid(e.code.clone(), e.to_string()))?;
@@ -405,7 +403,6 @@ impl UploadProcessor {
                 input_tree: input,
                 entry_candidate_id: inspection.entry_candidates[0].id.clone(),
                 result_dir: results,
-                timeout: std::time::Duration::ZERO,
             })
             .await
             .map_err(|e| UploadBatchError::Invalid(e.code.clone(), e.to_string()))?;

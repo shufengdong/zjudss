@@ -318,47 +318,6 @@ async fn generation_and_repair_receive_required_rss_syntax_docs() {
 }
 
 #[tokio::test]
-async fn timeout_is_not_repaired() {
-    let author = Arc::new(ScriptedAuthor::default());
-    let engine = Arc::new(ScenarioEngine::default());
-    author.enqueue(script_turn("result = test(table, para);"));
-    engine.enqueue(EngineScenario::Failure {
-        code: "engine_timeout".into(),
-        stderr: b"timeout".to_vec(),
-        exit_code: 0,
-    });
-    let app = TestApp::builder()
-        .engine(engine.clone())
-        .agent_factory(Arc::new(ScriptedAgentFactory::default()))
-        .script_author(author.clone())
-        .failure_analyzer(author.clone())
-        .catalog_mode(zjudss::testing::E2eCatalogMode::Minimal)
-        .spawn()
-        .await;
-    let user = common::test_user("alice@example.com");
-    let workflow = confirm(&app, &user, "timeout").await;
-
-    app.state
-        .managed_workflow_service
-        .execute_confirmed(&user, workflow.id)
-        .await
-        .unwrap();
-
-    let terminal = app
-        .state
-        .managed_workflow_service
-        .get(&user, workflow.id)
-        .await
-        .unwrap();
-    assert_eq!(terminal.status, "failed");
-    assert_eq!(terminal.corrections_used, 0);
-    assert_eq!(author.trace(), vec!["generate", "analyze_failure"]);
-    assert_eq!(terminal.attempts[0].engine_logs[0].text, "timeout");
-    assert!(terminal.attempts[0].failure_analysis.is_none());
-    assert_eq!(engine.calls().len(), 1);
-}
-
-#[tokio::test]
 async fn repair_budget_allows_at_most_four_engine_calls() {
     let author = Arc::new(ScriptedAuthor::default());
     let engine = Arc::new(ScenarioEngine::default());

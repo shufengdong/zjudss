@@ -30,14 +30,12 @@ fn write_executable(path: &Path, source: &str) {
 #[cfg(unix)]
 fn process_test_engine(
     binary: PathBuf,
-    timeout: Duration,
     process_output_max_bytes: usize,
     output_limits: OutputLimits,
 ) -> ProcessEngine {
     ProcessEngine::new(EngineConfig {
         bin: binary,
         binary_sha256: "fixture".into(),
-        default_timeout: timeout,
         process_output_max_bytes,
         output_limits,
         capabilities: EngineCapabilities {
@@ -106,10 +104,6 @@ fn spec(root: &Path, input_tree: &Path, mode: RunMode) -> RunSpec {
         script_path,
         named_inputs,
         result_dir: root.join(format!("result-{mode:?}")),
-        // Process-heavy cases in this file run concurrently under the default
-        // test harness. Keep enough scheduling headroom while individual
-        // timeout tests continue to override this value explicitly.
-        timeout: Duration::from_secs(15),
     }
 }
 
@@ -269,7 +263,6 @@ fn run_local_tree_survives_shared_example_removal() {
         script_path: "case.rss".into(),
         named_inputs: vec![],
         result_dir: task.path().join("out"),
-        timeout: Duration::from_secs(1),
     };
     let command = build_command(Path::new("tensoreval"), &spec).unwrap();
     assert_eq!(command.cwd, tree);
@@ -483,7 +476,7 @@ fn output_validation_rejects_symlinks_and_capability_probe_fails_closed() {
     )
     .unwrap();
     std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let error = EngineConfig::probe(old, Duration::from_secs(1)).unwrap_err();
+    let error = EngineConfig::probe(old).unwrap_err();
     assert_eq!(error.code, "engine_parquet_output_unsupported");
 }
 
@@ -501,12 +494,7 @@ fn capability_probe_exercises_each_model_import_profile() {
     ] {
         let binary = root.path().join(format!("engine-{profile}"));
         write_probe_engine(&binary, Some(profile));
-        assert_eq!(
-            EngineConfig::probe(binary, Duration::from_secs(2))
-                .unwrap_err()
-                .code,
-            expected
-        );
+        assert_eq!(EngineConfig::probe(binary).unwrap_err().code, expected);
     }
 }
 
@@ -521,7 +509,7 @@ async fn process_engine_accepts_binary_replacement_and_rejects_only_a_missing_bi
     let root = tempfile::tempdir().unwrap();
     let binary = root.path().join("engine");
     write_probe_engine(&binary, None);
-    let config = EngineConfig::probe(binary.clone(), Duration::from_secs(2)).unwrap();
+    let config = EngineConfig::probe(binary.clone()).unwrap();
     assert_eq!(config.binary_sha256.len(), 64);
     let engine = ProcessEngine::new(config);
     assert_eq!(engine.binary_sha256().len(), 64);
@@ -546,7 +534,6 @@ async fn process_engine_accepts_binary_replacement_and_rejects_only_a_missing_bi
         .inspect(zjudss::adapters::InspectSpec {
             input_tree: input_tree.clone(),
             model_path: "main.rss".into(),
-            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap();
@@ -560,7 +547,6 @@ async fn process_engine_accepts_binary_replacement_and_rejects_only_a_missing_bi
         .inspect(zjudss::adapters::InspectSpec {
             input_tree,
             model_path: "main.rss".into(),
-            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap_err();
@@ -578,7 +564,7 @@ async fn process_engine_preserves_multiline_failure_output_and_exit_code() {
     let root = tempfile::tempdir().unwrap();
     let binary = root.path().join("engine");
     write_probe_engine(&binary, None);
-    let config = EngineConfig::probe(binary.clone(), Duration::from_secs(2)).unwrap();
+    let config = EngineConfig::probe(binary.clone()).unwrap();
     let engine = ProcessEngine::new(config);
     drop(_probe_guard);
 
@@ -614,7 +600,7 @@ async fn process_engine_import_uses_input_root_wrapper_for_nested_entry() {
     let root = tempfile::tempdir().unwrap();
     let binary = root.path().join("engine");
     write_probe_engine(&binary, None);
-    let config = EngineConfig::probe(binary.clone(), Duration::from_secs(2)).unwrap();
+    let config = EngineConfig::probe(binary.clone()).unwrap();
     let engine = ProcessEngine::new(config);
     drop(_probe_guard);
 
@@ -663,7 +649,6 @@ for name in {tables}; do cp probe.parquet "$result_dir/$name.parquet"; done
     let inspection = engine
         .inspect_model_import(ImportInspectSpec {
             input_tree: input.clone(),
-            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap();
@@ -677,7 +662,6 @@ for name in {tables}; do cp probe.parquet "$result_dir/$name.parquet"; done
             input_tree: input.clone(),
             entry_candidate_id: inspection.entry_candidates[0].id.clone(),
             result_dir: root.path().join("out"),
-            timeout: Duration::from_secs(2),
         })
         .await
         .unwrap();
@@ -701,7 +685,6 @@ for name in {tables}; do cp probe.parquet "$result_dir/$name.parquet"; done
             input_tree: input.clone(),
             entry_candidate_id: inspection.entry_candidates[0].id.clone(),
             result_dir: root.path().join("failed-out"),
-            timeout: Duration::from_secs(2),
         })
         .await
         .unwrap_err();
@@ -716,7 +699,6 @@ for name in {tables}; do cp probe.parquet "$result_dir/$name.parquet"; done
         let unsafe_inspection = engine
             .inspect_model_import(ImportInspectSpec {
                 input_tree: unsafe_input.clone(),
-                timeout: Duration::from_secs(1),
             })
             .await
             .unwrap();
@@ -725,7 +707,6 @@ for name in {tables}; do cp probe.parquet "$result_dir/$name.parquet"; done
                 input_tree: unsafe_input.clone(),
                 entry_candidate_id: unsafe_inspection.entry_candidates[0].id.clone(),
                 result_dir: root.path().join(format!("unsafe-{directory}-out")),
-                timeout: Duration::from_secs(2),
             })
             .await
             .unwrap_err();
@@ -746,7 +727,6 @@ for name in {tables}; do cp probe.parquet "$result_dir/$name.parquet"; done
                 input_tree: cancelled_input,
                 entry_candidate_id: cancelled_candidate,
                 result_dir: cancelled_result_dir,
-                timeout: Duration::from_secs(30),
             })
             .await
     });
@@ -771,7 +751,6 @@ for name in {tables}; do cp probe.parquet "$result_dir/$name.parquet"; done
     let concurrent_inspection = engine
         .inspect_model_import(ImportInspectSpec {
             input_tree: input.clone(),
-            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap();
@@ -830,7 +809,6 @@ for name in {tables}; do cp probe.parquet "$result_dir/$name.parquet"; done
                 input_tree: first_input,
                 entry_candidate_id: first_candidate,
                 result_dir: first_result,
-                timeout: Duration::from_secs(2),
             })
             .await
     });
@@ -843,7 +821,6 @@ for name in {tables}; do cp probe.parquet "$result_dir/$name.parquet"; done
                 input_tree: second_input,
                 entry_candidate_id: second_candidate,
                 result_dir: second_result,
-                timeout: Duration::from_secs(2),
             })
             .await
     });
@@ -975,7 +952,7 @@ async fn real_tensoreval_smoke_writes_snappy_parquet() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let binary = PathBuf::from(std::env::var_os("TENSOREVAL_BIN").expect("set TENSOREVAL_BIN"));
-    let engine = ProcessEngine::new(EngineConfig::probe(binary, Duration::from_secs(30)).unwrap());
+    let engine = ProcessEngine::new(EngineConfig::probe(binary).unwrap());
     #[cfg(unix)]
     drop(_probe_guard);
     let (root, input_tree) = tree();
@@ -1013,12 +990,7 @@ mkdir -p "$result_dir"
 cp input.parquet "$result_dir/result.parquet"
 "#,
     );
-    let engine = process_test_engine(
-        binary,
-        Duration::from_secs(5),
-        1024 * 1024,
-        OutputLimits::default(),
-    );
+    let engine = process_test_engine(binary, 1024 * 1024, OutputLimits::default());
 
     let output = engine
         .run_analysis(spec(root.path(), &input_tree, RunMode::Analysis))
@@ -1068,12 +1040,7 @@ printf 'parse failed: \377\376\n' >&2
 exit 23
 "#,
     );
-    let engine = process_test_engine(
-        binary,
-        Duration::from_secs(5),
-        1024,
-        OutputLimits::default(),
-    );
+    let engine = process_test_engine(binary, 1024, OutputLimits::default());
     let run = spec(root.path(), &input_tree, RunMode::Analysis);
     let result_dir = run.result_dir.clone();
 
@@ -1089,7 +1056,7 @@ exit 23
 
 #[cfg(unix)]
 #[tokio::test]
-async fn timeout_and_future_cancellation_terminate_the_whole_process_group() {
+async fn unbounded_execution_waits_and_future_cancellation_terminates_the_whole_process_group() {
     async fn wait_for(path: &Path) {
         tokio::time::timeout(Duration::from_secs(2), async {
             while !path.exists() {
@@ -1111,37 +1078,21 @@ wait
 "#,
     );
     let heartbeat = input_tree.join("child.heartbeat");
-    let engine = process_test_engine(
-        binary.clone(),
-        // Process startup competes with the other process-engine cases when the
-        // integration binary runs tests in parallel. Keep enough time for the
-        // helper to create its child before exercising the timeout path.
-        Duration::from_secs(5),
-        1024,
-        OutputLimits::default(),
-    );
-    let mut timeout_run = spec(root.path(), &input_tree, RunMode::Analysis);
-    timeout_run.timeout = Duration::ZERO;
-    let timeout_result_dir = timeout_run.result_dir.clone();
-    let error = engine.run_analysis(timeout_run).await.unwrap_err();
-    assert_eq!(error.code, "engine_timeout");
-    assert!(!timeout_result_dir.exists());
-    wait_for(&heartbeat).await;
-    let timeout_size = std::fs::metadata(&heartbeat).unwrap().len();
-    tokio::time::sleep(Duration::from_millis(150)).await;
-    assert_eq!(std::fs::metadata(&heartbeat).unwrap().len(), timeout_size);
-
-    std::fs::remove_file(&heartbeat).unwrap();
-    let cancelled_engine = process_test_engine(
-        binary,
-        Duration::from_secs(30),
-        1024,
-        OutputLimits::default(),
-    );
+    let cancelled_engine = process_test_engine(binary, 1024, OutputLimits::default());
     let cancelled_run = spec(root.path(), &input_tree, RunMode::Analysis);
     let cancelled_result_dir = cancelled_run.result_dir.clone();
     let task = tokio::spawn(async move { cancelled_engine.run_analysis(cancelled_run).await });
     wait_for(&heartbeat).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), async {
+            while !task.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .is_err(),
+        "无截止时间的引擎 future 不得自动结束"
+    );
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     let cancelled_size = std::fs::metadata(&heartbeat).unwrap().len();
@@ -1193,7 +1144,7 @@ async fn live_result_monitor_enforces_file_count_file_size_and_total_size() {
                 "#!/bin/sh\nresult_dir=''\nwhile [ \"$#\" -gt 0 ]; do case \"$1\" in --result-dir) shift; result_dir=\"$1\";; --output-format|--input) shift;; esac; shift; done\nmkdir -p \"$result_dir\"\n{body}\nsleep 5\n"
             ),
         );
-        let engine = process_test_engine(binary, Duration::from_secs(2), 1024, limits);
+        let engine = process_test_engine(binary, 1024, limits);
         let run = spec(root.path(), &input_tree, RunMode::Analysis);
         let result_dir = run.result_dir.clone();
         let error = engine.run_analysis(run).await.unwrap_err();
@@ -1237,7 +1188,6 @@ async fn monitor_rejects_symlink_directory_and_monitor_failure_then_final_scan_r
         );
         let engine = process_test_engine(
             binary,
-            Duration::from_secs(2),
             1024,
             OutputLimits {
                 max_files: 5,
@@ -1350,12 +1300,7 @@ cp probe.parquet "$result_dir/bus.parquet"
 cp probe.parquet "$result_dir/diagnostic.parquet"
 "#,
     );
-    let engine = process_test_engine(
-        binary.clone(),
-        Duration::from_secs(15),
-        4096,
-        OutputLimits::default(),
-    );
+    let engine = process_test_engine(binary.clone(), 4096, OutputLimits::default());
     let make_spec = |result_dir: PathBuf| CaseProjectionSpec {
         input_tree: input.clone(),
         source_entry: "dss/model.dss".into(),
@@ -1371,7 +1316,6 @@ cp probe.parquet "$result_dir/diagnostic.parquet"
             },
         ],
         result_dir,
-        timeout: Duration::from_secs(15),
     };
     let projected = engine
         .project_case(make_spec(root.path().join("ok")))

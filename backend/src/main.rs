@@ -135,7 +135,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             upload_staging_ttl_hours: runtime.upload_staging_ttl_hours,
             script_repair_max_attempts: runtime.script_repair_max_attempts,
             agent_model_retry_max: runtime.agent_model_retry_max,
-            managed_engine_timeout: std::time::Duration::from_millis(runtime.tensoreval_timeout_ms),
             managed_result_max_file_bytes: runtime.result_max_file_bytes,
             script_author_override: None,
             failure_analyzer_override: None,

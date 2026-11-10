@@ -57,9 +57,6 @@ pub enum EngineScenario {
     Cancelled {
         barrier_id: String,
     },
-    Timeout {
-        barrier_id: String,
-    },
     Empty,
     CorruptParquet,
     Oversize,
@@ -136,9 +133,7 @@ impl ScenarioEngine {
     }
 
     pub fn enqueue(&self, scenario: EngineScenario) {
-        if let EngineScenario::Timeout { barrier_id } | EngineScenario::Cancelled { barrier_id } =
-            &scenario
-        {
+        if let EngineScenario::Cancelled { barrier_id } = &scenario {
             self.inner
                 .barriers
                 .lock()
@@ -281,22 +276,6 @@ impl ScenarioEngine {
                     .ok_or_else(|| failure("scenario_barrier_missing", barrier_id))?;
                 barrier.block().await;
                 Err(failure("engine_cancelled", "仿真按场景取消"))
-            }
-            EngineScenario::Timeout { barrier_id } => {
-                let barrier = self
-                    .inner
-                    .barriers
-                    .lock()
-                    .expect("engine barriers")
-                    .get(&barrier_id)
-                    .cloned()
-                    .ok_or_else(|| failure("scenario_barrier_missing", barrier_id))?;
-                barrier.block().await;
-                Err(AdapterError::new(
-                    "engine_timeout",
-                    ErrorCategory::Timeout,
-                    "仿真按场景超时",
-                ))
             }
             EngineScenario::Empty => validate_outputs(&spec.result_dir, self.inner.limits),
             EngineScenario::CorruptParquet => {
@@ -601,7 +580,6 @@ fn scenario_name(scenario: &EngineScenario) -> &'static str {
         EngineScenario::ContractError { .. } => "contract_error",
         EngineScenario::MonitorError => "monitor_error",
         EngineScenario::Cancelled { .. } => "cancelled",
-        EngineScenario::Timeout { .. } => "timeout",
         EngineScenario::Empty => "empty",
         EngineScenario::CorruptParquet => "corrupt_parquet",
         EngineScenario::Oversize => "oversize",

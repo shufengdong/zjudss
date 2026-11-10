@@ -14,7 +14,6 @@ mod task_file;
 
 use async_trait::async_trait;
 use std::path::PathBuf;
-use std::time::Duration;
 use tokio::process::Command;
 
 use super::{
@@ -30,14 +29,13 @@ pub use output::{OutputLimits, validate_outputs};
 pub struct EngineConfig {
     pub bin: PathBuf,
     pub binary_sha256: String,
-    pub default_timeout: Duration,
     pub process_output_max_bytes: usize,
     pub output_limits: OutputLimits,
     pub capabilities: EngineCapabilities,
 }
 
 impl EngineConfig {
-    pub fn probe(bin: PathBuf, default_timeout: Duration) -> Result<Self, AdapterError> {
+    pub fn probe(bin: PathBuf) -> Result<Self, AdapterError> {
         execution::ensure_binary_available(&bin)?;
         let capabilities = EngineCapabilities::probe(&bin)?;
         capabilities.require_v3()?;
@@ -45,7 +43,6 @@ impl EngineConfig {
         Ok(Self {
             bin,
             binary_sha256,
-            default_timeout,
             process_output_max_bytes: 1024 * 1024,
             output_limits: OutputLimits::default(),
             capabilities,
@@ -74,11 +71,7 @@ impl ProcessEngine {
                     "必须设置 TENSOREVAL_BIN；生产模式不回退 stub",
                 )
             })?;
-        let timeout = std::env::var("TENSOREVAL_TIMEOUT_MS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(120_000);
-        let mut config = EngineConfig::probe(bin, Duration::from_millis(timeout))?;
+        let mut config = EngineConfig::probe(bin)?;
         config.process_output_max_bytes = env_usize(
             "ENGINE_PROCESS_OUTPUT_MAX_BYTES",
             config.process_output_max_bytes,
@@ -119,18 +112,8 @@ impl SimEngine for ProcessEngine {
         command
             .args(["--dss-to-rss", "--check", "--study", "snapshot", model])
             .current_dir(&spec.input_tree);
-        let timeout = if spec.timeout.is_zero() {
-            self.config.default_timeout
-        } else {
-            spec.timeout
-        };
-        let output = control::run_command(
-            &mut command,
-            timeout,
-            self.config.process_output_max_bytes,
-            None,
-        )
-        .await?;
+        let output =
+            control::run_command(&mut command, self.config.process_output_max_bytes, None).await?;
         if !output.status.success() {
             return Err(execution::exit_error(&output));
         }

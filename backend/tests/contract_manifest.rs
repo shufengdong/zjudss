@@ -287,7 +287,6 @@ fn contract_manifest_contains_all_public_enums() {
         "facade_contract_invalid",
         "facade_schema_invalid",
         "facade_unsupported_input_kind",
-        "engine_timeout",
         "result_monitor_failed",
         "result_file_limit",
         "result_file_too_large",

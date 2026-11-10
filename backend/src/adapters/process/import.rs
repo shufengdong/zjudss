@@ -75,7 +75,6 @@ impl ProcessEngine {
                     script_path,
                     named_inputs: Vec::new(),
                     result_dir: spec.result_dir,
-                    timeout: spec.timeout,
                 },
                 &[RunMode::Dataframe],
             )
@@ -143,7 +142,6 @@ impl ProcessEngine {
                     script_path,
                     named_inputs: Vec::new(),
                     result_dir: spec.result_dir,
-                    timeout: spec.timeout,
                 },
                 &[RunMode::Dataframe],
             )

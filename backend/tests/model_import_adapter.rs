@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use zjudss::adapters::{
     CaseProjectionSpec, ImportInspectSpec, ImportProfile, ImportSpec, ProjectionOutputSpec,
     STATIC_IMPORT_OUTPUTS, SimEngine, StubEngine,
@@ -17,14 +15,12 @@ async fn include_graph_returns_stable_virtual_root_candidates() {
     let first = engine
         .inspect_model_import(ImportInspectSpec {
             input_tree: root.path().to_path_buf(),
-            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap();
     let second = engine
         .inspect_model_import(ImportInspectSpec {
             input_tree: root.path().to_path_buf(),
-            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap();
@@ -66,7 +62,6 @@ async fn include_graph_allows_parent_segments_that_stay_inside_source_tree() {
     let inspection = StubEngine
         .inspect_model_import(ImportInspectSpec {
             input_tree: root.path().to_path_buf(),
-            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap();
@@ -82,7 +77,6 @@ async fn include_graph_allows_parent_segments_that_stay_inside_source_tree() {
             input_tree: root.path().to_path_buf(),
             entry_candidate_id: inspection.entry_candidates[0].id.clone(),
             result_dir: root.path().join("out"),
-            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap();
@@ -102,7 +96,6 @@ async fn include_graph_rejects_parent_segments_that_escape_source_tree() {
     let error = StubEngine
         .inspect_model_import(ImportInspectSpec {
             input_tree: root.path().to_path_buf(),
-            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap_err();
@@ -122,7 +115,6 @@ async fn include_graph_rejects_absolute_dependency_paths() {
     let error = StubEngine
         .inspect_model_import(ImportInspectSpec {
             input_tree: root.path().to_path_buf(),
-            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap_err();
@@ -143,7 +135,6 @@ async fn include_graph_reports_missing_normalized_dependency() {
     let error = StubEngine
         .inspect_model_import(ImportInspectSpec {
             input_tree: root.path().to_path_buf(),
-            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap_err();
@@ -160,7 +151,6 @@ async fn static_import_emits_all_canonical_snappy_tables_including_zero_rows() {
     let inspection = engine
         .inspect_model_import(ImportInspectSpec {
             input_tree: root.path().to_path_buf(),
-            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap();
@@ -169,7 +159,6 @@ async fn static_import_emits_all_canonical_snappy_tables_including_zero_rows() {
             input_tree: root.path().to_path_buf(),
             entry_candidate_id: inspection.entry_candidates[0].id.clone(),
             result_dir: output,
-            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap();
@@ -216,7 +205,6 @@ async fn unsupported_execution_lifecycles_fail_before_outputs() {
         let inspection = engine
             .inspect_model_import(ImportInspectSpec {
                 input_tree: root.path().to_path_buf(),
-                timeout: Duration::from_secs(1),
             })
             .await
             .unwrap();
@@ -225,7 +213,6 @@ async fn unsupported_execution_lifecycles_fail_before_outputs() {
                 input_tree: root.path().to_path_buf(),
                 entry_candidate_id: inspection.entry_candidates[0].id.clone(),
                 result_dir: root.path().join("out"),
-                timeout: Duration::from_secs(1),
             })
             .await
             .unwrap_err();
@@ -241,7 +228,6 @@ fn import_specs_reject_paths_outside_the_source_tree() {
         input_tree: root.path().to_path_buf(),
         entry_candidate_id: "../master.dss".into(),
         result_dir: root.path().join("output"),
-        timeout: Duration::from_secs(1),
     };
     assert_eq!(spec.validate().unwrap_err().code, "entry_candidate_invalid");
 }
@@ -275,7 +261,6 @@ async fn stub_case_projection_preserves_contract_order_and_splits_diagnostics() 
                 },
             ],
             result_dir: root.path().join("out"),
-            timeout: Duration::from_secs(1),
         })
         .await
         .unwrap();
@@ -312,7 +297,6 @@ fn case_projection_specs_reject_unpublished_symbols_paths_and_outputs() {
             diagnostic: false,
         }],
         result_dir: root.path().join("out"),
-        timeout: Duration::from_secs(1),
     };
     valid.validate().unwrap();
 

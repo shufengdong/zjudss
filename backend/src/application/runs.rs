@@ -147,7 +147,6 @@ pub struct RunService {
     session_cancellations: crate::application::SessionCancellationRegistry,
     data_dir: PathBuf,
     snapshot: Arc<EngineResourceSnapshot>,
-    engine_timeout: std::time::Duration,
     result_max_file_bytes: u64,
     failure_analyzer: Arc<dyn FailureAnalyzer>,
 }
@@ -164,7 +163,6 @@ pub(crate) struct RunServiceDependencies {
     pub session_cancellations: crate::application::SessionCancellationRegistry,
     pub data_dir: PathBuf,
     pub snapshot: Arc<EngineResourceSnapshot>,
-    pub engine_timeout: std::time::Duration,
     pub result_max_file_bytes: u64,
     pub failure_analyzer: Arc<dyn FailureAnalyzer>,
 }
@@ -183,7 +181,6 @@ impl RunService {
             session_cancellations,
             data_dir,
             snapshot,
-            engine_timeout,
             result_max_file_bytes,
             failure_analyzer,
         } = dependencies;
@@ -199,7 +196,6 @@ impl RunService {
             session_cancellations,
             data_dir,
             snapshot,
-            engine_timeout,
             result_max_file_bytes,
             failure_analyzer,
         }
@@ -282,7 +278,6 @@ fn public_failure_reason(error: &RunError) -> &'static str {
         RunError::Adapter(error) => match error.category {
             ErrorCategory::Model => "model",
             ErrorCategory::Solver => "solver",
-            ErrorCategory::Timeout => "timeout",
             ErrorCategory::Io => "io",
             ErrorCategory::Internal => "engine",
         },

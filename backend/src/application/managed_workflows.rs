@@ -218,7 +218,6 @@ pub(crate) struct ManagedWorkflowDependencies<'a> {
     pub data_dir: PathBuf,
     pub scheduler: RunScheduler,
     pub session_cancellations: SessionCancellationRegistry,
-    pub engine_timeout: std::time::Duration,
     pub result_max_file_bytes: u64,
     pub auto_start: bool,
     pub scripts: ScriptRepo,
@@ -241,7 +240,6 @@ impl ManagedWorkflowService {
             data_dir,
             scheduler,
             session_cancellations,
-            engine_timeout,
             result_max_file_bytes,
             auto_start,
             scripts,
@@ -258,7 +256,6 @@ impl ManagedWorkflowService {
             agent_bundle_version.clone(),
             scheduler,
             session_cancellations,
-            engine_timeout,
             result_max_file_bytes,
         );
         Self {

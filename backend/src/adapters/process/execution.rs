@@ -26,17 +26,11 @@ impl ProcessEngine {
         }
         let built = build_command(&self.config.bin, &spec)?;
         prepare_result_dir(&spec.result_dir)?;
-        let timeout = if spec.timeout.is_zero() {
-            self.config.default_timeout
-        } else {
-            spec.timeout
-        };
         self.ensure_binary_available()?;
         let mut command = Command::new(&built.program);
         command.args(&built.args).current_dir(&built.cwd);
         let outcome = control::run_command(
             &mut command,
-            timeout,
             self.config.process_output_max_bytes,
             Some((&spec.result_dir, self.config.output_limits)),
         )

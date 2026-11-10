@@ -7,7 +7,6 @@ use std::{
     io::Cursor,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
 };
 
 use serde_json::{Value, json};
@@ -253,7 +252,6 @@ impl AnalysisService {
                 script_path: PathBuf::from("generated/analysis.rss"),
                 named_inputs,
                 result_dir: output_dir,
-                timeout: Duration::from_secs(300),
             })
             .await
             .map_err(|error| AnalysisError::new("analysis_engine_failed", error.to_string()))?;

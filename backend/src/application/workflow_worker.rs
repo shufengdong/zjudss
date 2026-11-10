@@ -46,7 +46,6 @@ pub struct WorkflowWorker {
     agent_bundle_version: String,
     scheduler: RunScheduler,
     session_cancellations: SessionCancellationRegistry,
-    engine_timeout: std::time::Duration,
     result_max_file_bytes: u64,
     cancellations: Arc<Mutex<BTreeMap<i32, watch::Sender<bool>>>>,
 }
@@ -64,7 +63,6 @@ impl WorkflowWorker {
         agent_bundle_version: String,
         scheduler: RunScheduler,
         session_cancellations: SessionCancellationRegistry,
-        engine_timeout: std::time::Duration,
         result_max_file_bytes: u64,
     ) -> Self {
         let _ = std::fs::remove_dir_all(data_dir.join("managed-workflows"));
@@ -79,7 +77,6 @@ impl WorkflowWorker {
             agent_bundle_version,
             scheduler,
             session_cancellations,
-            engine_timeout,
             result_max_file_bytes,
             cancellations: Arc::new(Mutex::new(BTreeMap::new())),
         }
@@ -735,7 +732,6 @@ impl WorkflowWorker {
             script_path: tree.script_path.clone(),
             named_inputs: tree.named_inputs.clone(),
             result_dir: tree.result_dir.clone(),
-            timeout: self.engine_timeout,
         });
         tokio::pin!(run);
         let outcome = tokio::select! {
@@ -992,8 +988,7 @@ fn exit_code(error: &AdapterError) -> Option<i32> {
 fn repairable_engine_error(code: &str, exit_code: Option<i32>) -> bool {
     if matches!(
         code,
-        "engine_timeout"
-            | "result_monitor_failed"
+        "result_monitor_failed"
             | "result_path_escape"
             | "result_symlink_rejected"
             | "result_dir_invalid"

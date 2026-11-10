@@ -4,7 +4,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
@@ -121,7 +120,6 @@ pub struct ImportInspection {
 /// 从输入树中发现稳定入口候选的检查规格。
 pub struct ImportInspectSpec {
     pub input_tree: PathBuf,
-    pub timeout: Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -130,7 +128,6 @@ pub struct ImportSpec {
     pub input_tree: PathBuf,
     pub entry_candidate_id: String,
     pub result_dir: PathBuf,
-    pub timeout: Duration,
 }
 
 impl ImportSpec {
@@ -180,7 +177,6 @@ pub struct CaseProjectionSpec {
     pub projector: String,
     pub outputs: Vec<ProjectionOutputSpec>,
     pub result_dir: PathBuf,
-    pub timeout: Duration,
 }
 
 impl CaseProjectionSpec {
@@ -347,7 +343,6 @@ pub(crate) fn resolve_entry(spec: &ImportSpec) -> Result<(PathBuf, ImportProfile
     spec.validate()?;
     let inspection = inspect_tree(&ImportInspectSpec {
         input_tree: spec.input_tree.clone(),
-        timeout: spec.timeout,
     })?;
     let selected = inspection
         .entry_candidates

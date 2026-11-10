@@ -1,8 +1,7 @@
-//! 子进程生命周期控制：并行读取双流、超时/取消和进程组回收。
+//! 子进程生命周期控制：并行读取双流、取消和进程组回收。
 
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
-use std::time::Duration;
 
 use tokio::process::Command;
 
@@ -20,7 +19,6 @@ pub(crate) struct ProcessOutcome {
 
 pub(crate) async fn run_command(
     command: &mut Command,
-    timeout: Duration,
     retained_limit: usize,
     monitored_result_dir: Option<(&Path, OutputLimits)>,
 ) -> Result<ProcessOutcome, AdapterError> {
@@ -60,31 +58,25 @@ pub(crate) async fn run_command(
     let mut guard = ProcessGroupGuard::new(pid, cleanup_target);
 
     let wait_result = if let Some((result_dir, limits)) = monitored_result_dir {
-        tokio::time::timeout(timeout, async {
-            tokio::select! {
-                status = child.wait() => status.map_err(|error| AdapterError::new(
-                    "engine_wait_failed", ErrorCategory::Io, error.to_string())),
-                monitor = monitor_result_dir(result_dir, limits) => {
-                    match monitor {
-                        Ok(()) => unreachable!("result monitor only returns on failure"),
-                        Err(error) => Err(error),
-                    }
+        tokio::select! {
+            status = child.wait() => status.map_err(|error| AdapterError::new(
+                "engine_wait_failed", ErrorCategory::Io, error.to_string())),
+            monitor = monitor_result_dir(result_dir, limits) => {
+                match monitor {
+                    Ok(()) => unreachable!("result monitor only returns on failure"),
+                    Err(error) => Err(error),
                 }
             }
-        })
-        .await
+        }
     } else {
-        tokio::time::timeout(timeout, async {
-            child.wait().await.map_err(|error| {
-                AdapterError::new("engine_wait_failed", ErrorCategory::Io, error.to_string())
-            })
+        child.wait().await.map_err(|error| {
+            AdapterError::new("engine_wait_failed", ErrorCategory::Io, error.to_string())
         })
-        .await
     };
 
     let status = match wait_result {
-        Ok(Ok(status)) => status,
-        Ok(Err(error)) => {
+        Ok(status) => status,
+        Err(error) => {
             terminate_process_group(pid, &mut child).await;
             let stderr = join_capture(stderr_task)
                 .await
@@ -92,22 +84,6 @@ pub(crate) async fn run_command(
             let _ = join_capture(stdout_task).await;
             guard.cleanup();
             return Err(with_stderr(error, stderr));
-        }
-        Err(_) => {
-            terminate_process_group(pid, &mut child).await;
-            let stderr = join_capture(stderr_task)
-                .await
-                .unwrap_or_else(|_| CapturedStream::empty());
-            let _ = join_capture(stdout_task).await;
-            guard.cleanup();
-            return Err(with_stderr(
-                AdapterError::new(
-                    "engine_timeout",
-                    ErrorCategory::Timeout,
-                    "tensoreval 执行超时",
-                ),
-                stderr,
-            ));
         }
     };
 
