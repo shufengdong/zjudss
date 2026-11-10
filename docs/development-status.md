@@ -193,6 +193,21 @@ Agent bundle/权限；没有 adapter 外进程启动，也没有把任意 EChart
 - 部署与集成测试文档把 144/144、profile 和代表运行数明确标为 2026-10-30 的历史候选证据；新候选必须从本次动态
   snapshot 重新产生零失败报告，不把旧数量当作接收门槛。
 
+2026-11-10 的后端可维护性与源码文档阶段在不改变公共行为的前提下完成：
+
+- 81 个 HTTP handler/health 入口补齐本地执行语义 Rustdoc；method/path 仍由 `api/mod.rs` 的生产 Router 与
+  `route_manifest()` 同一注册表决定，三类 DataFrame 端点共用保持原顺序/重复项语义的 `api/query.rs` 列解析；
+- durable 事件按 wire/card 投影、持久化写入和 session broadcast 拆为 `events/mod.rs`、`writer.rs`、`bus.rs`，
+  write-before-publish、operation revision、SSE replay 和公开导出保持不变；
+- 托管结果 schema/dtype/unit/非空校验集中到 `workflow_result_contract.rs`；repository 的连接本地
+  `last_insert_rowid` 集中到共享 helper，调用仍紧跟同连接 insert；
+- E2E 事件提交故障新增 session 作用域计数，控制路由的全局一次性注入保持兼容，默认并行测试不再跨会话抢占；
+- adapter/Agent/engine resource、组合根、应用门面、认证/catalog/ingestion/storage、repository 与工具注册补齐所有权 Rustdoc。
+  `catalog/schema.rs`、事件投影、图表公共合同和 `workflow_worker.rs` 仍保留各自完整合同/编排，不为缩短文件复制规则。
+
+机械合同审计确认本阶段没有改变前端 DTO、migration、功能目录、81 条路由、消息/工具 manifest 或 Agent bundle 权限；
+所有进程启动仍只存在于 `backend/src/adapters/`。
+
 ## Hard boundaries
 
 所有 tensoreval 调用必须经过 adapter；所有 repository 查询带 `UserId`；所有模型和结果正文使用 Snappy Parquet；浏览器与
@@ -337,3 +352,16 @@ manifest、contract manifest 聚焦测试。完整 `cargo test --features e2e-te
 `ers_7d30a9cba13a8bf2ba4741e4fa2010df`，通过 19/19 ProcessEngine、150/150 案例 projector、0 失败，
 并通过 6/6 被引用 profile 的代表运行。先前 7 个 `case_projection_invalid` 外部阻塞已经关闭；这不等同于尚未运行的
 150 案例自然语言全链路长测，也不替代下一次 binary/snapshot 的新报告。
+
+2026-11-10 本阶段实际通过以下确定性门禁：
+
+- `cargo check --release`，项目自身不再报告 test-only `EngineResourceSnapshot::minimal` dead-code warning；
+- `cargo fmt --all -- --check`、`cargo clippy --all-targets --all-features -- -D warnings`、
+  `cargo doc --no-deps --all-features`；
+- 允许本机回环监听后，以默认并行度运行未过滤的 `cargo test --features e2e-test`，全部通过；其中
+  `engine_resources` 35/35、`process_engine_v4` 18/18，合同 manifest 与并行故障注入测试均通过；
+- `./scripts/check-functional-coverage --require-pr`：30/30 目录条目、350/350 功能证据、297/297 公共合同、
+  100% PR 追溯，`gatePassed=true`。
+
+本阶段未修改前端，因此没有把未执行的 Vitest/build/Playwright 记为新增证据；也未重新运行真实 LLM provider、
+`scripts/test-release-engine` 或 150 案例自然语言长测，不能用上述确定性门禁替代下一候选的真实发布 lane。

@@ -12,6 +12,21 @@ camelCase。跨用户与不存在资源统一 404。错误响应为
 `{"error":"…","code":"stable_code","details":…}`。上传使用 multipart；upload batch 创建返回 202，运行创建返回
 202（幂等重放为 200）。
 
+## Source navigation
+
+公共 method/path 的权威来源是 [`backend/src/api/mod.rs`](../backend/src/api/mod.rs) 中同时构造生产 Router 和
+`route_manifest()` 的注册表；当前合同保持 81 条唯一 method/path。各 handler 上的 Rustdoc 解释本地 extractor、用户作用域、
+application 调用与响应语义，但不替代路由注册表。公共错误响应集中在
+[`backend/src/api/error.rs`](../backend/src/api/error.rs)，分页列选择解析和下载附件构造分别集中在
+[`backend/src/api/query.rs`](../backend/src/api/query.rs) 与
+[`backend/src/api/attachment.rs`](../backend/src/api/attachment.rs)。
+
+路由族按职责位于 `backend/src/api/` 的 `auth`、`sessions`/`events`、`uploads`、`data_resources`、
+`study_configurations`/`workflows`/`retries`、`scripts`/`runs`、`datasets`/`analysis`/`comparisons`/`chart_views`、
+`workspaces`/`model_dataframes` 和 `examples` 模块。浏览器 DTO 以
+[`frontend/src/types/`](../frontend/src/types/) 为源码入口；领域状态机和事务语义继续由
+[`backend/src/application/`](../backend/src/application/) 的对应 service facade 拥有。
+
 ## Routes
 
 | Method | Path | Semantics |

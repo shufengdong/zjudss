@@ -103,15 +103,20 @@ repository 的异步请求路径把 Diesel 同步 SQLite 操作封装在 `spawn_
 |---|---|---|
 | application 组合根 | `backend/src/application/mod.rs` 的 `AppStateDependencies`、`AppStateOptions` 与 `AppState::assemble` | 生产和测试都使用具名依赖/选项；不再增加按参数排列的构造函数变体 |
 | HTTP 错误响应 | `backend/src/api/error.rs` | 各领域错误类型保持独立；这里只集中公开 status/code/message/details 的映射和响应构造 |
+| HTTP 查询列解析 | `backend/src/api/query.rs` | dataset、data resource 和 model DataFrame 共用同一逗号分隔解析；保持原始顺序、重复项和空项过滤语义，不承担字段授权 |
+| durable 事件 | `backend/src/application/events/mod.rs`、`writer.rs`、`bus.rs` | `mod` 拥有 wire/card 投影，`writer` 保证先持久化再广播并处理 operation revision，`bus` 只拥有 session broadcast 生命周期 |
+| 托管结果合同 | `backend/src/application/workflow_result_contract.rs` | 集中逻辑 dtype/unit/schema 与非空值校验；`WorkflowWorker` 继续拥有 author/repair、执行顺序和终态发布 |
 | Artifact CAS 提交与 GC | `backend/src/db/repositories/artifact.rs` | 唯一实现 hash 去重、配额、新 artifact/link 和 usage 结算；上传原文件只在外层增加状态校验、幂等重放和指针写入 |
 | Artifact 已有引用计数 | `backend/src/db/repositories/artifact_refs.rs` | 唯一实现可信用户 scope 解析、重复 ID 聚合和已有 link 的 retain/release；唯一 artifact 的 usage 只在 link 创建/删除时变化 |
 | Artifact 领域事务 | 各 `backend/src/db/repositories/` 领域模块 | 决定引用集合、事务时机、stale/404 映射和 tombstone；不自行更新已有 `ref_count` |
+| SQLite insert ID | `backend/src/db/repositories/mod.rs` 的 `last_insert_rowid` | 必须在产生行的同一连接上紧跟 insert 读取；领域 repository 不再复制 SQL 形式 |
 | tensoreval 进程执行 | `backend/src/adapters/process/control.rs`、`execution.rs`、`result_scan.rs`、`monitor.rs`、`task_file.rs` | `control` 负责 spawn、双流捕获、超时/取消和进程组终止；`execution` 负责编排、退出映射与 final result；monitor 与退出后的 final scan 共用同一结果扫描语义；临时 RSS/wrapper 由 RAII 文件对象负责取消清理 |
 | 引擎导入与投影 | `backend/src/adapters/process/import.rs` | 只编排受控 import/projector spec、临时任务文件和规范输出，不自行启动子进程或扫描结果目录 |
 | 引擎资源读取 | `backend/src/engine_resources/tree.rs`、`loader.rs` | `tree` 唯一实现安全路径、遍历及有界读取/hash；`loader` 解析 catalog、文档与案例并按实际字节生成 snapshot identity，不依赖 binary capability |
 | 引擎资源发布 | `backend/src/engine_resources/publisher.rs` | 唯一实现 generated/source inventory、复制时 hash 复核、staging 清理、原子 rename、既有 snapshot 校验和路径 rebase |
 | 后端 E2E 状态装配 | `backend/src/testing/app.rs`、`backend/src/testing/engine_fixture.rs` | 统一 minimal/runtime 限制、scheduler、override 与 snapshot 到 `AppStateOptions` 的映射；仅在 `e2e-test` feature 下编译 |
 | 后端集成测试生命周期 | `backend/tests/common/app.rs` | 只负责临时目录、数据库迁移、用户 seed 和调用共享 E2E 状态装配，不复制 `AppStateOptions` 构造 |
+| E2E 事件提交故障 | `backend/src/testing/faults.rs` | 控制路由保留全局一次性故障；进程内并行测试按 session 注入，避免其他会话抢先消费计数 |
 | 前端 HTTP 传输 | `frontend/src/api/client.ts` 的 `checkedFetch` 与共享下载路径 | 集中凭据、错误体解析和取消信号；领域 API 模块仍负责 URL、DTO 和业务参数 |
 | 前端 DTO 测试数据 | `frontend/src/test/fixtures.ts` | 仅供测试使用；builder 自有的默认值每次深度隔离并只接受顶层覆盖，传入 override 的所有权仍属于调用方 |
 | live 结果来源事实 | `backend/src/application/result_sources.rs` | 唯一组合 dataset 用户/live 校验、会话、artifact scope、schema 与 artifact content hash；不拥有删除或发布事务 |
@@ -121,6 +126,11 @@ repository 的异步请求路径把 Diesel 同步 SQLite 操作封装在 `spawn_
 | 图表编译算法 | `backend/src/application/charting/compiler/` | facade 保持不变；公共候选/预算/schema 与六类独立算法分层，不合并不同统计语义 |
 | 图表来源与物化视图 | `backend/src/application/charting/service/` | 来源解析、Plot Data draft、冻结展示/cursor 分离；`ChartViewRepo` 继续独占幂等发布、列表和删除事务 |
 | 前端受控图表构建 | `frontend/src/components/datasets/chart_builder/` | 纯字段/状态转换、Hook 副作用、模板控件和显示控件分离；只产生 `ChartConfig`，不产生或接收服务器 ECharts option |
+
+部分文件因拥有一个不可再分割的合同或编排而有意保持较大：`catalog/schema.rs` 统一 dtype grammar、schema 引用与可执行规则；
+`application/events/mod.rs` 保持同一消息 wire/card 投影；图表 compiler 的 facade/公共合同继续与按图表类型拆出的算法协作；
+`workflow_worker.rs` 保留单个托管工作流的 author/repair/执行/终态顺序。维护时只抽取具有独立不变量和测试所有权的职责，
+不为缩短文件而复制合同或改变公开 facade。
 
 这些归属不允许把服务器路径、任意 ECharts option、SQL 或命令带入公共边界，也不改变各层原有的稳定错误码。
 
