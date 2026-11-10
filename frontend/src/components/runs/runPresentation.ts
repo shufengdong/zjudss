@@ -71,9 +71,17 @@ export function runTitle(run: SimulationRun): string {
   return run.scriptName
 }
 
-export function runStatusLabel(status: SimulationRun['status']): string {
-  return Object.prototype.hasOwnProperty.call(STATUS_LABELS, status)
-    ? STATUS_LABELS[status]
+export function isRunCancelled(run: SimulationRun): boolean {
+  if (run.status !== 'failed') return false
+  if (run.stage === 'cancelled_by_user') return true
+  if (!run.error || typeof run.error !== 'object' || Array.isArray(run.error)) return false
+  return (run.error as Record<string, unknown>).code === 'cancelled_by_user'
+}
+
+export function runStatusLabel(run: SimulationRun): string {
+  if (isRunCancelled(run)) return '已取消'
+  return Object.prototype.hasOwnProperty.call(STATUS_LABELS, run.status)
+    ? STATUS_LABELS[run.status]
     : '未知状态'
 }
 

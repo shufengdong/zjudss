@@ -22,12 +22,13 @@ const makeDataset = (id: string, name: string, rowCount: number, sizeBytes: numb
   schemaHash: 'h'.repeat(64), lineage: [],
 })
 const state = (runs: SimulationRun[], overrides: Partial<RunHistoryState> = {}): RunHistoryState => ({
-  runs, status: 'ready', error: null, reload: vi.fn(), previewDeletion:vi.fn(), deleteRun:vi.fn(), ...overrides,
+  runs, status: 'ready', error: null, reload: vi.fn(), cancel:vi.fn(), previewDeletion:vi.fn(), deleteRun:vi.fn(), ...overrides,
 })
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((accept) => { resolve = accept })
-  return { promise, resolve }
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((accept, decline) => { resolve = accept; reject = decline })
+  return { promise, resolve, reject }
 }
 
 describe('RunHistory', () => {
@@ -142,6 +143,61 @@ describe('RunHistory', () => {
     expect(screen.getByText('当前阶段：收集结果')).toBeInTheDocument()
     expect(screen.getByText('计算完成后可查看结果')).toBeInTheDocument()
     expect(mockedListRunDatasets).not.toHaveBeenCalled()
+  })
+
+  it('offers cancellation only for live runs and disables the action while cancellation is pending', async () => {
+    const request = deferred<void>()
+    const cancel = vi.fn().mockReturnValue(request.promise)
+    const queued = historyRun({ id: '11', status: 'queued', stage: 'queued', startedAt: null, finishedAt: null })
+    const running = historyRun({ id: '12', status: 'running', stage: 'execute', finishedAt: null })
+    const terminal = historyRun({ id: '13' })
+    const history = state([queued, running, terminal], { cancel })
+    const { rerender } = render(<RunHistory history={history} datasetRevision={0} onOpenDataset={vi.fn()} />)
+
+    expect(screen.getByRole('button', { name: '取消运行 11' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '取消运行 12' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: '取消运行 13' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '取消运行 12' }))
+    expect(screen.getByRole('button', { name: '取消中…' })).toBeDisabled()
+    expect(cancel).toHaveBeenCalledWith(running)
+
+    act(() => request.resolve())
+    await act(async () => request.promise)
+    rerender(<RunHistory history={state([{ ...running, status: 'failed', stage: 'cancelled_by_user' }], { cancel })} datasetRevision={0} onOpenDataset={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: '取消运行 12' })).not.toBeInTheDocument()
+  })
+
+  it('restores the cancellation action and bounds the per-run error after failure', async () => {
+    const cancel = vi.fn().mockRejectedValue(new Error('错'.repeat(600)))
+    const running = historyRun({ status: 'running', stage: 'execute', finishedAt: null })
+    render(<RunHistory history={state([running], { cancel })} datasetRevision={0} onOpenDataset={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '取消运行 9' }))
+    const alert = await screen.findByRole('alert')
+    expect(screen.getByRole('button', { name: '取消运行 9' })).toBeEnabled()
+    expect(alert).toHaveTextContent(/^取消失败：/)
+    const detail = alert.textContent?.replace('取消失败：', '') ?? ''
+    expect(Array.from(detail)).toHaveLength(501)
+    expect(detail.endsWith('…')).toBe(true)
+  })
+
+  it('presents user cancellation as a neutral terminal state with duration and timestamps', () => {
+    const cancelled = historyRun({
+      status: 'failed',
+      stage: 'cancelled_by_user',
+      exitCode: null,
+      error: { code: 'cancelled_by_user', reason: 'cancelled_by_user', analysisStatus: 'unavailable', engineLogs: [] },
+    })
+    render(<RunHistory history={state([cancelled])} datasetRevision={0} onOpenDataset={vi.fn()} />)
+
+    const header = screen.getByRole('button', { name: /静态潮流/ })
+    expect(header).toHaveTextContent('已取消')
+    expect(header.querySelector('.bg-red-50')).toBeNull()
+    fireEvent.click(header)
+    expect(screen.queryByText(/失败原因/)).not.toBeInTheDocument()
+    expect(screen.getByText('运行已由用户取消')).toBeInTheDocument()
+    expect(screen.getByText('耗时：2 秒')).toBeInTheDocument()
+    expect(screen.getByText(`结束时间：${new Date(cancelled.finishedAt!).toLocaleString()}`)).toBeInTheDocument()
   })
 
   it('preserves expansion and loads results when a running record succeeds', async () => {

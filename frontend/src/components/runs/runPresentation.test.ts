@@ -6,6 +6,7 @@ import {
   formatDuration,
   formatTimestamp,
   parseRunFailureDiagnosis,
+  isRunCancelled,
   runDurationMs,
   runFailure,
   runStageLabel,
@@ -35,13 +36,24 @@ describe('run presentation', () => {
 
   it('localizes statuses and execution stages without guessing unknown values', () => {
     const statuses: SimulationRun['status'][] = ['queued', 'running', 'succeeded', 'failed']
-    expect(['排队中', '运行中', '成功', '失败']).toEqual(statuses.map(runStatusLabel))
+    expect(['排队中', '运行中', '成功', '失败']).toEqual(statuses.map((status) => runStatusLabel(simulationRun({ status }))))
     expect(['排队等待', '准备输入', '执行计算', '收集结果', '已完成', '未知失败阶段', '恢复中断']).toEqual(
       ['queued', 'prepare', 'run', 'collect', 'completed', 'failed', 'recovery'].map(runStageLabel),
     )
     expect(runStageLabel('engine-step')).toBe('engine-step')
     expect(runStageLabel('')).toBe('未知阶段')
-    expect(runStatusLabel('unexpected' as SimulationRun['status'])).toBe('未知状态')
+    expect(runStatusLabel(simulationRun({ status: 'unexpected' as SimulationRun['status'] }))).toBe('未知状态')
+  })
+
+  it('recognizes the public user-cancelled terminal shape without widening the status union', () => {
+    const cancelled = simulationRun({
+      status: 'failed',
+      stage: 'cancelled_by_user',
+      error: { code: 'cancelled_by_user', reason: 'cancelled_by_user' },
+    })
+    expect(isRunCancelled(cancelled)).toBe(true)
+    expect(runStatusLabel(cancelled)).toBe('已取消')
+    expect(isRunCancelled(simulationRun({ status: 'failed', stage: 'execute' }))).toBe(false)
   })
 
   it('derives terminal, running and queued durations from authoritative timestamps', () => {

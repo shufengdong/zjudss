@@ -1,13 +1,21 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { listRuns } from '../api/client'
+import { cancelManagedWorkflow, cancelRun, listRuns } from '../api/client'
 import { simulationRun } from '../test/fixtures'
 import type { SimulationRun } from '../types'
 import { useRunHistory } from './useRunHistory'
 
-vi.mock('../api/client', () => ({ listRuns: vi.fn() }))
+vi.mock('../api/client', () => ({
+  cancelManagedWorkflow: vi.fn(),
+  cancelRun: vi.fn(),
+  deleteRun: vi.fn(),
+  listRuns: vi.fn(),
+  previewRunDeletion: vi.fn(),
+}))
 
 const mockedListRuns = vi.mocked(listRuns)
+const mockedCancelRun = vi.mocked(cancelRun)
+const mockedCancelManagedWorkflow = vi.mocked(cancelManagedWorkflow)
 const historyItem = (id: string) => simulationRun({
   id,
   clientRunId: `client-${id}`,
@@ -25,7 +33,11 @@ function deferred<T>() {
 }
 
 describe('useRunHistory', () => {
-  beforeEach(() => mockedListRuns.mockReset())
+  beforeEach(() => {
+    mockedListRuns.mockReset()
+    mockedCancelRun.mockReset()
+    mockedCancelManagedWorkflow.mockReset()
+  })
 
   it('exposes loading and ready states', async () => {
     const request = deferred<SimulationRun[]>()
@@ -68,5 +80,52 @@ describe('useRunHistory', () => {
     const { result } = renderHook(() => useRunHistory(null))
     expect(result.current).toMatchObject({ runs: [], status: 'idle', error: null })
     expect(mockedListRuns).not.toHaveBeenCalled()
+  })
+
+  it('routes ordinary and managed cancellation to their exclusive endpoints and reloads after success', async () => {
+    const ordinary = historyItem('11')
+    const managed = historyItem('12')
+    ordinary.status = 'running'
+    ordinary.finishedAt = null
+    managed.status = 'queued'
+    managed.startedAt = null
+    managed.finishedAt = null
+    managed.managedWorkflowId = 'workflow-12'
+    const refreshedOrdinary = { ...ordinary, status: 'failed' as const, stage: 'cancelled_by_user' }
+    const refreshedManaged = { ...managed, status: 'failed' as const, stage: 'cancelled_by_user' }
+    mockedListRuns
+      .mockResolvedValueOnce([ordinary, managed])
+      .mockResolvedValueOnce([refreshedOrdinary, managed])
+      .mockResolvedValueOnce([refreshedOrdinary, refreshedManaged])
+    mockedCancelRun.mockResolvedValue(refreshedOrdinary)
+    mockedCancelManagedWorkflow.mockResolvedValue({} as Awaited<ReturnType<typeof cancelManagedWorkflow>>)
+
+    const { result } = renderHook(() => useRunHistory('1'))
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+
+    await act(async () => result.current.cancel(ordinary))
+    expect(mockedCancelRun).toHaveBeenCalledWith('11')
+    expect(mockedCancelManagedWorkflow).not.toHaveBeenCalled()
+    await waitFor(() => expect(result.current.runs[0].status).toBe('failed'))
+
+    await act(async () => result.current.cancel(managed))
+    expect(mockedCancelManagedWorkflow).toHaveBeenCalledWith('workflow-12')
+    expect(mockedCancelRun).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(result.current.runs[1].status).toBe('failed'))
+  })
+
+  it('keeps the current row and propagates cancellation failures without reloading', async () => {
+    const running = historyItem('13')
+    running.status = 'running'
+    running.finishedAt = null
+    mockedListRuns.mockResolvedValue([running])
+    mockedCancelRun.mockRejectedValue(new Error('取消请求失败'))
+
+    const { result } = renderHook(() => useRunHistory('1'))
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+
+    await expect(act(async () => result.current.cancel(running))).rejects.toThrow('取消请求失败')
+    expect(result.current.runs).toEqual([running])
+    expect(mockedListRuns).toHaveBeenCalledTimes(1)
   })
 })

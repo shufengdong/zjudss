@@ -115,6 +115,7 @@ export async function uploadReplacementFiles(resourceId:string,clientBatchId:str
 export const searchHistory=async(query:string)=>(await request<{items:HistoryHit[]}>(`/api/history/search${params({query})}`)).items
 export const listRuns=async(sessionId:string)=>(await request<{runs:SimulationRun[]}>(`/api/sessions/${sessionId}/runs`)).runs
 export const getRun=(id:string)=>request<SimulationRun>(`/api/runs/${id}`)
+export const cancelRun=(id:string)=>request<SimulationRun>(`/api/runs/${id}/cancel`,{method:'POST'})
 export const previewRunDeletion=(id:string)=>request<RunDeletionPreview>(`/api/runs/${id}/deletion-preview`,{method:'POST'})
 export const deleteRun=(id:string,impactToken:string)=>request<void>(`/api/runs/${id}${params({impactToken})}`,{method:'DELETE'},async()=>undefined)
 export const listRunDatasets=async(id:string)=>(await request<{datasets:DatasetMetadata[]}>(`/api/runs/${id}/datasets`)).datasets

@@ -8,6 +8,7 @@ import {
   formatBytes,
   formatDuration,
   formatTimestamp,
+  isRunCancelled,
   runDurationMs,
   runFailure,
   runStageLabel,
@@ -23,14 +24,17 @@ type DatasetDetail = {
 
 const EMPTY_DETAIL: DatasetDetail = { status: 'idle', data: [], error: null }
 
-function requestError(error: unknown): string {
-  return error instanceof Error && error.message.trim() ? error.message : '未知错误'
+function requestError(error: unknown, limit = 500): string {
+  const message = error instanceof Error && error.message.trim() ? error.message.trim() : '未知错误'
+  const characters = Array.from(message)
+  return characters.length > limit ? `${characters.slice(0, limit).join('')}…` : characters.join('')
 }
 
-function statusClass(status: SimulationRun['status']): string {
-  if (status === 'succeeded') return 'bg-emerald-50 text-emerald-700'
-  if (status === 'failed') return 'bg-red-50 text-red-700'
-  if (status === 'running') return 'bg-blue-50 text-blue-700'
+function statusClass(run: SimulationRun): string {
+  if (isRunCancelled(run)) return 'bg-slate-100 text-slate-600'
+  if (run.status === 'succeeded') return 'bg-emerald-50 text-emerald-700'
+  if (run.status === 'failed') return 'bg-red-50 text-red-700'
+  if (run.status === 'running') return 'bg-blue-50 text-blue-700'
   return 'bg-slate-100 text-slate-600'
 }
 
@@ -50,6 +54,13 @@ function RunDetails({ run, detail, now, onRetry, onOpenDataset }: {
   onOpenDataset: (datasetId: string) => void
 }) {
   const duration = formatDuration(runDurationMs(run, now))
+  if (isRunCancelled(run)) {
+    return <div className="space-y-1 border-t bg-slate-50 px-3 py-3 text-xs text-slate-600">
+      <p>运行已由用户取消</p>
+      <p>耗时：{duration}</p>
+      <RunTimestamps run={run} />
+    </div>
+  }
   if (run.status === 'failed') {
     const failure = runFailure(run)
     return <div role="alert" className="space-y-1 border-t border-red-100 bg-red-50/60 px-3 py-3 text-xs text-red-800">
@@ -116,6 +127,8 @@ export default function RunHistory({ history, datasetRevision, onOpenDataset, on
   const previousStatuses = useRef<Record<string, SimulationRun['status']>>({})
   const hasLiveRuns = history.runs.some((run) => run.status === 'queued' || run.status === 'running')
   const [now, setNow] = useState(() => Date.now())
+  const [cancelling,setCancelling]=useState<Set<string>>(()=>new Set())
+  const [cancelErrors,setCancelErrors]=useState<Record<string,string>>({})
   const[deletion,setDeletion]=useState<{run:SimulationRun;preview:RunDeletionPreview|null}|null>(null),[deleting,setDeleting]=useState(false),[deleteError,setDeleteError]=useState<string|null>(null)
   const deletionGeneration=useRef(0)
 
@@ -198,6 +211,11 @@ export default function RunHistory({ history, datasetRevision, onOpenDataset, on
   const previewDelete=(run:SimulationRun)=>{const generation=++deletionGeneration.current;setDeleteError(null);setDeletion({run,preview:null});void loadDeletionPreview(run,generation)}
   const closeDeletion=()=>{deletionGeneration.current+=1;setDeletion(null);setDeleteError(null)}
   const confirmDelete=async()=>{if(!deletion?.preview)return;const{run,preview}=deletion;setDeleting(true);setDeleteError(null);try{await history.deleteRun(run.id,preview.impactToken);onRunDeleted?.(run.id,preview.resultIds.map(String));closeDeletion()}catch(cause){setDeleteError(requestError(cause));const generation=++deletionGeneration.current;setDeletion({run,preview:null});await loadDeletionPreview(run,generation)}finally{setDeleting(false)}}
+  const cancelRun=async(run:SimulationRun)=>{
+    setCancelling((current)=>new Set(current).add(run.id))
+    setCancelErrors((current)=>{const next={...current};delete next[run.id];return next})
+    try{await history.cancel(run)}catch(cause){setCancelErrors((current)=>({...current,[run.id]:requestError(cause)}))}finally{setCancelling((current)=>{const next=new Set(current);next.delete(run.id);return next})}
+  }
 
   if (history.status === 'loading') {
     return <div aria-live="polite" className="p-4 text-xs text-slate-500">正在加载运行记录…</div>
@@ -215,7 +233,7 @@ export default function RunHistory({ history, datasetRevision, onOpenDataset, on
       const summary=<>
           <span className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800">{runTitle(run)}</span>
-            <span className={`shrink-0 rounded px-2 py-0.5 ${statusClass(run.status)}`}>{runStatusLabel(run.status)}</span>
+            <span className={`shrink-0 rounded px-2 py-0.5 ${statusClass(run)}`}>{runStatusLabel(run)}</span>
           </span>
           <span className="mt-1 block truncate text-slate-500">{run.scriptName} · 模型版本 {run.modelVersionId}</span>
           <span className="mt-1 flex items-center text-slate-400">
@@ -224,7 +242,8 @@ export default function RunHistory({ history, datasetRevision, onOpenDataset, on
           </span>
         </>
       return <article key={run.id} className="overflow-hidden rounded-lg border bg-white text-xs">
-        <div className="flex items-stretch">{onLocateScript?<button type="button" disabled={!run.scriptMessageId} onClick={()=>run.scriptMessageId?void onLocateScript(run.scriptMessageId):undefined} className="min-w-0 flex-1 px-3 py-3 text-left disabled:cursor-default">{summary}{!run.scriptMessageId&&<span className="mt-1 block text-amber-600">脚本尚未生成，无法定位</span>}</button>:<button type="button" aria-expanded={isExpanded} aria-controls={detailId} onClick={()=>toggle(run)} className="block min-w-0 flex-1 px-3 py-3 text-left">{summary}</button>}{onLocateScript&&<button type="button" aria-label={isExpanded?'收起运行详情':'展开运行详情'} aria-expanded={isExpanded} aria-controls={detailId} onClick={()=>toggle(run)} className="border-l px-3 text-brand-600">{isExpanded?'收起':'详情'}</button>}{['succeeded','failed'].includes(run.status)&&<button type="button" aria-label={`删除运行 ${run.id}`} onClick={()=>void previewDelete(run)} className="border-l px-3 text-red-600">删除</button>}</div>
+        <div className="flex items-stretch">{onLocateScript?<button type="button" disabled={!run.scriptMessageId} onClick={()=>run.scriptMessageId?void onLocateScript(run.scriptMessageId):undefined} className="min-w-0 flex-1 px-3 py-3 text-left disabled:cursor-default">{summary}{!run.scriptMessageId&&<span className="mt-1 block text-amber-600">脚本尚未生成，无法定位</span>}</button>:<button type="button" aria-expanded={isExpanded} aria-controls={detailId} onClick={()=>toggle(run)} className="block min-w-0 flex-1 px-3 py-3 text-left">{summary}</button>}{onLocateScript&&<button type="button" aria-label={isExpanded?'收起运行详情':'展开运行详情'} aria-expanded={isExpanded} aria-controls={detailId} onClick={()=>toggle(run)} className="border-l px-3 text-brand-600">{isExpanded?'收起':'详情'}</button>}{(run.status==='queued'||run.status==='running')&&<button type="button" aria-label={cancelling.has(run.id)?'取消中…':`取消运行 ${run.id}`} disabled={cancelling.has(run.id)} onClick={()=>void cancelRun(run)} className="border-l px-3 text-amber-700 disabled:text-slate-400">{cancelling.has(run.id)?'取消中…':'取消'}</button>}{['succeeded','failed'].includes(run.status)&&<button type="button" aria-label={`删除运行 ${run.id}`} onClick={()=>void previewDelete(run)} className="border-l px-3 text-red-600">删除</button>}</div>
+        {cancelErrors[run.id]&&<div role="alert" className="border-t border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">取消失败：{cancelErrors[run.id]}</div>}
         {isExpanded && <div id={detailId}>
           <RunDetails
             run={run}
