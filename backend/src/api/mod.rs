@@ -16,6 +16,7 @@ mod error;
 mod events;
 mod examples;
 mod model_dataframes;
+mod query;
 mod retries;
 mod runs;
 mod scripts;

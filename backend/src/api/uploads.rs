@@ -1,3 +1,9 @@
+//! 统一上传批次的接收、恢复与编辑 HTTP 边界。
+//!
+//! multipart handler 只解析受控字段并把字节流写入 staging；单文件、批次和 artifact 配额由
+//! storage/application 层强制执行。批次解析、候选状态机、替换规则和发布事务不在本模块；
+//! 每次可见状态更新会同步 durable `upload-batch` 卡片。
+
 use axum::Json;
 use axum::extract::{Multipart, Path, State};
 use axum::http::StatusCode;
@@ -13,6 +19,12 @@ use crate::storage::StageLimits;
 
 use super::ApiError;
 
+/// `POST /api/sessions/{id}/upload-batches`：接收当前用户会话的一批上传文件。
+///
+/// 路由关闭 Axum 默认 body limit 以支持流式 multipart，但 application 配置仍强制单文件与
+/// 批次容量。请求包含 `clientBatchId`、可选 `relativePaths` 和 `file.<clientFileId>`；成功
+/// staging 并启动解析后返回 202 和可恢复批次。幂等冲突、格式/归档限制和配额错误保留稳定
+/// code，跨用户与不存在会话统一返回 404。
 pub async fn create(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -147,6 +159,10 @@ async fn accept_multipart(
     Ok((StatusCode::ACCEPTED, Json(json!({"uploadBatch":view}))))
 }
 
+/// `GET /api/upload-batches/{id}`：读取当前用户上传批次的权威状态。
+///
+/// 成功返回 200，并幂等同步对应 durable 上传卡片以修复先前消息写入中断；不会重新提交发布
+/// 事务。跨用户与不存在批次统一返回 404。
 pub async fn get(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -157,6 +173,10 @@ pub async fn get(
     Ok(Json(json!({"uploadBatch":view})))
 }
 
+/// `PUT /api/upload-batches/{id}/parse-settings`：更新受控解析设置并重新解析批次。
+///
+/// 仅当前用户可修改等待解析设置的批次；成功返回 200 和新 revision 的批次，并同步 durable
+/// 卡片。终态、过期或正在确认的批次返回稳定状态冲突，不会破坏已保存候选。
 pub async fn parse_settings(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -176,6 +196,11 @@ pub async fn parse_settings(
 pub struct CandidateBody {
     decisions: Vec<CandidateDecision>,
 }
+
+/// `PUT /api/upload-batches/{id}/candidates`：保存上传候选的用途决定。
+///
+/// 决定仅限模型表、普通资源或跳过等受控枚举；成功返回 200、更新后的批次并同步 durable
+/// 卡片。已冻结、终态或正在确认的批次拒绝修改，跨用户与不存在批次统一返回 404。
 pub async fn candidates(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -248,6 +273,11 @@ pub(super) async fn publish_upload(
     .await?;
     Ok(())
 }
+
+/// `DELETE /api/upload-batches/{id}`：放弃当前用户的未完成上传批次。
+///
+/// 成功幂等释放仍由批次持有的 staging/artifact 引用、同步终态卡片并返回 204；确认正在执行
+/// 时返回 409 `upload_state_invalid`，跨用户与不存在批次统一返回 404。
 pub async fn discard(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -259,6 +289,11 @@ pub async fn discard(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// `POST /api/data-resources/{id}/replacement-batches`：为现有资源接收替换上传。
+///
+/// 路由与普通上传一样关闭 Axum 默认 body limit，但仍执行 application 容量限制。当前用户
+/// 必须拥有资源；成功仅创建并解析替换候选批次，返回 202，不会在确认前修改原资源。跨用户
+/// 与不存在资源统一返回 404。
 pub async fn replacement(
     State(state): State<AppState>,
     user: CurrentUser,

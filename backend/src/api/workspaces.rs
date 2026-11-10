@@ -1,3 +1,9 @@
+//! 模型工作区、草稿发布、历史版本激活与删除的 HTTP 边界。
+//!
+//! 所有 handler 要求当前用户，并把会话/版本稳定 ID 与精确 revision、幂等键或 impact token
+//! 交给 version service。草稿/版本不可变发布、active 指针、artifact 引用和删除事务均不在
+//! 本模块实现。
+
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -10,6 +16,10 @@ use crate::db::repositories::{DraftSnapshot, VersionSnapshot, WorkspaceSnapshot}
 
 use super::ApiError;
 
+/// `GET /api/sessions/{id}/workspace`：读取当前用户会话的模型工作区。
+///
+/// 成功返回 200、active 版本和当前 draft 快照；首次访问可按需建立空 workspace 容器，但不
+/// 创建草稿或激活版本。跨用户与不存在会话统一返回 404。
 pub async fn workspace(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -20,6 +30,10 @@ pub async fn workspace(
     )))
 }
 
+/// `GET /api/sessions/{id}/versions`：列出会话的不可变模型版本。
+///
+/// 成功返回 200 和当前用户可读的历史版本；首次访问可按需建立空 workspace 容器，但不移动
+/// active 指针或增加 artifact 引用。跨用户与不存在会话统一返回 404。
 pub async fn versions(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -31,6 +45,11 @@ pub async fn versions(
     ))
 }
 
+/// `POST /api/sessions/{id}/versions`：显式发布精确草稿 revision 并自动激活。
+///
+/// 请求包含 expected draft、幂等 client publish ID 与可选描述；首次创建返回 201，内容去重或
+/// 同一 draft revision/client ID 重放返回 200。revision 漂移返回 409
+/// `draft_revision_conflict`；失败不清空或部分发布草稿。
 pub async fn publish(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -54,6 +73,10 @@ pub async fn publish(
     ))
 }
 
+/// `GET /api/versions/{id}`：读取当前用户的不可变版本详情。
+///
+/// 成功返回 200、冻结描述、来源摘要和表清单；读取不激活版本，跨用户、已删除与不存在版本
+/// 统一返回 404。
 pub async fn version(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -64,6 +87,10 @@ pub async fn version(
     )))
 }
 
+/// `POST /api/versions/{id}/activate`：把历史版本设为当前 active。
+///
+/// 成功返回 200 和更新后的工作区；存在 draft 时请求必须携带精确 draft 引用并明确允许放弃，
+/// 否则返回稳定 409。激活只移动指针，不改写不可变版本；跨用户与不存在版本统一返回 404。
 pub async fn activate(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -78,6 +105,10 @@ pub async fn activate(
     )))
 }
 
+/// `POST /api/versions/{id}/deletion-preview`：生成版本删除影响与短期 token。
+///
+/// 成功返回 200 并冻结当前消费者/影响摘要，不删除版本。active 或跨用户/不存在版本按 version
+/// service 的稳定冲突/404 语义返回。
 pub async fn deletion_preview(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -100,6 +131,11 @@ pub struct DeleteQuery {
     impact_token: String,
 }
 
+/// `DELETE /api/versions/{id}?impactToken=...`：确认删除不可变历史版本。
+///
+/// 仅非 active、无忙碌消费者且影响未变化的版本可删除；成功原子 tombstone 并释放直接
+/// artifact 引用，返回 204。无效/过期 token、影响变化或 busy 返回稳定 409，跨用户与不存在
+/// 版本统一返回 404。
 pub async fn delete_version(
     State(state): State<AppState>,
     user: CurrentUser,
