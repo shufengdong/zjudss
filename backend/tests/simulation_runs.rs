@@ -14,10 +14,15 @@ use zjudss::agent::{
     FailureAnalyzer,
 };
 use zjudss::application::RunScheduler;
-use zjudss::application::{CreateScriptRequest, PublishDraftRequest, ScriptSource};
+use zjudss::application::{
+    CreateScriptRequest, EventWriter, OperationKind, OperationRef, PublishDraftRequest,
+    ScriptSource, Stage, StageStatus,
+};
 
 #[cfg(feature = "e2e-test")]
-use zjudss::testing::{EngineScenario, IdDatasetFixture, ScenarioEngine, ScriptedAuthor};
+use zjudss::testing::{
+    EngineScenario, IdDatasetFixture, RunControlGate, ScenarioEngine, ScriptedAuthor,
+};
 
 #[cfg(feature = "e2e-test")]
 #[derive(Default)]
@@ -137,6 +142,14 @@ async fn post_cancel(app: &TestApp, cookie: &str, run_id: i32) -> axum::response
         .unwrap()
 }
 
+fn run_id_by_client(app: &TestApp, client_run_id: &str) -> i32 {
+    zjudss::db::schema::simulation_runs::table
+        .filter(zjudss::db::schema::simulation_runs::client_run_id.eq(client_run_id))
+        .select(zjudss::db::schema::simulation_runs::id)
+        .first(&mut app.pool.get().unwrap())
+        .unwrap()
+}
+
 #[cfg(feature = "e2e-test")]
 #[tokio::test]
 async fn active_and_queued_runs_cancel_idempotently_without_failure_analysis_or_results() {
@@ -151,7 +164,7 @@ async fn active_and_queued_runs_cancel_idempotently_without_failure_analysis_or_
         .scheduler(RunScheduler::new(1, 1, 4))
         .spawn()
         .await;
-    let (user, cookie, _session_id, _version_id, script_id) = setup(&app).await;
+    let (user, cookie, session_id, _version_id, script_id) = setup(&app).await;
 
     let first = post_run(&app, &cookie, &script_id, "cancel-active").await;
     let first: Value =
@@ -181,6 +194,7 @@ async fn active_and_queued_runs_cancel_idempotently_without_failure_analysis_or_
     assert_eq!(queued["error"]["code"], "cancelled_by_user");
     assert_eq!(engine.calls().len(), 1, "排队取消不得启动第二次引擎调用");
 
+    let mut events = app.state.events.subscribe(session_id);
     let active_cancel = post_cancel(&app, &cookie, first_id).await;
     assert_eq!(active_cancel.status(), StatusCode::OK);
     let active: Value = serde_json::from_slice(
@@ -190,6 +204,43 @@ async fn active_and_queued_runs_cancel_idempotently_without_failure_analysis_or_
     )
     .unwrap();
     assert_eq!(active["error"]["code"], "cancelled_by_user");
+    let first_id_string = first_id.to_string();
+    let event = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            let value = serde_json::to_value(event).unwrap();
+            if value["type"] == "progress"
+                && value["operation"]["id"].as_str() == Some(first_id_string.as_str())
+                && value["stages"][0]["key"] == "cancelled_by_user"
+            {
+                break value;
+            }
+        }
+    })
+    .await
+    .expect("取消终态必须实时广播");
+    assert_eq!(event["stages"][0]["label"], "已取消");
+
+    let writer = EventWriter::new(
+        user.id.clone(),
+        session_id,
+        app.state.message_repo.clone(),
+        app.state.events.clone(),
+    );
+    writer
+        .progress(
+            OperationRef {
+                kind: OperationKind::Run,
+                id: first_id.to_string(),
+            },
+            vec![Stage {
+                key: "run".into(),
+                label: "延迟执行更新".into(),
+                status: StageStatus::Running,
+            }],
+        )
+        .await
+        .unwrap();
 
     let repeated = post_cancel(&app, &cookie, first_id).await;
     assert_eq!(repeated.status(), StatusCode::OK);
@@ -209,6 +260,236 @@ async fn active_and_queued_runs_cancel_idempotently_without_failure_analysis_or_
             .unwrap()
             .is_empty()
     );
+    let messages = app
+        .state
+        .message_repo
+        .list_by_session(&user.id, session_id)
+        .await
+        .unwrap();
+    let progress = messages
+        .iter()
+        .filter(|message| message.run_id == Some(first_id) && message.kind == "progress")
+        .collect::<Vec<_>>();
+    assert_eq!(progress.len(), 1, "一个 run 只保留一条可修订进度消息");
+    let payload: Value =
+        serde_json::from_str(progress[0].payload_json.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["stages"][0]["key"], "cancelled_by_user");
+    assert_eq!(payload["stages"][0]["label"], "已取消");
+}
+
+#[cfg(feature = "e2e-test")]
+#[tokio::test]
+async fn cancellation_before_signal_registration_releases_only_the_queued_ticket() {
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::Cancelled {
+        barrier_id: "registration-active".into(),
+    });
+    let scheduler = RunScheduler::new(1, 1, 4);
+    let app = TestApp::builder()
+        .engine(Arc::new(engine.clone()))
+        .scheduler(scheduler.clone())
+        .spawn()
+        .await;
+    let (_user, cookie, _session_id, _version_id, script_id) = setup(&app).await;
+    let active = post_run(&app, &cookie, &script_id, "registration-active").await;
+    let active: Value =
+        serde_json::from_slice(&to_bytes(active.into_body(), 1024 * 1024).await.unwrap()).unwrap();
+    let active_id = active["run"]["id"]
+        .as_str()
+        .unwrap()
+        .parse::<i32>()
+        .unwrap();
+    assert!(engine.wait_until_blocked("registration-active").await);
+
+    let gate = RunControlGate::before_registration(&app.data_dir, "cancel-before-registration");
+    let router = app.router.clone();
+    let queued_cookie = cookie.clone();
+    let queued_script = script_id.clone();
+    let submission = tokio::spawn(async move {
+        router
+            .oneshot(
+                Request::post(format!("/api/scripts/{queued_script}/runs"))
+                    .header("cookie", queued_cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"clientRunId":"cancel-before-registration"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    });
+    gate.wait_until_entered().await;
+    assert_eq!(scheduler.active_count(), 1);
+    assert_eq!(scheduler.waiting_count(), 1);
+    let queued_id = run_id_by_client(&app, "cancel-before-registration");
+    assert_eq!(
+        post_cancel(&app, &cookie, queued_id).await.status(),
+        StatusCode::OK
+    );
+    gate.release();
+    assert_eq!(submission.await.unwrap().status(), StatusCode::ACCEPTED);
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while scheduler.waiting_count() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("已持久化取消必须在进入 scheduler 前释放排队名额");
+    assert_eq!(scheduler.active_count(), 1, "不得靠释放活动运行来腾出队列");
+    assert_eq!(engine.calls().len(), 1);
+    assert_eq!(
+        post_cancel(&app, &cookie, active_id).await.status(),
+        StatusCode::OK
+    );
+}
+
+#[cfg(feature = "e2e-test")]
+#[tokio::test]
+async fn cancellation_during_result_publication_finishes_cleanup_and_preserves_the_winner() {
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::IdSuccess(vec![IdDatasetFixture {
+        name: "result".into(),
+        ids: vec!["1".into()],
+    }]));
+    engine.enqueue(EngineScenario::IdSuccess(vec![IdDatasetFixture {
+        name: "result".into(),
+        ids: vec!["2".into()],
+    }]));
+    let app = TestApp::builder().engine(Arc::new(engine)).spawn().await;
+    let (user, cookie, _session_id, _version_id, script_id) = setup(&app).await;
+    let usage_before = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
+    let objects_before = object_file_count(&app.data_dir);
+    let registration = RunControlGate::before_registration(&app.data_dir, "publication-cancel");
+    let router = app.router.clone();
+    let run_cookie = cookie.clone();
+    let run_script = script_id.clone();
+    let submission = tokio::spawn(async move {
+        router
+            .oneshot(
+                Request::post(format!("/api/scripts/{run_script}/runs"))
+                    .header("cookie", run_cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"clientRunId":"publication-cancel"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    });
+    registration.wait_until_entered().await;
+    let run_id = run_id_by_client(&app, "publication-cancel");
+    let publication = RunControlGate::result_publication(&app.data_dir, run_id);
+    registration.release();
+    assert_eq!(submission.await.unwrap().status(), StatusCode::ACCEPTED);
+    publication.wait_until_entered().await;
+    assert_eq!(
+        post_cancel(&app, &cookie, run_id).await.status(),
+        StatusCode::OK
+    );
+    publication.release();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        publication.wait_until_finished(),
+    )
+    .await
+    .expect("取消不得丢弃已开始的 artifact 发布与回滚清理");
+
+    assert_eq!(
+        app.state
+            .run_service
+            .find(&user, run_id)
+            .await
+            .unwrap()
+            .stage,
+        "cancelled_by_user"
+    );
+    assert!(
+        app.state
+            .run_service
+            .datasets(&user, run_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let usage_after = app
+        .state
+        .artifact_service
+        .get_usage(user.storage_scope_id)
+        .await
+        .unwrap();
+    assert_eq!(usage_after.used_artifacts, usage_before.used_artifacts);
+    assert_eq!(usage_after.used_bytes, usage_before.used_bytes);
+    assert_eq!(object_file_count(&app.data_dir), objects_before);
+
+    let completed = post_run(&app, &cookie, &script_id, "publication-completes").await;
+    let completed: Value =
+        serde_json::from_slice(&to_bytes(completed.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    let completed_id = completed["run"]["id"]
+        .as_str()
+        .unwrap()
+        .parse::<i32>()
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if app
+                .state
+                .run_service
+                .find(&user, completed_id)
+                .await
+                .unwrap()
+                .status
+                == "succeeded"
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let terminal = post_cancel(&app, &cookie, completed_id).await;
+    let terminal: Value =
+        serde_json::from_slice(&to_bytes(terminal.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert_eq!(terminal["status"], "succeeded");
+    assert_eq!(
+        app.state
+            .run_service
+            .datasets(&user, completed_id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(object_file_count(&app.data_dir), objects_before + 1);
+}
+
+fn object_file_count(data_dir: &std::path::Path) -> usize {
+    fn count(path: &std::path::Path) -> usize {
+        std::fs::read_dir(path)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| {
+                        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                            count(&entry.path())
+                        } else {
+                            usize::from(entry.file_type().is_ok_and(|kind| kind.is_file()))
+                        }
+                    })
+                    .sum()
+            })
+            .unwrap_or_default()
+    }
+    count(&data_dir.join("objects"))
 }
 
 #[tokio::test]
@@ -571,7 +852,7 @@ async fn failed_run_publishes_a_terminal_failed_progress_event() {
     })
     .await
     .unwrap();
-    assert_eq!(progress.len(), 3);
+    assert_eq!(progress.len(), 1);
     assert_eq!(
         progress.last().unwrap()["operation"]["id"],
         run_id.to_string()
@@ -891,7 +1172,11 @@ async fn successful_run_publishes_a_terminal_done_progress_event() {
                     serde_json::from_str::<Value>(message.payload_json.as_deref().unwrap()).unwrap()
                 })
                 .collect::<Vec<_>>();
-            if progress.len() == 3 {
+            if progress.len() == 1
+                && progress[0]["stages"]
+                    .as_array()
+                    .is_some_and(|stages| stages.iter().all(|stage| stage["status"] == "done"))
+            {
                 break progress;
             }
             tokio::task::yield_now().await;

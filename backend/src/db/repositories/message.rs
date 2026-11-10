@@ -311,8 +311,48 @@ fn keep_existing_operation(existing: &Message, incoming: &NewMessage) -> bool {
                 _ => false,
             }
         }
+        "progress" => {
+            let existing_terminal = progress_terminal(&existing_payload);
+            let incoming_terminal = progress_terminal(&incoming_payload);
+            existing_terminal && !incoming_terminal
+                || progress_rank(&incoming_payload) < progress_rank(&existing_payload)
+        }
         _ => false,
     }
+}
+
+fn progress_terminal(payload: &Value) -> bool {
+    payload
+        .get("stages")
+        .and_then(Value::as_array)
+        .is_some_and(|stages| {
+            stages.iter().any(|stage| {
+                stage.get("key").and_then(Value::as_str) == Some("cancelled_by_user")
+                    || stage.get("status").and_then(Value::as_str) == Some("failed")
+            }) || !stages.is_empty()
+                && stages
+                    .iter()
+                    .all(|stage| stage.get("status").and_then(Value::as_str) == Some("done"))
+        })
+}
+
+fn progress_rank(payload: &Value) -> usize {
+    payload
+        .get("stages")
+        .and_then(Value::as_array)
+        .map(|stages| {
+            stages
+                .iter()
+                .take_while(|stage| {
+                    matches!(
+                        stage.get("status").and_then(Value::as_str),
+                        Some("done") | Some("failed")
+                    )
+                })
+                .count()
+                + usize::from(progress_terminal(payload)) * (stages.len() + 1)
+        })
+        .unwrap_or_default()
 }
 
 fn study_configuration_state_rank(state: &str) -> u8 {

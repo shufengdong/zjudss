@@ -87,6 +87,12 @@ impl RunService {
         }
         let created = result?;
         if !created.replayed {
+            #[cfg(feature = "e2e-test")]
+            crate::testing::pause_before_registration(
+                &self.data_dir,
+                &created.run.client_run_id,
+            )
+            .await;
             let service = self.clone();
             let principal = user.clone();
             let run_id = created.run.id;
@@ -94,6 +100,17 @@ impl RunService {
             let mut run_cancelled = service.register_cancellation(run_id);
             let mut execution_cancelled = run_cancelled.clone();
             tokio::spawn(async move {
+                match service.repo.find(&principal.id, run_id).await {
+                    Ok(run) if !matches!(run.status.as_str(), "queued" | "running") => {
+                        service.remove_cancellation(run_id);
+                        return;
+                    }
+                    Err(_) => {
+                        service.remove_cancellation(run_id);
+                        return;
+                    }
+                    Ok(_) => {}
+                }
                 let mut session_cancelled = service
                     .session_cancellations
                     .subscribe(&principal.id, session_id);

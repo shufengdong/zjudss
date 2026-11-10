@@ -209,14 +209,30 @@ impl RunService {
 
     pub async fn cancel(&self, user: &CurrentUser, id: i32) -> Result<RunSummary, RunError> {
         let run = self.repo.cancel(&user.id, id, now_ms()).await?;
-        if run.stage == "cancelled_by_user"
-            && let Some(sender) = self
+        if run.stage == "cancelled_by_user" {
+            if let Some(sender) = self
                 .cancellations
                 .lock()
                 .expect("run cancellation registry")
                 .get(&id)
-        {
-            sender.send_replace(true);
+            {
+                sender.send_replace(true);
+            }
+            let writer = EventWriter::new(
+                user.id.clone(),
+                run.session_id,
+                self.messages.clone(),
+                self.events.clone(),
+            );
+            let _ = writer
+                .progress(
+                    OperationRef {
+                        kind: OperationKind::Run,
+                        id: id.to_string(),
+                    },
+                    run_cancelled_stages(),
+                )
+                .await;
         }
         let script_name = if let Some(script_id) = run.script_resource_id {
             self.scripts.find(&user.id, script_id).await?.name
@@ -483,6 +499,14 @@ fn run_failed_stages(active: &str) -> Vec<Stage> {
             stage
         })
         .collect()
+}
+
+fn run_cancelled_stages() -> Vec<Stage> {
+    vec![Stage {
+        key: "cancelled_by_user".into(),
+        label: "已取消".into(),
+        status: StageStatus::Done,
+    }]
 }
 
 fn run_output_ref(dataset: &RunDataset) -> ResultOutputRef {

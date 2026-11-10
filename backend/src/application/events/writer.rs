@@ -92,6 +92,7 @@ impl EventWriter {
         operation_id: &str,
         content: String,
         payload: &T,
+        run_id: Option<i32>,
     ) -> Result<AppEvent, RepoError> {
         #[cfg(feature = "e2e-test")]
         if crate::testing::FaultInjector::for_event_bus(&self.events)
@@ -108,7 +109,7 @@ impl EventWriter {
                 operation_id.to_string(),
                 NewMessage {
                     session_id: self.session_id,
-                    run_id: None,
+                    run_id,
                     role: "tool".into(),
                     kind: kind.into(),
                     content,
@@ -134,6 +135,7 @@ impl EventWriter {
             &operation_id,
             format!("上传批次：{}", card.state),
             &card,
+            None,
         )
         .await
     }
@@ -145,6 +147,7 @@ impl EventWriter {
             &operation_id,
             format!("研究配置：{}", card.state),
             &card,
+            None,
         )
         .await
     }
@@ -159,6 +162,7 @@ impl EventWriter {
             &operation_id,
             format!("研究工作流：{}", card.state),
             &card,
+            None,
         )
         .await
     }
@@ -223,14 +227,25 @@ impl EventWriter {
             operation: operation.clone(),
             stages,
         };
-        self.emit(
-            "tool",
-            "progress",
-            format!("进度：{}", operation.id),
-            Some(serde_json::to_value(payload).unwrap_or_default()),
-            run_id,
-        )
-        .await
+        if run_id.is_some() {
+            self.emit_operation(
+                "progress",
+                &format!("run:{}", operation.id),
+                format!("进度：{}", operation.id),
+                &payload,
+                run_id,
+            )
+            .await
+        } else {
+            self.emit(
+                "tool",
+                "progress",
+                format!("进度：{}", operation.id),
+                Some(serde_json::to_value(payload).unwrap_or_default()),
+                run_id,
+            )
+            .await
+        }
     }
 
     pub async fn result(

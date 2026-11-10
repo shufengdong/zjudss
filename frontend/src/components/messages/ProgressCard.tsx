@@ -3,7 +3,10 @@ import { useRunFailureDiagnosis } from '../../hooks/useRunFailureDiagnosis'
 import { CheckIcon, XIcon } from '../icons'
 import FailureDiagnosisPanel from './FailureDiagnosisPanel'
 
-function StageIcon({ status }: { status: StageStatus }) {
+function StageIcon({ status, cancelled = false }: { status: StageStatus; cancelled?: boolean }) {
+  if (cancelled) {
+    return <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-xs text-slate-500">—</span>
+  }
   if (status === 'done') {
     return (
       <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500 text-white">
@@ -44,8 +47,11 @@ export default function ProgressCard({ message }: { message: ProgressMessage }) 
       </div>
       <ol className="space-y-2.5">
         {message.stages.map((stage) => {
+          const cancelled = stage.key === 'cancelled_by_user'
           const textCls =
-            stage.status === 'failed'
+            cancelled
+              ? 'text-slate-500'
+              : stage.status === 'failed'
               ? 'text-red-600'
               : stage.status === 'running'
                 ? 'font-medium text-brand-600'
@@ -54,7 +60,7 @@ export default function ProgressCard({ message }: { message: ProgressMessage }) 
                   : 'text-slate-400'
           return (
             <li key={stage.key} className="flex items-center gap-2.5">
-              <StageIcon status={stage.status} />
+              <StageIcon status={stage.status} cancelled={cancelled} />
               <span className={`text-sm ${textCls}`}>{stage.label}</span>
             </li>
           )

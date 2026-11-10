@@ -83,4 +83,14 @@ describe('ProgressCard', () => {
     await act(async () => { await Promise.resolve() })
     expect(getRun).not.toHaveBeenCalled()
   })
+
+  it('presents_user_cancellation_as_a_neutral_terminal_state', async () => {
+    render(<ProgressCard message={{
+      ...message('run', false),
+      stages: [{ key: 'cancelled_by_user', label: '已取消', status: 'done' }],
+    }} />)
+    expect(screen.getByText('已取消')).toHaveClass('text-slate-500')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(getRun).not.toHaveBeenCalled()
+  })
 })

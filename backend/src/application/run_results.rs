@@ -234,45 +234,56 @@ pub(crate) async fn publish_run_results(
             created_at_ms: now_ms(),
         });
     }
-    let store = artifacts.store().clone();
-    let _publication_guard = artifacts.exclusive_publication_guard().await;
-    let publish_store = store.clone();
-    let published_new = Arc::new(Mutex::new(Vec::<String>::new()));
-    let published_by_callback = published_new.clone();
-    let publication = repo
-        .complete_with_artifact_outputs(
-            &user.id,
-            RunArtifactOutputs {
-                scope_id: user.storage_scope_id,
-                run_id,
-                drafts,
-                datasets,
-                finished_at_ms: now_ms(),
-            },
-            move |index, path| {
-                let existed = publish_store
-                    .resolve(path)
-                    .map_err(|error| RepoError::Storage(error.to_string()))?
-                    .is_file();
-                publish_store
-                    .publish(&mut staged_artifacts[index], path)
-                    .map_err(|error| RepoError::Storage(error.to_string()))?;
-                if !existed {
-                    published_by_callback
-                        .lock()
-                        .expect("published run paths")
-                        .push(path.to_string());
-                }
-                Ok(())
-            },
-        )
-        .await;
-    if publication.is_err() {
-        for path in published_new.lock().expect("published run paths").iter() {
-            let _ = store.remove(path);
+    let repo = repo.clone();
+    let artifacts = artifacts.clone();
+    let user = user.clone();
+    tokio::spawn(async move {
+        let store = artifacts.store().clone();
+        #[cfg(feature = "e2e-test")]
+        crate::testing::pause_result_publication(store.data_dir(), run_id).await;
+        let _publication_guard = artifacts.exclusive_publication_guard().await;
+        let publish_store = store.clone();
+        let published_new = Arc::new(Mutex::new(Vec::<String>::new()));
+        let published_by_callback = published_new.clone();
+        let publication = repo
+            .complete_with_artifact_outputs(
+                &user.id,
+                RunArtifactOutputs {
+                    scope_id: user.storage_scope_id,
+                    run_id,
+                    drafts,
+                    datasets,
+                    finished_at_ms: now_ms(),
+                },
+                move |index, path| {
+                    let existed = publish_store
+                        .resolve(path)
+                        .map_err(|error| RepoError::Storage(error.to_string()))?
+                        .is_file();
+                    publish_store
+                        .publish(&mut staged_artifacts[index], path)
+                        .map_err(|error| RepoError::Storage(error.to_string()))?;
+                    if !existed {
+                        published_by_callback
+                            .lock()
+                            .expect("published run paths")
+                            .push(path.to_string());
+                    }
+                    Ok(())
+                },
+            )
+            .await;
+        if publication.is_err() {
+            for path in published_new.lock().expect("published run paths").iter() {
+                let _ = store.remove(path);
+            }
         }
-    }
-    publication.map_err(Into::into)
+        #[cfg(feature = "e2e-test")]
+        crate::testing::finish_result_publication(store.data_dir(), run_id);
+        publication.map_err(Into::into)
+    })
+    .await
+    .map_err(|error| RunError::Repository(RepoError::Join(error)))?
 }
 
 fn valid_result_name(value: &str) -> bool {
