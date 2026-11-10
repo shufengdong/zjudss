@@ -75,6 +75,60 @@ async fn login(app: &TestApp, id: &str, password: &str) -> (String, Value, Strin
 }
 
 #[tokio::test]
+async fn cancel_run_is_owner_scoped_and_cross_user_is_hidden() {
+    let app = TestApp::spawn().await;
+    let (alice_cookie, _, _) = login(&app, "alice", "alice").await;
+    let (bob_cookie, _, _) = login(&app, "bob", "bob").await;
+    let session = app
+        .state
+        .session_repo
+        .create(&UserId("alice".into()), "cancel scope", 1)
+        .await
+        .unwrap();
+    let run_id = {
+        let mut conn = app.pool.get().unwrap();
+        diesel::sql_query(
+            "INSERT INTO simulation_runs(session_id,client_run_id,status,stage,engine_contract_version,agent_skill_refs_json,run_kind,input_snapshot_json,created_at_ms) VALUES(?1,'scope-cancel','queued','queued','test','[]','managed','{}',1)",
+        )
+        .bind::<diesel::sql_types::Integer, _>(session.id)
+        .execute(&mut conn)
+        .unwrap();
+        diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
+            "last_insert_rowid()",
+        ))
+        .get_result::<i32>(&mut conn)
+        .unwrap()
+    };
+
+    let hidden = app
+        .router
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/api/runs/{run_id}/cancel"),
+            Some(&bob_cookie),
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
+
+    let owned = app
+        .router
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/api/runs/{run_id}/cancel"),
+            Some(&alice_cookie),
+            Value::Null,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(owned.status(), StatusCode::OK);
+    assert_eq!(json_body(owned).await["error"]["code"], "cancelled_by_user");
+}
+
+#[tokio::test]
 async fn login_sets_persistent_opaque_cookie_and_me_returns_user() {
     let app = TestApp::spawn().await;
     let (cookie, body, set_cookie) = login(&app, "alice", "alice").await;

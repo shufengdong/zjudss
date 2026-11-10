@@ -12,8 +12,8 @@ fn production_router_and_manifest_share_one_declaration() {
 
     // Six method/path pairs are newly registered. The seventh chart API replaces
     // the existing GET /api/dataset-views/{id}/data handler in place.
-    assert_eq!(routes.len(), 81);
-    assert_eq!(unique.len(), 81);
+    assert_eq!(routes.len(), 82);
+    assert_eq!(unique.len(), 82);
     assert!(unique.contains(&("GET", "/health")));
     assert!(unique.contains(&("POST", "/api/auth/login")));
     assert!(unique.contains(&("POST", "/api/auth/logout")));
@@ -70,6 +70,7 @@ fn production_router_and_manifest_share_one_declaration() {
     assert!(unique.contains(&("POST", "/api/scripts/{id}/retry-previews")));
     assert!(unique.contains(&("POST", "/api/retry-previews/{id}/confirm")));
     assert!(unique.contains(&("POST", "/api/runs/{id}/deletion-preview")));
+    assert!(unique.contains(&("POST", "/api/runs/{id}/cancel")));
     assert!(unique.contains(&("DELETE", "/api/runs/{id}")));
     assert!(unique.contains(&("GET", "/api/run-comparisons/{id}")));
     for path in [
@@ -106,7 +107,7 @@ fn contract_manifest_contains_all_public_enums() {
         manifest.changes,
         [
             "dynamic_study_facades",
-            "bounded_engine_execution",
+            "unbounded_engine_execution",
             "recoverable_upload_batches",
             "independent_data_resources",
             "managed_study_configurations",
@@ -302,6 +303,7 @@ fn contract_manifest_contains_all_public_enums() {
         "result_publish_failed",
         "stderr_audit_failed",
         "run_busy",
+        "managed_run_cancel_via_workflow",
         "no_result_dataset",
         "client_retry_id_invalid",
         "retry_not_available",

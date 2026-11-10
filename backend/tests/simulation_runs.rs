@@ -13,6 +13,7 @@ use zjudss::agent::{
     FailureAnalysis, FailureAnalysisError, FailureAnalysisEvidence, FailureAnalysisRequest,
     FailureAnalyzer,
 };
+use zjudss::application::RunScheduler;
 use zjudss::application::{CreateScriptRequest, PublishDraftRequest, ScriptSource};
 
 #[cfg(feature = "e2e-test")]
@@ -121,6 +122,132 @@ async fn post_run(
         )
         .await
         .unwrap()
+}
+
+async fn post_cancel(app: &TestApp, cookie: &str, run_id: i32) -> axum::response::Response {
+    app.router
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/runs/{run_id}/cancel"))
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[cfg(feature = "e2e-test")]
+#[tokio::test]
+async fn active_and_queued_runs_cancel_idempotently_without_failure_analysis_or_results() {
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::Cancelled {
+        barrier_id: "active-run".into(),
+    });
+    let analyzer = Arc::new(ScriptedAuthor::default());
+    let app = TestApp::builder()
+        .engine(Arc::new(engine.clone()))
+        .failure_analyzer(analyzer.clone())
+        .scheduler(RunScheduler::new(1, 1, 4))
+        .spawn()
+        .await;
+    let (user, cookie, _session_id, _version_id, script_id) = setup(&app).await;
+
+    let first = post_run(&app, &cookie, &script_id, "cancel-active").await;
+    let first: Value =
+        serde_json::from_slice(&to_bytes(first.into_body(), 1024 * 1024).await.unwrap()).unwrap();
+    let first_id = first["run"]["id"].as_str().unwrap().parse::<i32>().unwrap();
+    assert!(engine.wait_until_blocked("active-run").await);
+
+    let second = post_run(&app, &cookie, &script_id, "cancel-queued").await;
+    let second: Value =
+        serde_json::from_slice(&to_bytes(second.into_body(), 1024 * 1024).await.unwrap()).unwrap();
+    let second_id = second["run"]["id"]
+        .as_str()
+        .unwrap()
+        .parse::<i32>()
+        .unwrap();
+
+    let queued_cancel = post_cancel(&app, &cookie, second_id).await;
+    assert_eq!(queued_cancel.status(), StatusCode::OK);
+    let queued: Value = serde_json::from_slice(
+        &to_bytes(queued_cancel.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(queued["status"], "failed");
+    assert_eq!(queued["stage"], "cancelled_by_user");
+    assert_eq!(queued["error"]["code"], "cancelled_by_user");
+    assert_eq!(engine.calls().len(), 1, "排队取消不得启动第二次引擎调用");
+
+    let active_cancel = post_cancel(&app, &cookie, first_id).await;
+    assert_eq!(active_cancel.status(), StatusCode::OK);
+    let active: Value = serde_json::from_slice(
+        &to_bytes(active_cancel.into_body(), 1024 * 1024)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(active["error"]["code"], "cancelled_by_user");
+
+    let repeated = post_cancel(&app, &cookie, first_id).await;
+    assert_eq!(repeated.status(), StatusCode::OK);
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while app.state.scheduler.active_count() != 0 || app.state.scheduler.waiting_count() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("取消释放 scheduler 名额");
+    assert!(analyzer.trace().is_empty(), "用户取消不得触发失败分析");
+    assert!(
+        app.state
+            .dataset_service
+            .list(&user, first_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn managed_run_cancel_route_requires_the_workflow_endpoint() {
+    let app = TestApp::spawn().await;
+    let (_user, cookie, session_id, _version_id, _script_id) = setup(&app).await;
+    let run_id = {
+        let mut conn = app.pool.get().unwrap();
+        diesel::sql_query(
+            "INSERT INTO managed_workflows(session_id,status,intent_json,created_at_ms,updated_at_ms) VALUES(?1,'executing','{}',1,1)",
+        )
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .execute(&mut conn)
+        .unwrap();
+        let workflow_id = diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
+            "last_insert_rowid()",
+        ))
+        .get_result::<i32>(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "INSERT INTO simulation_runs(session_id,client_run_id,status,stage,engine_contract_version,agent_skill_refs_json,managed_workflow_id,run_kind,input_snapshot_json,created_at_ms) VALUES(?1,'managed-cancel-route','running','run','test','[]',?2,'managed','{}',1)",
+        )
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .bind::<diesel::sql_types::Integer, _>(workflow_id)
+        .execute(&mut conn)
+        .unwrap();
+        diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
+            "last_insert_rowid()",
+        ))
+        .get_result::<i32>(&mut conn)
+        .unwrap()
+    };
+
+    let response = post_cancel(&app, &cookie, run_id).await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert_eq!(body["code"], "managed_run_cancel_via_workflow");
 }
 
 #[tokio::test]

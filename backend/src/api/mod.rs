@@ -257,6 +257,7 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
         ["POST"]
     );
     add_route!("/api/scripts/{id}/runs", post(runs::create), ["POST"]);
+    add_route!("/api/runs/{id}/cancel", post(runs::cancel), ["POST"]);
     add_route!(
         "/api/scripts/{id}/retry-previews",
         post(scripts::retry_preview),

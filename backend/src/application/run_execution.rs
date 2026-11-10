@@ -91,16 +91,36 @@ impl RunService {
             let principal = user.clone();
             let run_id = created.run.id;
             let session_id = script.session_id;
+            let mut run_cancelled = service.register_cancellation(run_id);
+            let mut execution_cancelled = run_cancelled.clone();
             tokio::spawn(async move {
-                let mut cancelled = service
+                let mut session_cancelled = service
                     .session_cancellations
                     .subscribe(&principal.id, session_id);
-                if *cancelled.borrow() {
+                if *session_cancelled.borrow() {
+                    service.remove_cancellation(run_id);
                     return;
                 }
+                let forward_service = service.clone();
+                let session_forward = tokio::spawn(async move {
+                    let _ = session_cancelled.changed().await;
+                    if let Some(sender) = forward_service
+                        .cancellations
+                        .lock()
+                        .expect("run cancellation registry")
+                        .get(&run_id)
+                    {
+                        sender.send_replace(true);
+                    }
+                });
                 let _ = ticket
-                    .run_cancellable(service.execute(principal, run_id), &mut cancelled)
+                    .run_cancellable(
+                        service.execute(principal, run_id, &mut execution_cancelled),
+                        &mut run_cancelled,
+                    )
                     .await;
+                session_forward.abort();
+                service.remove_cancellation(run_id);
             });
         }
         Ok(RunSubmission {
@@ -121,8 +141,17 @@ impl RunService {
             .map_err(Into::into)
     }
 
-    async fn execute(&self, user: CurrentUser, id: i32) {
-        if let Err(error) = self.execute_inner(&user, id).await {
+    async fn execute(
+        &self,
+        user: CurrentUser,
+        id: i32,
+        cancelled: &mut tokio::sync::watch::Receiver<bool>,
+    ) {
+        let outcome = tokio::select! {
+            result = self.execute_inner(&user, id) => Some(result),
+            changed = cancelled.changed() => { let _ = changed; None }
+        };
+        if let Some(Err(error)) = outcome {
             let run = self.repo.find(&user.id, id).await.ok();
             let failed_stage = run
                 .as_ref()

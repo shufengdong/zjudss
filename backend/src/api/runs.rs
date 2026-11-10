@@ -52,6 +52,18 @@ pub async fn get(
         state.run_service.find_summary(&user, id).await?,
     )))
 }
+/// `POST /api/runs/{id}/cancel`：显式取消当前用户的普通脚本运行。
+///
+/// 排队或执行中的普通 run 原子收敛为 `cancelled_by_user`；重复取消和其他终态保持幂等并
+/// 返回 200。受管 run 返回 409，要求通过 workflow 取消；跨用户、已删除与不存在 run 统一
+/// 返回 404。执行中取消会通过 adapter future drop 终止整个进程组且不发布部分结果。
+pub async fn cancel(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i32>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(run_json(state.run_service.cancel(&user, id).await?)))
+}
 #[derive(Deserialize)]
 pub struct ListQuery {
     limit: Option<i64>,
@@ -141,6 +153,9 @@ fn public_run_error(status: &str, raw: Option<&str>) -> Option<Value> {
         .and_then(Value::as_str);
     if code == Some("service_restarted") {
         return Some(json!({"code":"service_restarted","message":"服务重启，运行已中止"}));
+    }
+    if code == Some("cancelled_by_user") {
+        return Some(json!({"code":"cancelled_by_user","message":"用户已取消运行"}));
     }
     let reason = parsed
         .as_ref()

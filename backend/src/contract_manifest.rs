@@ -53,6 +53,7 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "script_static_invalid",
     "script_model_incompatible",
     "run_queue_full",
+    "managed_run_cancel_via_workflow",
     "invalid_run",
     "run_busy",
     "no_result_dataset",
@@ -209,7 +210,7 @@ pub fn contract_manifest() -> Result<ContractManifest, KnowledgeError> {
         version: "v4",
         changes: vec![
             "dynamic_study_facades",
-            "bounded_engine_execution",
+            "unbounded_engine_execution",
             "recoverable_upload_batches",
             "independent_data_resources",
             "managed_study_configurations",

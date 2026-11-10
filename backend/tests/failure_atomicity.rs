@@ -6,9 +6,11 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use diesel::prelude::*;
 use tower::ServiceExt;
 use zjudss::application::{EventWriter, now_ms};
 use zjudss::auth::{CurrentUser, UserId};
+use zjudss::db::repositories::RunRepo;
 use zjudss::testing::{
     FaultInjector, FaultPoint, ScriptScenario, ScriptTurn, ScriptedAgentFactory,
 };
@@ -22,6 +24,70 @@ fn principal() -> CurrentUser {
         storage_scope_id: 1,
         auth_session_hash: "test".into(),
     }
+}
+
+#[tokio::test]
+async fn cancel_and_result_publication_preserve_the_first_terminal_state() {
+    let app = TestApp::spawn().await;
+    let p = principal();
+    let session = app
+        .state
+        .session_repo
+        .create(&p.id, "run race", 1)
+        .await
+        .unwrap();
+    let (cancel_first, complete_first) = {
+        let mut conn = app.pool.get().unwrap();
+        for client_id in ["cancel-first", "complete-first"] {
+            diesel::sql_query(
+                "INSERT INTO simulation_runs(session_id,client_run_id,status,stage,engine_contract_version,agent_skill_refs_json,run_kind,input_snapshot_json,created_at_ms) VALUES(?1,?2,'running','run','test','[]','managed','{}',1)",
+            )
+            .bind::<diesel::sql_types::Integer, _>(session.id)
+            .bind::<diesel::sql_types::Text, _>(client_id)
+            .execute(&mut conn)
+            .unwrap();
+        }
+        let ids = zjudss::db::schema::simulation_runs::table
+            .filter(zjudss::db::schema::simulation_runs::session_id.eq(session.id))
+            .order(zjudss::db::schema::simulation_runs::id.asc())
+            .select(zjudss::db::schema::simulation_runs::id)
+            .load::<i32>(&mut conn)
+            .unwrap();
+        (ids[0], ids[1])
+    };
+    let repo = RunRepo::new(app.pool.clone());
+
+    let cancelled = repo.cancel(&p.id, cancel_first, 10).await.unwrap();
+    assert_eq!(cancelled.status, "failed");
+    assert_eq!(cancelled.stage, "cancelled_by_user");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(cancelled.error_json.as_deref().unwrap())
+            .unwrap()["code"],
+        "cancelled_by_user"
+    );
+    assert!(
+        repo.complete(&p.id, cancel_first, vec![], 11)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        repo.find(&p.id, cancel_first).await.unwrap().status,
+        "failed"
+    );
+    assert_eq!(
+        repo.cancel(&p.id, cancel_first, 12)
+            .await
+            .unwrap()
+            .finished_at_ms,
+        Some(10)
+    );
+
+    repo.complete(&p.id, complete_first, vec![], 20)
+        .await
+        .unwrap();
+    let terminal = repo.cancel(&p.id, complete_first, 21).await.unwrap();
+    assert_eq!(terminal.status, "succeeded");
+    assert_eq!(terminal.finished_at_ms, Some(20));
 }
 
 #[tokio::test]

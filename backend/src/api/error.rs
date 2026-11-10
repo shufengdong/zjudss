@@ -315,6 +315,11 @@ impl From<RunError> for ApiError {
                 "idempotency_conflict",
                 error.to_string(),
             ),
+            RunError::ManagedRunCancelViaWorkflow => Self::public(
+                StatusCode::CONFLICT,
+                "managed_run_cancel_via_workflow",
+                error.to_string(),
+            ),
             RunError::QueueFull => Self::public(
                 StatusCode::TOO_MANY_REQUESTS,
                 "run_queue_full",

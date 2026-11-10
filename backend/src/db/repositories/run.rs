@@ -147,6 +147,7 @@ pub enum RunRepoError {
     ScriptIncompatible(Vec<String>),
     ConfigurationStale,
     IdempotencyConflict,
+    ManagedRunCancelViaWorkflow,
     RunBusy,
     ResultBusy,
     InvalidDeletionToken,
@@ -512,6 +513,68 @@ impl RunRepo {
         .await
         .map_err(RepoError::Join)?
     }
+    pub async fn cancel(
+        &self,
+        user: &UserId,
+        id: i32,
+        now: i64,
+    ) -> Result<SimulationRun, RunRepoError> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            conn.immediate_transaction::<SimulationRun, RunRepoError, _>(|conn| {
+                let run = schema::simulation_runs::table
+                    .inner_join(
+                        schema::sessions::table
+                            .on(schema::sessions::id.eq(schema::simulation_runs::session_id)),
+                    )
+                    .filter(schema::simulation_runs::id.eq(id))
+                    .filter(schema::sessions::user_id.eq(&user))
+                    .filter(schema::sessions::deletion_status.eq("live"))
+                    .filter(schema::simulation_runs::deleted_at_ms.is_null())
+                    .select(schema::simulation_runs::all_columns)
+                    .first::<SimulationRun>(conn)
+                    .optional()?
+                    .ok_or(RepoError::NotFound)?;
+                if run.managed_workflow_id.is_some() {
+                    return Err(RunRepoError::ManagedRunCancelViaWorkflow);
+                }
+                if !matches!(run.status.as_str(), "queued" | "running") {
+                    return Ok(run);
+                }
+                let duration_ms = run.started_at_ms.map(|started| now.saturating_sub(started));
+                let error = serde_json::json!({
+                    "code": "cancelled_by_user",
+                    "reason": "cancelled_by_user",
+                    "stage": "cancelled_by_user",
+                    "durationMs": duration_ms,
+                    "engineLogs": [],
+                    "analysisStatus": "unavailable"
+                })
+                .to_string();
+                let count = diesel::sql_query(
+                    "UPDATE simulation_runs
+                     SET status='failed',stage='cancelled_by_user',error_json=?1,
+                         exit_code=NULL,finished_at_ms=?2
+                     WHERE id=?3 AND status IN ('queued','running') AND deleted_at_ms IS NULL",
+                )
+                .bind::<Text, _>(error)
+                .bind::<BigInt, _>(now)
+                .bind::<Integer, _>(id)
+                .execute(conn)?;
+                if count != 1 {
+                    return Err(RepoError::InvalidState("run terminal state changed".into()).into());
+                }
+                schema::simulation_runs::table
+                    .find(id)
+                    .first(conn)
+                    .map_err(RunRepoError::from)
+            })
+        })
+        .await
+        .map_err(|error| RunRepoError::Repository(RepoError::Join(error)))?
+    }
     pub async fn list(
         &self,
         user: &UserId,
@@ -657,7 +720,7 @@ impl RunRepo {
             let count = diesel::sql_query(
                 "UPDATE simulation_runs SET status=?1,stage=?2,error_json=?3,\
                  exit_code=?4,started_at_ms=COALESCE(started_at_ms,?5),finished_at_ms=?6 \
-                 WHERE id=?7 AND deleted_at_ms IS NULL AND \
+                 WHERE id=?7 AND status IN ('queued','running') AND deleted_at_ms IS NULL AND \
                  session_id IN(SELECT id FROM sessions WHERE user_id=?8)",
             )
             .bind::<Text, _>(transition.status)
@@ -672,7 +735,7 @@ impl RunRepo {
             if count == 1 {
                 Ok(())
             } else {
-                Err(RepoError::NotFound)
+                Err(RepoError::InvalidState("run terminal state changed".into()))
             }
         })
         .await
@@ -698,11 +761,12 @@ impl RunRepo {
                     .filter(schema::simulation_runs::id.eq(id))
                     .filter(schema::simulation_runs::session_id.eq_any(owned_sessions))
                     .filter(schema::simulation_runs::deleted_at_ms.is_null())
+                    .filter(schema::simulation_runs::status.eq("running"))
                     .select(schema::simulation_runs::id)
                     .first::<i32>(conn)
                     .optional()?;
                 if exists.is_none() {
-                    return Err(RepoError::NotFound);
+                    return Err(RepoError::InvalidState("run terminal state changed".into()));
                 }
                 for dataset in datasets {
                     diesel::sql_query("INSERT INTO result_datasets(run_id,artifact_id,result_name,schema_json,schema_hash,row_count,size_bytes,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)")
@@ -716,10 +780,11 @@ impl RunRepo {
                         .bind::<BigInt, _>(dataset.created_at_ms)
                         .execute(conn)?;
                 }
-                diesel::sql_query("UPDATE simulation_runs SET status='succeeded',stage='completed',exit_code=0,error_json=NULL,finished_at_ms=?1 WHERE id=?2")
+                let count = diesel::sql_query("UPDATE simulation_runs SET status='succeeded',stage='completed',exit_code=0,error_json=NULL,finished_at_ms=?1 WHERE id=?2 AND status='running'")
                     .bind::<BigInt, _>(now)
                     .bind::<Integer, _>(id)
                     .execute(conn)?;
+                if count != 1 { return Err(RepoError::InvalidState("run terminal state changed".into())); }
                 diesel::sql_query("SELECT * FROM result_datasets WHERE run_id=?1 AND deleted_at_ms IS NULL ORDER BY id")
                     .bind::<Integer, _>(id)
                     .load(conn)
@@ -751,14 +816,15 @@ impl RunRepo {
                 if artifacts.len() != datasets.len() { return Err(RepoError::InvalidState("result artifact count mismatch".into())); }
                 let owned = schema::simulation_runs::table
                     .inner_join(schema::sessions::table.on(schema::sessions::id.eq(schema::simulation_runs::session_id)))
-                    .filter(schema::simulation_runs::id.eq(run_id)).filter(schema::sessions::user_id.eq(&user)).filter(schema::sessions::deletion_status.eq("live")).filter(schema::simulation_runs::deleted_at_ms.is_null()).select(schema::simulation_runs::id).first::<i32>(conn).optional()?;
-                if owned.is_none() { return Err(RepoError::NotFound); }
+                    .filter(schema::simulation_runs::id.eq(run_id)).filter(schema::sessions::user_id.eq(&user)).filter(schema::sessions::deletion_status.eq("live")).filter(schema::simulation_runs::deleted_at_ms.is_null()).filter(schema::simulation_runs::status.eq("running")).select(schema::simulation_runs::id).first::<i32>(conn).optional()?;
+                if owned.is_none() { return Err(RepoError::InvalidState("run terminal state changed".into())); }
                 for (dataset, artifact) in datasets.into_iter().zip(artifacts) {
                     diesel::sql_query("INSERT INTO result_datasets(run_id,artifact_id,result_name,schema_json,schema_hash,row_count,size_bytes,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)")
                         .bind::<Integer,_>(run_id).bind::<Integer,_>(artifact.id).bind::<Text,_>(dataset.result_name).bind::<Text,_>(dataset.schema_json).bind::<Text,_>(dataset.schema_hash).bind::<BigInt,_>(dataset.row_count).bind::<BigInt,_>(dataset.size_bytes).bind::<BigInt,_>(dataset.created_at_ms).execute(conn)?;
                 }
-                diesel::sql_query("UPDATE simulation_runs SET status='succeeded',stage='completed',exit_code=0,error_json=NULL,finished_at_ms=?1 WHERE id=?2")
+                let count = diesel::sql_query("UPDATE simulation_runs SET status='succeeded',stage='completed',exit_code=0,error_json=NULL,finished_at_ms=?1 WHERE id=?2 AND status='running'")
                     .bind::<BigInt,_>(finished_at_ms).bind::<Integer,_>(run_id).execute(conn)?;
+                if count != 1 { return Err(RepoError::InvalidState("run terminal state changed".into())); }
                 diesel::sql_query("SELECT * FROM result_datasets WHERE run_id=?1 AND deleted_at_ms IS NULL ORDER BY id").bind::<Integer,_>(run_id).load(conn).map_err(RepoError::from)
             })
             .await

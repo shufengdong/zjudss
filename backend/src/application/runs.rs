@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tokio::sync::watch;
 
 use crate::adapters::{ENGINE_CONTRACT_VERSION, ErrorCategory, RunMode, RunSpec, SimEngine};
 use crate::agent::FailureAnalyzer;
@@ -66,6 +67,7 @@ pub enum RunError {
     ScriptIncompatible(Vec<String>),
     ConfigurationStale,
     IdempotencyConflict,
+    ManagedRunCancelViaWorkflow,
     QueueFull,
     Invalid(String),
     ResultContract(&'static str, String),
@@ -87,6 +89,7 @@ impl std::fmt::Display for RunError {
             Self::ScriptIncompatible(m) => write!(f, "脚本与当前模型不兼容: {}", m.join(",")),
             Self::ConfigurationStale => write!(f, "冻结输入的来源已经变化"),
             Self::IdempotencyConflict => write!(f, "clientRunId 已用于不同运行"),
+            Self::ManagedRunCancelViaWorkflow => write!(f, "受管运行必须通过工作流取消"),
             Self::QueueFull => write!(f, "运行队列已满"),
             Self::Invalid(v) => write!(f, "{v}"),
             Self::ResultContract(_, v) => write!(f, "{v}"),
@@ -125,6 +128,7 @@ impl From<RunRepoError> for RunError {
             RunRepoError::ScriptIncompatible(m) => Self::ScriptIncompatible(m),
             RunRepoError::ConfigurationStale => Self::ConfigurationStale,
             RunRepoError::IdempotencyConflict => Self::IdempotencyConflict,
+            RunRepoError::ManagedRunCancelViaWorkflow => Self::ManagedRunCancelViaWorkflow,
             RunRepoError::RunBusy => Self::RunBusy,
             RunRepoError::ResultBusy => Self::ResultBusy,
             RunRepoError::InvalidDeletionToken => Self::InvalidDeletionImpactToken,
@@ -149,6 +153,7 @@ pub struct RunService {
     snapshot: Arc<EngineResourceSnapshot>,
     result_max_file_bytes: u64,
     failure_analyzer: Arc<dyn FailureAnalyzer>,
+    cancellations: Arc<Mutex<BTreeMap<i32, watch::Sender<bool>>>>,
 }
 
 pub(crate) struct RunServiceDependencies {
@@ -198,7 +203,43 @@ impl RunService {
             snapshot,
             result_max_file_bytes,
             failure_analyzer,
+            cancellations: Arc::new(Mutex::new(BTreeMap::new())),
         }
+    }
+
+    pub async fn cancel(&self, user: &CurrentUser, id: i32) -> Result<RunSummary, RunError> {
+        let run = self.repo.cancel(&user.id, id, now_ms()).await?;
+        if run.stage == "cancelled_by_user"
+            && let Some(sender) = self
+                .cancellations
+                .lock()
+                .expect("run cancellation registry")
+                .get(&id)
+        {
+            sender.send_replace(true);
+        }
+        let script_name = if let Some(script_id) = run.script_resource_id {
+            self.scripts.find(&user.id, script_id).await?.name
+        } else {
+            "脚本尚未生成".into()
+        };
+        Ok(RunSummary { run, script_name })
+    }
+
+    fn register_cancellation(&self, id: i32) -> watch::Receiver<bool> {
+        let (sender, receiver) = watch::channel(false);
+        self.cancellations
+            .lock()
+            .expect("run cancellation registry")
+            .insert(id, sender);
+        receiver
+    }
+
+    fn remove_cancellation(&self, id: i32) {
+        self.cancellations
+            .lock()
+            .expect("run cancellation registry")
+            .remove(&id);
     }
 
     pub async fn find(&self, user: &CurrentUser, id: i32) -> Result<SimulationRun, RunError> {
