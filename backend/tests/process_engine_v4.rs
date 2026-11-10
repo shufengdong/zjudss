@@ -1057,16 +1057,6 @@ exit 23
 #[cfg(unix)]
 #[tokio::test]
 async fn unbounded_execution_waits_and_future_cancellation_terminates_the_whole_process_group() {
-    async fn wait_for(path: &Path) {
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while !path.exists() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .unwrap();
-    }
-
     let (root, input_tree) = tree();
     let binary = root.path().join("group-engine.sh");
     write_executable(
@@ -1082,7 +1072,14 @@ wait
     let cancelled_run = spec(root.path(), &input_tree, RunMode::Analysis);
     let cancelled_result_dir = cancelled_run.result_dir.clone();
     let task = tokio::spawn(async move { cancelled_engine.run_analysis(cancelled_run).await });
-    wait_for(&heartbeat).await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !heartbeat.exists() {
+            assert!(!task.is_finished(), "引擎在写入心跳前意外结束");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("并行测试负载下引擎应在测试看门狗内写入心跳");
     assert!(
         tokio::time::timeout(Duration::from_millis(150), async {
             while !task.is_finished() {

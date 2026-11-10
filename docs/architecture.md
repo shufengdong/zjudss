@@ -110,7 +110,7 @@ repository 的异步请求路径把 Diesel 同步 SQLite 操作封装在 `spawn_
 | Artifact 已有引用计数 | `backend/src/db/repositories/artifact_refs.rs` | 唯一实现可信用户 scope 解析、重复 ID 聚合和已有 link 的 retain/release；唯一 artifact 的 usage 只在 link 创建/删除时变化 |
 | Artifact 领域事务 | 各 `backend/src/db/repositories/` 领域模块 | 决定引用集合、事务时机、stale/404 映射和 tombstone；不自行更新已有 `ref_count` |
 | SQLite insert ID | `backend/src/db/repositories/mod.rs` 的 `last_insert_rowid` | 必须在产生行的同一连接上紧跟 insert 读取；领域 repository 不再复制 SQL 形式 |
-| tensoreval 进程执行 | `backend/src/adapters/process/control.rs`、`execution.rs`、`result_scan.rs`、`monitor.rs`、`task_file.rs` | `control` 负责 spawn、双流捕获、超时/取消和进程组终止；`execution` 负责编排、退出映射与 final result；monitor 与退出后的 final scan 共用同一结果扫描语义；临时 RSS/wrapper 由 RAII 文件对象负责取消清理 |
+| tensoreval 进程执行 | `backend/src/adapters/process/control.rs`、`execution.rs`、`result_scan.rs`、`monitor.rs`、`task_file.rs` | `control` 负责 spawn、双流捕获、结果监控和 future 取消时的进程组终止，不设置生产执行超时；`execution` 负责编排、退出映射与 final result；monitor 与退出后的 final scan 共用同一结果扫描语义；临时 RSS/wrapper 由 RAII 文件对象负责取消清理 |
 | 引擎导入与投影 | `backend/src/adapters/process/import.rs` | 只编排受控 import/projector spec、临时任务文件和规范输出，不自行启动子进程或扫描结果目录 |
 | 引擎资源读取 | `backend/src/engine_resources/tree.rs`、`loader.rs` | `tree` 唯一实现安全路径、遍历及有界读取/hash；`loader` 解析 catalog、文档与案例并按实际字节生成 snapshot identity，不依赖 binary capability |
 | 引擎资源发布 | `backend/src/engine_resources/publisher.rs` | 唯一实现 generated/source inventory、复制时 hash 复核、staging 清理、原子 rename、既有 snapshot 校验和路径 rebase |

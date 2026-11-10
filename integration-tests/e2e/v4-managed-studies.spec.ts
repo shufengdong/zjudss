@@ -71,7 +71,7 @@ test('managed Newton study confirms, repairs one engine failure, and publishes o
   const baseline = await control.trace() as { author: string[]; authorRepairCount: number; engine: Array<{ scenario: string }> }
   await control.enqueueAuthor({ kind: 'script', content: newtonScript })
   await control.enqueueEngine({ kind: 'run_failure' })
-  await control.enqueueAuthor({ kind: 'script', content: newtonScript })
+  await control.enqueueAuthor({ kind: 'script', content: `${newtonScript}\n// repaired after engine diagnostic` })
   await control.enqueueEngine({ kind: 'bus_voltage_success' })
 
   const confirmResponse = page.waitForResponse(response => response.request().method() === 'POST' && /\/api\/study-configurations\/\d+\/confirm$/.test(new URL(response.url()).pathname))
@@ -206,7 +206,7 @@ test('failed managed script previews changed inputs and retries only after confi
   const configuration = await prepareNewtonStudy(page, api, sessionId, control)
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    await control.enqueueAuthor({ kind: 'script', content: newtonScript })
+    await control.enqueueAuthor({ kind: 'script', content: `${newtonScript}\n// failing candidate ${attempt + 1}` })
     await control.enqueueEngine({ kind: 'run_failure' })
   }
   const confirmResponse = page.waitForResponse(response => response.request().method() === 'POST' && /\/api\/study-configurations\/\d+\/confirm$/.test(new URL(response.url()).pathname))
@@ -248,5 +248,7 @@ test('failed managed script previews changed inputs and retries only after confi
   expect(confirmed.status(), confirmedText).toBe(200)
   const retry = JSON.parse(confirmedText) as { id: number; sourceWorkflowId: number }
   expect(retry.sourceWorkflowId).toBe(source.id)
-  await expect.poll(async () => ((await (await api.get(`/api/workflows/${retry.id}`)).json()) as { status: string }).status, { timeout: 30_000 }).toBe('succeeded')
+  await expect.poll(async () => ((await (await api.get(`/api/workflows/${retry.id}`)).json()) as { status: string }).status, { timeout: 30_000 }).toMatch(/succeeded|failed/)
+  const retriedWorkflow = await (await api.get(`/api/workflows/${retry.id}`)).json() as { status: string }
+  expect(retriedWorkflow.status, JSON.stringify({ workflow: retriedWorkflow, trace: await control.trace() }, null, 2)).toBe('succeeded')
 })

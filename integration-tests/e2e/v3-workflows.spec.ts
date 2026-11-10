@@ -88,6 +88,39 @@ test('one result can be deleted without deleting its run or sibling result', asy
   expect(after.map((dataset: any) => dataset.name)).toEqual(['keep'])
 })
 
+test('a running ordinary simulation can be cancelled from run history', async ({ appPage, control }) => {
+  const { page, api } = await appPage({ subject: 'studies@example.com' })
+  const { sessionId } = await createReadySession(page, api, '普通运行取消')
+  await page.locator('input[type=file]').first().setInputFiles(
+    resolve(process.cwd(), '../integration-tests/fixtures/uploads/rss/replacement.rss'),
+  )
+  const scriptCard = page.getByRole('article', { name: /脚本 replacement\.rss/ })
+  await expect(scriptCard).toBeVisible()
+  await control.enqueueEngine({ kind: 'cancelled', data: { barrier_id: 'ordinary-run-cancel' } })
+  await scriptCard.getByRole('button', { name: '运行' }).click()
+
+  let run: any
+  await expect.poll(async () => {
+    run = (await (await api.get(`/api/sessions/${sessionId}/runs`)).json()).runs[0]
+    return run?.status
+  }).toBe('running')
+
+  await page.getByRole('button', { name: '运行记录' }).click()
+  const cancelResponse = page.waitForResponse((response) =>
+    response.request().method() === 'POST'
+      && new URL(response.url()).pathname === `/api/runs/${run.id}/cancel`)
+  await page.getByRole('button', { name: `取消运行 ${run.id}` }).click()
+  expect((await cancelResponse).status()).toBe(200)
+  await expect.poll(async () => (await (await api.get(`/api/runs/${run.id}`)).json()).stage)
+    .toBe('cancelled_by_user')
+  const runCard = page.getByRole('button', { name: /replacement\.rss.*已取消/ }).locator('xpath=ancestor::article[1]')
+  await expect(runCard).toContainText('已取消')
+  await runCard.getByRole('button', { name: '展开运行详情' }).click()
+  await expect(runCard).toContainText('运行已由用户取消')
+  await expect(runCard).not.toContainText('失败原因')
+  await control.release('ordinary-run-cancel')
+})
+
 test('user-configured charts survive source deletion', async ({ loginAs, control }) => {
   const alice = await loginAs('alice@example.com')
   const bob = await loginAs('bob@example.com')

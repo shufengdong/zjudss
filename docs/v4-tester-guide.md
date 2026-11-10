@@ -593,7 +593,7 @@ Examples/HarmonicsVariableLoad/IEEE_519.rssbundle
 | `workflow_in_progress` | 同会话已有任务 | 等待或取消当前任务后重试 |
 | `resource_alias_conflict` | alias 已存在 | 选择另存或通过自然语言改名 |
 | `model_import_unsupported` | 当前文件无法完整投影 | 核对文件/profile；有效案例仍出现则报引擎合同缺陷 |
-| `engine_timeout` | 引擎超时 | 保存运行 ID 和诊断，交由发布/引擎负责人分析 |
+| `cancelled_by_user` | 用户取消运行 | 确认界面显示“已取消”，重复取消保持同一终态且不产生结果 |
 | `engine_contract_mismatch` | binary 与资源目录不兼容 | 停止本轮研究测试，通知发布负责人 |
 | `engine_resource_hash_mismatch` | 已发布资源 snapshot 损坏 | 停止测试，通知发布负责人重启或重新部署 |
 | `run_busy` / `result_busy` | 正被执行或派生任务占用 | 等待任务终态后重试删除 |

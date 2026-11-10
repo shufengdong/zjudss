@@ -35,7 +35,7 @@ publish。binary capability 与资源目录合同分别失败关闭；资源 loa
 | `AGENT_BUNDLE_VERSION` | `v4.4.0` |
 | `SESSION_TTL_DAYS` / `SESSION_COOKIE_SECURE` | `30` / `false` |
 | `AGENT_MAX_CONCURRENT_RUNS` / `AGENT_MAX_USER_RUNS` / `AGENT_QUEUE_CAPACITY` | `8` / `2` / `32` |
-| `TENSOREVAL_TIMEOUT_MS` / `AGENT_MODEL_RETRY_MAX` | `120000` / `2` |
+| `AGENT_MODEL_RETRY_MAX` | `2` |
 | `SCRIPT_REPAIR_MAX_ATTEMPTS` / `SCRIPT_REPAIR_STDERR_MAX_BYTES` | `3` / `65536` |
 | `ENGINE_PROCESS_OUTPUT_MAX_BYTES` | `1048576` |
 | `UPLOAD_SINGLE_FILE_LIMIT_BYTES` / `UPLOAD_BATCH_LIMIT_BYTES` / `UPLOAD_STAGING_TTL_HOURS` | `52428800` / `524288000` / `24` |
@@ -122,9 +122,14 @@ SSE 关闭缓冲。前端构建使用 VITE_BASE_PATH=/zjudss/、VITE_API_BASE_PA
 
 ## Deterministic gate
 
-V4 Task 3 起，候选发布还必须通过 `process_engine_v4`：stdout/stderr 有界流式捕获、运行中结果目录监控、超时/取消
+V4 Task 3 起，候选发布还必须通过 `process_engine_v4`：stdout/stderr 有界流式捕获、运行中结果目录监控、future 取消时
 进程组终止和退出后单次严格 final scan 均属于 adapter 发布门禁；monitor 与 final scan 共用结果目录扫描实现，
 final scan 仍在进程退出后独立执行。RSS 脚本不再依赖 zjudss 静态语法校验能力。
+
+所有生产 `tensoreval` 调用均无墙钟执行上限；遗留环境变量 `TENSOREVAL_TIMEOUT_MS` 会被忽略。调度器并发/队列上限、
+stdout/stderr 保留上限和结果文件数量/大小/路径安全限制仍生效。普通仿真和受管工作流可由用户取消；导入、案例投影和
+派生分析没有用户取消入口，只会因完成、实际错误、结果安全拒绝或服务停止而结束。自动化测试可以保留独立看门狗，
+但该看门狗不是生产引擎截止时间。
 
 ```bash
 cd backend

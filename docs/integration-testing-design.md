@@ -24,7 +24,7 @@
 - Playwright 只经真实 UI、Vite proxy 和 Axum 路由工作；ScenarioEngine 控制确定性外部行为，但不能替代 HTTP、持久化、
   浏览器交互或公共合同证据。
 
-当前确定性基线为 50 个 Vitest 文件/265 条用例、生产构建和 31 条 Playwright 旅程；Rust 全量套件的真实 eig-rs
+当前确定性基线为 54 个 Vitest 文件/292 条用例、生产构建和 32 条 Playwright 旅程；Rust 全量套件的真实 eig-rs
 验收断言若失败，必须单独报告实际无效案例，不能通过共享夹具自动跳过或改写资源合同。
 
 研究/workflow/run 维护性回归以公共 service/API 和真实 SQLite transaction 为证据：`managed_workflows.rs` 与
@@ -54,7 +54,7 @@ artifact 并使未确认研究配置失效、Struct preview/confirm 与被取代
 终态脚本消息锚点、带候选和无候选两类取消/启动恢复、active 模型切换竞争、并发重放 material 引用结算；
 Task 10 另以 `backend/tests/script_repair.rs` 覆盖首次生成后立即执行、一次成功、生成和 repair 都收到 RSS 顶层/多结果必需章节、
 非零退出修正成功及结构化失败分析、分析模型不可用时仍保留日志、相同脚本 hash 保留审计但不重复调用引擎、初始/repair 结构合同违规的
-引擎调用和预算差异、3 次实质变化的修正对应最多 4 次执行、候选配额失败终态化、结果合同拒绝后无部分发布、超时不修正、
+引擎调用和预算差异、3 次实质变化的修正对应最多 4 次执行、候选配额失败终态化、结果合同拒绝后无部分发布、
 64 KiB 脱敏 prompt、审计 stderr 隔离，以及生成阶段取消；前端组件测试覆盖失败诊断直接展示、四段分析、日志下载入口和
 默认折叠的自动修正记录。`script_contract.rs` 还直接验证两个及以上结果只有方括号解构才能通过 adapter 前的结构合同。
 `artifact_store.rs` 还验证没有数据库记录的崩溃遗留 CAS
@@ -71,7 +71,7 @@ Task 11 由 `simulation_runs.rs`、`workflow_retries.rs` 和 `result_deletion.rs
 规范 script message 锚点、按门面读取最新所需输入、开放/冻结结果合同、失败脚本在输入不变时直接派生以及输入变化时
 差异确认、完整新修正预算、派生脚本血缘、终态删除 preview/token、`run_busy`/`result_busy`、全部直接结果原子 tombstone、
 artifact 配额释放、重复删除和派生/提升血缘保留；同时覆盖普通失败 run 先落脱敏日志/终态进度、后完成结构化分析，以及分析器错误、
-30 秒超时和启动恢复的 unavailable 降级。Vitest 覆盖共享面板、旧 `engineOutput`、pending-only 轮询、请求代次隔离与读取重试；Playwright 在不打开运行记录时验证
+失败分析器自身的 30 秒超时和启动恢复的 unavailable 降级。Vitest 覆盖共享面板、旧 `engineOutput`、pending-only 轮询、请求代次隔离与读取重试；Playwright 在不打开运行记录时验证
 运行进度卡的多行脱敏 tensoreval 日志，并验证刷新后恢复。
 schema 资源的 SaveAsNew alias 分配、过期/跨路径失效 preview 回收、同用户跨会话去重原文件的引用隔离、普通资源
 分析输入/冻结血缘、并发 confirm 原文件幂等提交、同一确认声明只能取得一次执行锁、精确重放跨暂存 TTL 仍只读返回、显式 alias 冲突重放保持冻结失败语义、活动确认期间候选冻结与 DELETE 冲突、到期避让以及重启先汇总
@@ -115,14 +115,19 @@ Rust 直接工具测试验证 skill 门禁、十进制字符串 ID、当前会�
 模型发布行为还覆盖明确发布请求使用精确 draft/revision 并自动激活、消息级幂等、内容去重、stale/跨用户拒绝，以及
 普通修改、研究和“生成脚本/结果”文字不触发隐式发布。
 
-ScenarioEngine 场景由控制端按调用顺序排队，不使用 sleep；timeout/cancel 使用 barrier，并能排队提供二进制 stderr、
+ScenarioEngine 场景由控制端按调用顺序排队，不使用 sleep；长时间执行/cancel 使用 barrier，并能排队提供二进制 stderr、
 结果合同错误和监控错误。进程 adapter 的 Rust 测试使用独立 helper process 验证双流超过 1 MiB 仍持续排空、完整 hash、
-非 UTF-8、非零退出码、进程组超时/取消、运行中三类结果限额、符号链接/目录、监控失败和退出后最终扫描；所有失败
+非 UTF-8、非零退出码、生产执行不因等待时长自行结束、future drop/用户取消终止进程组、运行中三类结果限额、符号链接/目录、监控失败和退出后最终扫描；所有失败
 都断言未发布目录被清理。退出后的 final scan 只执行一次并与 monitor 共享扫描实现，同时仍独立复核退出瞬间的目录；
 import/projector 的临时 wrapper 与 RSS 通过 future cancellation 测试证明会被清理。engine resource 测试精确断言
 snapshot identity、catalog 版本、generated + manifest-declared source inventory、逐文件 hash、既有目录损坏拒绝和原子发布后的
 path rebase；binary probe 先于且独立于 resource load。测试证据写入
 `target/functional-coverage/e2e-routes.ndjson`，包含通过的测试名及实际 method/path/status。
+
+普通运行专项测试覆盖排队取消、运行中进程组取消、重复取消幂等、完成/取消竞态只保留首个终态、跨用户 404，以及受管
+run 返回 `managed_run_cancel_via_workflow` 并要求走 workflow 端点。Vitest 覆盖普通/受管端点分流、失败恢复按钮和
+`cancelled_by_user` 的中性终态。测试中的 `tokio::time::timeout`、Vitest/Playwright timeout 只用于发现挂死，不传入生产
+engine spec。导入、案例投影和派生分析不测试用户取消，因为产品没有这些入口；它们只验证完成、实际错误、结果安全拒绝和服务停止清理。
 
 ## Commands
 
@@ -178,5 +183,9 @@ Vitest 文件、265/265 用例、生产构建、31/31 Playwright，以及 350/35
 2026-11-06 eig-rs/sparrowzz 发布 Dynamic V13 完整合同后，zjudss 未过滤 `cargo test --features e2e-test`
 在允许本机回环监听的环境中通过；真实 release-engine 同时通过 19/19 ProcessEngine 测试、150/150 案例 projector
 和 6/6 profile 代表运行。上述 7 个 `case_projection_invalid` 已由资源合同修复并关闭，不再是当前阻塞。
+
+2026-11-10 无固定引擎超时与用户取消阶段重新通过未过滤 Rust 全套、54/54 文件共 292/292 项 Vitest、生产构建和
+32/32 Playwright；功能追溯为 351/351，公共合同为 298/298，30/30 条目均有效且 `gatePassed=true`。新增浏览器旅程从
+运行记录取消一条真实运行中的普通仿真，并为 `POST /api/runs/{id}/cancel` 产生 200 路由证据。
 
 案例库应用以整体切换验收：准备阶段不发布，确认后 active 为新建或复用的模型版本、draft 为空、上一案例配套资源退出 live 集合，历史资源引用保留。`case_import` 行为测试覆盖重复案例去重、资源切换、资源发布失败回滚、用户资源 alias 冲突保护和过期确认基线；浏览器案例旅程覆盖“确认切换案例”与自动激活。独立全案例人工旅程在确认后验证 active，不再额外请求 Agent 发布同一案例。

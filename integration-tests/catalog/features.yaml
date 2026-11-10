@@ -1046,9 +1046,6 @@
       name: initial_contract_rejection_does_not_execute_and_repair_consumes_budget
     - runner: rust
       file: backend/tests/script_repair.rs
-      name: timeout_is_not_repaired
-    - runner: rust
-      file: backend/tests/script_repair.rs
       name: repair_budget_allows_at_most_four_engine_calls
     - runner: rust
       file: backend/tests/script_repair.rs
@@ -1062,7 +1059,7 @@
     - runner: rust
       file: backend/src/application/script_contract.rs
       name: requires_bracketed_binding_for_multiple_results
-  assertions: [initial generation runs immediately, generation and repair receive required RSS syntax before function-specific docs, each candidate and parent attempt is durable, structural contract violations including unbracketed multi-result bindings never reach tensoreval, repair candidates consume the configured budget, three changed repairs permit at most four engine calls, nonzero exits and result contract violations are repairable, timeout monitor path quota and infrastructure failures stop immediately, stderr sent to the model is sanitized and bounded while raw retained bytes remain audit only, failure analysis is bounded and cannot hide logs when unavailable, identical parent and repair hashes remain audited without another engine call, cancellation interrupts author or engine work, exact result names and schemas publish atomically without partial datasets]
+  assertions: [initial generation runs immediately, generation and repair receive required RSS syntax before function-specific docs, each candidate and parent attempt is durable, structural contract violations including unbracketed multi-result bindings never reach tensoreval, repair candidates consume the configured budget, three changed repairs permit at most four engine calls, nonzero exits and result contract violations are repairable, monitor path quota and infrastructure failures stop immediately, stderr sent to the model is sanitized and bounded while raw retained bytes remain audit only, failure analysis is bounded and cannot hide logs when unavailable, identical parent and repair hashes remain audited without another engine call, cancellation interrupts author or engine work, exact result names and schemas publish atomically without partial datasets]
   fixtures: [minimal dynamic facade, frozen model and Struct resource, scripted author, scenario engine]
   contracts:
     - "error:repair_contract_violated"
@@ -1201,6 +1198,9 @@
       name: one result can be deleted without deleting its run or sibling result
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
+      name: a running ordinary simulation can be cancelled from run history
+    - runner: playwright
+      file: integration-tests/e2e/v3-workflows.spec.ts
       name: failed run progress shows persistent sanitized tensoreval output without requesting datasets
     - runner: rust
       file: backend/tests/simulation_runs.rs
@@ -1220,6 +1220,18 @@
     - runner: rust
       file: backend/tests/simulation_runs.rs
       name: successful_run_publishes_a_terminal_done_progress_event
+    - runner: rust
+      file: backend/tests/simulation_runs.rs
+      name: active_and_queued_runs_cancel_idempotently_without_failure_analysis_or_results
+    - runner: rust
+      file: backend/tests/simulation_runs.rs
+      name: managed_run_cancel_route_requires_the_workflow_endpoint
+    - runner: rust
+      file: backend/tests/auth_scope.rs
+      name: cancel_run_is_owner_scoped_and_cross_user_is_hidden
+    - runner: rust
+      file: backend/tests/failure_atomicity.rs
+      name: cancel_and_result_publication_preserve_the_first_terminal_state
     - runner: rust
       file: backend/tests/simulation_runs.rs
       name: manual_script_runs_once_without_an_active_model_and_freezes_its_message_anchor
@@ -1290,6 +1302,24 @@
       file: frontend/src/components/runs/RunHistory.test.tsx
       name: refreshes expanded results after deletion and ignores the obsolete response
     - runner: vitest
+      file: frontend/src/hooks/useRunHistory.test.ts
+      name: routes ordinary and managed cancellation to their exclusive endpoints and reloads after success
+    - runner: vitest
+      file: frontend/src/hooks/useRunHistory.test.ts
+      name: keeps the current row and propagates cancellation failures without reloading
+    - runner: vitest
+      file: frontend/src/components/runs/RunHistory.test.tsx
+      name: offers cancellation only for live runs and disables the action while cancellation is pending
+    - runner: vitest
+      file: frontend/src/components/runs/RunHistory.test.tsx
+      name: restores the cancellation action and bounds the per-run error after failure
+    - runner: vitest
+      file: frontend/src/components/runs/RunHistory.test.tsx
+      name: presents user cancellation as a neutral terminal state with duration and timestamps
+    - runner: vitest
+      file: frontend/src/components/runs/runPresentation.test.ts
+      name: recognizes the public user-cancelled terminal shape without widening the status union
+    - runner: vitest
       file: frontend/src/components/messages/FailureDiagnosisPanel.test.tsx
       name: shows logs, metadata, truncation and all structured analysis sections
     - runner: vitest
@@ -1316,18 +1346,20 @@
     - runner: vitest
       file: frontend/src/hooks/useRunFailureDiagnosis.test.tsx
       name: ignores_stale_detail_responses_and_clears_polling_on_unmount
-  assertions: [run binds an immutable script and canonical message anchor while freezing the latest required active model and live resources, resource-only manual scripts run without an active model, successful Agent scripts execute once without repair, retry and generated-script rerun preserve frozen user and selector overrides only across explicit replacement descendants, same-alias resources without lineage are rejected, source-less and legacy snapshots remain replayable, cyclic or over-depth lineage fails as configuration stale, unchanged retries reuse the effective artifact, existing clientRetryId and clientRunId operations replay before mutable resource reads or overlay materialization, failed Agent scripts retry through a derived workflow with a fresh correction budget and explicit confirmation when inputs changed, run and result lists remain readable, successful run progress has no running stage, failed run progress shows bounded sanitized multiline tensoreval logs and analysis inline and survives refresh, analyzer failure timeout and restart never hide stored logs, workflow and run progress share one diagnosis panel while polling only pending analysis, terminal run deletion requires a fresh impact token and atomically tombstones all direct results, scripts never auto-run]
+  assertions: [run binds an immutable script and canonical message anchor while freezing the latest required active model and live resources, resource-only manual scripts run without an active model, successful Agent scripts execute once without repair, retry and generated-script rerun preserve frozen user and selector overrides only across explicit replacement descendants, same-alias resources without lineage are rejected, source-less and legacy snapshots remain replayable, cyclic or over-depth lineage fails as configuration stale, unchanged retries reuse the effective artifact, existing clientRetryId and clientRunId operations replay before mutable resource reads or overlay materialization, failed Agent scripts retry through a derived workflow with a fresh correction budget and explicit confirmation when inputs changed, run and result lists remain readable, queued and active ordinary runs cancel idempotently without publishing results or failure analysis, cancellation is owner scoped and preserves the first terminal state, managed runs require workflow cancellation, the frontend routes each kind to its governed endpoint and displays user cancellation neutrally, successful run progress has no running stage, failed run progress shows bounded sanitized multiline tensoreval logs and analysis inline and survives refresh, analyzer failure timeout and restart never hide stored logs, workflow and run progress share one diagnosis panel while polling only pending analysis, terminal run deletion requires a fresh impact token and atomically tombstones all direct results, scripts never auto-run]
   fixtures: [published model, valid RSS script, successful and failed runs, multi-result run]
   contracts:
     - "route:POST /api/scripts/{id}/runs"
     - "route:GET /api/sessions/{id}/runs"
     - "route:GET /api/runs/{id}"
+    - "route:POST /api/runs/{id}/cancel"
     - "route:GET /api/runs/{id}/datasets"
     - "route:POST /api/scripts/{id}/retry-previews"
     - "route:POST /api/retry-previews/{id}/confirm"
     - "route:POST /api/runs/{id}/deletion-preview"
     - "route:DELETE /api/runs/{id}"
     - "error:run_busy"
+    - "error:managed_run_cancel_via_workflow"
     - "error:no_result_dataset"
     - "error:client_retry_id_invalid"
     - "error:retry_not_available"
@@ -1545,7 +1577,7 @@
       name: nonzero_exit_keeps_actual_code_and_bounded_binary_stderr_without_partial_datasets
     - runner: rust
       file: backend/tests/process_engine_v4.rs
-      name: timeout_and_future_cancellation_terminate_the_whole_process_group
+      name: unbounded_execution_waits_and_future_cancellation_terminates_the_whole_process_group
     - runner: rust
       file: backend/tests/process_engine_v4.rs
       name: live_result_monitor_enforces_file_count_file_size_and_total_size
@@ -1561,12 +1593,11 @@
     - runner: release
       file: scripts/test-release-engine
       name: real_engine_projects_all_examples_and_runs_representative_studies
-  assertions: [process commands are controlled, stdout and stderr are drained with bounded retained bytes and full hashes, timeout cancellation and monitor failures terminate the process group, result limits and path safety are enforced during execution and after exit without partial datasets, case projectors use one-shot internal scripts and exact ordered Parquet output contracts, current resources are published immutably, binary replacement takes effect on the next call, release gate executes the real projector for every published manifest case and validates its Model Data Struct and diagnostic outputs, then runs managed.rss for one successful representative of every referenced profile]
+  assertions: [process commands are controlled, stdout and stderr are drained with bounded retained bytes and full hashes, production execution remains pending without a wall-clock deadline, future cancellation and monitor failures terminate the process group, result limits and path safety are enforced during execution and after exit without partial datasets, test watchdogs remain outside production engine specs, case projectors use one-shot internal scripts and exact ordered Parquet output contracts, current resources are published immutably, binary replacement takes effect on the next call, release gate executes the real projector for every published manifest case and validates its Model Data Struct and diagnostic outputs, then runs managed.rss for one successful representative of every referenced profile]
   fixtures: [fake process engine, dynamic rssbundle resource tree, current real eig-rs rssbundle catalog]
   contracts:
     - "tool:search_engine_docs"
     - "tool:read_engine_doc_section"
-    - "error:engine_timeout"
     - "error:result_monitor_failed"
     - "error:result_file_limit"
     - "error:result_file_too_large"

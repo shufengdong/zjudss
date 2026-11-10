@@ -16,7 +16,7 @@
 |---|---|---|
 | Task 1：空库 schema、配置与合同基线 | complete | `6607387`，V4 schema/config/manifest 聚焦测试 |
 | Task 2：动态 DataFrame 研究门面 | complete | 独立 catalog 版本、动态门面真实目录门禁、隔离诊断、传递 schema/hash、current snapshot 事务 |
-| Task 3：统一 tensoreval 进程边界 | complete | 双流有界捕获/完整 hash、运行中结果监控、进程组超时与取消、最终严格扫描、无部分结果 |
+| Task 3：统一 tensoreval 进程边界 | complete | 双流有界捕获/完整 hash、运行中结果监控、无固定执行超时、future drop 时终止进程组、最终严格扫描、无部分结果 |
 | Task 4：统一上传、解析设置与用途确认 | complete | upload batch API、24h 可配置 TTL、并发 reservation、CSV/Excel/Parquet/DSS/案例候选、20+para 拆分、动态 catalog 表头推断 |
 | Task 5：独立数据资源发布与管理 | complete | model/resource 双子事务、普通 Data/Struct 资源、替换/删除/提升、资源分析、4 个 Agent 工具 |
 | Task 6：目录驱动研究配置 | complete | revision 状态机、动态 model/Data/Struct/结果卡、唯一资源自动绑定与真实多资源消歧、server-owned 结果 selector、受控列映射、待确认结果可继续编辑、最终确认准备合同、3 个 Agent 工具 |
@@ -27,7 +27,7 @@
 | Task 8：V4 Agent bundle 与受控工具 | complete | `v4.4.0`、5 个按需 skills（`study-planning@1.5.0`）、23 个对话工具；研究配置包含模型生成的详细说明和服务端权威页脚；明确自然语言可发布精确草稿并自动激活，也可按当前卡片精确 revision 修改结果；无聊天脚本创建、图表创建、自动确认或旧规划权限 |
 | Task 12：统一上传与数据文件工作台 | complete | 旧模型导入前端已移除、durable batch 摘要恢复、用途/隐藏 sheet/双子事务确认；案例完整卡归入模型工作区，普通上传完整卡归入数据文件页；资源分页预览/下载/删除/replacement、模型版本描述 |
 | Task 13：研究确认与受管执行前端 | complete | 对话内上传摘要与可按配置记忆收起状态的研究配置卡、只呈现待处理输入、参数模板只读与运行覆盖提示、server-owned selector 隐藏、错误自动展开、目录类型参数、revision stale 刷新、attempt/取消/失败重试、精确脚本定位、run 删除影响确认 |
-| Task 14：确定性全链路测试与功能追溯 | complete | 31 条 Playwright 旅程；350/350 功能证据、297/297 公共合同、PR 覆盖 100% |
+| Task 14：确定性全链路测试与功能追溯 | complete | 32 条 Playwright 旅程；351/351 功能证据、298/298 公共合同、PR 覆盖 100% |
 | Task 15：文档、真实依赖门禁与发布切换 | complete | V4 当前文档与空库部署合同；动态真实引擎门禁；固定用户登录、真实 LLM 规划、受管执行/重跑、分析、比较和删除语义旅程 |
 | 用户配置图表工作台 | complete | 六类受控配置、capability/预览/保存/会话发现/删除七条 API、不可变 Snappy Parquet Plot Data、来源删除后恢复、390px 与跨用户浏览器旅程；不授予 LLM 图表权限 |
 
@@ -46,9 +46,9 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 | 独立数据资源 | complete | 会话唯一 alias、原文件/规范 Parquet、Struct 覆盖预览、重新上传替换、删除影响、结果提升和分析输入 |
 | 草稿与版本 | complete | expected revision、整表覆盖、显式发布/激活、影响预览删除 |
 | 案例库 | complete | schema v2 manifest 与 projection profile 严格匹配；2026-11-06 当前候选 150/150 案例通过受控 projector 转成目录声明的 Model/Data/Struct 候选，diagnostic 不进入输入；原生结果允许包含未进入受管有序子集的附加结果 |
-| 脚本与运行 | complete | 受管 Agent 脚本已实现候选持久化、直接执行、自动修正和冻结结果合同；普通运行与工作流共用脱敏日志/失败分析器，失败进度卡可恢复展示诊断；成功脚本单次运行读取最新所需输入，失败脚本可比较输入后派生“重新尝试”，手写/上传脚本开放结果合同且不修正；终态 run 支持影响预览和原子删除 |
+| 脚本与运行 | complete | 受管 Agent 脚本已实现候选持久化、直接执行、自动修正和冻结结果合同；所有生产 tensoreval 调用默认运行到完成，普通运行与工作流可由用户取消并终止进程组；两者共用脱敏日志/失败分析器，失败进度卡可恢复展示诊断；成功脚本单次运行读取最新所需输入，失败脚本可比较输入后派生“重新尝试”，手写/上传脚本开放结果合同且不修正；终态 run 支持影响预览和原子删除 |
 | 结果与派生 | complete | 单结果删除、分析、用户配置图表、比较、tombstone 血缘；图表冻结来源快照与自己的 Plot Data，来源删除后仍可发现和读取 |
-| 前端 | complete | 三列/窄屏、模型详细说明先于研究配置卡、配置卡按浏览器会话记忆收起状态且错误自动展开、Struct 参数显示只读模板身份与本次运行覆盖、运行摘要与失败原因/耗时/全结果选择、普通运行与研究工作流共用失败诊断面板、成功研究的脚本/运行结果成果归组与脚本锚定、pending-only 轮询、结果数据表、用户配置图表工作台、active/draft/历史模型表只读工作台、登录用户菜单 |
+| 前端 | complete | 三列/窄屏、模型详细说明先于研究配置卡、配置卡按浏览器会话记忆收起状态且错误自动展开、Struct 参数显示只读模板身份与本次运行覆盖、运行摘要与失败原因/耗时/全结果选择、排队/运行中取消入口及中性“已取消”终态、普通运行与研究工作流共用失败诊断面板、成功研究的脚本/运行结果成果归组与脚本锚定、pending-only 轮询、结果数据表、用户配置图表工作台、active/draft/历史模型表只读工作台、登录用户菜单 |
 | Agent bundle | complete | V4 `v4.4.0`、`study-planning@1.5.0`、23 个受控工具；DeepSeek/百炼 provider；`publish_model_version` 只响应明确发布意图并发布精确草稿 revision；`search_study_facades`/`prepare_study` 要求模型详细说明，并以服务端权威页脚先于配置卡完成准备；`update_study_results` 只修改当前未确认卡片结果，对话 Agent 无通用脚本、图表创建或最终确认权限 |
 | 发布门禁 | complete | deterministic Rust/Vitest/build/Playwright/coverage；真实 eig-rs/tensoreval 与所选 LLM provider 候选门禁 |
 
@@ -61,9 +61,10 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 - Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `SPARROWZZ_DIR` 动态发现并验证
   `dss/docs/catalog`（含 case projection schema v2）与 `dss/rssbundle` manifest schema v2，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
 - 每次 tensoreval 调用均由统一 adapter 流式排空 stdout/stderr；每流按 `ENGINE_PROCESS_OUTPUT_MAX_BYTES` 保留等额首尾并
-  记录完整 hash/总字节数。运行中和退出后都检查结果数量、单文件/总量、普通文件和路径边界；失败、超时或取消会
-  终止整个进程组并清理未发布目录。
-- 公共合同：81 条唯一 method/path 路由、12 类消息、23 个工具、5 个 skills、8 个上传来源、6 类图表。
+  记录完整 hash/总字节数。生产调用没有墙钟执行上限，默认等待引擎完成；运行中和退出后都检查结果数量、单文件/总量、
+  普通文件和路径边界。实际失败、结果监控/安全拒绝或调用 future 被取消时会终止整个进程组并清理未发布目录。
+  普通运行与受管工作流提供用户取消；导入、案例投影和派生分析没有用户取消入口，只会因完成、实际失败、结果安全拒绝或服务停止结束。
+- 公共合同：82 条唯一 method/path 路由、12 类消息、23 个工具、5 个 skills、8 个上传来源、6 类图表。
 - 静态 DSS adapter profile 固定输出 21 张规范 DataFrame；统一上传把其中 20 张网络表作为模型候选，把 `para`
   作为普通 Data resource 候选。其他模型表完全由当前 engine snapshot 的有效 model schema 和实际表头推断。
 - 研究配置：`search_study_facades` 按当前 snapshot 返回目录门面、方法差异和禁用诊断，显式函数不会被拓扑改写；
@@ -73,7 +74,7 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
   确认成功会以同一配置 ID 原位发布 `confirmed` 卡片，Agent 历史按用户、会话和数据库权威状态筛选最新可编辑配置，不会把滞后的
   `study-config` 消息重新解释为当前待确认配置。
   `prepare_confirmation` 重新检查 revision、snapshot、门面 hash、active 模型和资源内容，生成 Task 9 原子事务使用的
-  locked contract/input snapshot/private Struct overlays；confirm 公共路由原子创建受管 workflow 与 provisional run，并由无工具 ScriptAuthor 生成候选。generation/repair 都优先取得当前 snapshot 的 RSS 顶层和多结果声明，再附加函数章节；多结果必须使用方括号解构。retry/rerun 只跟随最多 64 层显式 replacement 血缘，拒绝同 alias 冒充、循环和超深链；source-less 输入复用冻结 artifact，旧 snapshot 回退到合并 overrides。候选先经过冻结函数、alias 顺序、精确结果名与多结果解构结构合同检查，再通过统一 adapter 调用 tensoreval；与父候选 hash 相同的 repair 仍记录 attempt 和预算，但不重复执行。非零退出或可修正的结果限制/合同错误最多修正 3 次；超时、监控、路径、配额和基础设施错误立即失败。成功仅在全部结果名称、列顺序、逻辑 dtype、实际非空值和可用 unit 元数据满足 Snappy Parquet 结果合同时原子发布。
+  locked contract/input snapshot/private Struct overlays；confirm 公共路由原子创建受管 workflow 与 provisional run，并由无工具 ScriptAuthor 生成候选。generation/repair 都优先取得当前 snapshot 的 RSS 顶层和多结果声明，再附加函数章节；多结果必须使用方括号解构。retry/rerun 只跟随最多 64 层显式 replacement 血缘，拒绝同 alias 冒充、循环和超深链；source-less 输入复用冻结 artifact，旧 snapshot 回退到合并 overrides。候选先经过冻结函数、alias 顺序、精确结果名与多结果解构结构合同检查，再通过统一 adapter 调用 tensoreval；与父候选 hash 相同的 repair 仍记录 attempt 和预算，但不重复执行。非零退出或可修正的结果限制/合同错误最多修正 3 次；监控、路径、配额和基础设施错误立即失败。引擎执行本身无固定超时，工作流取消通过 future cancellation 中止当前进程组。成功仅在全部结果名称、列顺序、逻辑 dtype、实际非空值和可用 unit 元数据满足 Snappy Parquet 结果合同时原子发布。
 - 模型表读取：active、准确 draft revision 和历史版本均支持元数据、分页投影与 Parquet 下载；Agent 可通过
   有界等值查询读取实际行后再修改，读取不改变模型生命周期。
 - 用户配置图表：固定 API 从仿真/分析 DataFrame 发现标量及最多四层数值 List 分量，服务端校验六类受控配置并编译
@@ -366,3 +367,8 @@ manifest、contract manifest 聚焦测试。完整 `cargo test --features e2e-te
 
 本阶段未修改前端，因此没有把未执行的 Vitest/build/Playwright 记为新增证据；也未重新运行真实 LLM provider、
 `scripts/test-release-engine` 或 150 案例自然语言长测，不能用上述确定性门禁替代下一候选的真实发布 lane。
+
+2026-11-10 无固定引擎超时与用户取消阶段通过后端格式、全 target/all feature 零警告 Clippy、允许本机回环后的未过滤
+`cargo test --features e2e-test`、54/54 文件共 292/292 项 Vitest、生产构建和 32/32 Playwright。PR 功能门禁为
+351/351 功能证据、298/298 公共合同、30/30 目录条目和 100% 追溯。生产 `tensoreval` 不再使用墙钟截止时间；测试看门狗
+仍保持有界，其中进程心跳看门狗按全套并行负载放宽到 10 秒。恢复与受管研究浏览器旅程也已改用当前 cancellation/候选变化合同。

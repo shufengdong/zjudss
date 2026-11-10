@@ -24,7 +24,7 @@ test('committed sessions and results survive restart while a running script conv
 
   await page.locator('input[type=file]').first().setInputFiles(resolve(process.cwd(), '../integration-tests/fixtures/uploads/rss/replacement.rss'))
   const restartCard = page.getByRole('article', { name: /脚本 / }).last()
-  await control.enqueueEngine({ kind: 'timeout', data: { barrier_id: 'restart-running' } })
+  await control.enqueueEngine({ kind: 'cancelled', data: { barrier_id: 'restart-running' } })
   await restartCard.getByRole('button', { name: '运行' }).click()
   let interrupted: any
   await expect.poll(async () => {

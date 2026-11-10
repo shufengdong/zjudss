@@ -87,6 +87,7 @@ application 调用与响应语义，但不替代路由注册表。公共错误�
 | POST | `/api/retry-previews/{id}/confirm` | 用户确认输入差异后创建派生 workflow |
 | GET | `/api/sessions/{id}/runs` | 运行记录 |
 | GET | `/api/runs/{id}` | 冻结运行快照 |
+| POST | `/api/runs/{id}/cancel` | 幂等取消排队中或运行中的普通仿真；受管运行必须取消 workflow |
 | POST | `/api/runs/{id}/deletion-preview` | 返回终态运行、直接结果和派生引用影响 token |
 | DELETE | `/api/runs/{id}` | 以 impact token 原子 tombstone 运行与全部直接结果 |
 | GET | `/api/runs/{id}/datasets` | 运行的存活结果 |
@@ -238,7 +239,8 @@ script 消息时一次性绑定，之后不可更换。正常完成、取消或�
 首次确认提交后，后端立即调用无工具 `ScriptAuthor` 生成候选并保存 candidate artifact。结构检查只验证冻结门面函数、
 输入 alias/顺序、Struct 资源引用和结果绑定未变化；一般 RSS 语义与运行可行性以 tensoreval 为准。候选通过结构检查后
 立即使用确认时冻结的 model/Data/Struct artifact 构造私有命名输入树并执行。非零退出、结果数量/大小限制和
-`result_contract_invalid` 可进入修正；`engine_timeout`、`result_monitor_failed`、路径安全、配额和基础设施错误直接失败。
+`result_contract_invalid` 可进入修正；`result_monitor_failed`、路径安全、配额和基础设施错误直接失败。生产引擎执行没有
+固定墙钟上限，默认等待完成；取消工作流会取消当前引擎 future 并终止其进程组。
 默认最多 3 个 repair candidate，因此最多 4 次引擎调用。每次引擎失败先持久化公开脱敏日志，再 best-effort 调用独立的
 失败分析模型；模型不可用、超时或返回非法 JSON 不得隐藏日志、阻断修正或改变终态。每个 repair prompt 固定包含当前完整脚本、脱敏 stderr、结构或
 结果诊断、冻结合同和“只输出修改后的完整脚本，不要解释”。发送内容按 UTF-8 边界保留 64 KiB 首尾；完整有界 stderr
@@ -319,6 +321,14 @@ tensoreval 以非零状态退出时保留实际退出码。原始有界 stderr �
 已创建操作在调度、读取当前资源和物化 overlay 之前直接返回原 workflow/run；事务内仍二次检查以处理并发。门面 hash
 变化返回 `study_contract_changed`。
 
+`POST /api/runs/{id}/cancel` 只用于普通仿真。排队中或运行中的 run 原子收敛为 `status=failed`、
+`stage=cancelled_by_user` 和公开 `error.code=cancelled_by_user`，不会发布结果或启动失败分析；并发完成与取消只允许第一个终态提交。
+重复取消已终态普通 run 幂等返回当前快照。不存在或跨用户统一返回 404；受管 run 返回
+`409 managed_run_cancel_via_workflow`，客户端必须改用 `POST /api/workflows/{id}/cancel`。前端将
+`cancelled_by_user` 显示为中性的“已取消”，不作为普通计算失败展示。
+数据库中既有的 `engine_timeout` 错误 JSON 不迁移也不重写，仍经通用历史失败兼容读取；当前生产合同和稳定错误枚举不再
+包含或产生该错误码。
+
 终态运行通过 `POST /api/runs/{id}/deletion-preview` 获取短期影响 token，再用
 `DELETE /api/runs/{id}?impactToken=...` 原子 tombstone run 和全部存活直接结果并释放其 artifact 引用。排队/运行中返回
 `run_busy`，任一直接结果正被分析消费时返回 `result_busy`；已完成的派生、比较、视图和提升资源保留冻结血缘。
@@ -363,7 +373,7 @@ DELETE 携带 opaque `impactToken` 并在事务中重新计算影响。影响变
 
 主要稳定错误包括认证/隔离、配额与上传、导入与草稿冲突、模型表分页/读取/受控查询、脚本输入兼容、active race、
 运行队列、版本删除影响变化、结果 busy、分析/比较/视图校验、历史索引不可用、engine snapshot/contract 不匹配，
-以及引擎超时、结果监控/容量/路径失败。权威枚举由
+以及结果监控/容量/路径失败。权威枚举由
 `cargo run --bin contract-manifest` 产生，并由功能目录逐项覆盖。
 
 上传批次详情的 `diagnostics` 包含模型和数据发布子事务的失败信息；对象形态合并至 `errors`，数组形态追加。`resource_alias_conflict` 的 `message` 列出当前会话内冲突资源名称和别名，提示修改别名后重试，不改变稳定错误码。
