@@ -40,6 +40,7 @@ pub mod upload_confirmation;
 mod upload_processing;
 pub mod uploads;
 pub mod versions;
+mod workflow_result_contract;
 pub mod workflow_worker;
 
 use std::path::PathBuf;
