@@ -59,7 +59,9 @@ impl EventWriter {
         run_id: Option<i32>,
     ) -> Result<AppEvent, RepoError> {
         #[cfg(feature = "e2e-test")]
-        if crate::testing::FaultInjector.take(crate::testing::FaultPoint::EventCommit) {
+        if crate::testing::FaultInjector
+            .take(crate::testing::FaultPoint::EventCommit, self.session_id)
+        {
             return Err(RepoError::Storage(
                 "injected event commit failure".to_string(),
             ));
@@ -92,7 +94,9 @@ impl EventWriter {
         payload: &T,
     ) -> Result<AppEvent, RepoError> {
         #[cfg(feature = "e2e-test")]
-        if crate::testing::FaultInjector.take(crate::testing::FaultPoint::EventCommit) {
+        if crate::testing::FaultInjector
+            .take(crate::testing::FaultPoint::EventCommit, self.session_id)
+        {
             return Err(RepoError::Storage(
                 "injected event commit failure".to_string(),
             ));
