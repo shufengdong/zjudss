@@ -118,7 +118,7 @@ impl ControlState {
             llm,
             engine,
             author: Arc::new(ScriptedAuthor::default()),
-            faults: FaultInjector,
+            faults: FaultInjector::default(),
             artifacts: None,
             pool: None,
         }

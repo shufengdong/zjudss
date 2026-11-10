@@ -201,7 +201,8 @@ Agent bundle/权限；没有 adapter 外进程启动，也没有把任意 EChart
   write-before-publish、operation revision、SSE replay 和公开导出保持不变；
 - 托管结果 schema/dtype/unit/非空校验集中到 `workflow_result_contract.rs`；repository 的连接本地
   `last_insert_rowid` 集中到共享 helper，调用仍紧跟同连接 insert；
-- E2E 事件提交故障新增 session 作用域计数，控制路由的全局一次性注入保持兼容，默认并行测试不再跨会话抢占；
+- E2E 事件提交故障新增 app scope + session 作用域计数，控制路由的全局一次性注入保持兼容，不同临时数据库的同号
+  session 在默认并行测试中不再互相抢占；
 - adapter/Agent/engine resource、组合根、应用门面、认证/catalog/ingestion/storage、repository 与工具注册补齐所有权 Rustdoc。
   `catalog/schema.rs`、事件投影、图表公共合同和 `workflow_worker.rs` 仍保留各自完整合同/编排，不为缩短文件复制规则。
 

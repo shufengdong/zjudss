@@ -1,6 +1,8 @@
 //! session 级实时事件广播通道。
 
 use std::collections::HashMap;
+#[cfg(feature = "e2e-test")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::broadcast;
@@ -8,14 +10,34 @@ use tokio::sync::broadcast;
 use super::AppEvent;
 
 /// 按 session 隔离的事件总线（每条 session 一条 broadcast 通道）。
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct EventBus {
     senders: Arc<Mutex<HashMap<i32, broadcast::Sender<AppEvent>>>>,
+    #[cfg(feature = "e2e-test")]
+    fault_scope_id: usize,
+}
+
+#[cfg(feature = "e2e-test")]
+static NEXT_FAULT_SCOPE_ID: AtomicUsize = AtomicUsize::new(1);
+
+impl Default for EventBus {
+    fn default() -> Self {
+        Self {
+            senders: Arc::default(),
+            #[cfg(feature = "e2e-test")]
+            fault_scope_id: NEXT_FAULT_SCOPE_ID.fetch_add(1, Ordering::Relaxed),
+        }
+    }
 }
 
 impl EventBus {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    #[cfg(feature = "e2e-test")]
+    pub(crate) fn fault_scope_id(&self) -> usize {
+        self.fault_scope_id
     }
 
     /// 订阅某 session 的事件流（懒创建通道）。

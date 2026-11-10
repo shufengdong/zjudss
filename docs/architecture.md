@@ -116,7 +116,7 @@ repository 的异步请求路径把 Diesel 同步 SQLite 操作封装在 `spawn_
 | 引擎资源发布 | `backend/src/engine_resources/publisher.rs` | 唯一实现 generated/source inventory、复制时 hash 复核、staging 清理、原子 rename、既有 snapshot 校验和路径 rebase |
 | 后端 E2E 状态装配 | `backend/src/testing/app.rs`、`backend/src/testing/engine_fixture.rs` | 统一 minimal/runtime 限制、scheduler、override 与 snapshot 到 `AppStateOptions` 的映射；仅在 `e2e-test` feature 下编译 |
 | 后端集成测试生命周期 | `backend/tests/common/app.rs` | 只负责临时目录、数据库迁移、用户 seed 和调用共享 E2E 状态装配，不复制 `AppStateOptions` 构造 |
-| E2E 事件提交故障 | `backend/src/testing/faults.rs` | 控制路由保留全局一次性故障；进程内并行测试按 session 注入，避免其他会话抢先消费计数 |
+| E2E 事件提交故障 | `backend/src/testing/faults.rs` | 控制路由保留全局一次性故障；进程内并行测试按 app scope + session 注入，避免其他临时数据库的同号会话抢先消费计数 |
 | 前端 HTTP 传输 | `frontend/src/api/client.ts` 的 `checkedFetch` 与共享下载路径 | 集中凭据、错误体解析和取消信号；领域 API 模块仍负责 URL、DTO 和业务参数 |
 | 前端 DTO 测试数据 | `frontend/src/test/fixtures.ts` | 仅供测试使用；builder 自有的默认值每次深度隔离并只接受顶层覆盖，传入 override 的所有权仍属于调用方 |
 | live 结果来源事实 | `backend/src/application/result_sources.rs` | 唯一组合 dataset 用户/live 校验、会话、artifact scope、schema 与 artifact content hash；不拥有删除或发布事务 |

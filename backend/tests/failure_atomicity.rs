@@ -42,7 +42,8 @@ async fn injected_event_commit_failure_publishes_nothing_and_keeps_history_reada
     );
     writer.assistant("已发布历史").await.unwrap();
     let mut subscriber = app.state.events.subscribe(session.id);
-    FaultInjector.fail_next_for_session(FaultPoint::EventCommit, session.id);
+    FaultInjector::for_event_bus(&app.state.events)
+        .fail_next_for_session(FaultPoint::EventCommit, session.id);
     assert!(writer.assistant("不得发布").await.is_err());
     assert!(subscriber.try_recv().is_err());
     let history = app
@@ -63,6 +64,47 @@ async fn injected_event_commit_failure_publishes_nothing_and_keeps_history_reada
             .len(),
         2
     );
+}
+
+#[tokio::test]
+async fn scoped_event_fault_does_not_cross_apps_with_the_same_session_id() {
+    let first = TestApp::spawn().await;
+    let second = TestApp::spawn().await;
+    let p = principal();
+    let first_session = first
+        .state
+        .session_repo
+        .create(&p.id, "first", now_ms())
+        .await
+        .unwrap();
+    let second_session = second
+        .state
+        .session_repo
+        .create(&p.id, "second", now_ms())
+        .await
+        .unwrap();
+    assert_eq!(first_session.id, second_session.id);
+    let first_writer = EventWriter::new(
+        p.id.clone(),
+        first_session.id,
+        first.state.message_repo.clone(),
+        first.state.events.clone(),
+    );
+    let second_writer = EventWriter::new(
+        p.id.clone(),
+        second_session.id,
+        second.state.message_repo.clone(),
+        second.state.events.clone(),
+    );
+
+    FaultInjector::for_event_bus(&first.state.events)
+        .fail_next_for_session(FaultPoint::EventCommit, first_session.id);
+
+    second_writer
+        .assistant("另一个应用不应消费故障")
+        .await
+        .unwrap();
+    assert!(first_writer.assistant("目标应用消费故障").await.is_err());
 }
 
 #[tokio::test]

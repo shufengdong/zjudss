@@ -612,4 +612,3 @@ git commit -m "docs: record backend maintainability baseline"
 - [ ] **Step 8: Review the final branch**
 
 Run `git status --short`, `git diff a733b14..HEAD --stat`, and inspect every commit. Confirm the two pre-existing Agent hash files remain unstaged, no frontend/migration/feature-catalog file changed, and every task has its own verification evidence.
-

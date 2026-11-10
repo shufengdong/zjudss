@@ -7,7 +7,7 @@
 
 ## Conventions
 
-除 `/health` 与登录外，所有路由要求 HttpOnly 登录 Cookie。ID 出网为字符串，时间为 ISO 8601，字段为
+除 `/health`、登录与登出外，所有路由要求 HttpOnly 登录 Cookie。ID 出网为字符串，时间为 ISO 8601，字段为
 camelCase。跨用户与不存在资源统一 404。错误响应为
 `{"error":"…","code":"stable_code","details":…}`。上传使用 multipart；upload batch 创建返回 202，运行创建返回
 202（幂等重放为 200）。
@@ -56,7 +56,7 @@ application 调用与响应语义，但不替代路由注册表。公共错误�
 | GET | `/api/data-resources/{id}/rows` | 受控列投影和 cursor 分页 |
 | GET | `/api/data-resources/{id}/download` | 下载 `original` 或规范 Parquet |
 | POST | `/api/data-resources/{id}/structured-replacement-previews` | 校验 Struct 参数覆盖并生成短期预览 token |
-| POST | `/api/data-resource-replacement-previews/{token}/confirm` | 以 Replace/SaveAsNew/Cancel 确认参数覆盖 |
+| POST | `/api/data-resource-replacement-previews/{id}/confirm` | 以 Replace/SaveAsNew/Cancel 确认参数覆盖 |
 | POST | `/api/data-resources/{id}/deletion-preview` | 生成资源引用影响和短期删除 token |
 | DELETE | `/api/data-resources/{id}` | 以 impact token 幂等删除并释放直接 artifact 引用 |
 | POST | `/api/study-configurations/{id}/confirm` | 以当前 revision 最终确认并原子创建受管 workflow/provisional run |

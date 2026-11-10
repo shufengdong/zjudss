@@ -1229,7 +1229,8 @@ async fn confirm_route_replay_repairs_a_failed_terminal_card_without_duplicate_w
     })
     .to_string();
 
-    FaultInjector.fail_next_for_session(FaultPoint::EventCommit, session.id);
+    FaultInjector::for_event_bus(&app.state.events)
+        .fail_next_for_session(FaultPoint::EventCommit, session.id);
     let response = app
         .router
         .clone()
