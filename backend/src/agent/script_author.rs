@@ -1,3 +1,7 @@
+//! RSS 脚本生成与修复的隔离 LLM 边界。
+//!
+//! 输入只包含冻结合同和按需引擎文档，输出在交给适配器前被规范化为脚本文本。
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -82,6 +86,7 @@ impl std::fmt::Display for ScriptAuthorError {
 impl std::error::Error for ScriptAuthorError {}
 
 #[async_trait]
+/// 依据冻结合同生成或修复 RSS 的隔离接口。
 pub trait ScriptAuthor: Send + Sync {
     async fn generate(&self, request: ScriptGenerationRequest)
     -> Result<String, ScriptAuthorError>;
@@ -90,6 +95,7 @@ pub trait ScriptAuthor: Send + Sync {
 }
 
 #[derive(Clone)]
+/// 使用无工具 Agent 生成纯 RSS 文本的生产实现。
 pub struct LlmScriptAuthor {
     factory: Arc<dyn AgentFactory>,
     model_retry_max: usize,

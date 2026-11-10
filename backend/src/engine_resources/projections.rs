@@ -1,3 +1,5 @@
+//! 案例投影 catalog 的声明式输入/输出合同和查找注册表。
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -69,6 +71,7 @@ pub struct ProjectionResultSelector {
 }
 
 #[derive(Debug, Clone)]
+/// 已校验案例 projector profile 的稳定 ID 索引。
 pub struct CaseProjectionRegistry {
     catalog_entry_count: usize,
     enabled: BTreeMap<String, CaseProjectionProfile>,

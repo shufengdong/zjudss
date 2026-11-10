@@ -1,3 +1,5 @@
+//! 子进程生命周期控制：并行读取双流、超时/取消和进程组回收。
+
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::time::Duration;

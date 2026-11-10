@@ -86,6 +86,7 @@ pub struct InspectOutcome {
 }
 
 #[derive(Debug, Clone)]
+/// 只允许引用任务私有输入树中文件的模型检查规格。
 pub struct InspectSpec {
     pub input_tree: PathBuf,
     pub model_path: PathBuf,
@@ -112,6 +113,7 @@ pub struct NamedInput {
 }
 
 #[derive(Debug, Clone)]
+/// 声明一次受控引擎执行所需的模式、输入、结果目录和超时。
 pub struct RunSpec {
     pub mode: RunMode,
     pub input_tree: PathBuf,
@@ -269,6 +271,7 @@ pub(super) fn validate_tree_file(root: &Path, relative: &Path) -> Result<(), Ada
 }
 
 #[async_trait]
+/// 应用层调用仿真、导入和案例投影的唯一抽象边界。
 pub trait SimEngine: Send + Sync {
     async fn inspect(&self, spec: InspectSpec) -> Result<InspectOutcome, AdapterError>;
     async fn run_dataframe(&self, spec: RunSpec) -> Result<EngineRunOutput, AdapterError>;

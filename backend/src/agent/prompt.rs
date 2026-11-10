@@ -1,3 +1,5 @@
+//! 从系统规则、会话事实和按需 skill 引用组装单次请求 Prompt。
+
 use serde_json::json;
 
 use crate::agent::knowledge::AgentKnowledge;

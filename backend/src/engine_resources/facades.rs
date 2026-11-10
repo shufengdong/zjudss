@@ -1,3 +1,5 @@
+//! study facade catalog 的合同模型、校验索引与确定性搜索。
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -98,6 +100,7 @@ pub struct FacadeSearchResult {
 }
 
 #[derive(Debug, Clone)]
+/// 已校验 facade 合同的稳定 ID 索引和搜索视图。
 pub struct FacadeRegistry {
     catalog_entry_count: usize,
     enabled: BTreeMap<String, FacadeContract>,

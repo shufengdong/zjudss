@@ -1,19 +1,24 @@
+//! 按请求构造 LLM Agent，并只注册调用方依据 manifest 选择的工具集合。
+
 use rig::tool::RegisteredTool;
 use rig::tool::server::ToolServer;
 use rig::{Agent, AgentBuilder};
 
 use super::{LlmConfig, LlmError};
 
+/// 单次 Agent 构造所需的已筛选工具与完整系统 Prompt。
 pub struct AgentBuildRequest {
     pub tools: Vec<RegisteredTool>,
     pub system_prompt: String,
 }
 
+/// 按请求创建相互隔离的 Agent 实例。
 pub trait AgentFactory: Send + Sync {
     fn build(&self, request: AgentBuildRequest) -> Result<Agent, LlmError>;
 }
 
 #[derive(Debug, Clone)]
+/// 根据服务配置连接 LLM provider 的生产 Agent 工厂。
 pub struct LlmAgentFactory {
     config: LlmConfig,
 }

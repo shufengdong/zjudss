@@ -1,3 +1,5 @@
+//! 从当前资源树加载 catalog、facade、projection、文档和案例并构造快照。
+
 use std::collections::BTreeMap;
 use std::path::Path;
 

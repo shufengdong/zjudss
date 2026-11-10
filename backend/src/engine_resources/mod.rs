@@ -1,3 +1,7 @@
+//! 当前 `SPARROWZZ_DIR` 资源树的只读加载、验证、快照和不可变发布边界。
+//!
+//! 服务启动时从文件字节计算快照身份并发布副本；源树不会被改写，资源更新需重启服务后才生效。
+
 mod examples;
 mod facades;
 mod knowledge;
@@ -61,6 +65,7 @@ impl std::fmt::Display for EngineResourceError {
 
 impl std::error::Error for EngineResourceError {}
 
+/// 负责从当前资源树构造并发布一次启动期不可变快照。
 pub struct EngineResourceRegistry;
 
 impl EngineResourceRegistry {

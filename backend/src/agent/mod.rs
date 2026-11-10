@@ -1,4 +1,6 @@
-//! Agent 层：provider 选择 + preamble + agent 组装（由原 `llm.rs` 迁移）。
+//! Agent 运行边界：校验嵌入式知识、组装 Prompt，并按请求创建受 manifest 约束的工具 Agent。
+//!
+//! 引擎文档不常驻系统 Prompt；脚本生成与失败分析使用各自隔离的结构化入口。
 //!
 //! provider 选择与 agent 组装解耦：`build_agent` 只在 match 分支内做 provider 选择，
 //! preamble / tools / temperature 都在分支之外，保证多个 provider 共用同一份组装逻辑。

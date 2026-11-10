@@ -1,3 +1,7 @@
+//! `tensoreval` 子进程的唯一生产执行边界。
+//!
+//! 这里统一能力预检、命令构造、进程组取消、双流捕获以及结果目录校验；应用层和工具层不得直接启动引擎进程。
+
 mod capture;
 mod command;
 mod control;
@@ -22,6 +26,7 @@ pub use command::{EngineCommand, build_command};
 pub use output::{OutputLimits, validate_outputs};
 
 #[derive(Debug, Clone)]
+/// 已通过能力预检的生产引擎配置和运行限制。
 pub struct EngineConfig {
     pub bin: PathBuf,
     pub binary_sha256: String,
@@ -49,6 +54,7 @@ impl EngineConfig {
 }
 
 #[derive(Debug, Clone)]
+/// 通过统一受控子进程边界调用真实 `tensoreval` 的引擎实现。
 pub struct ProcessEngine {
     config: EngineConfig,
 }

@@ -1,3 +1,5 @@
+//! 生产模型导入与案例投影包装器，所有实际进程调用仍经统一控制层。
+
 use std::collections::HashSet;
 
 use super::ProcessEngine;

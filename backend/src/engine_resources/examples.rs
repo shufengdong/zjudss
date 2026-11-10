@@ -1,3 +1,5 @@
+//! 案例 manifest、依赖图和受限源文件的加载与验证。
+
 use std::collections::HashSet;
 use std::path::{Component, Path};
 
@@ -15,6 +17,7 @@ const SUPPORTED_BUNDLE_ARTIFACT: &str = "mems.dss-rss-bundle";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 从受限资源树加载并带内容摘要的单个引擎案例。
 pub struct EngineExample {
     pub id: String,
     pub title: String,

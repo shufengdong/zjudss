@@ -1,3 +1,5 @@
+//! 临时 RSS 任务文件的安全创建与 RAII 清理。
+
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};

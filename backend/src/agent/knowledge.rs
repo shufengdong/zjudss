@@ -1,3 +1,7 @@
+//! 内嵌 Agent bundle、skill 索引和内容的完整性校验与按需读取。
+//!
+//! manifest 是允许工具和版本的权威来源；启动时会验证版本、路径及所有内容摘要。
+
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Component, Path};
 
@@ -46,6 +50,7 @@ pub struct AgentSkill {
 }
 
 #[derive(Debug, Clone)]
+/// 通过版本、路径和 SHA-256 校验后的嵌入式 Agent 知识包。
 pub struct AgentKnowledge {
     pub manifest: AgentManifest,
     pub system_prompt: String,

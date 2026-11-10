@@ -1,3 +1,7 @@
+//! 模型导入和案例投影使用的受控规格、输出合同与输入树校验。
+//!
+//! 本模块只处理稳定 profile、规范相对路径和声明式输出，不接受任意命令参数。
+
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
@@ -114,12 +118,14 @@ pub struct ImportInspection {
 }
 
 #[derive(Debug, Clone)]
+/// 从输入树中发现稳定入口候选的检查规格。
 pub struct ImportInspectSpec {
     pub input_tree: PathBuf,
     pub timeout: Duration,
 }
 
 #[derive(Debug, Clone)]
+/// 通过稳定入口候选 ID 导入模型的受控规格。
 pub struct ImportSpec {
     pub input_tree: PathBuf,
     pub entry_candidate_id: String,
@@ -167,6 +173,7 @@ pub struct ProjectionOutputSpec {
 }
 
 #[derive(Debug, Clone)]
+/// 通过已发布 projector 和声明式输出执行案例投影的受控规格。
 pub struct CaseProjectionSpec {
     pub input_tree: PathBuf,
     pub source_entry: PathBuf,

@@ -1,3 +1,5 @@
+//! 引擎退出后的最终结果集合、格式、压缩和容量合同校验。
+
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -7,6 +9,7 @@ use crate::storage::ParquetInspector;
 use super::result_scan::{ScanPhase, output_error, scan_result_dir};
 
 #[derive(Debug, Clone, Copy)]
+/// 单次执行允许发布的文件数量与字节上限。
 pub struct OutputLimits {
     pub max_files: usize,
     pub max_file_bytes: u64,
@@ -22,6 +25,7 @@ impl Default for OutputLimits {
     }
 }
 
+/// 最终扫描结果目录并返回已验证的 Snappy Parquet 数据集。
 pub fn validate_outputs(
     result_dir: &Path,
     limits: OutputLimits,

@@ -1,3 +1,7 @@
+//! 资源树的安全遍历、有界读取和字节级摘要工具。
+//!
+//! 所有路径都必须留在配置根目录内；符号链接、特殊文件和超限内容会被拒绝。
+
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 

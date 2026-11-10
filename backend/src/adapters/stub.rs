@@ -1,3 +1,7 @@
+//! 测试专用的确定性引擎实现。
+//!
+//! 生产构造路径不会回退到该 stub；它仅用于在测试中生成合同兼容的 Snappy Parquet。
+
 use std::sync::Arc;
 
 use arrow_array::{Float64Array, Int64Array, RecordBatch, StringArray};

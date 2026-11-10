@@ -1,3 +1,5 @@
+//! 通用执行流程：准备隔离结果目录、启动进程、监控并完成最终扫描。
+
 use tokio::process::Command;
 
 use super::{ProcessEngine, build_command, control, validate_outputs};

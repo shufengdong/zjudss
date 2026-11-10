@@ -1,3 +1,5 @@
+//! 已验证引擎文档的分段索引和有界按需检索。
+
 use std::collections::HashSet;
 
 use sha2::{Digest, Sha256};
@@ -23,6 +25,7 @@ pub struct DocSearchHit {
 }
 
 #[derive(Debug, Clone)]
+/// 对已验证文档分段建立的只读检索索引。
 pub struct EngineKnowledge {
     pub sections: Vec<DocSection>,
 }

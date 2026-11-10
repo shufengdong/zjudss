@@ -1,3 +1,5 @@
+//! 引擎运行期间的结果目录安全与容量监控。
+
 use std::path::Path;
 use std::time::Duration;
 

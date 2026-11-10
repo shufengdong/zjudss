@@ -1,15 +1,19 @@
+//! 从已校验的 `RunSpec` 构造固定形态的引擎命令。
+
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 use crate::adapters::{AdapterError, ErrorCategory, RunMode, RunSpec};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// 由受控规格生成、可供审计或启动的程序、工作目录和参数。
 pub struct EngineCommand {
     pub program: PathBuf,
     pub cwd: PathBuf,
     pub args: Vec<OsString>,
 }
 
+/// 构造强制使用独立结果目录和 Parquet 输出格式的引擎命令。
 pub fn build_command(program: &Path, spec: &RunSpec) -> Result<EngineCommand, AdapterError> {
     spec.validate()?;
     let mut args = Vec::new();

@@ -1,3 +1,7 @@
+//! 引擎失败分析的独立 LLM 边界与结构化输出校验。
+//!
+//! 分析器仅接收已脱敏、受限的证据，不参与主对话工具调用或脚本执行。
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -121,6 +125,7 @@ impl std::fmt::Display for FailureAnalysisError {
 impl std::error::Error for FailureAnalysisError {}
 
 #[async_trait]
+/// 将受限、已脱敏证据转换为可验证结构化诊断的隔离接口。
 pub trait FailureAnalyzer: Send + Sync {
     async fn analyze_failure(
         &self,
@@ -129,6 +134,7 @@ pub trait FailureAnalyzer: Send + Sync {
 }
 
 #[derive(Clone)]
+/// 使用无工具 Agent 生成并校验失败诊断的生产实现。
 pub struct LlmFailureAnalyzer {
     factory: Arc<dyn AgentFactory>,
     model_retry_max: usize,

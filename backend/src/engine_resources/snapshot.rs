@@ -1,3 +1,5 @@
+//! 引擎资源快照的身份、容量限制和聚合只读视图。
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -24,6 +26,7 @@ pub(crate) struct SourceFileSpec {
 }
 
 #[derive(Debug, Clone, Copy)]
+/// 资源发现、读取和依赖遍历的启动期容量上限。
 pub struct ResourceLimits {
     pub max_documents: usize,
     pub max_document_bytes: u64,
@@ -49,6 +52,9 @@ impl Default for ResourceLimits {
 }
 
 #[derive(Debug, Clone)]
+/// 由已验证资源文件字节聚合而成的启动期只读快照。
+///
+/// `id` 随 catalog、文档或案例内容变化；发布后读取路径指向不可变副本，源树更新需重启才能形成新快照。
 pub struct EngineResourceSnapshot {
     pub id: String,
     pub contract_version: String,
@@ -74,6 +80,7 @@ pub struct EngineResourceSnapshot {
 }
 
 impl EngineResourceSnapshot {
+    #[cfg(any(test, feature = "e2e-test"))]
     pub(crate) fn minimal(
         id: impl Into<String>,
         contract_version: impl Into<String>,

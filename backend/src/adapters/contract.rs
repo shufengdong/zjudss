@@ -1,3 +1,7 @@
+//! 引擎能力探测与 `tensoreval-parquet-v3` 合同校验。
+//!
+//! 启动预检从真实 binary 读取版本和能力，并在任何业务执行前拒绝不兼容引擎。
+
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -17,6 +21,7 @@ pub const ENGINE_CONTRACT_VERSION: &str = "tensoreval-parquet-v3";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 启动时从真实 binary 探测并验证的引擎能力集合。
 pub struct EngineCapabilities {
     pub contract_version: String,
     pub result_dir: bool,

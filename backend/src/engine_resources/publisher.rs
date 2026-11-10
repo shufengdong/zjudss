@@ -1,3 +1,5 @@
+//! 将已验证快照发布到数据目录，并把所有读取路径重定位到不可变发布副本。
+
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};

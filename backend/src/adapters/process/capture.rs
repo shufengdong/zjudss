@@ -1,3 +1,5 @@
+//! 有界捕获 stdout/stderr，同时计算完整流与保留片段的摘要。
+
 use std::collections::VecDeque;
 
 use sha2::{Digest, Sha256};
