@@ -9,9 +9,9 @@ use crate::db::models::{
 use crate::db::{DbPool, schema};
 
 use super::{
-    ArtifactDraft, ArtifactRepo, CommittedOverlayInput, NewRunDataset, RepoError, RepoResult,
+    ArtifactDraft, ArtifactRepo, CommittedOverlayInput, NewRunDataset, RepoError,
     StructOverlayRequest, WorkflowOverlayInput, commit_overlay_inputs_on,
-    resolve_frozen_struct_input_on,
+    last_insert_rowid as last_id, resolve_frozen_struct_input_on,
 };
 
 #[derive(Debug, Clone)]
@@ -373,14 +373,6 @@ pub(crate) fn load_owned_on(
         output_dataset_ids,
         progress_message_revision,
     })
-}
-
-fn last_id(conn: &mut SqliteConnection) -> RepoResult<i32> {
-    diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
-        "last_insert_rowid()",
-    ))
-    .get_result(conn)
-    .map_err(RepoError::from)
 }
 
 async fn owned_scope_id(pool: &DbPool, user: &str) -> Result<i32, ManagedWorkflowRepoError> {

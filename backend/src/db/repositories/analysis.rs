@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 
-use super::{RepoError, RepoResult, RunDataset, StateTransition};
+use super::{RepoError, RepoResult, RunDataset, StateTransition, last_insert_rowid};
 use crate::auth::UserId;
 use crate::db::models::{
     NewResultAnalysisRun, NewResultDataset, ResultAnalysisInput, ResultAnalysisRun,
@@ -65,7 +65,7 @@ impl AnalysisRepo {
                 diesel::insert_into(schema::result_analysis_runs::table)
                     .values(&run)
                     .execute(conn)?;
-                let id = last_id(conn)?;
+                let id = last_insert_rowid(conn)?;
                 for input in &mut inputs {
                     input.analysis_run_id = id;
                 }
@@ -101,7 +101,7 @@ impl AnalysisRepo {
                     diesel::insert_into(schema::result_datasets::table)
                         .values(&dataset)
                         .execute(conn)?;
-                    let derived_id = last_id(conn)?;
+                    let derived_id = last_insert_rowid(conn)?;
                     diesel::sql_query(
                         "INSERT INTO dataset_lineage_snapshots(derived_dataset_id,source_dataset_id,source_resource_id,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json,created_at_ms) SELECT ?1,dataset_id,resource_id,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json,?2 FROM result_analysis_inputs WHERE analysis_run_id=?3",
                     )
@@ -243,12 +243,4 @@ fn dataset_session(conn: &mut SqliteConnection, user: &str, id: i32) -> RepoResu
     .optional()?
     .map(|row| row.session_id)
     .ok_or(RepoError::NotFound)
-}
-
-fn last_id(conn: &mut SqliteConnection) -> RepoResult<i32> {
-    diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
-        "last_insert_rowid()",
-    ))
-    .get_result(conn)
-    .map_err(RepoError::from)
 }

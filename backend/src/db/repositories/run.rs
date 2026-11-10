@@ -1,7 +1,7 @@
 use super::{
     ArtifactDraft, ArtifactRepo, OverlayArtifactSource, RepoError, RepoResult, StateTransition,
     StructOverlayRequest, WorkflowInputRepo, WorkflowOverlayInput, WorkflowStructOverlayMaterial,
-    commit_overlay_inputs_on, resolve_frozen_struct_input_on,
+    commit_overlay_inputs_on, last_insert_rowid, resolve_frozen_struct_input_on,
 };
 use crate::agent::FailureAnalysis;
 use crate::application::diagnostics::FailureAnalysisStatus;
@@ -468,8 +468,7 @@ impl RunRepo {
                         schema::simulation_runs::created_at_ms.eq(request.created_at_ms),
                     ))
                     .execute(conn)?;
-                let id: i32 = diesel::select(diesel::dsl::sql::<Integer>("last_insert_rowid()"))
-                    .get_result(conn)?;
+                let id = last_insert_rowid(conn)?;
                 Ok(CreatedRun {
                     run: schema::simulation_runs::table.find(id).first(conn)?,
                     replayed: false,

@@ -6,7 +6,7 @@ use crate::auth::UserId;
 use crate::db::models::{DraftDataframe, DraftRef, WorkspaceDraft};
 use crate::db::{DbPool, schema};
 
-use super::{RepoError, RepoResult};
+use super::{RepoError, last_insert_rowid};
 
 #[path = "version_deletion.rs"]
 mod version_deletion;
@@ -326,7 +326,7 @@ impl VersionRepo {
                         schema::workspace_drafts::created_at_ms.eq(now_ms),
                         schema::workspace_drafts::updated_at_ms.eq(now_ms),
                     )).execute(conn)?;
-                    let draft_id = last_id(conn)?;
+                    let draft_id = last_insert_rowid(conn)?;
                     if let Some(version_id) = workspace.active_version_id {
                         diesel::sql_query("INSERT INTO draft_dataframes(draft_id,table_name,artifact_id,schema_json,row_count,content_hash,created_at_ms) SELECT ?1,table_name,artifact_id,schema_json,row_count,content_hash,?2 FROM model_dataframes WHERE version_id=?3")
                             .bind::<Integer,_>(draft_id).bind::<BigInt,_>(now_ms).bind::<Integer,_>(version_id).execute(conn)?;
@@ -694,12 +694,6 @@ fn canonical_json(value: &serde_json::Value) -> String {
     }
 }
 
-fn last_id(conn: &mut SqliteConnection) -> RepoResult<i32> {
-    diesel::select(diesel::dsl::sql::<Integer>("last_insert_rowid()"))
-        .get_result(conn)
-        .map_err(RepoError::from)
-}
-
 pub(super) fn publish_on(
     conn: &mut diesel::SqliteConnection,
     user: &str,
@@ -757,7 +751,7 @@ pub(super) fn publish_on(
         let summary = serde_json::json!({"draftId":draft.id,"draftRevision":draft.revision,"tables":frames.iter().map(|frame| &frame.table_name).collect::<Vec<_>>()}).to_string();
         diesel::sql_query("INSERT INTO model_versions(workspace_id,description,content_hash,source_summary_json,engine_contract_version,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6)")
                         .bind::<Integer,_>(workspace.id).bind::<Text,_>(&description).bind::<Text,_>(&content_hash).bind::<Text,_>(summary).bind::<Text,_>(&engine_contract).bind::<BigInt,_>(now_ms).execute(conn)?;
-        let version_id = last_id(conn)?;
+        let version_id = last_insert_rowid(conn)?;
         for frame in &frames {
             diesel::sql_query("INSERT INTO model_dataframes(version_id,table_name,artifact_id,schema_json,row_count,content_hash,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7)")
                             .bind::<Integer,_>(version_id).bind::<Text,_>(&frame.table_name).bind::<Integer,_>(frame.artifact_id).bind::<Text,_>(&frame.schema_json).bind::<BigInt,_>(frame.row_count).bind::<Text,_>(&frame.content_hash).bind::<BigInt,_>(now_ms).execute(conn)?;

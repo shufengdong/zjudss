@@ -22,6 +22,10 @@ mod user;
 mod version;
 mod workflow_input;
 
+use diesel::RunQueryDsl;
+use diesel::sql_types::Integer;
+use diesel::sqlite::SqliteConnection;
+
 pub use analysis::AnalysisRepo;
 pub use artifact::{ArtifactDraft, ArtifactRepo};
 pub use chart_view::{
@@ -113,6 +117,12 @@ impl From<diesel::result::Error> for RepoError {
 
 pub type RepoResult<T> = Result<T, RepoError>;
 
+pub(super) fn last_insert_rowid(conn: &mut SqliteConnection) -> RepoResult<i32> {
+    diesel::select(diesel::dsl::sql::<Integer>("last_insert_rowid()"))
+        .get_result(conn)
+        .map_err(RepoError::from)
+}
+
 pub(super) struct StateTransition {
     pub status: &'static str,
     pub stage: String,
@@ -155,5 +165,29 @@ impl StateTransition {
             exit_code,
             ..Self::failed(stage, error, now_ms)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use diesel::Connection;
+    use diesel::connection::SimpleConnection;
+    use diesel::sqlite::SqliteConnection;
+
+    use super::last_insert_rowid;
+
+    #[test]
+    fn last_insert_rowid_is_connection_local_and_monotonic() {
+        let mut conn = SqliteConnection::establish(":memory:").unwrap();
+        conn.batch_execute("CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT)")
+            .unwrap();
+
+        conn.batch_execute("INSERT INTO items DEFAULT VALUES")
+            .unwrap();
+        assert_eq!(last_insert_rowid(&mut conn).unwrap(), 1);
+
+        conn.batch_execute("INSERT INTO items DEFAULT VALUES")
+            .unwrap();
+        assert_eq!(last_insert_rowid(&mut conn).unwrap(), 2);
     }
 }

@@ -7,7 +7,7 @@ use crate::db::models::{
 };
 use crate::db::{DbPool, schema};
 
-use super::{RepoError, RepoResult};
+use super::{RepoError, RepoResult, last_insert_rowid};
 
 #[derive(Debug, Clone)]
 pub struct StudyConfigurationAggregate {
@@ -67,10 +67,7 @@ impl StudyConfigurationRepo {
                         schema::study_configurations::updated_at_ms.eq(input.now_ms),
                     ))
                     .execute(conn)?;
-                let id = diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
-                    "last_insert_rowid()",
-                ))
-                .get_result::<i32>(conn)?;
+                let id = last_insert_rowid(conn)?;
                 insert_children(conn, id, input.bindings, input.structs, input.results)?;
                 load_owned(conn, &user, id)
             })

@@ -5,7 +5,7 @@ use crate::auth::UserId;
 use crate::db::models::{Message, NewMessage};
 use crate::db::{DbPool, schema};
 
-use super::{RepoError, RepoResult};
+use super::{RepoError, RepoResult, last_insert_rowid};
 
 #[derive(Clone)]
 pub struct MessageRepo {
@@ -22,7 +22,7 @@ impl MessageRepo {
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || -> RepoResult<Message> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            conn.immediate_transaction::<Message, diesel::result::Error, _>(|conn| {
+            conn.immediate_transaction::<Message, RepoError, _>(|conn| {
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(new.session_id))
                     .filter(schema::sessions::user_id.eq(&scope.0))
@@ -32,9 +32,7 @@ impl MessageRepo {
                 diesel::insert_into(schema::messages::table)
                     .values(new.clone())
                     .execute(conn)?;
-                let id: i32 =
-                    diesel::dsl::sql::<diesel::sql_types::Integer>("SELECT last_insert_rowid()")
-                        .get_result(conn)?;
+                let id = last_insert_rowid(conn)?;
                 if new.role == "user" {
                     let title: String = new.content.chars().take(30).collect();
                     diesel::update(
@@ -49,11 +47,14 @@ impl MessageRepo {
                     ))
                     .execute(conn)?;
                 }
-                schema::messages::table.find(id).first(conn)
+                schema::messages::table
+                    .find(id)
+                    .first(conn)
+                    .map_err(RepoError::from)
             })
             .map_err(|error| match error {
-                diesel::result::Error::NotFound => RepoError::NotFound,
-                other => RepoError::Query(other),
+                RepoError::Query(diesel::result::Error::NotFound) => RepoError::NotFound,
+                other => other,
             })
         })
         .await
@@ -81,7 +82,7 @@ impl MessageRepo {
         let scope = scope.clone();
         tokio::task::spawn_blocking(move || -> RepoResult<(Message, bool)> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            conn.immediate_transaction::<(Message, bool), diesel::result::Error, _>(|conn| {
+            conn.immediate_transaction::<(Message, bool), RepoError, _>(|conn| {
                 schema::sessions::table
                     .filter(schema::sessions::id.eq(new.session_id))
                     .filter(schema::sessions::user_id.eq(&scope.0))
@@ -118,7 +119,8 @@ impl MessageRepo {
                     return schema::messages::table
                         .find(existing.id)
                         .first(conn)
-                        .map(|message| (message, true));
+                        .map(|message| (message, true))
+                        .map_err(RepoError::from);
                 }
                 diesel::insert_into(schema::messages::table)
                     .values((
@@ -127,17 +129,16 @@ impl MessageRepo {
                         schema::messages::revision.eq(1),
                     ))
                     .execute(conn)?;
-                let id: i32 =
-                    diesel::dsl::sql::<diesel::sql_types::Integer>("SELECT last_insert_rowid()")
-                        .get_result(conn)?;
+                let id = last_insert_rowid(conn)?;
                 schema::messages::table
                     .find(id)
                     .first(conn)
                     .map(|message| (message, true))
+                    .map_err(RepoError::from)
             })
             .map_err(|error| match error {
-                diesel::result::Error::NotFound => RepoError::NotFound,
-                other => RepoError::Query(other),
+                RepoError::Query(diesel::result::Error::NotFound) => RepoError::NotFound,
+                other => other,
             })
         })
         .await

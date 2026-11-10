@@ -8,7 +8,7 @@ use crate::db::models::{DataResourceRecord, DraftRef, UploadCandidateRecord, Upl
 use crate::db::schema;
 
 use super::super::data_resource::owned_batch;
-use super::super::{RepoError, RepoResult};
+use super::super::{RepoError, RepoResult, last_insert_rowid};
 use super::{PublishChildResult, ResourcePublishInput};
 
 pub(in crate::db::repositories) fn publish_resources_on(
@@ -328,8 +328,7 @@ pub(in crate::db::repositories) fn apply_model_candidates_to_draft_on(
     } else {
         diesel::sql_query("INSERT INTO workspace_drafts(workspace_id,base_version_id,revision,diagnostics_json,created_at_ms,updated_at_ms) VALUES(?1,?2,1,'{}',?3,?3)")
                         .bind::<Integer,_>(workspace.id).bind::<diesel::sql_types::Nullable<Integer>,_>(workspace.active_version_id).bind::<BigInt,_>(now_ms).execute(conn)?;
-        let id =
-            diesel::select(diesel::dsl::sql::<Integer>("last_insert_rowid()")).get_result(conn)?;
+        let id = last_insert_rowid(conn)?;
         if let Some(version_id) = workspace
             .active_version_id
             .filter(|_| mode == super::DraftApplicationMode::MergeWithActiveBase)

@@ -1,6 +1,6 @@
 use diesel::prelude::*;
 
-use super::{RepoError, RepoResult};
+use super::{RepoError, RepoResult, last_insert_rowid};
 use crate::auth::UserId;
 use crate::db::models::{NewRunComparison, RunComparison};
 use crate::db::{DbPool, schema};
@@ -51,10 +51,7 @@ impl ComparisonRepo {
                 diesel::insert_into(schema::run_comparisons::table)
                     .values(&new)
                     .execute(conn)?;
-                let id: i32 = diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
-                    "last_insert_rowid()",
-                ))
-                .get_result(conn)?;
+                let id = last_insert_rowid(conn)?;
                 Ok(schema::run_comparisons::table.find(id).first(conn)?)
             })
         })

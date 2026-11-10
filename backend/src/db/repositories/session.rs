@@ -6,7 +6,7 @@ use crate::auth::UserId;
 use crate::db::models::{NewSession, Session};
 use crate::db::{DbPool, schema};
 
-use super::{RepoError, RepoResult};
+use super::{RepoError, RepoResult, last_insert_rowid};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -73,7 +73,7 @@ impl SessionRepo {
         };
         tokio::task::spawn_blocking(move || -> RepoResult<Session> {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            conn.immediate_transaction::<Session, diesel::result::Error, _>(|conn| {
+            conn.immediate_transaction::<Session, RepoError, _>(|conn| {
                 diesel::insert_into(schema::sessions::table)
                     .values(NewSession {
                         title,
@@ -82,12 +82,12 @@ impl SessionRepo {
                         user_id: user_id.0.clone(),
                     })
                     .execute(conn)?;
-                let id: i32 =
-                    diesel::dsl::sql::<diesel::sql_types::Integer>("SELECT last_insert_rowid()")
-                        .get_result(conn)?;
-                schema::sessions::table.find(id).first(conn)
+                let id = last_insert_rowid(conn)?;
+                schema::sessions::table
+                    .find(id)
+                    .first(conn)
+                    .map_err(RepoError::from)
             })
-            .map_err(RepoError::Query)
         })
         .await
         .map_err(RepoError::Join)?
