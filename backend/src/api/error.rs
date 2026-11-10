@@ -1,3 +1,9 @@
+//! 领域错误到公开 HTTP 错误合同的唯一映射边界。
+//!
+//! 各 application、repository 与 adapter 保留自己的错误类型；本模块只选择状态码、稳定 code、
+//! 面向用户的消息和受控 details。内部路径、命令、SQL、provider 诊断和未脱敏引擎输出不得从
+//! 此边界进入响应。
+
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
@@ -20,7 +26,10 @@ use crate::application::WorkflowError;
 use crate::application::charting::ChartServiceError;
 use crate::db::repositories::RepoError;
 
-/// 统一 API 错误：把仓储/适配器错误映射为 HTTP 响应。
+/// 统一的公开 API 错误响应。
+///
+/// [`IntoResponse`] 固定序列化 `{error,code,details?}`；各 `From` 实现保留领域稳定 code，并把
+/// 不应公开的基础设施错误收敛为 500 `internal_error`。404 映射同时承担跨用户资源隐藏边界。
 pub struct ApiError {
     status: StatusCode,
     message: String,

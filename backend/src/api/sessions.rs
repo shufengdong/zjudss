@@ -1,4 +1,9 @@
-//! 会话与消息 handler：CRUD + 触发一次对话（后台 agent run，经 SSE 推送）。
+//! 会话、历史消息与对话启动的 HTTP 边界。
+//!
+//! 所有路由均要求当前用户，并通过 session/history repository 或 application service 保持用户
+//! 作用域；跨用户与不存在资源统一表现为 404。本模块负责分页 DTO、删除影响 token 和 Agent
+//! admission 映射，不拥有消息持久化规则、删除事务或 Agent/引擎执行逻辑；实时投递由相邻的
+//! SSE 模块负责。
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
@@ -25,6 +30,10 @@ fn derive_status(latest: Option<&str>) -> &'static str {
     }
 }
 
+/// `GET /api/sessions`：列出当前用户的会话摘要。
+///
+/// 成功返回 200，并把每个会话的最近运行状态投影为前端三态；只读取当前用户数据，不创建或
+/// 激活任何资源。
 pub async fn list(
     State(state): State<AppState>,
     principal: CurrentUser,
@@ -52,6 +61,9 @@ pub struct CreateSessionBody {
     title: String,
 }
 
+/// `POST /api/sessions`：为当前用户创建会话。
+///
+/// 标题缺省为空字符串；成功持久化会话并返回 201，新会话状态为 `completed`。
 pub async fn create(
     State(state): State<AppState>,
     principal: CurrentUser,
@@ -79,7 +91,10 @@ pub struct RenameSessionBody {
     title: String,
 }
 
-/// `PATCH /api/sessions/{id}` → 200 改名后的 Session。
+/// `PATCH /api/sessions/{id}`：修改当前用户会话标题。
+///
+/// 成功返回 200 和更新后的会话摘要，状态仍由最近运行推导；不存在或跨用户会话统一返回
+/// 404。
 pub async fn rename(
     State(state): State<AppState>,
     principal: CurrentUser,
@@ -114,6 +129,10 @@ pub struct SessionDeletionPreview {
     expires_at: String,
 }
 
+/// `POST /api/sessions/{id}/deletion-preview`：生成会话删除影响预览。
+///
+/// 当前用户拥有会话时返回 200、影响计数、逻辑字节数和五分钟有效的 opaque token；仓储会
+/// 保存 token hash 与影响快照，后续删除必须使用同一预览。不存在或跨用户会话统一返回 404。
 pub async fn deletion_preview(
     State(state): State<AppState>,
     principal: CurrentUser,
@@ -146,7 +165,11 @@ pub struct DeleteSessionQuery {
     impact_token: String,
 }
 
-/// `DELETE /api/sessions/{id}` → 204；未知会话 → 404。同时注销事件通道。
+/// `DELETE /api/sessions/{id}?impactToken=...`：确认删除当前用户会话。
+///
+/// token 必须来自尚未过期且影响未变化的预览。成功或同一删除的幂等重放返回 204；首次确认
+/// 会取消该会话的 Agent/引擎工作、注销 SSE 通道、执行仓储清理并释放 artifact 引用。无效
+/// token 或影响变化返回对应稳定冲突码，跨用户与不存在会话统一返回 404。
 pub async fn delete(
     State(state): State<AppState>,
     principal: CurrentUser,
@@ -190,6 +213,11 @@ fn random_token() -> String {
 
 // ---- 消息 ----
 
+/// `GET /api/sessions/{id}/messages`：读取当前用户会话的连续消息窗口。
+///
+/// `beforeId` 向前分页，`aroundId` 必须精确属于该会话，`limit` 由 history service 限制在
+/// 1..=100；成功返回 200、消息和下一页锚点，只读且不触发 Agent。非法锚点或跨用户资源不会
+/// 泄露其他会话内容。
 pub async fn messages(
     State(state): State<AppState>,
     principal: CurrentUser,
@@ -231,6 +259,11 @@ pub struct HistorySearchQuery {
     to_ms: Option<i64>,
     limit: Option<i64>,
 }
+/// `GET /api/history/search`：搜索当前用户可读的会话历史。
+///
+/// 接受正文查询及可选脚本名、状态、时间范围和数量限制；成功返回 200 和有界摘要，不返回
+/// 脚本全文或原始 stderr。非法查询返回稳定的 400 错误，索引不可用返回 503
+/// `history_search_unavailable`。
 pub async fn search_history(
     State(state): State<AppState>,
     principal: CurrentUser,
@@ -258,6 +291,11 @@ pub struct PostMessageBody {
     message: String,
 }
 
+/// `POST /api/sessions/{id}/messages`：追加用户消息并启动一次后台 Agent 对话。
+///
+/// admission 在写消息前完成；队列已满返回 429 `agent_queue_full` 且不持久化用户消息。成功
+/// 先落库并广播用户消息、更新会话活跃时间，再异步运行 Agent，返回 202 和当前会话标题；后续
+/// durable 卡片与回复通过消息历史和 SSE 可恢复。跨用户与不存在会话统一返回 404。
 pub async fn post_message(
     State(state): State<AppState>,
     principal: CurrentUser,

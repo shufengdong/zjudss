@@ -1,4 +1,9 @@
-//! HTTP 层：axum 路由、handler、DTO 与 SSE。
+//! HTTP/SSE 入口与公共路由合同。
+//!
+//! 本模块集中注册所有 Axum 路由、应用当前用户中间件和按端点覆盖请求体限制，并从同一份
+//! 声明生成 [`route_manifest`]。`/health`、登录和登出保持公开；其余 `/api` 路由统一经过
+//! [`crate::auth::require_user`]。各子模块只负责 HTTP extractor、DTO/响应映射和调用 application
+//! facade，不在此层复制领域状态机、仓储事务或引擎规则。
 
 mod analysis;
 mod attachment;
@@ -30,13 +35,22 @@ use crate::application::AppState;
 
 pub use error::ApiError;
 
+/// `GET /health`：公开的进程存活探针。
+///
+/// 不读取数据库或外部引擎；进程能够处理请求时返回 200 和纯文本 `ok`。
 async fn health() -> &'static str {
     "ok"
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq)]
+/// 一条已注册 HTTP 路由的方法与路径合同。
+///
+/// 该类型由生产路由声明同步生成，供合同清单与自动化测试读取，不承载 handler 行为或 DTO
+/// 定义。
 pub struct RouteContract {
+    /// 大写 HTTP 方法，例如 `GET` 或 `POST`。
     pub method: &'static str,
+    /// Axum 注册路径；路径参数保留 `{id}` 形式。
     pub path: &'static str,
 }
 
@@ -337,6 +351,10 @@ fn build_router_and_manifest() -> (Router<AppState>, Router<AppState>, Vec<Route
     (public, protected, manifest)
 }
 
+/// 构造生产 Axum 路由器并注入应用状态。
+///
+/// 公开路由不要求登录；受保护路由统一应用当前用户认证中间件。上传和脚本等 multipart 端点
+/// 在各自注册位置显式关闭 Axum 默认 body limit，实际容量仍由对应 application service 控制。
 pub fn router(state: AppState) -> Router {
     let (public, protected, _) = build_router_and_manifest();
     public
@@ -347,6 +365,10 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// 返回与生产路由同源的 method/path 清单。
+///
+/// 清单只描述公开 HTTP 表面；状态码、请求/响应 DTO 和稳定错误语义由各 handler、
+/// [`ApiError`] 与 `docs/api-design.md` 共同说明。
 pub fn route_manifest() -> Vec<RouteContract> {
     build_router_and_manifest().2
 }

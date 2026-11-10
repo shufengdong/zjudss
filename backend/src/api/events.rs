@@ -1,4 +1,8 @@
-//! 可恢复 SSE：先订阅实时通道，再按 Last-Event-ID 补发持久消息，最后去重接续实时事件。
+//! 当前用户会话的可恢复 SSE 边界。
+//!
+//! handler 先验证会话归属并订阅实时通道，再按 `Last-Event-ID` 补发 durable 消息，最后按消息
+//! revision 去重接续广播。消息投影与写入顺序由 application event 模块拥有；本模块只负责
+//! SSE 帧、游标恢复、背压降级和认证撤销后的连接关闭。
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -33,6 +37,12 @@ fn resync_frame() -> SseEvent {
         .data(r#"{"reason":"cursor_unavailable"}"#)
 }
 
+/// `GET /api/sessions/{id}/events`：建立当前用户会话的 SSE 消息流。
+///
+/// `Last-Event-ID` 接受 `messageId:revision`，并兼容把旧纯数字游标解释为 revision 1；有效
+/// 游标先补发数据库消息再接续实时事件。无效、过期或因 lag 无法连续恢复的游标发送
+/// `resync-required` 帧；心跳期间发现登录会话被撤销会关闭流。跨用户与不存在会话统一返回
+/// 404，成功以 200 `text/event-stream` 持续响应且不修改领域状态。
 pub async fn stream(
     State(state): State<AppState>,
     principal: CurrentUser,
