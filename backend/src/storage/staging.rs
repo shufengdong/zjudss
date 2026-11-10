@@ -1,3 +1,5 @@
+//! 在指定目录下生成不可预测且不复用的 staging 路径。
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 

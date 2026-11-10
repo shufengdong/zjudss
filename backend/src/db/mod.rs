@@ -1,4 +1,6 @@
-//! 数据库层：SQLite 连接池、PRAGMA 与嵌入式迁移。
+//! 数据库层：SQLite 连接池、PRAGMA、嵌入式迁移与启动期恢复入口。
+//!
+//! 异步领域请求中的 Diesel 操作由 repository 放入 `spawn_blocking`；开始监听前的迁移和恢复保持同步、失败关闭。
 //!
 //! 迁移 SQL 位于 `backend/migrations/`，编译期通过 [`embed_migrations`] 嵌入，
 //! 启动时用 [`run_migrations`] 应用。连接池用 r2d2，每个连接在检出时执行

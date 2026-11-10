@@ -1,3 +1,8 @@
+//! 按领域划分的 SQLite repository 边界。
+//!
+//! 查询显式接收 `UserId`，同步 Diesel 工作封装在 `spawn_blocking`；共享错误、状态迁移和连接本地 insert ID 在此定义，
+//! 具体模块继续拥有自己的 immediate transaction、幂等、tombstone 和表级 SQL。
+
 mod analysis;
 mod artifact;
 mod artifact_refs;
@@ -79,6 +84,7 @@ pub use workflow_input::{
 };
 
 #[derive(Debug)]
+/// repository 边界共享的连接、查询、并发、配额和状态错误。
 pub enum RepoError {
     Pool(diesel::r2d2::PoolError),
     Query(diesel::result::Error),
@@ -123,6 +129,7 @@ pub(super) fn last_insert_rowid(conn: &mut SqliteConnection) -> RepoResult<i32> 
         .map_err(RepoError::from)
 }
 
+/// 运行与分析 repository 共享的终态字段集合，不共享具体事务。
 pub(super) struct StateTransition {
     pub status: &'static str,
     pub stage: String,

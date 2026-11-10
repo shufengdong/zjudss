@@ -1,3 +1,7 @@
+//! 用户会话查询、删除影响预览及整棵会话资源原子清理。
+//!
+//! 跨用户与不存在会话保持不可区分；删除使用当前影响指纹并保留 tombstone 一致性。
+
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Integer, Text};
 use sha2::{Digest, Sha256};
@@ -54,6 +58,7 @@ struct SessionDeletionImpactRow {
 }
 
 #[derive(Clone)]
+/// 用户会话及其删除影响事务的 repository 门面。
 pub struct SessionRepo {
     pool: DbPool,
 }

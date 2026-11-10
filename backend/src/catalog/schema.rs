@@ -1,3 +1,5 @@
+//! 可执行 DataFrame schema 合同及其跨 catalog 引用验证。
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -248,6 +250,7 @@ struct DtypeGrammar {
 }
 
 #[derive(Debug, Clone)]
+/// 解析并索引可执行 DataFrame 合同、变体和 dtype grammar 的只读注册表。
 pub struct SchemaRegistry {
     raw: Value,
     grammar: DtypeGrammar,

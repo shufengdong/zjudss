@@ -1,3 +1,5 @@
+//! opaque cookie session 的创建、续期、撤销和 `CurrentUser` 解析。
+
 use std::time::Duration;
 
 use argon2::Argon2;
@@ -51,6 +53,7 @@ pub enum AuthError {
 }
 
 #[derive(Clone)]
+/// 创建、校验、续期和撤销 opaque 登录 session 的认证服务。
 pub struct AuthService {
     pool: DbPool,
     ttl_ms: i64,

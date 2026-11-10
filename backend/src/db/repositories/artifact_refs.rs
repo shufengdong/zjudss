@@ -1,3 +1,7 @@
+//! 已存在 artifact link 的引用计数与用户 storage scope 解析。
+//!
+//! 调用方决定领域引用集合和事务时机；本模块集中聚合重复 ID，并只在 link 首次创建或最终删除时改变 usage。
+
 use std::collections::BTreeMap;
 
 use diesel::prelude::*;

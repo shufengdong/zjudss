@@ -1,3 +1,7 @@
+//! 结果分析状态机：冻结输入、调度受控脚本、验证/发布输出并投影持久化消息。
+//!
+//! 输入与输出物理由子模块拥有；本门面保留阶段迁移、原子发布和失败收敛。
+
 use std::{
     collections::HashSet,
     io::Cursor,
@@ -88,6 +92,7 @@ impl std::fmt::Display for AnalysisError {
 impl std::error::Error for AnalysisError {}
 
 #[derive(Clone)]
+/// 拥有分析阶段迁移、调度、原子输出发布和消息投影的应用门面。
 pub struct AnalysisService {
     repo: AnalysisRepo,
     results: ResultRepo,

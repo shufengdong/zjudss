@@ -1,3 +1,5 @@
+//! 根据规范化列名和类型对上传表进行确定性 catalog 匹配与证据排序。
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde::Serialize;

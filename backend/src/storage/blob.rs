@@ -1,3 +1,5 @@
+//! 内容寻址 artifact 的有界写入、原子发布和临时文件 RAII 清理。
+
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -162,6 +164,7 @@ impl Drop for StagedArtifact {
 }
 
 #[derive(Debug, Clone)]
+/// 以 SHA-256 相对路径发布和解析不可变 artifact 的物理存储。
 pub struct ArtifactStore {
     data_dir: PathBuf,
     staging_dir: PathBuf,

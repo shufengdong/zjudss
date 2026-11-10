@@ -1,3 +1,7 @@
+//! 普通脚本运行门面：冻结当前输入、幂等创建运行，并调度不可变结果发布。
+//!
+//! 创建/上传脚本不会隐式执行；只有显式运行请求进入该状态机。
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -130,6 +134,7 @@ impl From<RunRepoError> for RunError {
 }
 
 #[derive(Clone)]
+/// 拥有普通脚本运行提交、删除预览和终态读取的应用门面。
 pub struct RunService {
     repo: RunRepo,
     scripts: ScriptRepo,

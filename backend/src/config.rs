@@ -10,6 +10,7 @@ use std::time::Duration;
 const MIB: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone)]
+/// 从环境变量一次性解析并完成交叉字段校验的运行配置。
 pub struct RuntimeConfig {
     pub bind_addr: SocketAddr,
     pub database_url: String,

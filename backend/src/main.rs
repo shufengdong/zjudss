@@ -1,3 +1,7 @@
+//! 服务组合根：先完成配置、数据库/用户、引擎与资源/Agent 预检，再装配具名依赖并监听 HTTP。
+//!
+//! 任一失败关闭门禁在开放端口前终止启动，生产路径不会回退到测试 stub。
+
 use zjudss::agent::knowledge::AgentKnowledge;
 use zjudss::agent::{LlmAgentFactory, LlmConfig};
 use zjudss::application::{
@@ -18,7 +22,6 @@ async fn main() {
         std::process::exit(1);
     }
 }
-
 async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if let Err(err) = dotenvy::dotenv() {
         eprintln!("[dotenv] warning: {err}");

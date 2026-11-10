@@ -1,3 +1,7 @@
+//! 统一上传批次状态机：接收、解析、候选识别、用途选择、过期和恢复。
+//!
+//! 候选确认前不会修改模型草稿或资源库；解析只调用 ingestion 和 adapter 的受控边界。
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -241,6 +245,7 @@ impl From<std::io::Error> for UploadBatchError {
 }
 
 #[derive(Clone)]
+/// 拥有上传批次从接收、解析到待确认/终态生命周期的应用门面。
 pub struct UploadBatchService {
     repo: UploadRepo,
     confirmation_repo: UploadConfirmationRepo,

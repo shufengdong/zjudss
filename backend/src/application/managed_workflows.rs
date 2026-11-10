@@ -1,3 +1,7 @@
+//! 托管研究工作流门面：确认冻结合同，驱动生成/执行/修复，并支持可审计重试与恢复。
+//!
+//! 工作流与普通脚本运行是不同状态机；已确认的输入、引擎快照和结果合同保持不可变。
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -184,6 +188,7 @@ impl From<StudyConfigurationError> for WorkflowError {
 }
 
 #[derive(Clone)]
+/// 拥有研究确认、重试、取消和可恢复执行生命周期的应用门面。
 pub struct ManagedWorkflowService {
     repo: ManagedWorkflowRepo,
     configurations: StudyConfigurationService,

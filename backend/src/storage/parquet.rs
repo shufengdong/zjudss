@@ -1,3 +1,5 @@
+//! Parquet 元数据、Snappy 压缩、空值和分页读取所需的物理检查。
+
 use std::path::Path;
 
 use arrow_array::RecordBatch;
@@ -46,6 +48,7 @@ impl std::fmt::Display for ParquetError {
 }
 impl std::error::Error for ParquetError {}
 
+/// 读取 Parquet 物理事实而不承载领域发布规则的无状态入口。
 pub struct ParquetInspector;
 impl ParquetInspector {
     pub fn metadata(path: &Path) -> Result<ParquetMetadata, ParquetError> {

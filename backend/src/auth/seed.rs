@@ -1,3 +1,7 @@
+//! 启动期固定用户 seed 的验证与原子写入。
+//!
+//! 相同 seed 可幂等重放；已初始化数据库遇到不同 seed 会失败关闭而不是静默改写身份。
+
 use std::collections::HashSet;
 use std::fmt;
 

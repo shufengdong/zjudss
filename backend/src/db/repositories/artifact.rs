@@ -1,3 +1,5 @@
+//! Artifact CAS 元数据、配额、去重、link 创建和垃圾回收的权威事务实现。
+
 use diesel::prelude::*;
 
 use crate::db::models::{
@@ -19,6 +21,7 @@ pub struct ArtifactDraft {
 }
 
 #[derive(Clone)]
+/// Artifact CAS 元数据、link、配额和 GC 的 repository 门面。
 pub struct ArtifactRepo {
     pool: DbPool,
 }

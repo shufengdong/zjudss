@@ -1,3 +1,7 @@
+//! 受控 Parquet DataFrame 读取内核。
+//!
+//! 结果、数据资源和模型表共享分页、列投影、cursor 内容绑定、Arrow→JSON 与批次扫描语义。
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 
@@ -103,6 +107,7 @@ impl std::fmt::Display for DataFrameReadError {
 impl std::error::Error for DataFrameReadError {}
 
 #[derive(Clone)]
+/// 所有应用层 Parquet 表格读取共享的无状态物理读取器。
 pub(crate) struct ParquetDataFrameReader {
     artifacts: ArtifactService,
 }

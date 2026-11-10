@@ -1,10 +1,7 @@
-//! 工具层：把仿真内核能力（模型检查 / 时序仿真）封装成 rig 的有状态工具。
+//! Agent 工具注册与每请求服务作用域的权威边界。
 //!
-//! 每个工具实例携带绑定到当前 session 的共享服务（引擎适配器、事件写入器、任务仓储
-//! 和限流信号量），**每请求构建一套**（architecture §5 / §10 #2）。
-//!
-//! 工具只通过 `adapters::SimEngine` 调用内核。内核地址、鉴权和错误码翻译均由适配器
-//! 收敛，以落实 AGENTS.md 的边界约束。
+//! 私有实现 catalog 必须与已校验 manifest 双向一致，再按 manifest 顺序注册；工具参数只接受稳定 ID 和受控 spec。
+//! `ToolServices` 绑定当前用户/session，skill gate 记录本次请求已加载知识；所有引擎调用仍只经 `adapters::SimEngine`。
 
 pub mod compare_simulations;
 pub mod get_storage_usage;
@@ -48,7 +45,9 @@ use crate::auth::{CurrentUser, UserId};
 use crate::db::models::DraftRef;
 use crate::engine_resources::EngineResourceSnapshot;
 
-/// 工具共享服务：引擎适配器 + 绑定到当前 session 的写入器 / 任务仓储 / 限流信号量。
+/// 绑定到当前用户、session 和请求消息的工具共享服务。
+///
+/// 每次 Agent 请求创建一套实例，防止 skill 状态、草稿检查状态或授权意图跨请求泄漏。
 #[derive(Clone)]
 pub struct ToolServices {
     pub engine: Arc<dyn SimEngine>,
@@ -322,6 +321,7 @@ pub fn tool_implementation_names() -> Vec<&'static str> {
         .collect()
 }
 
+/// 校验私有工具实现 catalog 与 Agent manifest 的允许列表完全一致且无重复。
 pub fn validate_tool_catalog(manifest: &AgentManifest) -> Result<(), ToolCatalogError> {
     let mut implementations = BTreeSet::new();
     for definition in tool_definitions() {
@@ -352,7 +352,7 @@ pub fn validate_tool_catalog(manifest: &AgentManifest) -> Result<(), ToolCatalog
     Ok(())
 }
 
-/// 每请求按已经校验的 manifest 顺序装配一套有状态工具（§5）。
+/// 每请求按已经校验的 manifest 顺序装配一套有状态工具。
 pub fn build_tools(services: Arc<ToolServices>) -> Vec<RegisteredTool> {
     validate_tool_catalog(&services.agent_knowledge.manifest)
         .expect("agent tool catalog must match the validated manifest");

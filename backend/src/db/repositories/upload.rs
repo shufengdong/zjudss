@@ -1,3 +1,5 @@
+//! 上传批次、文件、候选、解析状态、幂等确认 claim 和启动恢复的事务所有者。
+
 use diesel::prelude::*;
 
 use crate::auth::UserId;
@@ -85,6 +87,7 @@ pub struct RecoverableUpload {
 }
 
 #[derive(Clone)]
+/// 上传批次状态、claim 与恢复查询的 repository 门面。
 pub struct UploadRepo {
     pool: DbPool,
 }

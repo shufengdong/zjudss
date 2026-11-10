@@ -1,7 +1,7 @@
-//! 编排层：全局状态、事件总线与一次对话的编排。
+//! 应用编排层：装配具名依赖，并把 HTTP/Agent 请求委派给各自拥有状态机的领域门面。
 //!
-//! `AppState` 是 axum 的共享状态（连接池、仓储、事件总线、引擎适配器、限流信号量）；
-//! `EventBus` 按 session 广播事件供 SSE 订阅；`ChatService` 编排一次 agent 对话。
+//! 上传、研究配置、托管工作流、普通运行、结果来源、分析和比较保持独立事务与生命周期；
+//! `AppState` 只负责共享服务和运行时依赖，不吸收这些领域规则。
 
 pub mod analysis;
 pub mod artifacts;
@@ -170,6 +170,7 @@ pub struct AppState {
     pub upload_batch_limit_bytes: u64,
 }
 
+/// 生产与测试共同使用的具名外部依赖，避免参数顺序承载隐含语义。
 pub struct AppStateDependencies {
     pub pool: DbPool,
     pub engine: Arc<dyn SimEngine>,
@@ -179,6 +180,7 @@ pub struct AppStateDependencies {
     pub scheduler: RunScheduler,
 }
 
+/// 组合根的运行时容量、路径和预检产物。
 pub struct AppStateOptions {
     pub data_dir: PathBuf,
     pub storage_limits: StorageLimits,
@@ -223,6 +225,7 @@ impl AppState {
         .map_err(|error| (error.code(), error.to_string()))
     }
 
+    /// 用已经通过启动预检的依赖和选项装配所有领域门面。
     pub fn assemble(dependencies: AppStateDependencies, options: AppStateOptions) -> Self {
         let AppStateDependencies {
             pool,

@@ -1,7 +1,10 @@
+//! 薄工具包装器共享的领域错误适配、严格对象 schema 与 Rig dispatch 边界。
+
 use rig::completion::ToolAnnotations;
 use rig::tool::{Tool, ToolContext, ToolErrorKind, ToolExecutionError};
 
 #[derive(Debug)]
+/// 向模型返回稳定 code 与可读反馈的领域工具错误。
 pub struct DomainToolError {
     pub code: &'static str,
     pub message: String,
@@ -105,6 +108,7 @@ impl From<crate::application::StudyConfigurationError> for DomainToolError {
     }
 }
 
+/// 构造拒绝额外字段的严格对象参数 schema。
 pub fn object_schema(properties: serde_json::Value, required: &[&str]) -> serde_json::Value {
     serde_json::json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
 }

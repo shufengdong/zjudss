@@ -1,3 +1,5 @@
+//! RSS 源码的受限依赖发现与规范相对路径校验，不执行脚本。
+
 use std::collections::{BTreeSet, VecDeque};
 use std::path::{Component, Path};
 
@@ -14,6 +16,7 @@ pub struct DependencyReport {
     pub diagnostics: Vec<String>,
 }
 
+/// 只解析 RSS 依赖声明且不执行脚本的检查入口。
 pub struct RssInspector;
 
 impl RssInspector {

@@ -1,3 +1,7 @@
+//! 不可信上传内容的格式识别、解包和规范化边界。
+//!
+//! 该层只产生受限的文件树、RSS 依赖报告或 Snappy Parquet，不发布领域资源。
+
 mod archive;
 mod bundle;
 mod rss;

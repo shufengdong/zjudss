@@ -1,3 +1,7 @@
+//! 托管工作流、尝试、冻结输入与 provisional run 的原子持久化边界。
+//!
+//! 确认、重试、结果发布和恢复各自保持幂等及用户作用域，并共享同一工作流聚合装载规则。
+
 use diesel::prelude::*;
 use serde_json::json;
 use sha2::Digest;
@@ -139,6 +143,7 @@ impl From<diesel::result::Error> for ManagedWorkflowRepoError {
 }
 
 #[derive(Clone)]
+/// 托管工作流聚合及其原子状态迁移的 repository 门面。
 pub struct ManagedWorkflowRepo {
     pool: DbPool,
 }

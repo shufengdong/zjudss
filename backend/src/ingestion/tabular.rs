@@ -1,3 +1,7 @@
+//! CSV/Excel/Parquet 的安全检查、schema 推断和 Snappy Parquet 规范化。
+//!
+//! Excel 公式、宏和外部链接不会执行；所需公式值必须来自可验证缓存。
+
 use std::io::Read;
 use std::path::Path;
 
@@ -54,6 +58,7 @@ impl std::fmt::Display for TabularError {
 }
 impl std::error::Error for TabularError {}
 
+/// 检查表格格式和逻辑 schema 的无状态入口。
 pub struct TabularInspector;
 
 #[derive(Debug, Clone)]

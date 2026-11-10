@@ -1,3 +1,5 @@
+//! 普通运行、冻结输入、结果数据集、终态和 tombstone 的事务所有者。
+
 use super::{
     ArtifactDraft, ArtifactRepo, OverlayArtifactSource, RepoError, RepoResult, StateTransition,
     StructOverlayRequest, WorkflowInputRepo, WorkflowOverlayInput, WorkflowStructOverlayMaterial,
@@ -162,6 +164,7 @@ impl From<diesel::result::Error> for RunRepoError {
 }
 
 #[derive(Clone)]
+/// 普通运行与结果生命周期的 repository 门面。
 pub struct RunRepo {
     pool: DbPool,
 }

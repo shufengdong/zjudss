@@ -1,3 +1,5 @@
+//! 从运行时权威注册表生成前后端合同 manifest，供一致性测试校验路由、消息和枚举。
+
 use serde::Serialize;
 
 use crate::agent::knowledge::{AgentKnowledge, KnowledgeError};
@@ -182,6 +184,7 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// 由当前路由、消息类型、工具和公共枚举生成的机器可读合同。
 pub struct ContractManifest {
     pub version: &'static str,
     pub changes: Vec<&'static str>,
@@ -194,6 +197,7 @@ pub struct ContractManifest {
     pub stable_error_codes: Vec<&'static str>,
 }
 
+/// 从权威注册表构造合同 manifest，并验证嵌入式 Agent 工具清单。
 pub fn contract_manifest() -> Result<ContractManifest, KnowledgeError> {
     let knowledge = AgentKnowledge::load_embedded("v4.4.0")?;
     let mut skill_ids = knowledge

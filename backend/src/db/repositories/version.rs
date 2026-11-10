@@ -1,3 +1,5 @@
+//! 模型 workspace、可变草稿、不可变版本、激活和删除预览的事务所有者。
+
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Integer, Nullable, Text};
 use sha2::{Digest, Sha256};
@@ -173,6 +175,7 @@ impl From<diesel::result::Error> for VersionRepoError {
 }
 
 #[derive(Clone)]
+/// 模型 workspace、草稿和不可变版本的 repository 门面。
 pub struct VersionRepo {
     pool: DbPool,
 }

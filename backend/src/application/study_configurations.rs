@@ -1,3 +1,7 @@
+//! 自然语言研究配置的准备、资源绑定、修订和冻结合同门面。
+//!
+//! 配置卡只持有受控值和稳定资源 ID；确认后由托管工作流接管执行生命周期。
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -300,6 +304,7 @@ impl From<RepoError> for StudyConfigurationError {
 }
 
 #[derive(Clone)]
+/// 拥有研究配置 revision、资源绑定和确认前冻结校验的应用门面。
 pub struct StudyConfigurationService {
     repo: StudyConfigurationRepo,
     versions: VersionRepo,

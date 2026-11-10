@@ -1,3 +1,7 @@
+//! 上传用途确认门面：把候选分别发布到模型草稿或独立数据资源。
+//!
+//! 两侧使用独立幂等子事务，允许部分成功后只重试未完成的一侧。
+
 use std::collections::BTreeSet;
 use std::fs::File;
 use std::path::PathBuf;
@@ -85,6 +89,7 @@ impl PublicationStrategy {
 }
 
 #[derive(Clone)]
+/// 以独立幂等子事务发布模型和数据资源候选的应用门面。
 pub struct UploadConfirmationService {
     repo: DataResourceRepo,
     confirmation_repo: UploadConfirmationRepo,

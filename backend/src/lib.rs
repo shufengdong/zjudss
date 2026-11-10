@@ -1,4 +1,7 @@
 //! 配电网仿真智能体后端库入口。
+//!
+//! `api` 只处理传输，`application` 拥有业务编排，`db::repositories` 拥有持久化事务，
+//! `adapters` 是所有 `tensoreval` 进程调用的唯一边界；组合根通过 `AppState` 注入这些层。
 
 pub mod adapters;
 pub mod agent;

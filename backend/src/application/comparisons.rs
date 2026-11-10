@@ -1,3 +1,7 @@
+//! 运行比较门面：推导兼容性、冻结比较快照，并通过分析服务执行受控比较脚本。
+//!
+//! 比较拥有独立记录和幂等发布，不与分析共享状态机。
+
 use serde_json::{Value, json};
 
 use crate::application::{
@@ -35,6 +39,7 @@ impl std::fmt::Display for ComparisonError {
 impl std::error::Error for ComparisonError {}
 
 #[derive(Clone)]
+/// 校验两个运行的结果兼容性并发布独立比较快照的应用门面。
 pub struct ComparisonService {
     repo: ComparisonRepo,
     runs: RunRepo,

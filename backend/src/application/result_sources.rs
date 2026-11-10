@@ -1,3 +1,7 @@
+//! live 结果来源事实的唯一解析入口。
+//!
+//! 以当前用户和 dataset ID 组合会话、artifact scope、schema 与内容 hash，但不拥有发布或删除事务。
+
 use serde_json::{Value, json};
 
 use crate::application::dataframe_reader::{DataFrameColumn, DataFrameReadSource};
@@ -76,6 +80,7 @@ impl ResultSource {
 }
 
 #[derive(Clone)]
+/// 解析当前用户可见 live dataset 及其不可变读取事实的应用服务。
 pub(crate) struct ResultSourceService {
     results: ResultRepo,
     artifacts: ArtifactService,

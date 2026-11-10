@@ -1,3 +1,5 @@
+//! RSS bundle manifest 与声明文件集合的完整性验证。
+
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -36,6 +38,7 @@ pub struct ValidatedBundle {
     pub diagnostics: Vec<String>,
 }
 
+/// 校验 bundle manifest 与其声明文件集合的无状态入口。
 pub struct BundleValidator;
 
 impl BundleValidator {

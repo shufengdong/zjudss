@@ -1,3 +1,5 @@
+//! ZIP/DSS 目录的安全提取：拒绝路径逃逸、链接、重复路径和容量超限。
+
 use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Write};
@@ -78,6 +80,7 @@ impl ExtractedTree {
     }
 }
 
+/// 将不可信 archive 提取为受限普通文件树的无状态入口。
 pub struct ArchiveExtractor;
 
 impl ArchiveExtractor {

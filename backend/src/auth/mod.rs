@@ -1,3 +1,7 @@
+//! 固定用户认证边界：启动期不可变 seed、opaque cookie session 和请求用户提取。
+//!
+//! 认证成功后所有领域查询仍必须显式携带 `UserId`，不得依赖隐式全局用户。
+
 mod seed;
 mod session;
 
