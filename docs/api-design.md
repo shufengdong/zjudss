@@ -93,7 +93,7 @@ application 调用与响应语义，但不替代路由注册表。公共错误�
 | GET | `/api/runs/{id}/datasets` | 运行的存活结果 |
 | GET/DELETE | `/api/datasets/{id}` | 元数据/删除单个结果 |
 | GET | `/api/datasets/{id}/rows` | cursor 分页投影 |
-| GET | `/api/datasets/{id}/download` | 下载 Parquet |
+| GET | `/api/datasets/{id}/download` | 流式下载完整 Parquet（含 `Content-Length`） |
 | GET | `/api/datasets/{id}/chart-capabilities` | 返回可用字段、List 分量和图表预算 |
 | POST | `/api/datasets/{id}/chart-previews` | 校验受控配置并返回非持久化 `ChartModel` 预览 |
 | POST | `/api/datasets/{id}/views` | 以幂等操作 ID 保存不可变图表与 Plot Data |

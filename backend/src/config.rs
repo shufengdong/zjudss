@@ -143,8 +143,7 @@ impl RuntimeConfig {
                 "UPLOAD_BATCH_LIMIT_BYTES 不能小于 UPLOAD_SINGLE_FILE_LIMIT_BYTES",
             ));
         }
-        let result_max_file_bytes =
-            positive_u64(&values, "RESULT_MAX_FILE_BYTES", 2 * 1024 * MIB)?;
+        let result_max_file_bytes = positive_u64(&values, "RESULT_MAX_FILE_BYTES", 2 * 1024 * MIB)?;
         let result_max_total_bytes =
             positive_u64(&values, "RESULT_MAX_TOTAL_BYTES", 8 * 1024 * MIB)?;
         if result_max_total_bytes < result_max_file_bytes {

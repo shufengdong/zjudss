@@ -135,9 +135,7 @@ export const deleteDataset=(id:string)=>request<{datasetId:string;tombstone:unkn
 export const getStorageUsage=()=>request<StorageUsage>('/api/storage-usage')
 export const previewScriptRetry=(scriptId:string,clientRetryId:string)=>request<RetryPreviewView>(`/api/scripts/${scriptId}/retry-previews`,{method:'POST',body:JSON.stringify({clientRetryId})})
 export const confirmScriptRetry=(previewId:string,confirmed=true)=>request<ManagedWorkflowView>(`/api/retry-previews/${previewId}/confirm`,{method:'POST',body:JSON.stringify({confirmed})})
-export async function downloadDataset(id:string,name='dataset',signal?:AbortSignal){
-  return download(`/api/datasets/${id}/download`,`${name}.parquet`,signal)
-}
+export const datasetDownloadUrl=(id:string)=>apiUrl(`/api/datasets/${id}/download`)
 export async function downloadDataResource(id:string,kind:'normalized'|'original',name='data-resource',signal?:AbortSignal){
   const fallback=kind==='normalized'?`${name}.parquet`:name
   return download(`/api/data-resources/${id}/download${params({kind})}`,fallback,signal)

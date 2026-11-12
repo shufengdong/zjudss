@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
+  datasetDownloadUrl,
   downloadDataResource,
-  downloadDataset,
   downloadModelDataFrame,
   deleteSession,
   getModelDataFrame,
@@ -74,12 +74,8 @@ describe('protected downloads', () => {
     kind: 'model-version', dataframeId: '11', versionId: '7', tableName: 'bus',
   }
 
-  it('uses response filenames for all download endpoints', async () => {
+  it('uses response filenames for Fetch-and-Blob download endpoints', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response('dataset', {
-        status: 200,
-        headers: { 'content-disposition': 'attachment; filename="dataset-result.parquet"' },
-      }))
       .mockResolvedValueOnce(new Response('resource', {
         status: 200,
         headers: { 'content-disposition': 'attachment; filename="resource-source.csv"' },
@@ -90,10 +86,9 @@ describe('protected downloads', () => {
       }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(downloadDataset('1', 'fallback-dataset')).resolves.toMatchObject({ filename: 'dataset-result.parquet' })
     await expect(downloadDataResource('2', 'original', 'fallback-resource')).resolves.toMatchObject({ filename: 'resource-source.csv' })
     await expect(downloadModelDataFrame(version)).resolves.toMatchObject({ filename: 'model-table.parquet' })
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('uses endpoint-specific fallback filenames when disposition is absent', async () => {
@@ -102,10 +97,17 @@ describe('protected downloads', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(downloadDataset('1', 'dataset-name')).resolves.toMatchObject({ filename: 'dataset-name.parquet' })
     await expect(downloadDataResource('2', 'normalized', 'resource-name')).resolves.toMatchObject({ filename: 'resource-name.parquet' })
     await expect(downloadModelDataFrame(version)).resolves.toMatchObject({ filename: 'bus.parquet' })
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('exposes result downloads as same-origin URLs without fetching a Blob', () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    expect(datasetDownloadUrl('1')).toBe('/api/datasets/1/download')
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('uses structured errors and emits one authentication event for a download 401', async () => {
@@ -118,7 +120,7 @@ describe('protected downloads', () => {
     const listener = vi.fn()
     window.addEventListener('zjudss:authentication-required', listener)
 
-    await expect(downloadDataset('1')).rejects.toEqual(
+    await expect(downloadDataResource('1', 'normalized')).rejects.toEqual(
       new ApiError(401, '请先登录', 'authentication_required', { reason: 'expired' }),
     )
     expect(listener).toHaveBeenCalledTimes(1)
@@ -144,11 +146,10 @@ describe('protected downloads', () => {
     vi.stubGlobal('fetch', fetchMock)
     const signal = new AbortController().signal
 
-    await downloadDataset('1', 'dataset', signal)
     await downloadDataResource('2', 'original', 'resource', signal)
     await downloadModelDataFrame(version, signal)
 
-    expect(fetchMock.mock.calls).toHaveLength(3)
+    expect(fetchMock.mock.calls).toHaveLength(2)
     for (const [, init] of fetchMock.mock.calls as [string, RequestInit][]) {
       expect(init.signal).toBe(signal)
     }
