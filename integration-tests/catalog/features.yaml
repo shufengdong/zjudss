@@ -1384,7 +1384,16 @@
     - runner: rust
       file: backend/src/application/dataframe_reader.rs
       name: utf8_view_values_are_returned_as_json_strings
-  assertions: [metadata rows and download are readable, dataset details remain centered across content widths, Arrow Utf8View values page as JSON strings, deleting one result keeps siblings and run]
+    - runner: rust
+      file: backend/src/api/attachment.rs
+      name: attachment_response_streams_large_files_in_bounded_chunks
+    - runner: rust
+      file: backend/src/api/attachment.rs
+      name: attachment_response_reports_an_empty_file_without_body_chunks
+    - runner: vitest
+      file: frontend/src/components/datasets/DatasetWorkbench.test.tsx
+      name: downloads the protected Parquet directly without constructing a browser Blob
+  assertions: [metadata rows and download are readable, downloads stream in bounded chunks with accurate Content-Length, the browser uses the authenticated direct download route without constructing a full Blob, dataset details remain centered across content widths, Arrow Utf8View values page as JSON strings, deleting one result keeps siblings and run]
   fixtures: [multi-result run]
   contracts:
     - "route:GET /api/datasets/{id}"
