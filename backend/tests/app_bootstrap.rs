@@ -133,8 +133,8 @@ fn runtime_config_uses_v4_defaults_and_rejects_zero_or_inconsistent_limits() {
     assert_eq!(config.storage_warning_ratio, 0.8);
     assert_eq!(config.upload_staging_ttl_hours, 24);
     assert_eq!(config.result_max_files, 100);
-    assert_eq!(config.result_max_file_bytes, 512 * 1024 * 1024);
-    assert_eq!(config.result_max_total_bytes, 2 * 1024 * 1024 * 1024);
+    assert_eq!(config.result_max_file_bytes, 2 * 1024 * 1024 * 1024);
+    assert_eq!(config.result_max_total_bytes, 8 * 1024 * 1024 * 1024);
     assert_eq!(config.engine_process_output_max_bytes, 1024 * 1024);
     assert_eq!(config.script_repair_stderr_max_bytes, 64 * 1024);
     assert_eq!(config.script_repair_max_attempts, 3);

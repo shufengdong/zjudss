@@ -62,7 +62,8 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
   `dss/docs/catalog`（含 case projection schema v2）与 `dss/rssbundle` manifest schema v2，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
 - 每次 tensoreval 调用均由统一 adapter 流式排空 stdout/stderr；每流按 `ENGINE_PROCESS_OUTPUT_MAX_BYTES` 保留等额首尾并
   记录完整 hash/总字节数。生产调用没有墙钟执行上限，默认等待引擎完成；运行中和退出后都检查结果数量、单文件/总量、
-  普通文件和路径边界。实际失败、结果监控/安全拒绝或调用 future 被取消时会终止整个进程组并清理未发布目录。
+  普通文件和路径边界；默认单文件上限为 2 GiB、单次执行全部结果上限为 8 GiB，超限结果不会截断或部分发布。实际失败、
+  结果监控/安全拒绝或调用 future 被取消时会终止整个进程组并清理未发布目录。
   普通运行与受管工作流提供用户取消；导入、案例投影和派生分析没有用户取消入口，只会因完成、实际失败、结果安全拒绝或服务停止结束。
 - 公共合同：82 条唯一 method/path 路由、12 类消息、23 个工具、5 个 skills、8 个上传来源、6 类图表。
 - 静态 DSS adapter profile 固定输出 21 张规范 DataFrame；统一上传把其中 20 张网络表作为模型候选，把 `para`

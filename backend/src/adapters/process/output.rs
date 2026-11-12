@@ -19,8 +19,8 @@ impl Default for OutputLimits {
     fn default() -> Self {
         Self {
             max_files: 100,
-            max_file_bytes: 512 * 1024 * 1024,
-            max_total_bytes: 2 * 1024 * 1024 * 1024,
+            max_file_bytes: 2 * 1024 * 1024 * 1024,
+            max_total_bytes: 8 * 1024 * 1024 * 1024,
         }
     }
 }
