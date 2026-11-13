@@ -7,13 +7,15 @@ engine contract、允许工具和文件 SHA-256；启动时完整验证。Agent 
 
 ## Skills
 
-按需 skill 为 `model-intake`、`study-planning@1.5.0`、`result-analysis@1.2.0`、`comparison` 和
+按需 skill 为 `model-intake`、`study-planning@1.5.0`、`result-analysis@1.2.1`、`comparison` 和
 `troubleshooting`。结果分析和比较要求先加载对应 skill；实际引用保存在资源/运行/
 分析快照中。
 
 `result-analysis` 明确要求每条 RSS 声明以分号结束，右侧必须是返回 DataFrame 的函数调用；完整复制也要根据实际
 schema 使用 `select(col(...), source)`，不能生成 `derived = source` 这类 alias 直赋值。用户在同一条消息中要求先读
-schema 再执行分析时，Agent 必须在读取后继续调用 `run_result_analysis`，不能只汇报 schema 后结束本轮。
+schema 再执行分析时，Agent 必须在读取后继续调用 `run_result_analysis`，不能只汇报 schema 后结束本轮。工具的
+`intent` 是去除首尾空白后 1 到 1000 个 Unicode 字符的审计说明字符串，不参与脚本执行；空白或越限返回
+`analysis_intent_invalid`，不会创建分析记录。skill 提供完整 JSON/RSS 参数示例并禁止 Python import。
 
 每轮对话还注入服务端生成的 `currentResultContext`。服务只在当前用户、当前会话最近 20 条运行中选择最新的
 `succeeded` 且仍有存活 dataset 的运行；摘要只含稳定 dataset ID、名称、行数、大小、schema hash 与持久化列元数据，

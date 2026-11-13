@@ -112,7 +112,8 @@ RUN-001 在 Rust 层验证创建、重放、列表和详情都返回绑定脚本
 `currentResultContext` 只提供有界稳定元数据、Agent 加载 `result-analysis`、实际调用 `run_result_analysis`，且数据库只冻结
 选中的一个 dataset ID；两个名称/列均可能匹配的结果则只要求选择，不产生分析记录。另一个场景证明较新的 running、failed
 和 succeeded-but-empty 运行不会遮蔽最近可用成功结果。上下文构造单元测试覆盖 64 KiB 总预算、32 列、256 字符与显式裁剪标志；
-Agent bundle/tool 合同测试锁定 `result-analysis@1.2.0`、23 个工具及不变的显式多输入参数。
+Agent bundle/tool 合同测试锁定 `result-analysis@1.2.1`、23 个工具、不变的显式多输入参数，以及 1 到 1000 字符的
+审计 `intent` 字符串；对象、空白和超长 intent 在分析写入前失败关闭。
 唯一结果 scripted 场景请求复制指定列，不声称模拟引擎验证了阈值筛选语义；真实依赖旅程通过 trace 与输出血缘确认恰好冻结当前候选运行的
 `bus_voltage`，并逐页比较派生副本的全部行及 schema，删除同一来源后再验证 tombstone 血缘与派生数据可读。
 补充 scripted 场景覆盖不同用户/会话的较新结果不可见、最近 20 条的精确边界、全部来源删除后的 `null`，以及损坏持久化 schema

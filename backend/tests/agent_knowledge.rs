@@ -74,7 +74,7 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     assert!(study_planning.contains("只有用户原文包含目录中的完整函数标识"));
     assert!(study_planning.contains("算法名称（如 Newton/牛顿法）"));
     let result_skill = knowledge.skill("result-analysis").unwrap();
-    assert_eq!(result_skill.metadata.version, "1.2.0");
+    assert_eq!(result_skill.metadata.version, "1.2.1");
     assert_eq!(
         result_skill.metadata.required_tools,
         ["run_result_analysis"]
@@ -91,6 +91,8 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     assert!(result_analysis.contains("右侧必须是返回 DataFrame 的函数调用"));
     assert!(result_analysis.contains("分号"));
     assert!(result_analysis.contains("必须继续调用 `run_result_analysis`"));
+    assert!(result_analysis.contains(r#""intent": "复制当前电压结果的 time 和 v_mag 列""#));
+    assert!(result_analysis.contains("不得使用 Python import"));
     assert!(!result_analysis.contains("VisualizationSpec"));
     assert!(!knowledge.system_prompt.contains("create_dataset_view"));
     assert!(

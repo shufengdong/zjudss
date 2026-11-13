@@ -321,6 +321,11 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
     }, allowedTools)
     report.segments.push(summarizeTrace('result_analysis', trace))
     const analysisCall = trace.find(entry => entry.toolName === 'run_result_analysis' && entry.status === 'success')!
+    expect(typeof analysisCall.args.intent).toBe('string')
+    expect((analysisCall.args.intent as string).trim().length).toBeGreaterThan(0)
+    expect(typeof analysisCall.args.script).toBe('string')
+    expect(analysisCall.args.script).not.toMatch(/\bimport\b/)
+    expect(analysisCall.args.expectedOutputs).toEqual(['derived'])
     expect(analysisCall.args.inputs).toHaveLength(1)
     expect(String((analysisCall.args.inputs as any[])[0].datasetId)).toBe(voltage.id)
     const analysisIds = [...new Set((await readAllMessages(api, sessionId))
@@ -329,6 +334,7 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
     const analysisId = analysisIds[0]
     const analysis = await apiJson(api, `/api/analysis-runs/${analysisId}`)
     expect(analysis.status).toBe('succeeded')
+    expect(analysis.intent).toBe(analysisCall.args.intent)
     expect(analysis.datasets).toHaveLength(1)
     const derived = analysis.datasets[0]
     expect(derived.name).toBe('derived')

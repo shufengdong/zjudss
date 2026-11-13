@@ -272,9 +272,12 @@ async fn run_result_analysis_has_no_chart_creation_input() {
             .len(),
         2
     );
+    assert_eq!(parameters["properties"]["intent"]["type"], "string");
+    assert_eq!(parameters["properties"]["intent"]["minLength"], 1);
+    assert_eq!(parameters["properties"]["intent"]["maxLength"], 1_000);
     assert!(
         serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
-            "intent":{},
+            "intent":"join the selected result datasets",
             "script":"joined = join(left, right)",
             "inputs":[
                 {"datasetId":1,"alias":"left"},
@@ -287,7 +290,20 @@ async fn run_result_analysis_has_no_chart_creation_input() {
     );
     assert!(
         serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
-            "intent":{},
+            "intent":{"request":"join the selected result datasets"},
+            "script":"joined = join(left, right)",
+            "inputs":[
+                {"datasetId":1,"alias":"left"},
+                {"datasetId":2,"alias":"right"}
+            ],
+            "expectedOutputs":["joined"]
+        }))
+        .is_err(),
+        "object-valued intent must be rejected at the tool boundary"
+    );
+    assert!(
+        serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
+            "intent":"copy the selected result",
             "script":"result = source",
             "inputs":[],
             "expectedOutputs":["result"],

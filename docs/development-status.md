@@ -24,7 +24,7 @@
 | Task 10：脚本生成、执行与自动修正 | complete | RSS 必需语法章节优先注入 generation/repair、结构合同强制多结果方括号解构、冻结输入树、共享调度与会话取消、tensoreval 立即执行、3 次修正/4 次执行上限、原样修复只审计不重跑、64 KiB 脱敏 stdout/stderr、带日志引用的结构化失败分析、精确结果合同、独占原子结果发布与崩溃孤儿回收 |
 | Task 11：脚本重跑、失败重试与运行删除 | complete | 最新所需输入冻结、用户/selector overlay 按显式 replacement 血缘跨 retry/rerun 重建、source-less 与旧 snapshot 兼容、开放/精确结果合同、派生 retry workflow、输入差异确认、普通 run 持久失败日志/智能分析、run/result 原子 tombstone、artifact 引用释放 |
 | Task 7：durable 消息、历史锚定与会话删除 | complete | 3 种 revisioned 操作卡、`messageId:revision` SSE、连续 around window、影响 token 删除与统一取消 |
-| Task 8：V4 Agent bundle 与受控工具 | complete | `v4.4.0`、5 个按需 skills（`study-planning@1.5.0`、`result-analysis@1.2.0`）、23 个对话工具；每轮注入有界当前结果元数据，唯一匹配后可执行自然语言派生分析；研究配置包含模型生成的详细说明和服务端权威页脚；明确自然语言可发布精确草稿并自动激活，也可按当前卡片精确 revision 修改结果；无聊天脚本创建、图表创建、自动确认或旧规划权限 |
+| Task 8：V4 Agent bundle 与受控工具 | complete | `v4.4.0`、5 个按需 skills（`study-planning@1.5.0`、`result-analysis@1.2.1`）、23 个对话工具；每轮注入有界当前结果元数据，唯一匹配后可执行自然语言派生分析；研究配置包含模型生成的详细说明和服务端权威页脚；明确自然语言可发布精确草稿并自动激活，也可按当前卡片精确 revision 修改结果；无聊天脚本创建、图表创建、自动确认或旧规划权限 |
 | Task 12：统一上传与数据文件工作台 | complete | 旧模型导入前端已移除、durable batch 摘要恢复、用途/隐藏 sheet/双子事务确认；案例完整卡归入模型工作区，普通上传完整卡归入数据文件页；资源分页预览/下载/删除/replacement、模型版本描述 |
 | Task 13：研究确认与受管执行前端 | complete | 对话内上传摘要与可按配置记忆收起状态的研究配置卡、只呈现待处理输入、参数模板只读与运行覆盖提示、server-owned selector 隐藏、错误自动展开、目录类型参数、revision stale 刷新、attempt/取消/失败重试、精确脚本定位、run 删除影响确认 |
 | Task 14：确定性全链路测试与功能追溯 | complete | 32 条 Playwright 旅程；351/351 功能证据、298/298 公共合同、PR 覆盖 100% |
@@ -56,7 +56,7 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 
 - 后端 Cargo package 与 library crate 均为 `zjudss`；`backend/` 只是仓库目录名，Rust 调用点使用
   `zjudss::`。
-- Agent bundle：`v4.4.0`，目录 `backend/resources/agent/v4`；研究规划 skill 为 `study-planning@1.5.0`，结果分析 skill 为 `result-analysis@1.2.0`。
+- Agent bundle：`v4.4.0`，目录 `backend/resources/agent/v4`；研究规划 skill 为 `study-planning@1.5.0`，结果分析 skill 为 `result-analysis@1.2.1`。
 - LLM provider：缺省为 DeepSeek；也可通过 `LLM_PROVIDER=bailian`、显式模型、同地域 API Key 和 OpenAI-compatible endpoint 使用百炼。两者共用同一 Agent、工具和 ScriptAuthor 合同。
 - Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `SPARROWZZ_DIR` 动态发现并验证
   `dss/docs/catalog`（含 case projection schema v2）与 `dss/rssbundle` manifest schema v2，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
@@ -84,7 +84,8 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 - 当前结果自然语言分析：每轮只检查当前用户会话最近 20 条运行，选取最新成功且仍有存活结果的运行，并注入不超过
   64 KiB 的稳定 ID/schema 元数据；每个 dataset 最多 32 列、文本最多 256 个 Unicode 字符且显式标记裁剪。唯一匹配时
   默认只冻结一个 dataset，歧义或影响判断的裁剪必须查询/询问；显式多输入合同保持不变。纯图表请求仍进入结果工作台，
-  筛选、聚合、越限和其他派生请求进入 `run_result_analysis`。
+  筛选、聚合、越限和其他派生请求进入 `run_result_analysis`。该工具的审计 `intent` 使用 1 到 1000 字符的直接字符串，
+  与 RSS `script`、稳定输入和预期输出合同分离，避免 provider 生成无属性对象或裸文本造成参数解析循环。
 
 ## Backend dependency baseline
 

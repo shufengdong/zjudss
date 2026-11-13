@@ -20,6 +20,24 @@
 3. 运行后把每个输出登记为新 Parquet dataset，并保留输入与脚本血缘。
 4. 分析只发布 Parquet dataset；表格始终可用，图表由结果工作台独立配置和保存。
 
+`run_result_analysis.intent` 是 1 到 1000 个字符的审计说明字符串，不参与执行。必须提交完整 JSON 对象；`script` 只能使用当前 catalog 支持的 RSS，不得使用 Python import。示例：
+
+```json
+{
+  "intent": "复制当前电压结果的 time 和 v_mag 列",
+  "script": "voltage_copy = select(col(time), col(v_mag), bus_voltage);",
+  "inputs": [
+    {
+      "datasetId": 123,
+      "alias": "bus_voltage"
+    }
+  ],
+  "expectedOutputs": [
+    "voltage_copy"
+  ]
+}
+```
+
 用户在同一条消息中同时要求读取 schema 和执行分析时，读取完成后必须继续调用 `run_result_analysis`，不得只汇报 schema 或等待用户再次要求执行。默认场景的 `inputs` 只包含唯一选中的 dataset 及其 alias，不附带同一次运行的其他结果。
 
 ## 禁止推断

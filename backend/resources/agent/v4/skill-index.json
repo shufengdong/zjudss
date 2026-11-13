@@ -59,7 +59,7 @@
     },
     {
       "id": "result-analysis",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "description": "从 Parquet dataset 生成受控筛选、聚合和派生结果",
       "triggers": [
         "query-result",
@@ -74,7 +74,7 @@
         "docs/rsdss_function_reference.md"
       ],
       "path": "skills/result-analysis.md",
-      "sha256": "21bf468549eaf5f13c69504edf7ebd70c57ecd3f655a85c16a74fa035d271e36"
+      "sha256": "6297cef6b50e9fca8b2953800306e8cf7225227376cac7e53a2a825a99c429a2"
     },
     {
       "id": "comparison",

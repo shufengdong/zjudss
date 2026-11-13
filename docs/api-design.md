@@ -146,6 +146,9 @@ engine snapshot 中 manifest v2 绑定的 projection profile 动态执行，`pro
 既有规范 artifact，没有原文件入口。`rows` 只接受 limit/cursor/columns；下载不返回服务器路径。普通资源可直接
 作为 `run_result_analysis` 的稳定 `resourceId` 来源，派生血缘冻结资源 ID、schema hash 和 content hash。用户配置图表
 只接受仿真或分析结果的稳定 dataset ID，不接受数据资源、服务器路径、SQL 或任意 ECharts option。
+`run_result_analysis.intent` 是必填的审计说明字符串，去除首尾空白后必须为 1 到 1000 个 Unicode 字符；它不参与
+`script` 执行、`inputs` 解析或 `expectedOutputs` 校验。空白或越限返回 `analysis_intent_invalid` 且不创建分析记录，
+成功后仍以 JSON 字符串保存到既有 `intent_json` 并由分析详情的 `intent` 字段返回。
 
 重新上传与独立 Struct 资源工作台覆盖会创建新 artifact。重新上传确认必须显式提交 Replace、SaveAsNew 或 Cancel；Replace
 原子转移当前 alias、使依赖旧资源的未确认研究配置失效，并把旧资源保留为历史 replacement；

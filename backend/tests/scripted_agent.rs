@@ -325,6 +325,12 @@ struct AnalysisInputRow {
     dataset_id: Option<i32>,
 }
 
+#[derive(diesel::QueryableByName)]
+struct AnalysisIntentRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    intent_json: String,
+}
+
 #[tokio::test]
 async fn natural_language_analysis_uses_the_unique_current_result_dataset() {
     let factory = Arc::new(ScriptedAgentFactory::default());
@@ -360,7 +366,7 @@ async fn natural_language_analysis_uses_the_unique_current_result_dataset() {
                 call_id: "run-analysis".into(),
                 name: "run_result_analysis".into(),
                 args: json!({
-                    "intent":{"goal":"copy the time and v_mag columns of the current voltage result"},
+                    "intent":"copy the time and v_mag columns of the current voltage result",
                     "script":"voltage_copy = select(col(time), col(v_mag), bus_voltage);",
                     "inputs":[{"datasetId":source.id,"alias":"bus_voltage"}],
                     "expectedOutputs":["voltage_copy"]
@@ -399,6 +405,14 @@ async fn natural_language_analysis_uses_the_unique_current_result_dataset() {
             .unwrap();
     assert_eq!(inputs.len(), 1);
     assert_eq!(inputs[0].dataset_id, Some(source.id));
+    let intents = sql_query("SELECT intent_json FROM result_analysis_runs ORDER BY id")
+        .load::<AnalysisIntentRow>(&mut connection)
+        .unwrap();
+    assert_eq!(intents.len(), 1);
+    assert_eq!(
+        serde_json::from_str::<Value>(&intents[0].intent_json).unwrap(),
+        json!("copy the time and v_mag columns of the current voltage result")
+    );
 }
 
 #[tokio::test]
