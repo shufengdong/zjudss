@@ -2,7 +2,7 @@
   "agentBundleVersion": "v4.4.0",
   "engineContractVersion": "tensoreval-parquet-v3",
   "systemSha256": "00756d2a145ec6f63b060dbc2aaf5af222d0c86561edb21aac55e9ce54e36ff2",
-  "skillIndexSha256": "c5380150c1a0da7589c0185a91614a2c66bce5997468bca9d913c80883a15963",
+  "skillIndexSha256": "a04ff39cf14408c4f1169c58d3a183e029a98a6a13461c6a0382c2581497fc2c",
   "allowedTools": [
     "inspect_workspace",
     "read_model_dataframe",
