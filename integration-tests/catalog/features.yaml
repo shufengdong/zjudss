@@ -1437,6 +1437,7 @@
   contracts:
     - "route:GET /api/analysis-runs/{id}"
     - "tool:run_result_analysis"
+    - "error:analysis_intent_invalid"
 
 - id: VIEW-001
   source: docs/integration-testing-design.md#coverage-matrix

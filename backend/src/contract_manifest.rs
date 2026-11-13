@@ -83,6 +83,7 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "history_page_invalid",
     "history_query_invalid",
     "history_search_unavailable",
+    "analysis_intent_invalid",
     "analysis_alias_invalid",
     "analysis_create_failed",
     "analysis_engine_failed",

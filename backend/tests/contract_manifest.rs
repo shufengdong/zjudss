@@ -215,6 +215,11 @@ fn contract_manifest_contains_all_public_enums() {
     assert!(
         manifest
             .stable_error_codes
+            .contains(&"analysis_intent_invalid")
+    );
+    assert!(
+        manifest
+            .stable_error_codes
             .contains(&"workflow_in_progress")
     );
     for code in [

@@ -348,6 +348,11 @@ async fn natural_language_analysis_uses_the_unique_current_result_dataset() {
         .iter()
         .find(|dataset| dataset.result_name == "bus_voltage")
         .expect("bus_voltage result");
+    let intent_prefix = "copy the time and v_mag columns of the current voltage result: ";
+    let persisted_intent = format!(
+        "{intent_prefix}{}",
+        "压".repeat(1_000 - intent_prefix.chars().count())
+    );
     engine.enqueue(EngineScenario::Success(vec![DatasetFixture {
         name: "voltage_copy".into(),
         rows: vec![("bus-1".into(), 1.12)],
@@ -366,7 +371,7 @@ async fn natural_language_analysis_uses_the_unique_current_result_dataset() {
                 call_id: "run-analysis".into(),
                 name: "run_result_analysis".into(),
                 args: json!({
-                    "intent":"copy the time and v_mag columns of the current voltage result",
+                    "intent":format!("  {persisted_intent}  "),
                     "script":"voltage_copy = select(col(time), col(v_mag), bus_voltage);",
                     "inputs":[{"datasetId":source.id,"alias":"bus_voltage"}],
                     "expectedOutputs":["voltage_copy"]
@@ -411,7 +416,7 @@ async fn natural_language_analysis_uses_the_unique_current_result_dataset() {
     assert_eq!(intents.len(), 1);
     assert_eq!(
         serde_json::from_str::<Value>(&intents[0].intent_json).unwrap(),
-        json!("copy the time and v_mag columns of the current voltage result")
+        json!(persisted_intent)
     );
 }
 

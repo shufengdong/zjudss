@@ -314,6 +314,57 @@ async fn run_result_analysis_has_no_chart_creation_input() {
 }
 
 #[tokio::test]
+async fn invalid_analysis_intent_fails_before_persistent_side_effects() {
+    let app = TestApp::spawn().await;
+    let registered = tools::build_tools(services(&app, principal("alice")));
+    let tool = registered
+        .iter()
+        .find(|tool| tool.name() == "run_result_analysis")
+        .expect("run_result_analysis registered");
+    let before_runs = diesel::sql_query("SELECT count(*) count FROM result_analysis_runs")
+        .get_result::<common::CountRow>(&mut app.pool.get().unwrap())
+        .unwrap()
+        .count;
+    let before_artifacts = diesel::sql_query("SELECT count(*) count FROM artifacts")
+        .get_result::<common::CountRow>(&mut app.pool.get().unwrap())
+        .unwrap()
+        .count;
+
+    for intent in ["   \n\t".to_string(), "压".repeat(1_001)] {
+        let result = tool
+            .execute(
+                serde_json::json!({
+                    "intent": intent,
+                    "script": "result = select(col(time), source);",
+                    "inputs": [{"datasetId": 1, "alias": "source"}],
+                    "expectedOutputs": ["result"]
+                })
+                .to_string(),
+                &mut ToolContext::new(),
+            )
+            .await;
+        let error = result.error().expect("invalid intent must fail");
+        assert_eq!(error.code(), Some("analysis_intent_invalid"));
+        assert!(
+            error
+                .model_feedback()
+                .is_some_and(|feedback| feedback.contains("analysis_intent_invalid"))
+        );
+    }
+
+    let after_runs = diesel::sql_query("SELECT count(*) count FROM result_analysis_runs")
+        .get_result::<common::CountRow>(&mut app.pool.get().unwrap())
+        .unwrap()
+        .count;
+    let after_artifacts = diesel::sql_query("SELECT count(*) count FROM artifacts")
+        .get_result::<common::CountRow>(&mut app.pool.get().unwrap())
+        .unwrap()
+        .count;
+    assert_eq!(after_runs, before_runs);
+    assert_eq!(after_artifacts, before_artifacts);
+}
+
+#[tokio::test]
 async fn registered_tools_preserve_domain_error_feedback_and_metadata() {
     let app = TestApp::spawn().await;
     let registered = tools::build_tools(services(&app, principal("alice")));
