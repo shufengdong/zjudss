@@ -74,11 +74,20 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     assert!(study_planning.contains("只有用户原文包含目录中的完整函数标识"));
     assert!(study_planning.contains("算法名称（如 Newton/牛顿法）"));
     let result_skill = knowledge.skill("result-analysis").unwrap();
+    assert_eq!(result_skill.metadata.version, "1.2.0");
     assert_eq!(
         result_skill.metadata.required_tools,
         ["run_result_analysis"]
     );
     let result_analysis = result_skill.content.as_str();
+    assert!(knowledge.system_prompt.contains("currentResultContext"));
+    assert!(result_analysis.contains("currentResultContext"));
+    assert!(result_analysis.contains("唯一匹配"));
+    assert!(result_analysis.contains("默认只绑定一个"));
+    assert!(result_analysis.contains("list_result_datasets"));
+    assert!(result_analysis.contains("越限"));
+    assert!(result_analysis.contains("阈值线或点标记"));
+    assert!(result_analysis.contains("显式多输入"));
     assert!(result_analysis.contains("右侧必须是返回 DataFrame 的函数调用"));
     assert!(result_analysis.contains("分号"));
     assert!(result_analysis.contains("必须继续调用 `run_result_analysis`"));
@@ -252,7 +261,8 @@ fn preflight_rejects_bundle_and_engine_contract_mismatch() {
 #[tokio::test]
 async fn prompt_publishes_independent_catalog_versions_and_facade_inventory() {
     let app = common::TestApp::spawn().await;
-    let prompt = PromptAssembler::assemble(&app.state.agent_knowledge, &app.state.engine_snapshot);
+    let prompt =
+        PromptAssembler::assemble(&app.state.agent_knowledge, &app.state.engine_snapshot, None);
 
     assert!(prompt.contains("catalogSchemaVersions"));
     assert!(prompt.contains("studyFacades"));
@@ -263,4 +273,54 @@ async fn prompt_publishes_independent_catalog_versions_and_facade_inventory() {
     assert!(prompt.contains("\"dataframes\":4"));
     assert!(prompt.contains("\"dtypeGrammar\":1"));
     assert!(!prompt.contains("\"catalogSchemaVersion\":"));
+}
+
+#[tokio::test]
+async fn prompt_includes_bounded_current_result_facts() {
+    let app = common::TestApp::spawn().await;
+    let current_result = json!({
+        "runId":"17",
+        "createdAtMs":1234,
+        "datasets":[{
+            "datasetId":"29",
+            "name":"bus_voltage",
+            "nameTruncated":false,
+            "rowCount":42,
+            "sizeBytes":2048,
+            "schemaHash":"schema-29",
+            "schemaHashTruncated":false,
+            "columns":[{
+                "name":"v_mag",
+                "dtype":"Float64",
+                "nullable":false,
+                "unit":"pu",
+                "truncated":false
+            }],
+            "columnsTruncated":false
+        }],
+        "datasetsTruncated":false
+    })
+    .to_string();
+
+    let prompt = PromptAssembler::assemble(
+        &app.state.agent_knowledge,
+        &app.state.engine_snapshot,
+        Some(&current_result),
+    );
+
+    assert!(prompt.contains("\"currentResultContext\":{\"createdAtMs\":1234"));
+    assert!(prompt.contains("\"datasetId\":\"29\""));
+    assert!(prompt.contains("\"schemaHash\":\"schema-29\""));
+    assert!(prompt.contains("\"columnsTruncated\":false"));
+    assert!(!prompt.contains("storagePath"));
+    assert!(!prompt.contains("rowValues"));
+}
+
+#[tokio::test]
+async fn prompt_uses_null_when_current_result_is_unavailable() {
+    let app = common::TestApp::spawn().await;
+    let prompt =
+        PromptAssembler::assemble(&app.state.agent_knowledge, &app.state.engine_snapshot, None);
+
+    assert!(prompt.contains("\"currentResultContext\":null"));
 }

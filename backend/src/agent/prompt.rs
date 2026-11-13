@@ -10,7 +10,11 @@ use crate::engine_resources::EngineResourceSnapshot;
 pub struct PromptAssembler;
 
 impl PromptAssembler {
-    pub fn assemble(knowledge: &AgentKnowledge, resources: &EngineResourceSnapshot) -> String {
+    pub fn assemble(
+        knowledge: &AgentKnowledge,
+        resources: &EngineResourceSnapshot,
+        current_result_json: Option<&str>,
+    ) -> String {
         let skills: Vec<_> = knowledge
             .skill_index()
             .map(|skill| {
@@ -39,11 +43,17 @@ impl PromptAssembler {
             "documentSections": resources.knowledge.sections.len(),
             "examples": resources.examples.len(),
         });
+        let current_result = current_result_json.map(|value| {
+            serde_json::from_str::<serde_json::Value>(value)
+                .expect("current result context is valid JSON")
+        });
+        let current_result = json!({ "currentResultContext": current_result });
         format!(
-            "{}\n\n# Skill index\n{}\n\n# Engine resources\n{}",
+            "{}\n\n# Skill index\n{}\n\n# Engine resources\n{}\n\n# Current result\n{}",
             knowledge.system_prompt,
             serde_json::to_string(&skills).expect("skill index serializable"),
             serde_json::to_string(&summary).expect("resource summary serializable"),
+            serde_json::to_string(&current_result).expect("current result context serializable"),
         )
     }
 }

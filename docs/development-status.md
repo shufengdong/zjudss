@@ -24,7 +24,7 @@
 | Task 10：脚本生成、执行与自动修正 | complete | RSS 必需语法章节优先注入 generation/repair、结构合同强制多结果方括号解构、冻结输入树、共享调度与会话取消、tensoreval 立即执行、3 次修正/4 次执行上限、原样修复只审计不重跑、64 KiB 脱敏 stdout/stderr、带日志引用的结构化失败分析、精确结果合同、独占原子结果发布与崩溃孤儿回收 |
 | Task 11：脚本重跑、失败重试与运行删除 | complete | 最新所需输入冻结、用户/selector overlay 按显式 replacement 血缘跨 retry/rerun 重建、source-less 与旧 snapshot 兼容、开放/精确结果合同、派生 retry workflow、输入差异确认、普通 run 持久失败日志/智能分析、run/result 原子 tombstone、artifact 引用释放 |
 | Task 7：durable 消息、历史锚定与会话删除 | complete | 3 种 revisioned 操作卡、`messageId:revision` SSE、连续 around window、影响 token 删除与统一取消 |
-| Task 8：V4 Agent bundle 与受控工具 | complete | `v4.4.0`、5 个按需 skills（`study-planning@1.5.0`）、23 个对话工具；研究配置包含模型生成的详细说明和服务端权威页脚；明确自然语言可发布精确草稿并自动激活，也可按当前卡片精确 revision 修改结果；无聊天脚本创建、图表创建、自动确认或旧规划权限 |
+| Task 8：V4 Agent bundle 与受控工具 | complete | `v4.4.0`、5 个按需 skills（`study-planning@1.5.0`、`result-analysis@1.2.0`）、23 个对话工具；每轮注入有界当前结果元数据，唯一匹配后可执行自然语言派生分析；研究配置包含模型生成的详细说明和服务端权威页脚；明确自然语言可发布精确草稿并自动激活，也可按当前卡片精确 revision 修改结果；无聊天脚本创建、图表创建、自动确认或旧规划权限 |
 | Task 12：统一上传与数据文件工作台 | complete | 旧模型导入前端已移除、durable batch 摘要恢复、用途/隐藏 sheet/双子事务确认；案例完整卡归入模型工作区，普通上传完整卡归入数据文件页；资源分页预览/下载/删除/replacement、模型版本描述 |
 | Task 13：研究确认与受管执行前端 | complete | 对话内上传摘要与可按配置记忆收起状态的研究配置卡、只呈现待处理输入、参数模板只读与运行覆盖提示、server-owned selector 隐藏、错误自动展开、目录类型参数、revision stale 刷新、attempt/取消/失败重试、精确脚本定位、run 删除影响确认 |
 | Task 14：确定性全链路测试与功能追溯 | complete | 32 条 Playwright 旅程；351/351 功能证据、298/298 公共合同、PR 覆盖 100% |
@@ -56,7 +56,7 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 
 - 后端 Cargo package 与 library crate 均为 `zjudss`；`backend/` 只是仓库目录名，Rust 调用点使用
   `zjudss::`。
-- Agent bundle：`v4.4.0`，目录 `backend/resources/agent/v4`；研究规划 skill 为 `study-planning@1.5.0`。
+- Agent bundle：`v4.4.0`，目录 `backend/resources/agent/v4`；研究规划 skill 为 `study-planning@1.5.0`，结果分析 skill 为 `result-analysis@1.2.0`。
 - LLM provider：缺省为 DeepSeek；也可通过 `LLM_PROVIDER=bailian`、显式模型、同地域 API Key 和 OpenAI-compatible endpoint 使用百炼。两者共用同一 Agent、工具和 ScriptAuthor 合同。
 - Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `SPARROWZZ_DIR` 动态发现并验证
   `dss/docs/catalog`（含 case projection schema v2）与 `dss/rssbundle` manifest schema v2，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
@@ -81,6 +81,10 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 - 用户配置图表：固定 API 从仿真/分析 DataFrame 发现标量及最多四层数值 List 分量，服务端校验六类受控配置并编译
   `chart-model-v1`；前端只做确定性 ECharts 映射。预览不写入，保存冻结配置、诊断、来源快照与 Snappy Parquet Plot Data；
   来源 tombstone 后仍可从会话图表页恢复。对话 Agent 没有图表工具，也不产生 ECharts JSON。
+- 当前结果自然语言分析：每轮只检查当前用户会话最近 20 条运行，选取最新成功且仍有存活结果的运行，并注入不超过
+  64 KiB 的稳定 ID/schema 元数据；每个 dataset 最多 32 列、文本最多 256 个 Unicode 字符且显式标记裁剪。唯一匹配时
+  默认只冻结一个 dataset，歧义或影响判断的裁剪必须查询/询问；显式多输入合同保持不变。纯图表请求仍进入结果工作台，
+  筛选、聚合、越限和其他派生请求进入 `run_result_analysis`。
 
 ## Backend dependency baseline
 
@@ -373,3 +377,12 @@ manifest、contract manifest 聚焦测试。完整 `cargo test --features e2e-te
 `cargo test --features e2e-test`、54/54 文件共 292/292 项 Vitest、生产构建和 32/32 Playwright。PR 功能门禁为
 351/351 功能证据、298/298 公共合同、30/30 目录条目和 100% 追溯。生产 `tensoreval` 不再使用墙钟截止时间；测试看门狗
 仍保持有界，其中进程心跳看门狗按全套并行负载放宽到 10 秒。恢复与受管研究浏览器旅程也已改用当前 cancellation/候选变化合同。
+
+2026-11-13 当前结果自然语言分析阶段已通过后端格式、全 target/all feature 零警告 Clippy、当前结果/Prompt/Agent bundle/
+工具合同聚焦测试，以及精确跳过当前外部 eig-rs 资源树断言后的完整 `e2e-test`。未过滤 Rust 套件的唯一失败是该外部树
+19 个 facade catalog entry 中只有 18 个启用；应用未放宽资源合同。前端 55/55 文件共 295/295 项 Vitest 与生产构建通过；
+PR 功能门禁为 351/351 功能证据、298/298 公共合同、30/30 目录条目和 100% 追溯。Playwright 为 31/32；唯一失败可稳定
+复现于既有数据资源原文件下载把中文 display name 直接写入传统 `filename` 响应头，当前 Chromium 以非法 header 字符拒绝，
+与本阶段结果上下文和分析链路无关，本阶段没有越权改变该公共下载合同。随后为稳定复现该单项而执行的聚焦 Playwright
+重跑覆盖了全量 `e2e-routes.ndjson`；因此当前工作树重新执行覆盖门禁得到 330/351（94.017%），但 298/298 公共合同仍全部
+注册。这是运行证据文件的当前状态，不把此前全量浏览器运行产生的 351/351 结果冒充为聚焦重跑后的现状。

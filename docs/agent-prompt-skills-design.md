@@ -7,13 +7,24 @@ engine contract、允许工具和文件 SHA-256；启动时完整验证。Agent 
 
 ## Skills
 
-按需 skill 为 `model-intake`、`study-planning@1.5.0`、`result-analysis`、`comparison` 和
+按需 skill 为 `model-intake`、`study-planning@1.5.0`、`result-analysis@1.2.0`、`comparison` 和
 `troubleshooting`。结果分析和比较要求先加载对应 skill；实际引用保存在资源/运行/
 分析快照中。
 
 `result-analysis` 明确要求每条 RSS 声明以分号结束，右侧必须是返回 DataFrame 的函数调用；完整复制也要根据实际
 schema 使用 `select(col(...), source)`，不能生成 `derived = source` 这类 alias 直赋值。用户在同一条消息中要求先读
 schema 再执行分析时，Agent 必须在读取后继续调用 `run_result_analysis`，不能只汇报 schema 后结束本轮。
+
+每轮对话还注入服务端生成的 `currentResultContext`。服务只在当前用户、当前会话最近 20 条运行中选择最新的
+`succeeded` 且仍有存活 dataset 的运行；摘要只含稳定 dataset ID、名称、行数、大小、schema hash 与持久化列元数据，
+不读取 Parquet 行或暴露物理路径。完整 JSON 最多 64 KiB，每个 dataset 最多 32 个列摘要，每个文本字段最多 256 个
+Unicode 字符，并用 dataset、列和字段级标志明确裁剪。
+
+自然语言结果处理只在名称与列元数据唯一匹配时默认绑定一个 dataset，并继续显式提交 `datasetId + alias`；同一运行的
+其他结果不会被隐式复制或扫描。候选歧义时要求用户选择；裁剪影响判断时调用 `list_result_datasets`，上下文为 `null` 时
+先查询运行历史再查询结果，不能据此断言尚未运行。显式多输入分析仍按原合同支持最多 20 个输入。纯画图请求进入结果
+工作台；筛选、排序、聚合、统计、透视、关联、越限和派生进入分析，缺少阈值、单位或 List 分量时只询问必要信息。
+Agent 不得声称图表支持合同中不存在的阈值线或点标记。
 
 ## Tool authority
 

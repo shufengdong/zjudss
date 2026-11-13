@@ -761,11 +761,26 @@
     - runner: rust
       file: backend/tests/scripted_agent.rs
       name: agent_history_uses_the_latest_owned_mutable_configuration
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: natural_language_analysis_uses_the_unique_current_result_dataset
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: ambiguous_current_results_require_selection_without_analysis
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: current_result_context_is_scoped_to_owner_and_session
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: current_result_context_respects_latest_twenty_boundary_and_empty_session
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: current_result_context_lookup_error_and_deleted_datasets_degrade_to_null
     - runner: release
       file: scripts/test-release-integration
       name: real LLM provider and tensoreval complete the V4 semantic release journey
-  assertions: [tool calls are controlled and persisted, skills are loaded on demand, prepare_study validates and persists the bounded model-generated explanation plus a server-authored title and configuration ID footer before its configuration card and suppresses the later provider tail, prepare_study is a durable success even if provider finalization fails, conversational tools cannot create or run scripts, Agent history injects only the latest owned mutable configuration and never revives terminal or foreign configuration cards from stale message payloads]
-  fixtures: [embedded V4 agent bundle]
+  assertions: [tool calls are controlled and persisted, skills are loaded on demand, the bounded current-result context selects exactly one matching dataset for natural-language analysis, ambiguous current results require a user choice without an analysis write, prepare_study validates and persists the bounded model-generated explanation plus a server-authored title and configuration ID footer before its configuration card and suppresses the later provider tail, prepare_study is a durable success even if provider finalization fails, conversational tools cannot create or run scripts, Agent history injects only the latest owned mutable configuration and never revives terminal or foreign configuration cards from stale message payloads]
+  fixtures: [embedded V4 agent bundle, successful run with unique current result, successful run with ambiguous current results]
   contracts:
     - "tool:load_agent_skill"
     - "skill:comparison"
@@ -1411,8 +1426,14 @@
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
       name: analysis and comparisons survive source-result deletion with tombstone lineage
-  assertions: [analysis is readable after source deletion, lineage retains tombstones]
-  fixtures: [completed run, scripted analysis]
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: natural_language_analysis_uses_the_unique_current_result_dataset
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: ambiguous_current_results_require_selection_without_analysis
+  assertions: [analysis is readable after source deletion, lineage retains tombstones, bounded current-result metadata freezes only the uniquely selected dataset as the default analysis input, ambiguous candidates produce no analysis write, explicit multi-input analysis remains supported by the unchanged tool contract]
+  fixtures: [completed run, scripted analysis, unique bus_voltage result, two plausible voltage results]
   contracts:
     - "route:GET /api/analysis-runs/{id}"
     - "tool:run_result_analysis"

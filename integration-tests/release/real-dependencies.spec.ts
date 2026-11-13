@@ -7,6 +7,7 @@ import {
   expectDomainState,
   expectEngineReleaseEvidence,
   expectToolTrace,
+  readAllMessages,
   type ToolTraceEntry,
 } from './semantic-assertions'
 import { resolveLlmEvidence } from './llm-evidence'
@@ -293,18 +294,52 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
     expect(baseline, 'managed workflow baseline run is missing').toBeTruthy()
     const candidate = runs.find((run: any) => String(run.id) !== String(baseline.id))
     expect(candidate, 'explicit rerun is missing').toBeTruthy()
-    const baselineDatasets = (await apiJson(api, `/api/runs/${baseline.id}/datasets`)).datasets
-    const voltage = baselineDatasets.find((dataset: any) => dataset.name === 'bus_voltage') ?? baselineDatasets[0]
+    const currentDatasets = (await apiJson(api, `/api/runs/${candidate.id}/datasets`)).datasets
+    const voltage = currentDatasets.find((dataset: any) => dataset.name === 'bus_voltage')
     expect(voltage?.id).toMatch(/^\d+$/)
+    const sourceMetadata = await apiJson(api, `/api/datasets/${voltage.id}`)
+    const readRows = async (datasetId: string) => {
+      const rows: unknown[][] = []
+      let cursor: string | null = null
+      do {
+        const query = cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''
+        const page = await apiJson(api, `/api/datasets/${datasetId}/rows?limit=500${query}`)
+        rows.push(...page.rows)
+        cursor = page.nextCursor
+      } while (cursor)
+      return rows
+    }
+    const sourceRows = await readRows(voltage.id)
+    expect(sourceRows).toHaveLength(sourceMetadata.rowCount)
 
     trace = await sendAndCollect(page, api, sessionId,
-      `读取数据集 ID ${voltage.id} 的 schema并加载 result-analysis 技能。随后运行结果分析：把该数据集绑定为 source，不筛选、不聚合、不改变任何列，使用合法 RSS 脚本 \`derived = select(col(bus), col(v_mag), col(v_ang), source);\` 将完整数据输出为名为 derived 的 DataFrame。`,
+      '分析当前结果中唯一名为 bus_voltage 的 DataFrame：不筛选、不聚合、不改变任何列，请根据实际 schema 生成合法 RSS，派生完整副本并输出为名为 derived 的 DataFrame。',
       ['run_result_analysis'])
     expectToolTrace(trace, {
-      requiredTools: ['list_result_datasets', 'load_agent_skill', 'run_result_analysis'],
+      requiredTools: ['load_agent_skill', 'run_result_analysis'],
       gatedTools: { run_result_analysis: ['result-analysis'] },
     }, allowedTools)
     report.segments.push(summarizeTrace('result_analysis', trace))
+    const analysisCall = trace.find(entry => entry.toolName === 'run_result_analysis' && entry.status === 'success')!
+    expect(analysisCall.args.inputs).toHaveLength(1)
+    expect(String((analysisCall.args.inputs as any[])[0].datasetId)).toBe(voltage.id)
+    const analysisIds = [...new Set((await readAllMessages(api, sessionId))
+      .map(message => message.analysisRunId).filter(Boolean))]
+    expect(analysisIds).toHaveLength(1)
+    const analysisId = analysisIds[0]
+    const analysis = await apiJson(api, `/api/analysis-runs/${analysisId}`)
+    expect(analysis.status).toBe('succeeded')
+    expect(analysis.datasets).toHaveLength(1)
+    const derived = analysis.datasets[0]
+    expect(derived.name).toBe('derived')
+    expect(derived.columns).toEqual(sourceMetadata.columns)
+    expect(derived.rowCount).toBe(sourceMetadata.rowCount)
+    // Output lineage is the public projection of the persisted frozen inputs.
+    expect(derived.lineage).toHaveLength(1)
+    expect(derived.lineage[0].sourceDatasetId).toBe(voltage.id)
+    expect(derived.lineage[0].schemaHash).toBe(sourceMetadata.schemaHash)
+    expect(derived.lineage[0].deleted).toBe(false)
+    expect(await readRows(derived.id)).toEqual(sourceRows)
 
     trace = await sendAndCollect(page, api, sessionId,
       `加载 comparison 技能，比较基准运行 ID ${baseline.id} 与候选运行 ID ${candidate.id}，并保存比较结果。`,
@@ -318,6 +353,13 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
     const deleted = await api.delete(`/api/datasets/${voltage.id}`)
     expect(deleted.ok(), `dataset deletion returned ${deleted.status()}`).toBe(true)
     expect((await api.get(`/api/datasets/${voltage.id}`)).status()).toBe(404)
+    const restoredAnalysis = await apiJson(api, `/api/analysis-runs/${analysisId}`)
+    expect(restoredAnalysis.status).toBe('succeeded')
+    const restoredDerived = await apiJson(api, `/api/datasets/${derived.id}`)
+    expect(restoredDerived.lineage).toHaveLength(1)
+    expect(restoredDerived.lineage[0].deleted).toBe(true)
+    expect(restoredDerived.lineage[0].tombstone.datasetId).toBe(voltage.id)
+    expect(await readRows(derived.id)).toEqual(sourceRows)
     expect((await api.get(`/api/runs/${baseline.id}`)).status()).toBe(200)
 
     const finalState = await expectDomainState(api, {

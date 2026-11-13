@@ -127,9 +127,22 @@ impl ChatService {
         let tools = tools::build_tools(services);
 
         // 2. 构建 agent。
+        let current_result =
+            crate::application::current_result_context::CurrentResultContext::resolve(
+                &self.principal,
+                session_id,
+                &self.runs,
+            )
+            .await
+            .unwrap_or_else(|_| {
+                eprintln!("current result context unavailable: session_id={session_id}");
+                None
+            });
+        let current_result_json = current_result.as_ref().map(|context| context.prompt_json());
         let system_prompt = crate::agent::prompt::PromptAssembler::assemble(
             &self.agent_knowledge,
             &self.engine_snapshot,
+            current_result_json.as_deref(),
         );
         let agent = match self.agent_factory.build(AgentBuildRequest {
             tools,

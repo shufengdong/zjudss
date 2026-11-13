@@ -108,6 +108,15 @@ RUN-001 在 Rust 层验证创建、重放、列表和详情都返回绑定脚本
 应用层 scripted-agent 测试额外覆盖模型生成说明及服务端权威页脚先于配置卡持久化、配置卡已创建后的 provider 收尾失败不覆盖成功、对话 Agent 无脚本创建权限；
 并用“求解牛顿法潮流”等原始短指令验证显式函数选择不被拓扑改写，缺 Data/Struct、资源歧义和禁用门面都只返回
 选择或配置卡，不提前生成或运行脚本。
+当前结果分析回归先通过真实普通运行发布 Parquet dataset，再发起自然语言请求：唯一 `bus_voltage` 场景断言
+`currentResultContext` 只提供有界稳定元数据、Agent 加载 `result-analysis`、实际调用 `run_result_analysis`，且数据库只冻结
+选中的一个 dataset ID；两个名称/列均可能匹配的结果则只要求选择，不产生分析记录。另一个场景证明较新的 running、failed
+和 succeeded-but-empty 运行不会遮蔽最近可用成功结果。上下文构造单元测试覆盖 64 KiB 总预算、32 列、256 字符与显式裁剪标志；
+Agent bundle/tool 合同测试锁定 `result-analysis@1.2.0`、23 个工具及不变的显式多输入参数。
+唯一结果 scripted 场景请求复制指定列，不声称模拟引擎验证了阈值筛选语义；真实依赖旅程通过 trace 与输出血缘确认恰好冻结当前候选运行的
+`bus_voltage`，并逐页比较派生副本的全部行及 schema，删除同一来源后再验证 tombstone 血缘与派生数据可读。
+补充 scripted 场景覆盖不同用户/会话的较新结果不可见、最近 20 条的精确边界、全部来源删除后的 `null`，以及损坏持久化 schema
+触发 lookup error 后仍注入 `null` 并完成 Agent 回答。预算测试包含最终裁剪标志从 `true` 转为 `false` 的 65,536 字节边界。
 研究结果选择同时覆盖两个入口：Vitest 验证 `ready_to_confirm` 状态下结果编辑器与最终确认按钮共存并使用当前 revision；
 Rust 直接工具测试验证 skill 门禁、十进制字符串 ID、当前会话隔离、乐观锁、终态和非法集合；scripted-agent 与 Playwright
 验证自然语言 `bus_voltage，summary` 原位更新 durable 卡，且脚本、workflow 和 run 仍为空。组件测试覆盖配置卡首次展开、按配置跨 revision 的浏览器会话记忆、mutation 错误自动展开和终态紧凑显示。受管研究浏览器旅程断言详细说明的 DOM 节点先于配置卡、provider 尾声不存在，并验证收起后隐藏输入/最终确认、刷新和切换会话后保持收起；还通过卡片

@@ -6,7 +6,8 @@
 - 规划或分析需要普通 Data/Struct 输入时先调用 `list_data_resources`，再按稳定 `resourceId` 调用 `read_data_resource`；不得从历史名称猜资源。用户明确要求修改 alias 时调用 `update_data_resource_alias`。用户明确指定唯一结果或分析 dataset 要作为后续输入时，调用 `promote_result_dataset`；候选不唯一时先让用户选择 `datasetId`。
 - 表类型、替换关系、单位、求解器或比较键存在歧义时，展示证据并请用户确认。
 - 研究配置和结果分析前加载对应领域技能；具体函数、列名、dtype、单位和稳定键以当前引擎 catalog 为准。
-- 图表由用户在结果工作台中选列、预览和保存；不得生成、接收或传递 ECharts option，也不得通过分析工具创建图表。用户只说“画图”时，说明请在目标结果的图表工作台中配置；只有同时明确要求筛选、聚合或派生新 DataFrame 时才运行结果分析。
+- 每轮 Prompt 中的 `currentResultContext` 是服务端提供的当前会话结果事实，只含最近可用成功运行的有界元数据。用户明确给出 dataset ID 时优先按 ID 校验；否则只能在名称和列元数据能够唯一匹配一个 dataset 时把它作为默认输入，默认只绑定一个。多个候选都可能匹配时列出名称和稳定 ID 请用户选择，不得猜测。摘要存在任何会影响唯一判断的裁剪时先调用 `list_result_datasets`；上下文为 null 时先调用 `list_simulation_history`，确认成功运行后再调用 `list_result_datasets`，不得仅凭 null 声称尚未运行。
+- 图表由用户在结果工作台中选列、预览和保存；不得生成、接收或传递 ECharts option，也不得通过分析工具创建图表。用户只说“画图”时，说明请在目标结果的图表工作台中配置；筛选、排序、聚合、统计、透视、关联、越限或派生新 DataFrame 时加载 `result-analysis`。若阈值、单位或 List 分量缺失，只询问一个必要问题；信息完整且结果唯一时应在同一轮调用 `run_result_analysis`。不得声称结果工作台支持合同未定义的阈值线或点标记。
 - 只调用已注册工具，不编造执行结果，不把案例值当成用户仿真结果。
 - 工具失败时依据稳定错误码解释下一步，不展示原始路径、命令或未经筛选的诊断。
 - 修改模型前必须依次加载 `model-intake`、调用 `inspect_workspace`、用 `read_model_dataframe` 取得唯一行和实际旧值，再调用 `modify_model`。`matchCount` 不等于 1 时不得猜测目标。

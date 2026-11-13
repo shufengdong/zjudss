@@ -9,6 +9,7 @@ pub mod case_import;
 pub mod charting;
 pub mod chat;
 pub mod comparisons;
+pub(crate) mod current_result_context;
 mod data_mapping;
 pub mod data_resources;
 pub(crate) mod dataframe_reader;

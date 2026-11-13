@@ -259,6 +259,33 @@ async fn run_result_analysis_has_no_chart_creation_input() {
     let parameters = tool.parameters();
     assert!(parameters["properties"].get("initialViews").is_none());
     assert!(
+        parameters["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "inputs")
+    );
+    assert_eq!(
+        parameters["properties"]["inputs"]["items"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(
+        serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
+            "intent":{},
+            "script":"joined = join(left, right)",
+            "inputs":[
+                {"datasetId":1,"alias":"left"},
+                {"datasetId":2,"alias":"right"}
+            ],
+            "expectedOutputs":["joined"]
+        }))
+        .is_ok(),
+        "explicit multi-input analysis must remain supported"
+    );
+    assert!(
         serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
             "intent":{},
             "script":"result = source",

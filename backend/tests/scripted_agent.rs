@@ -10,12 +10,16 @@ use diesel::{RunQueryDsl, sql_query};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use zjudss::application::{
-    CandidateDecision, CandidatePurpose, ConfirmStudyRequest, EventWriter, PrepareStudyRequest,
-    PublishDraftRequest, StudyConfigCard, StudyConfigurationState,
+    CandidateDecision, CandidatePurpose, ConfirmStudyRequest, CreateRunRequest,
+    CreateScriptRequest, EventWriter, PrepareStudyRequest, PublishDraftRequest, ScriptSource,
+    StudyConfigCard, StudyConfigurationState,
 };
 use zjudss::auth::CurrentUser;
 use zjudss::db::models::DraftRef;
-use zjudss::testing::{ScriptScenario, ScriptTurn, ScriptedAgentFactory};
+use zjudss::testing::{
+    DatasetFixture, EngineScenario, ScenarioEngine, ScriptScenario, ScriptTurn,
+    ScriptedAgentFactory,
+};
 
 use common::TestApp;
 
@@ -251,6 +255,420 @@ fn assert_no_script_or_run(events: &[Value]) {
             .all(|event| event["type"] != "script" && event["type"] != "simulation-run"),
         "events: {events:#?}"
     );
+}
+
+async fn seed_successful_result_run(
+    app: &TestApp,
+    session_id: i32,
+    client_run_id: &str,
+) -> (i32, Vec<zjudss::db::repositories::RunDataset>) {
+    let user = common::test_user("instance");
+    publish_agent_study_model(app, session_id).await;
+    let script = app
+        .state
+        .script_service
+        .create(
+            &user,
+            session_id,
+            CreateScriptRequest {
+                name: format!("{client_run_id}.rss"),
+                content: "result = bus".into(),
+                source: ScriptSource::Upload,
+                agent_bundle_version: None,
+                agent_skill_refs: vec![],
+                study_plan: None,
+            },
+        )
+        .await
+        .unwrap();
+    let submission = app
+        .state
+        .run_service
+        .create(
+            &user,
+            script.id.parse().unwrap(),
+            CreateRunRequest {
+                client_run_id: client_run_id.into(),
+            },
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let run = app
+                .state
+                .run_service
+                .find(&user, submission.run.id)
+                .await
+                .unwrap();
+            if matches!(run.status.as_str(), "succeeded" | "failed") {
+                assert_eq!(run.status, "succeeded", "{:?}", run.error_json);
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("seed run finishes");
+    let datasets = app
+        .state
+        .run_service
+        .datasets(&user, submission.run.id)
+        .await
+        .unwrap();
+    (submission.run.id, datasets)
+}
+
+#[derive(diesel::QueryableByName)]
+struct AnalysisInputRow {
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
+    dataset_id: Option<i32>,
+}
+
+#[tokio::test]
+async fn natural_language_analysis_uses_the_unique_current_result_dataset() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::BusVoltageSuccess);
+    let app = TestApp::builder()
+        .engine(Arc::new(engine.clone()))
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
+    let session = create_session(&app).await;
+    let session_id = session.parse().unwrap();
+    let (_run_id, datasets) = seed_successful_result_run(&app, session_id, "current-voltage").await;
+    let source = datasets
+        .iter()
+        .find(|dataset| dataset.result_name == "bus_voltage")
+        .expect("bus_voltage result");
+    engine.enqueue(EngineScenario::Success(vec![DatasetFixture {
+        name: "voltage_copy".into(),
+        rows: vec![("bus-1".into(), 1.12)],
+        value_unit: Some("pu".into()),
+    }]));
+    factory.enqueue(ScriptScenario {
+        id: "current-result-analysis".into(),
+        expected_prompt: Some("复制刚才的电压结果，保留 time 和 v_mag 两列".into()),
+        turns: vec![
+            ScriptTurn::ToolCall {
+                call_id: "load-analysis".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"result-analysis"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "run-analysis".into(),
+                name: "run_result_analysis".into(),
+                args: json!({
+                    "intent":{"goal":"copy the time and v_mag columns of the current voltage result"},
+                    "script":"voltage_copy = select(col(time), col(v_mag), bus_voltage);",
+                    "inputs":[{"datasetId":source.id,"alias":"bus_voltage"}],
+                    "expectedOutputs":["voltage_copy"]
+                }),
+            },
+            ScriptTurn::Text {
+                text: "已复制电压结果的指定列。".into(),
+            },
+        ],
+    });
+
+    assert_eq!(
+        post_and_wait(
+            &app,
+            &session,
+            "复制刚才的电压结果，保留 time 和 v_mag 两列"
+        )
+        .await,
+        StatusCode::ACCEPTED
+    );
+    let trace = factory.trace();
+    assert_eq!(trace.len(), 1);
+    assert!(trace[0].system_prompt.contains("currentResultContext"));
+    assert!(trace[0].system_prompt.contains(&source.id.to_string()));
+    assert!(trace[0].system_prompt.contains("bus_voltage"));
+    let events = messages(&app, &session).await;
+    let analysis_tools = tool_names(&events)
+        .into_iter()
+        .filter(|name| *name != "agent_admission")
+        .collect::<Vec<_>>();
+    assert_eq!(analysis_tools, ["load_agent_skill", "run_result_analysis"]);
+    let mut connection = app.pool.get().unwrap();
+    let inputs =
+        sql_query("SELECT dataset_id FROM result_analysis_inputs ORDER BY analysis_run_id,ordinal")
+            .load::<AnalysisInputRow>(&mut connection)
+            .unwrap();
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(inputs[0].dataset_id, Some(source.id));
+}
+
+#[tokio::test]
+async fn ambiguous_current_results_require_selection_without_analysis() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::Success(vec![
+        DatasetFixture {
+            name: "bus_voltage".into(),
+            rows: vec![("bus-1".into(), 1.02)],
+            value_unit: Some("pu".into()),
+        },
+        DatasetFixture {
+            name: "voltage_summary".into(),
+            rows: vec![("bus-1".into(), 1.02)],
+            value_unit: Some("pu".into()),
+        },
+    ]));
+    let app = TestApp::builder()
+        .engine(Arc::new(engine))
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
+    let session = create_session(&app).await;
+    let session_id = session.parse().unwrap();
+    let (_run_id, datasets) =
+        seed_successful_result_run(&app, session_id, "ambiguous-voltage").await;
+    assert_eq!(datasets.len(), 2);
+    factory.enqueue(ScriptScenario {
+        id: "ambiguous-current-results".into(),
+        expected_prompt: Some("分析刚才的电压结果".into()),
+        turns: vec![ScriptTurn::Text {
+            text: "当前运行有 bus_voltage 和 voltage_summary 两个候选，请选择 datasetId。".into(),
+        }],
+    });
+
+    assert_eq!(
+        post_and_wait(&app, &session, "分析刚才的电压结果").await,
+        StatusCode::ACCEPTED
+    );
+    let trace = factory.trace();
+    assert_eq!(trace.len(), 1);
+    assert!(trace[0].system_prompt.contains("currentResultContext"));
+    for dataset in &datasets {
+        assert!(trace[0].system_prompt.contains(&dataset.id.to_string()));
+        assert!(trace[0].system_prompt.contains(&dataset.result_name));
+    }
+    let events = messages(&app, &session).await;
+    assert!(
+        tool_names(&events)
+            .into_iter()
+            .all(|name| name == "agent_admission")
+    );
+    let mut connection = app.pool.get().unwrap();
+    let analyses = sql_query("SELECT count(*) count FROM result_analysis_runs")
+        .get_result::<common::CountRow>(&mut connection)
+        .unwrap();
+    assert_eq!(analyses.count, 0);
+}
+
+#[tokio::test]
+async fn current_result_context_is_scoped_to_owner_and_session() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let engine = ScenarioEngine::default();
+    for _ in 0..3 {
+        engine.enqueue(EngineScenario::BusVoltageSuccess);
+    }
+    let app = TestApp::builder()
+        .engine(Arc::new(engine))
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
+    let session = create_session(&app).await;
+    let (owned_run, owned) =
+        seed_successful_result_run(&app, session.parse().unwrap(), "owned").await;
+    let other_session = create_session(&app).await;
+    let (_, other) =
+        seed_successful_result_run(&app, other_session.parse().unwrap(), "other-session").await;
+    let foreign_session = create_session(&app).await;
+    let (_, foreign) =
+        seed_successful_result_run(&app, foreign_session.parse().unwrap(), "foreign-owner").await;
+    let mut connection = app.pool.get().unwrap();
+    sql_query("UPDATE sessions SET user_id=?1 WHERE id=?2")
+        .bind::<diesel::sql_types::Text, _>(common::test_user("foreign").id.0)
+        .bind::<diesel::sql_types::Integer, _>(foreign_session.parse::<i32>().unwrap())
+        .execute(&mut connection)
+        .unwrap();
+    drop(connection);
+    let context = capture_current_result_context(&app, &factory, &session).await;
+    assert_eq!(context["runId"], owned_run.to_string());
+    let ids = context["datasets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|dataset| dataset["datasetId"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        owned
+            .iter()
+            .map(|dataset| dataset.id.to_string())
+            .collect::<Vec<_>>()
+    );
+    for dataset in other.iter().chain(&foreign) {
+        assert!(!ids.contains(&dataset.id.to_string().as_str()));
+    }
+}
+
+async fn capture_current_result_context(
+    app: &TestApp,
+    factory: &ScriptedAgentFactory,
+    session: &str,
+) -> Value {
+    factory.enqueue(ScriptScenario {
+        id: format!("current-context-{}", factory.trace().len()),
+        expected_prompt: Some("查看当前结果".into()),
+        turns: vec![ScriptTurn::Text {
+            text: "上下文检查完成。".into(),
+        }],
+    });
+    assert_eq!(
+        post_and_wait(app, session, "查看当前结果").await,
+        StatusCode::ACCEPTED
+    );
+    let trace = factory.trace();
+    let prompt = &trace.last().unwrap().system_prompt;
+    let section = prompt.split("# Current result\n").last().unwrap();
+    serde_json::from_str::<Value>(section).unwrap()["currentResultContext"].clone()
+}
+
+#[tokio::test]
+async fn current_result_context_respects_latest_twenty_boundary_and_empty_session() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::BusVoltageSuccess);
+    let app = TestApp::builder()
+        .engine(Arc::new(engine))
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
+    let session = create_session(&app).await;
+    assert!(
+        capture_current_result_context(&app, &factory, &session)
+            .await
+            .is_null()
+    );
+    let (run_id, _) = seed_successful_result_run(&app, session.parse().unwrap(), "boundary").await;
+    for index in 0..20 {
+        let mut connection = app.pool.get().unwrap();
+        sql_query("INSERT INTO simulation_runs(session_id,client_run_id,status,stage,engine_contract_version,agent_skill_refs_json,run_kind,input_snapshot_json,created_at_ms) VALUES(?1,?2,'succeeded','succeeded','tensoreval-parquet-v3','[]','managed','{}',1)")
+            .bind::<diesel::sql_types::Integer, _>(session.parse::<i32>().unwrap())
+            .bind::<diesel::sql_types::Text, _>(format!("empty-{index}"))
+            .execute(&mut connection).unwrap();
+        drop(connection);
+        if index == 18 {
+            let context = capture_current_result_context(&app, &factory, &session).await;
+            assert_eq!(
+                context["runId"],
+                run_id.to_string(),
+                "20th run is still considered"
+            );
+        }
+    }
+    assert!(
+        capture_current_result_context(&app, &factory, &session)
+            .await
+            .is_null(),
+        "21st run must not be considered"
+    );
+}
+
+#[tokio::test]
+async fn current_result_context_lookup_error_and_deleted_datasets_degrade_to_null() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::BusVoltageSuccess);
+    let app = TestApp::builder()
+        .engine(Arc::new(engine))
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
+    let session = create_session(&app).await;
+    let (run_id, datasets) =
+        seed_successful_result_run(&app, session.parse().unwrap(), "degradation").await;
+    // Corrupt persisted metadata to exercise the existing schema-deserialization
+    // error path without adding a production fault-injection interface.
+    let mut connection = app.pool.get().unwrap();
+    sql_query("UPDATE result_datasets SET schema_json='invalid-json' WHERE run_id=?1")
+        .bind::<diesel::sql_types::Integer, _>(run_id)
+        .execute(&mut connection)
+        .unwrap();
+    drop(connection);
+    assert!(
+        capture_current_result_context(&app, &factory, &session)
+            .await
+            .is_null()
+    );
+    assert!(
+        messages(&app, &session)
+            .await
+            .iter()
+            .any(|message| message["content"] == "上下文检查完成。")
+    );
+    for dataset in datasets {
+        app.state
+            .dataset_service
+            .delete(&common::test_user("instance"), dataset.id)
+            .await
+            .unwrap();
+    }
+    assert!(
+        capture_current_result_context(&app, &factory, &session)
+            .await
+            .is_null()
+    );
+}
+
+#[tokio::test]
+async fn current_result_context_skips_newer_unusable_runs() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::BusVoltageSuccess);
+    let app = TestApp::builder()
+        .engine(Arc::new(engine))
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
+    let session = create_session(&app).await;
+    let session_id = session.parse().unwrap();
+    let (usable_run_id, datasets) =
+        seed_successful_result_run(&app, session_id, "usable-voltage").await;
+    let source = datasets
+        .iter()
+        .find(|dataset| dataset.result_name == "bus_voltage")
+        .unwrap();
+    let now = zjudss::application::now_ms();
+    let mut connection = app.pool.get().unwrap();
+    for (offset, client_id, status) in [
+        (1_i64, "newer-success-without-results", "succeeded"),
+        (2_i64, "newer-failed", "failed"),
+        (3_i64, "newer-running", "running"),
+    ] {
+        sql_query(
+            "INSERT INTO simulation_runs(session_id,client_run_id,status,stage,engine_contract_version,agent_skill_refs_json,run_kind,input_snapshot_json,created_at_ms) VALUES(?1,?2,?3,?3,'tensoreval-parquet-v3','[]','managed','{}',?4)",
+        )
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .bind::<diesel::sql_types::Text, _>(client_id)
+        .bind::<diesel::sql_types::Text, _>(status)
+        .bind::<diesel::sql_types::BigInt, _>(now + offset)
+        .execute(&mut connection)
+        .unwrap();
+    }
+    drop(connection);
+    factory.enqueue(ScriptScenario {
+        id: "skip-unusable-current-runs".into(),
+        expected_prompt: Some("查看当前结果".into()),
+        turns: vec![ScriptTurn::Text {
+            text: "已找到最近可用结果。".into(),
+        }],
+    });
+
+    assert_eq!(
+        post_and_wait(&app, &session, "查看当前结果").await,
+        StatusCode::ACCEPTED
+    );
+    let prompt = &factory.trace()[0].system_prompt;
+    assert!(prompt.contains("currentResultContext"));
+    assert!(prompt.contains(&format!("\"runId\":\"{usable_run_id}\"")));
+    assert!(prompt.contains(&source.id.to_string()));
+    assert!(!prompt.contains("newer-success-without-results"));
 }
 
 #[tokio::test]
