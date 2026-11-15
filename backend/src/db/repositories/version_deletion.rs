@@ -105,7 +105,11 @@ fn assert_deletable(
         count: i64,
     }
     let busy = diesel::sql_query("SELECT count(*) count FROM simulation_runs WHERE model_version_id=?1 AND deleted_at_ms IS NULL AND status IN ('queued','running')").bind::<Integer,_>(version.id).get_result::<Count>(conn)?.count;
-    if busy > 0 {
+    let analysis_busy = diesel::sql_query("SELECT count(*) count FROM result_analysis_inputs i JOIN result_analysis_runs a ON a.id=i.analysis_run_id WHERE i.source_kind='active_model' AND i.model_version_id=?1 AND a.status IN ('pending','running')")
+        .bind::<Integer, _>(version.id)
+        .get_result::<Count>(conn)?
+        .count;
+    if busy > 0 || analysis_busy > 0 {
         return Err(VersionRepoError::Busy);
     }
     Ok(())

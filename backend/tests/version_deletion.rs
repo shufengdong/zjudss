@@ -169,6 +169,97 @@ async fn deletion_rejects_busy_versions_and_invalid_or_expired_tokens() {
 }
 
 #[tokio::test]
+async fn model_backed_analysis_blocks_deletion_only_while_active() {
+    let app = TestApp::spawn().await;
+    let cookie = app.login_cookie("alice@example.com").await;
+    let (session_id, version_id) = published_version(&app, &cookie).await;
+    let mut conn = app.pool.get().unwrap();
+    diesel::sql_query("UPDATE workspaces SET active_version_id=NULL WHERE active_version_id=?1")
+        .bind::<diesel::sql_types::Integer, _>(version_id)
+        .execute(&mut conn)
+        .unwrap();
+    diesel::sql_query("INSERT INTO result_analysis_runs(session_id,intent_json,script_artifact_id,status,stage,agent_bundle_version,agent_skill_refs_json,engine_contract_version,engine_resource_snapshot_id,created_at_ms) SELECT ?1,'{}',md.artifact_id,'pending','script','test','[]','test',(SELECT id FROM engine_resource_snapshots LIMIT 1),4 FROM model_dataframes md WHERE md.version_id=?2 LIMIT 1")
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .bind::<diesel::sql_types::Integer, _>(version_id)
+        .execute(&mut conn)
+        .unwrap();
+    diesel::sql_query("INSERT INTO result_analysis_inputs(analysis_run_id,source_kind,model_version_id,model_dataframe_id,alias,ordinal,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json) SELECT ar.id,'active_model',md.version_id,md.id,'model',0,md.table_name,md.schema_json,md.content_hash,md.content_hash,'{}' FROM result_analysis_runs ar JOIN model_dataframes md ON md.version_id=?1 WHERE ar.session_id=?2 ORDER BY ar.id DESC LIMIT 1")
+        .bind::<diesel::sql_types::Integer, _>(version_id)
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
+
+    let busy = preview(&app, &cookie, version_id).await;
+    assert_eq!(busy.status(), StatusCode::CONFLICT);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(busy.into_body(), 1024 * 1024).await.unwrap()).unwrap();
+    assert_eq!(body["code"], "version_has_active_consumers");
+
+    diesel::sql_query("UPDATE result_analysis_runs SET status='succeeded',stage='present',finished_at_ms=5 WHERE session_id=?1")
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .execute(&mut app.pool.get().unwrap())
+        .unwrap();
+    let mut conn = app.pool.get().unwrap();
+    diesel::sql_query("INSERT INTO result_datasets(analysis_run_id,artifact_id,result_name,schema_json,schema_hash,row_count,size_bytes,created_at_ms) SELECT ar.id,md.artifact_id,'derived-model-result',md.schema_json,md.content_hash,1,1,6 FROM result_analysis_runs ar JOIN result_analysis_inputs i ON i.analysis_run_id=ar.id JOIN model_dataframes md ON md.id=i.model_dataframe_id WHERE ar.session_id=?1 ORDER BY ar.id DESC LIMIT 1")
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .execute(&mut conn)
+        .unwrap();
+    let derived_id = diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
+        "last_insert_rowid()",
+    ))
+    .get_result::<i32>(&mut conn)
+    .unwrap();
+    diesel::sql_query("INSERT INTO dataset_lineage_snapshots(derived_dataset_id,source_kind,model_version_id,model_dataframe_id,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json,created_at_ms) SELECT ?1,source_kind,model_version_id,model_dataframe_id,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json,7 FROM result_analysis_inputs WHERE analysis_run_id=(SELECT analysis_run_id FROM result_datasets WHERE id=?1)")
+        .bind::<diesel::sql_types::Integer, _>(derived_id)
+        .execute(&mut conn)
+        .unwrap();
+    diesel::sql_query("UPDATE storage_scope_artifacts SET ref_count=ref_count+1 WHERE artifact_id=(SELECT artifact_id FROM result_datasets WHERE id=?1)")
+        .bind::<diesel::sql_types::Integer, _>(derived_id)
+        .execute(&mut conn)
+        .unwrap();
+    drop(conn);
+    let response = preview(&app, &cookie, version_id).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let value: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    let token = value["impactToken"].as_str().unwrap();
+    let deleted = app
+        .router
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/versions/{version_id}?impactToken={token}"))
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+    let retained = diesel::sql_query(
+        "SELECT count(*) count FROM result_analysis_inputs WHERE model_version_id=?1 AND model_dataframe_id IS NOT NULL",
+    )
+    .bind::<diesel::sql_types::Integer, _>(version_id)
+    .get_result::<common::CountRow>(&mut app.pool.get().unwrap())
+    .unwrap()
+    .count;
+    assert_eq!(retained, 1);
+
+    let user = common::test_user("alice@example.com");
+    let lineage = zjudss::db::repositories::ResultRepo::new(app.pool.clone())
+        .lineage(&user.id, derived_id)
+        .await
+        .unwrap();
+    assert_eq!(lineage.len(), 1);
+    assert_eq!(lineage[0].source_kind, "active_model");
+    assert_eq!(lineage[0].model_version_id, Some(version_id));
+    assert!(lineage[0].model_dataframe_id.is_some());
+    assert!(lineage[0].deleted);
+}
+
+#[tokio::test]
 async fn deletion_releases_the_model_artifact_reference() {
     let app = TestApp::spawn().await;
     let cookie = app.login_cookie("alice@example.com").await;
@@ -280,13 +371,13 @@ async fn deletion_tombstones_version_runs_and_raw_results_but_keeps_derived_line
     diesel::sql_query("INSERT INTO script_resources(session_id,artifact_id,name,source_kind,content_hash,validation_status,required_aliases_json,outputs_json,diagnostics_json,agent_skill_refs_json,created_at_ms) SELECT ?1,md.artifact_id,'run.rss','upload',a.sha256,'valid','[]','[]','{}','[]',2 FROM model_dataframes md JOIN artifacts a ON a.id=md.artifact_id WHERE md.version_id=?2 LIMIT 1").bind::<diesel::sql_types::Integer,_>(session_id).bind::<diesel::sql_types::Integer,_>(version_id).execute(&mut conn).unwrap();
     diesel::sql_query("INSERT INTO simulation_runs(session_id,model_version_id,model_content_hash,script_resource_id,script_artifact_id,script_content_hash,client_run_id,status,stage,engine_contract_version,agent_skill_refs_json,created_at_ms) SELECT ?1,v.id,v.content_hash,s.id,s.artifact_id,s.content_hash,'run','succeeded','completed','test','[]',3 FROM model_versions v JOIN script_resources s ON s.session_id=?1 WHERE v.id=?2 ORDER BY s.id DESC LIMIT 1").bind::<diesel::sql_types::Integer,_>(session_id).bind::<diesel::sql_types::Integer,_>(version_id).execute(&mut conn).unwrap();
     diesel::sql_query("INSERT INTO result_datasets(run_id,artifact_id,result_name,schema_json,schema_hash,row_count,size_bytes,created_at_ms) SELECT r.id,r.script_artifact_id,'raw','{}',r.script_content_hash,1,1,4 FROM simulation_runs r WHERE r.client_run_id='run'").execute(&mut conn).unwrap();
-    diesel::sql_query("INSERT INTO result_analysis_runs(session_id,intent_json,script_artifact_id,status,stage,agent_bundle_version,agent_skill_refs_json,engine_contract_version,created_at_ms) SELECT ?1,'{}',artifact_id,'succeeded','completed','test','[]','test',5 FROM script_resources WHERE session_id=?1 LIMIT 1").bind::<diesel::sql_types::Integer,_>(session_id).execute(&mut conn).unwrap();
+    diesel::sql_query("INSERT INTO result_analysis_runs(session_id,intent_json,script_artifact_id,status,stage,agent_bundle_version,agent_skill_refs_json,engine_contract_version,engine_resource_snapshot_id,created_at_ms) SELECT ?1,'{}',artifact_id,'succeeded','completed','test','[]','test',(SELECT id FROM engine_resource_snapshots LIMIT 1),5 FROM script_resources WHERE session_id=?1 LIMIT 1").bind::<diesel::sql_types::Integer,_>(session_id).execute(&mut conn).unwrap();
     diesel::sql_query("INSERT INTO result_datasets(analysis_run_id,artifact_id,result_name,schema_json,schema_hash,row_count,size_bytes,created_at_ms) SELECT ar.id,s.artifact_id,'derived','{}',s.content_hash,1,1,6 FROM result_analysis_runs ar JOIN script_resources s ON s.session_id=ar.session_id WHERE ar.session_id=?1 LIMIT 1").bind::<diesel::sql_types::Integer,_>(session_id).execute(&mut conn).unwrap();
     diesel::sql_query("UPDATE storage_scope_artifacts SET ref_count=ref_count+5 WHERE artifact_id=(SELECT artifact_id FROM model_dataframes WHERE version_id=?1 LIMIT 1)")
         .bind::<diesel::sql_types::Integer, _>(version_id)
         .execute(&mut conn)
         .unwrap();
-    diesel::sql_query("INSERT INTO dataset_lineage_snapshots(derived_dataset_id,source_dataset_id,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json,created_at_ms) SELECT d.id,r.id,r.result_name,r.schema_json,r.schema_hash,r.schema_hash,'{}',7 FROM result_datasets d JOIN result_datasets r WHERE d.analysis_run_id IS NOT NULL AND r.run_id IS NOT NULL LIMIT 1").execute(&mut conn).unwrap();
+    diesel::sql_query("INSERT INTO dataset_lineage_snapshots(derived_dataset_id,source_kind,source_dataset_id,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json,created_at_ms) SELECT d.id,'dataset',r.id,r.result_name,r.schema_json,r.schema_hash,r.schema_hash,'{}',7 FROM result_datasets d JOIN result_datasets r WHERE d.analysis_run_id IS NOT NULL AND r.run_id IS NOT NULL LIMIT 1").execute(&mut conn).unwrap();
     drop(conn);
 
     let response = preview(&app, &cookie, version_id).await;

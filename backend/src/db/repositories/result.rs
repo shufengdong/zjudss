@@ -1,4 +1,6 @@
 use diesel::prelude::*;
+use std::collections::{BTreeSet, HashSet};
+
 use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text};
 
 use super::{RepoError, RepoResult, RunDataset};
@@ -20,10 +22,16 @@ pub struct ResultViewRow {
 #[derive(QueryableByName, Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LineageRow {
+    #[diesel(sql_type = Text)]
+    pub source_kind: String,
     #[diesel(sql_type = Nullable<Integer>)]
     pub source_dataset_id: Option<i32>,
     #[diesel(sql_type = Nullable<Text>)]
     pub source_resource_id: Option<String>,
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub model_version_id: Option<i32>,
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub model_dataframe_id: Option<i32>,
     #[diesel(sql_type = Text)]
     pub source_name: String,
     #[diesel(sql_type = Text)]
@@ -38,6 +46,14 @@ pub struct LineageRow {
     pub deleted: bool,
     #[diesel(sql_type = Nullable<Text>)]
     pub tombstone_json: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DatasetModelOrigin {
+    Unique(i32),
+    None,
+    Multiple(Vec<i32>),
+    Invalid,
 }
 
 #[derive(Debug, Clone)]
@@ -183,10 +199,53 @@ impl ResultRepo {
         let pool = self.pool.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
-            diesel::sql_query("SELECT l.source_dataset_id,l.source_resource_id,l.source_name,l.source_schema_json,l.source_schema_hash,l.source_content_hash,l.source_producer_json,CASE WHEN l.source_dataset_id IS NOT NULL THEN (d.deleted_at_ms IS NOT NULL) ELSE (r.status='deleted') END AS deleted,CASE WHEN l.source_dataset_id IS NOT NULL THEN d.tombstone_json ELSE r.tombstone_json END tombstone_json FROM dataset_lineage_snapshots l LEFT JOIN result_datasets d ON d.id=l.source_dataset_id LEFT JOIN data_resources r ON r.id=l.source_resource_id WHERE l.derived_dataset_id=?1 ORDER BY l.id")
+            diesel::sql_query("SELECT l.source_kind,l.source_dataset_id,l.source_resource_id,l.model_version_id,l.model_dataframe_id,l.source_name,l.source_schema_json,l.source_schema_hash,l.source_content_hash,l.source_producer_json,CASE WHEN l.source_kind='dataset' THEN COALESCE(d.deleted_at_ms IS NOT NULL,1) WHEN l.source_kind='data_resource' THEN COALESCE(r.status='deleted',1) ELSE (v.id IS NULL OR v.deleted_at_ms IS NOT NULL) END AS deleted,CASE WHEN l.source_kind='dataset' THEN d.tombstone_json WHEN l.source_kind='data_resource' THEN r.tombstone_json ELSE v.tombstone_json END tombstone_json FROM dataset_lineage_snapshots l LEFT JOIN result_datasets d ON d.id=l.source_dataset_id LEFT JOIN data_resources r ON r.id=l.source_resource_id LEFT JOIN model_versions v ON v.id=l.model_version_id WHERE l.derived_dataset_id=?1 ORDER BY l.id")
                 .bind::<Integer, _>(id)
                 .load(&mut conn)
                 .map_err(RepoError::from)
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
+    pub async fn dataset_model_origin(
+        &self,
+        user: &UserId,
+        session_id: i32,
+        dataset_id: i32,
+        max_depth: usize,
+    ) -> RepoResult<DatasetModelOrigin> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            let owned = diesel::sql_query("SELECT count(*) count FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id JOIN sessions s ON s.id=COALESCE(r.session_id,a.session_id) WHERE d.id=?1 AND s.id=?2 AND s.user_id=?3 AND s.deletion_status='live' AND d.deleted_at_ms IS NULL AND d.artifact_id IS NOT NULL")
+                .bind::<Integer, _>(dataset_id)
+                .bind::<Integer, _>(session_id)
+                .bind::<Text, _>(&user)
+                .get_result::<Count>(&mut conn)?
+                .count;
+            if owned != 1 {
+                return Err(RepoError::NotFound);
+            }
+            let mut visiting = HashSet::new();
+            let mut versions = BTreeSet::new();
+            if !collect_model_origins(
+                &mut conn,
+                session_id,
+                dataset_id,
+                0,
+                max_depth,
+                &mut visiting,
+                &mut versions,
+            )? {
+                return Ok(DatasetModelOrigin::Invalid);
+            }
+            Ok(match versions.len() {
+                0 => DatasetModelOrigin::None,
+                1 => DatasetModelOrigin::Unique(*versions.first().expect("one origin")),
+                _ => DatasetModelOrigin::Multiple(versions.into_iter().collect()),
+            })
         })
         .await
         .map_err(RepoError::Join)?
@@ -268,6 +327,96 @@ impl ResultRepo {
         .await
         .map_err(|error| DeleteResultError::Repository(RepoError::Join(error)))?
     }
+}
+
+#[derive(QueryableByName)]
+struct OriginDatasetRow {
+    #[diesel(sql_type = Nullable<Integer>)]
+    run_id: Option<i32>,
+    #[diesel(sql_type = Nullable<Integer>)]
+    model_version_id: Option<i32>,
+}
+
+#[derive(QueryableByName)]
+struct OriginLineageRow {
+    #[diesel(sql_type = Text)]
+    source_kind: String,
+    #[diesel(sql_type = Nullable<Integer>)]
+    source_dataset_id: Option<i32>,
+    #[diesel(sql_type = Nullable<Integer>)]
+    model_version_id: Option<i32>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_model_origins(
+    conn: &mut SqliteConnection,
+    session_id: i32,
+    dataset_id: i32,
+    depth: usize,
+    max_depth: usize,
+    visiting: &mut HashSet<i32>,
+    versions: &mut BTreeSet<i32>,
+) -> RepoResult<bool> {
+    if depth > max_depth || !visiting.insert(dataset_id) {
+        return Ok(false);
+    }
+    let dataset = diesel::sql_query("SELECT d.run_id,r.model_version_id FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id WHERE d.id=?1 AND COALESCE(r.session_id,a.session_id)=?2")
+        .bind::<Integer, _>(dataset_id)
+        .bind::<Integer, _>(session_id)
+        .get_result::<OriginDatasetRow>(conn)
+        .optional()?;
+    let Some(dataset) = dataset else {
+        visiting.remove(&dataset_id);
+        return Ok(false);
+    };
+    let valid = if dataset.run_id.is_some() {
+        if let Some(version_id) = dataset.model_version_id {
+            versions.insert(version_id);
+        }
+        true
+    } else {
+        let sources = diesel::sql_query("SELECT source_kind,source_dataset_id,model_version_id FROM dataset_lineage_snapshots WHERE derived_dataset_id=?1 ORDER BY id")
+            .bind::<Integer, _>(dataset_id)
+            .load::<OriginLineageRow>(conn)?;
+        let mut valid = true;
+        for source in sources {
+            match source.source_kind.as_str() {
+                "dataset" => {
+                    let Some(source_id) = source.source_dataset_id else {
+                        valid = false;
+                        break;
+                    };
+                    if !collect_model_origins(
+                        conn,
+                        session_id,
+                        source_id,
+                        depth + 1,
+                        max_depth,
+                        visiting,
+                        versions,
+                    )? {
+                        valid = false;
+                        break;
+                    }
+                }
+                "active_model" => {
+                    let Some(version_id) = source.model_version_id else {
+                        valid = false;
+                        break;
+                    };
+                    versions.insert(version_id);
+                }
+                "data_resource" => {}
+                _ => {
+                    valid = false;
+                    break;
+                }
+            }
+        }
+        valid
+    };
+    visiting.remove(&dataset_id);
+    Ok(valid)
 }
 
 fn live_dataset_query() -> diesel::query_builder::SqlQuery {

@@ -78,6 +78,8 @@ pub struct VersionDataFrameReadRow {
     #[diesel(sql_type = Integer)]
     pub version_id: i32,
     #[diesel(sql_type = Text)]
+    pub model_content_hash: String,
+    #[diesel(sql_type = Text)]
     pub table_name: String,
     #[diesel(sql_type = Integer)]
     pub artifact_id: i32,
@@ -240,7 +242,7 @@ impl VersionRepo {
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             diesel::sql_query(
-                "SELECT md.id,md.version_id,md.table_name,md.artifact_id,md.schema_json,md.row_count,md.content_hash,a.size_bytes \
+                "SELECT md.id,md.version_id,v.content_hash AS model_content_hash,md.table_name,md.artifact_id,md.schema_json,md.row_count,md.content_hash,a.size_bytes \
                  FROM model_dataframes md \
                  JOIN model_versions v ON v.id=md.version_id \
                  JOIN workspaces w ON w.id=v.workspace_id \
@@ -249,6 +251,36 @@ impl VersionRepo {
                  WHERE md.id=?1 AND s.user_id=?2 AND s.deletion_status='live' AND v.deleted_at_ms IS NULL",
             )
             .bind::<Integer, _>(dataframe_id)
+            .bind::<Text, _>(user)
+            .get_result::<VersionDataFrameReadRow>(&mut conn)
+            .optional()?
+            .ok_or(VersionRepoError::Repository(RepoError::NotFound))
+        })
+        .await
+        .map_err(|error| VersionRepoError::Repository(RepoError::Join(error)))?
+    }
+
+    pub async fn find_active_version_dataframe(
+        &self,
+        user: &UserId,
+        session_id: i32,
+        dataframe_id: i32,
+    ) -> Result<VersionDataFrameReadRow, VersionRepoError> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            diesel::sql_query(
+                "SELECT md.id,md.version_id,v.content_hash AS model_content_hash,md.table_name,md.artifact_id,md.schema_json,md.row_count,md.content_hash,a.size_bytes \
+                 FROM model_dataframes md \
+                 JOIN model_versions v ON v.id=md.version_id \
+                 JOIN workspaces w ON w.id=v.workspace_id AND w.active_version_id=v.id \
+                 JOIN sessions s ON s.id=w.session_id \
+                 JOIN artifacts a ON a.id=md.artifact_id \
+                 WHERE md.id=?1 AND s.id=?2 AND s.user_id=?3 AND s.deletion_status='live' AND v.deleted_at_ms IS NULL",
+            )
+            .bind::<Integer, _>(dataframe_id)
+            .bind::<Integer, _>(session_id)
             .bind::<Text, _>(user)
             .get_result::<VersionDataFrameReadRow>(&mut conn)
             .optional()?

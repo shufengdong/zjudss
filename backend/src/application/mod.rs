@@ -369,6 +369,7 @@ impl AppState {
             engine_snapshot.clone(),
             data_dir.clone(),
             DataResourceRepo::new(pool.clone()),
+            VersionRepo::new(pool.clone()),
         );
         let comparison_service = ComparisonService::new(
             ComparisonRepo::new(pool.clone()),

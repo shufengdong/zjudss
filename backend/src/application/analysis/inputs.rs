@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 use super::{AnalysisError, AnalysisInput, AnalysisInputSource};
 use crate::adapters::NamedInput;
@@ -8,7 +9,7 @@ use crate::application::ArtifactService;
 use crate::application::result_sources::{ResultSource, ResultSourceService};
 use crate::auth::CurrentUser;
 use crate::db::models::ResultAnalysisInput;
-use crate::db::repositories::DataResourceRepo;
+use crate::db::repositories::{DataResourceRepo, ResultRepo, VersionRepo, VersionRepoError};
 
 #[derive(Debug, Clone)]
 pub(super) struct ResolvedAnalysisInput {
@@ -28,8 +29,11 @@ impl ResolvedAnalysisInput {
         Ok(Self {
             snapshot: ResultAnalysisInput {
                 analysis_run_id: 0,
+                source_kind: "dataset".into(),
                 dataset_id: Some(dataset_id),
                 resource_id: None,
+                model_version_id: None,
+                model_dataframe_id: None,
                 alias,
                 ordinal,
                 source_name: source.dataset.result_name.clone(),
@@ -41,6 +45,41 @@ impl ResolvedAnalysisInput {
             artifact_id,
             input_key: format!("dataset-{dataset_id}"),
         })
+    }
+
+    fn from_active_model(
+        alias: String,
+        ordinal: i32,
+        source: crate::db::repositories::VersionDataFrameReadRow,
+    ) -> Self {
+        let schema_hash = hex::encode(Sha256::digest(source.schema_json.as_bytes()));
+        let producer = json!({
+            "kind": "active_model",
+            "modelVersionId": source.version_id,
+            "modelContentHash": source.model_content_hash,
+            "modelDataframeId": source.id,
+            "tableName": source.table_name,
+            "contentHash": source.content_hash,
+        });
+        Self {
+            artifact_id: source.artifact_id,
+            input_key: format!("model-{}", source.id),
+            snapshot: ResultAnalysisInput {
+                analysis_run_id: 0,
+                source_kind: "active_model".into(),
+                dataset_id: None,
+                resource_id: None,
+                model_version_id: Some(source.version_id),
+                model_dataframe_id: Some(source.id),
+                alias,
+                ordinal,
+                source_name: source.table_name,
+                source_schema_json: source.schema_json,
+                source_schema_hash: schema_hash,
+                source_content_hash: source.content_hash,
+                source_producer_json: producer.to_string(),
+            },
+        }
     }
 
     #[cfg(test)]
@@ -71,8 +110,12 @@ impl ResolvedAnalysisInputs {
         session_id: i32,
         sources: &ResultSourceService,
         resources: &DataResourceRepo,
+        results: &ResultRepo,
+        versions: &VersionRepo,
     ) -> Result<Self, AnalysisError> {
         let mut entries = Vec::with_capacity(inputs.len());
+        let mut active_version_id = None;
+        let mut dataset_ids = Vec::new();
         for (ordinal, input) in inputs.iter().enumerate() {
             let ordinal = i32::try_from(ordinal).map_err(|error| {
                 AnalysisError::new("analysis_inputs_invalid", error.to_string())
@@ -85,6 +128,7 @@ impl ResolvedAnalysisInputs {
                     if source.session_id != session_id {
                         return Err(AnalysisError::new("analysis_input_not_found", "资源不存在"));
                     }
+                    dataset_ids.push(*dataset_id);
                     ResolvedAnalysisInput::from_dataset(input.alias.clone(), ordinal, source)?
                 }
                 AnalysisInputSource::DataResourceId(resource_id) => {
@@ -106,8 +150,11 @@ impl ResolvedAnalysisInputs {
                     ResolvedAnalysisInput {
                         snapshot: ResultAnalysisInput {
                             analysis_run_id: 0,
+                            source_kind: "data_resource".into(),
                             dataset_id: None,
                             resource_id: Some(id.clone()),
+                            model_version_id: None,
+                            model_dataframe_id: None,
                             alias: input.alias.clone(),
                             ordinal,
                             source_name: resource.resource.display_name,
@@ -125,8 +172,39 @@ impl ResolvedAnalysisInputs {
                         input_key: format!("resource-{resource_id}"),
                     }
                 }
+                AnalysisInputSource::ActiveModelDataFrameId(dataframe_id) => {
+                    let source = versions
+                        .find_active_version_dataframe(&principal.id, session_id, *dataframe_id)
+                        .await
+                        .map_err(|error| match error {
+                            VersionRepoError::Repository(_) => {
+                                AnalysisError::new("analysis_input_not_found", "资源不存在")
+                            }
+                            _ => AnalysisError::new("analysis_input_not_found", "资源不存在"),
+                        })?;
+                    if active_version_id
+                        .replace(source.version_id)
+                        .is_some_and(|version_id| version_id != source.version_id)
+                    {
+                        return Err(AnalysisError::new(
+                            "active_model_changed",
+                            "当前激活模型已变化",
+                        ));
+                    }
+                    ResolvedAnalysisInput::from_active_model(input.alias.clone(), ordinal, source)
+                }
             };
             entries.push(resolved);
+        }
+        if let Some(version_id) = active_version_id {
+            super::model_origin::require_matching_dataset_origins(
+                results,
+                &principal.id,
+                session_id,
+                &dataset_ids,
+                version_id,
+            )
+            .await?;
         }
         Ok(Self { entries })
     }

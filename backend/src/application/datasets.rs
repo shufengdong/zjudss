@@ -98,8 +98,11 @@ pub struct DatasetViewDto {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatasetLineageDto {
+    pub source_kind: String,
     pub source_dataset_id: Option<String>,
     pub source_resource_id: Option<String>,
+    pub model_version_id: Option<String>,
+    pub model_dataframe_id: Option<String>,
     pub name: String,
     pub schema: Value,
     pub schema_hash: String,
@@ -314,8 +317,11 @@ fn view_dto(v: ResultViewRow) -> DatasetViewDto {
 }
 fn lineage_dto(value: LineageRow) -> DatasetLineageDto {
     DatasetLineageDto {
+        source_kind: value.source_kind,
         source_dataset_id: value.source_dataset_id.map(|id| id.to_string()),
         source_resource_id: value.source_resource_id,
+        model_version_id: value.model_version_id.map(|id| id.to_string()),
+        model_dataframe_id: value.model_dataframe_id.map(|id| id.to_string()),
         name: value.source_name,
         schema: serde_json::from_str(&value.source_schema_json).unwrap_or(Value::Null),
         schema_hash: value.source_schema_hash,

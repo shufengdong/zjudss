@@ -51,7 +51,9 @@ pub use managed_workflow::{
     WorkflowStructOverlayMaterial,
 };
 pub use message::MessageRepo;
-pub use result::{DeleteResultError, DeletedResult, LineageRow, ResultRepo, ResultViewRow};
+pub use result::{
+    DatasetModelOrigin, DeleteResultError, DeletedResult, LineageRow, ResultRepo, ResultViewRow,
+};
 pub(crate) use run::RunArtifactOutputs;
 pub use run::{
     CreateRun, CreatedRun, NewRunDataset, RunContext, RunDataset, RunDeletionImpact, RunModelFrame,

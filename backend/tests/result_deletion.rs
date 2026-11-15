@@ -309,7 +309,7 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
 
     let analysis_id = {
         let mut conn = app.pool.get().unwrap();
-        diesel::sql_query("INSERT INTO result_analysis_runs(session_id,intent_json,script_artifact_id,status,stage,agent_bundle_version,agent_skill_refs_json,engine_contract_version,created_at_ms) SELECT session_id,'{}',script_artifact_id,'pending','queued','test','[]',engine_contract_version,created_at_ms FROM simulation_runs WHERE id=?1")
+        diesel::sql_query("INSERT INTO result_analysis_runs(session_id,intent_json,script_artifact_id,status,stage,agent_bundle_version,agent_skill_refs_json,engine_contract_version,engine_resource_snapshot_id,created_at_ms) SELECT session_id,'{}',script_artifact_id,'pending','queued','test','[]',engine_contract_version,(SELECT id FROM engine_resource_snapshots LIMIT 1),created_at_ms FROM simulation_runs WHERE id=?1")
             .bind::<diesel::sql_types::Integer,_>(run_id)
             .execute(&mut conn).unwrap();
         let id: i32 = diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
@@ -317,7 +317,7 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
         ))
         .get_result(&mut conn)
         .unwrap();
-        diesel::sql_query("INSERT INTO result_analysis_inputs(analysis_run_id,dataset_id,alias,ordinal,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json) VALUES(?1,?2,'source',0,?3,?4,?5,?5,?6)")
+        diesel::sql_query("INSERT INTO result_analysis_inputs(analysis_run_id,source_kind,dataset_id,alias,ordinal,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json) VALUES(?1,'dataset',?2,'source',0,?3,?4,?5,?5,?6)")
             .bind::<diesel::sql_types::Integer,_>(id)
             .bind::<diesel::sql_types::Integer,_>(source_id)
             .bind::<diesel::sql_types::Text,_>(&source.name)
@@ -386,7 +386,7 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
         ))
         .get_result(&mut conn)
         .unwrap();
-        diesel::sql_query("INSERT INTO dataset_lineage_snapshots(derived_dataset_id,source_dataset_id,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json,created_at_ms) VALUES(?1,?2,?3,?4,?5,?5,?6,1)")
+        diesel::sql_query("INSERT INTO dataset_lineage_snapshots(derived_dataset_id,source_kind,source_dataset_id,source_name,source_schema_json,source_schema_hash,source_content_hash,source_producer_json,created_at_ms) VALUES(?1,'dataset',?2,?3,?4,?5,?5,?6,1)")
             .bind::<diesel::sql_types::Integer,_>(derived)
             .bind::<diesel::sql_types::Integer,_>(source_id)
             .bind::<diesel::sql_types::Text,_>(&source.name)
@@ -438,7 +438,7 @@ async fn busy_results_are_protected_and_materialized_descendants_keep_tombstone_
             session_id: run.session_id,
             request_message_id: None,
             intent: json!({}),
-            script: "result = source".into(),
+            script: "result = limit(1, source);".into(),
             inputs: vec![zjudss::application::AnalysisInput {
                 source: zjudss::application::AnalysisInputSource::DatasetId(source_id),
                 alias: "source".into(),
@@ -496,7 +496,7 @@ async fn analysis_views_and_run_comparisons_use_snapshots_and_materialized_outpu
             session_id: baseline.session_id,
             request_message_id: None,
             intent: json!({"goal":"derive a stable result"}),
-            script: "result = source".into(),
+            script: "result = limit(1, source);".into(),
             inputs: vec![AnalysisInput {
                 source: zjudss::application::AnalysisInputSource::DatasetId(source_id),
                 alias: "source".into(),

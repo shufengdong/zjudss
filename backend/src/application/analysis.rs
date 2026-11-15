@@ -20,12 +20,13 @@ use crate::application::{
 use crate::auth::CurrentUser;
 use crate::db::models::{NewResultAnalysisRun, ResultAnalysisRun};
 use crate::db::repositories::{
-    AnalysisRepo, DataResourceRepo, MessageRepo, ResultRepo, RunDataset,
+    AnalysisRepo, DataResourceRepo, MessageRepo, ResultRepo, RunDataset, VersionRepo,
 };
 use crate::engine_resources::EngineResourceSnapshot;
 use crate::storage::StageLimits;
 
 mod inputs;
+mod model_origin;
 mod outputs;
 mod script_inspector;
 
@@ -44,6 +45,7 @@ pub struct AnalysisInput {
 pub enum AnalysisInputSource {
     DatasetId(i32),
     DataResourceId(String),
+    ActiveModelDataFrameId(i32),
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +108,7 @@ pub struct AnalysisService {
     snapshot: Arc<EngineResourceSnapshot>,
     data_dir: PathBuf,
     data_resources: DataResourceRepo,
+    versions: VersionRepo,
     sources: ResultSourceService,
 }
 
@@ -122,6 +125,7 @@ impl AnalysisService {
         snapshot: Arc<EngineResourceSnapshot>,
         data_dir: PathBuf,
         data_resources: DataResourceRepo,
+        versions: VersionRepo,
     ) -> Self {
         let sources = ResultSourceService::new(results.clone(), artifacts.clone());
         Self {
@@ -135,12 +139,23 @@ impl AnalysisService {
             snapshot,
             data_dir,
             data_resources,
+            versions,
             sources,
         }
     }
 
     pub async fn run(&self, request: AnalysisRequest) -> Result<AnalysisOutcome, AnalysisError> {
         validate_request(&request)?;
+        let resolved_inputs = ResolvedAnalysisInputs::resolve(
+            &request.inputs,
+            &request.principal,
+            request.session_id,
+            &self.sources,
+            &self.data_resources,
+            &self.results,
+            &self.versions,
+        )
+        .await?;
         let aliases = request
             .inputs
             .iter()
@@ -162,14 +177,6 @@ impl AnalysisService {
             })),
             run_id: None,
         })?;
-        let resolved_inputs = ResolvedAnalysisInputs::resolve(
-            &request.inputs,
-            &request.principal,
-            request.session_id,
-            &self.sources,
-            &self.data_resources,
-        )
-        .await?;
         let scope = self
             .artifacts
             .resolve_scope(request.principal.storage_scope_id)
@@ -198,6 +205,7 @@ impl AnalysisService {
                         request.skill_refs.clone(),
                     )),
                     engine_contract_version: ENGINE_CONTRACT_VERSION.into(),
+                    engine_resource_snapshot_id: self.snapshot.id.clone(),
                     created_at_ms: now_ms(),
                     started_at_ms: None,
                     finished_at_ms: None,
@@ -205,7 +213,13 @@ impl AnalysisService {
                 resolved_inputs.snapshot_rows(),
             )
             .await
-            .map_err(|error| AnalysisError::new("analysis_create_failed", error.to_string()))?;
+            .map_err(|error| {
+                if matches!(error, crate::db::repositories::RepoError::VersionConflict) {
+                    AnalysisError::new("active_model_changed", "当前激活模型已变化")
+                } else {
+                    AnalysisError::new("analysis_create_failed", error.to_string())
+                }
+            })?;
         let root = self.data_dir.join("analysis-work").join(run.id.to_string());
         let result = self
             .run_inner(
