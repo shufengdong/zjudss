@@ -138,6 +138,43 @@ function invariant(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message)
 }
 
+export interface ExpectedPhaseVoltageRow {
+  time: number
+  bus: string
+  phase: string
+  vPu: number
+}
+
+export function expectPhaseVoltageRows(
+  rows: unknown[][],
+  expected: ExpectedPhaseVoltageRow[],
+  tolerance = 1e-9,
+) {
+  invariant(rows.length === expected.length, `phase-voltage row count mismatch: ${rows.length} != ${expected.length}`)
+  const expectedByKey = new Map<string, number>()
+  for (const row of expected) {
+    invariant(Number.isFinite(row.time) && Number.isFinite(row.vPu), 'expected phase-voltage value is invalid')
+    const key = JSON.stringify([row.time, row.bus, row.phase])
+    invariant(!expectedByKey.has(key), `duplicate expected phase-voltage identity: ${key}`)
+    expectedByKey.set(key, row.vPu)
+  }
+  for (const row of rows) {
+    invariant(row.length === 4, 'phase-voltage row must contain four values')
+    const [time, bus, phase, vPu] = row
+    invariant(typeof time === 'number' && Number.isFinite(time), 'phase-voltage time must be a finite number')
+    invariant(typeof bus === 'string' && bus.length > 0, 'phase-voltage bus must be a nonempty string')
+    invariant(typeof phase === 'string' && phase.length > 0, 'phase-voltage phase must be a nonempty string')
+    invariant(typeof vPu === 'number' && Number.isFinite(vPu), 'phase-voltage v_pu must be a finite number')
+    const key = JSON.stringify([time, bus, phase])
+    const expectedValue = expectedByKey.get(key)
+    invariant(expectedValue !== undefined, `unexpected phase-voltage identity: ${key}`)
+    const scale = Math.max(1, Math.abs(expectedValue))
+    invariant(Math.abs(vPu - expectedValue) <= tolerance * scale, `phase-voltage value mismatch for ${key}`)
+    expectedByKey.delete(key)
+  }
+  invariant(expectedByKey.size === 0, 'phase-voltage output is missing expected identities')
+}
+
 export function agentTurnCompleted(messages: AgentTurnMessage[], requiredTools: string[] = []) {
   const calls = messages.filter((message) => message.type === 'tool-call')
   const running = new Set(calls.filter((message) => message.status === 'running').map((message) => message.callId))

@@ -89,12 +89,40 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
         if value.is_ascii_digit()
             || value == '.' && chars.get(index + 1).is_some_and(char::is_ascii_digit)
         {
-            index += 1;
-            while index < chars.len()
-                && (chars[index].is_ascii_alphanumeric()
-                    || matches!(chars[index], '.' | '_' | '+' | '-'))
-            {
+            if value == '.' {
                 index += 1;
+                while index < chars.len() && (chars[index].is_ascii_digit() || chars[index] == '_')
+                {
+                    index += 1;
+                }
+            } else {
+                while index < chars.len() && (chars[index].is_ascii_digit() || chars[index] == '_')
+                {
+                    index += 1;
+                }
+                if chars.get(index) == Some(&'.') {
+                    index += 1;
+                    while index < chars.len()
+                        && (chars[index].is_ascii_digit() || chars[index] == '_')
+                    {
+                        index += 1;
+                    }
+                }
+            }
+            if matches!(chars.get(index), Some('e' | 'E')) {
+                let exponent = index;
+                index += 1;
+                if matches!(chars.get(index), Some('+' | '-')) {
+                    index += 1;
+                }
+                let digits = index;
+                while index < chars.len() && (chars[index].is_ascii_digit() || chars[index] == '_')
+                {
+                    index += 1;
+                }
+                if digits == index {
+                    index = exponent;
+                }
             }
             tokens.push(Token::Literal);
             continue;
@@ -262,5 +290,15 @@ mod tests {
         let tokens =
             tokenize("if (ok) { table = select(table); } [a,b] = solve(table, para);").unwrap();
         assert_eq!(assigned_identifiers(&tokens), vec!["table", "a", "b"]);
+    }
+
+    #[test]
+    fn numeric_literals_do_not_consume_following_operators_or_function_names() {
+        let tokens = tokenize("result = select(alias(1e-3+mystery(col(x)), y), input);").unwrap();
+
+        assert!(tokens.windows(2).any(|pair| {
+            matches!(pair, [Token::Ident(name), Token::LParen] if name == "mystery")
+        }));
+        assert!(tokens.contains(&Token::Other('+')));
     }
 }

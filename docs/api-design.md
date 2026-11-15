@@ -152,8 +152,10 @@ engine snapshot 中 manifest v2 绑定的 projection profile 动态执行，`pro
 
 `run_result_analysis.inputs` 为 1..=20 项；每项只能提供 `modelDataframeId`、`datasetId` 或 `resourceId` 之一并带唯一 alias。
 模型 ID 只解析当前会话唯一 active 版本；混合 dataset 时其冻结模型来源必须唯一等于该 active 版本，否则返回
-`analysis_model_origin_mismatch` 且不创建分析记录。`read_result_dataset` 只接受稳定 dataset ID、cursor 和受控列投影，
-单次最多 100 行/32 列；读取失败统一为 `dataset_read_failed`，不暴露 artifact 路径。每个用户请求最多进入分析 service
+`analysis_model_origin_mismatch` 且不创建分析记录。若本次请求检查 workspace 后 active 版本发生切换，包含模型输入的执行返回
+`active_model_changed`；事务创建失败会释放已提交但未被 run 拥有的脚本引用。结果来源递归按完成节点缓存，仍以 64 条边为最大深度。
+`read_result_dataset` 只接受稳定 dataset ID、cursor 和受控列投影，单次最多 100 行/32 列，完整成功 JSON（含 metadata、lineage、
+转义后的单元格和 page）不超过 64 KiB；超限要求缩小投影并返回 `dataset_read_failed`，不暴露 artifact 路径。每个用户请求最多进入分析 service
 四次，第五次返回 `analysis_repair_budget_exhausted`。
 
 `GET /api/analysis-runs/{id}` 是既有路由的加法扩展：除 run 和 datasets 外，返回

@@ -2,6 +2,7 @@ mod common;
 
 use std::io::Cursor;
 use std::sync::Arc;
+use std::time::Duration;
 
 use common::TestApp;
 use diesel::prelude::*;
@@ -303,6 +304,27 @@ async fn dataset_model_origin_handles_direct_none_multiple_cycle_and_depth_limit
         DatasetModelOrigin::Invalid
     );
 
+    let mut shared_left = insert_derived_dataset(&app, session.id, artifact_id, "shared-left");
+    let mut shared_right = insert_derived_dataset(&app, session.id, artifact_id, "shared-right");
+    link_dataset(&app, shared_left, direct_second);
+    link_dataset(&app, shared_right, direct_second);
+    for depth in 0..28 {
+        let derived =
+            insert_derived_dataset(&app, session.id, artifact_id, &format!("shared-{depth}"));
+        link_dataset(&app, derived, shared_left);
+        link_dataset(&app, derived, shared_right);
+        shared_left = shared_right;
+        shared_right = derived;
+    }
+    let shared_origin = tokio::time::timeout(
+        Duration::from_millis(500),
+        repo.dataset_model_origin(&user.id, session.id, shared_right, 64),
+    )
+    .await
+    .expect("shared ancestors must be traversed once")
+    .unwrap();
+    assert_eq!(shared_origin, DatasetModelOrigin::Unique(second.version.id));
+
     for dataset_id in [direct_first, none, multiple, cycle_a, source] {
         let error = app
             .state
@@ -488,6 +510,90 @@ async fn active_dataframe_lookup_is_exactly_scoped_and_create_rejects_switch_rac
 }
 
 #[tokio::test]
+async fn analysis_create_conflict_releases_the_committed_script_reference() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "analysis cleanup", 1)
+        .await
+        .unwrap();
+    let historical = publish_version(
+        &app,
+        &user,
+        session.id,
+        "cleanup-historical",
+        b"id,name\n1,old\n",
+    )
+    .await;
+    let active = publish_version(
+        &app,
+        &user,
+        session.id,
+        "cleanup-active",
+        b"id,name\n1,new\n",
+    )
+    .await;
+    let refs_before = diesel::sql_query(
+        "SELECT COALESCE(sum(ref_count),0) count FROM storage_scope_artifacts WHERE storage_scope_id=?1",
+    )
+    .bind::<diesel::sql_types::Integer, _>(user.storage_scope_id)
+    .get_result::<common::CountRow>(&mut app.pool.get().unwrap())
+    .unwrap()
+    .count;
+    let pool = app.pool.clone();
+    let session_id = session.id;
+    let historical_id = historical.version.id;
+
+    let error = app
+        .state
+        .analysis_service
+        .run_with_before_create(
+            AnalysisRequest {
+                principal: user.clone(),
+                session_id,
+                request_message_id: None,
+                intent: serde_json::json!("race cleanup"),
+                script: "result = limit(1, model);".into(),
+                inputs: vec![AnalysisInput {
+                    source: AnalysisInputSource::ActiveModelDataFrameId(active.dataframes[0].id),
+                    alias: "model".into(),
+                }],
+                expected_outputs: vec!["result".into()],
+                skill_refs: vec![],
+            },
+            move || {
+                diesel::sql_query("UPDATE workspaces SET active_version_id=?1 WHERE session_id=?2")
+                    .bind::<diesel::sql_types::Integer, _>(historical_id)
+                    .bind::<diesel::sql_types::Integer, _>(session_id)
+                    .execute(&mut pool.get().unwrap())
+                    .unwrap();
+            },
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "active_model_changed");
+    let refs_after = diesel::sql_query(
+        "SELECT COALESCE(sum(ref_count),0) count FROM storage_scope_artifacts WHERE storage_scope_id=?1",
+    )
+    .bind::<diesel::sql_types::Integer, _>(user.storage_scope_id)
+    .get_result::<common::CountRow>(&mut app.pool.get().unwrap())
+    .unwrap()
+    .count;
+    assert_eq!(refs_after, refs_before);
+    assert_eq!(
+        count_rows(
+            &app,
+            "SELECT count(*) count FROM result_analysis_runs WHERE session_id=?1",
+            session_id,
+        ),
+        0
+    );
+}
+
+#[tokio::test]
 async fn analysis_service_preflight_failure_writes_nothing() {
     let app = TestApp::spawn().await;
     let user = common::test_user("alice@example.com");
@@ -504,26 +610,41 @@ async fn analysis_service_preflight_failure_writes_nothing() {
         session.id,
     );
 
-    let error = app
-        .state
-        .analysis_service
-        .run(AnalysisRequest {
-            principal: user,
-            session_id: session.id,
-            request_message_id: None,
-            intent: serde_json::json!("forbidden"),
-            script: "result = read_csv(model);".into(),
-            inputs: vec![AnalysisInput {
-                source: AnalysisInputSource::ActiveModelDataFrameId(active.dataframes[0].id),
-                alias: "model".into(),
-            }],
-            expected_outputs: vec!["result".into()],
-            skill_refs: vec![],
-        })
-        .await
-        .unwrap_err();
-
-    assert_eq!(error.code, "analysis_function_forbidden");
+    for (script, expected_code) in [
+        ("result = read_csv(model);", "analysis_function_forbidden"),
+        (
+            "result = select(alias(1+mystery(col(id)), y), model);",
+            "analysis_script_invalid",
+        ),
+        (
+            "result = select(alias(1+col(id,y), z), model);",
+            "analysis_script_invalid",
+        ),
+        (
+            "result = select(alias(1+import_df_url(model), y), model);",
+            "analysis_function_forbidden",
+        ),
+    ] {
+        let error = app
+            .state
+            .analysis_service
+            .run(AnalysisRequest {
+                principal: user.clone(),
+                session_id: session.id,
+                request_message_id: None,
+                intent: serde_json::json!("forbidden"),
+                script: script.into(),
+                inputs: vec![AnalysisInput {
+                    source: AnalysisInputSource::ActiveModelDataFrameId(active.dataframes[0].id),
+                    alias: "model".into(),
+                }],
+                expected_outputs: vec!["result".into()],
+                skill_refs: vec![],
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, expected_code, "{script}");
+    }
     assert_eq!(
         count_rows(
             &app,

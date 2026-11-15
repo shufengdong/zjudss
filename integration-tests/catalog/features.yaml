@@ -1468,14 +1468,32 @@
       name: read_result_dataset_is_bounded_projected_paginated_and_session_scoped
     - runner: rust
       file: backend/tests/tool_manifest.rs
+      name: active_analysis_reports_a_switch_after_workspace_inspection
+    - runner: rust
+      file: backend/tests/result_analysis_sources.rs
+      name: dataset_model_origin_handles_direct_none_multiple_cycle_and_depth_limit
+    - runner: rust
+      file: backend/tests/result_analysis_sources.rs
+      name: analysis_service_preflight_failure_writes_nothing
+    - runner: rust
+      file: backend/tests/result_analysis_sources.rs
+      name: analysis_create_conflict_releases_the_committed_script_reference
+    - runner: rust
+      file: backend/tests/tool_manifest.rs
       name: analysis_repair_budget_allows_four_service_calls_and_rejects_the_fifth
+    - runner: rust
+      file: backend/src/application/managed_rss.rs
+      name: numeric_literals_do_not_consume_following_operators_or_function_names
+    - runner: vitest
+      file: frontend/src/release/semantic-assertions.test.ts
+      name: requires exact non-null phase-voltage values and identities
     - runner: rust
       file: backend/tests/analysis_api.rs
       name: analysis_details_return_immutable_script_and_ordered_three_source_snapshots
     - runner: release
       file: scripts/test-release-integration
       name: real LLM provider and tensoreval complete the V4 semantic release journey
-  assertions: [the v4.5.0 conversational Agent loads result-analysis 1.3.0 and directly authors strict RSS without model-intake or ordinary script authority, read_result_dataset exposes only owned bounded 100-row 32-column cursor projections, active model reads accept only the exact active dataframe and mixed result inputs require the same unique model origin, full-data assert_all and strict nonempty lockstep explode fail closed, each user request permits four analysis service calls within twelve Agent turns and rejects the fifth, analysis details add immutable script hash engine snapshot and ordered discriminated input snapshots without exposing paths, refresh restores the read-only details while cross-version failure creates no analysis run, the real release journey pages every time bus phase v_pu row and verifies finite values complete source-derived row count and exact two-source lineage, source deletion retains tombstone lineage and the materialized output]
+  assertions: [the v4.5.0 conversational Agent loads result-analysis 1.3.0 and directly authors strict RSS without model-intake or ordinary script authority, read_result_dataset exposes only owned cursor projections bounded to 100 rows 32 columns and 64 KiB serialized success output, active model reads accept only the exact inspected active dataframe and report active_model_changed if activation changes before execution, mixed result inputs require the same unique model origin and shared lineage ancestors are memoized under the 64-edge limit, numeric literals cannot hide unknown wrong-arity or forbidden nested calls from zero-write preflight, rejected transactional creation releases its committed script reference, full-data assert_all and strict nonempty lockstep explode fail closed, each user request permits four analysis service calls within twelve Agent turns and rejects the fifth, analysis details add immutable script hash engine snapshot and ordered discriminated input snapshots without exposing paths, refresh restores the read-only details while cross-version failure creates no analysis run, the real release journey pages every time bus phase v_pu row and compares every non-null scalar value and phase identity against active bus facts and source magnitudes, source deletion retains tombstone lineage and the materialized output]
   fixtures: [active bus model table, same-version list-valued bus_voltage result, cross-version result, scripted repairable and nonrepairable failures, real eig-rs phase voltage analysis]
   contracts:
     - "route:GET /api/analysis-runs/{id}"

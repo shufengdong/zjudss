@@ -57,6 +57,7 @@ fn services_for_session(
         loaded_skills: Arc::new(Mutex::new(BTreeSet::new())),
         analysis_attempts: Arc::new(Mutex::new(0)),
         inspected_workspace: Arc::new(Mutex::new(false)),
+        inspected_workspace_active: Arc::new(Mutex::new(None)),
         inspected_workspace_draft: Arc::new(Mutex::new(None)),
         study_configurations: app.state.study_configuration_service.clone(),
         datasets: app.state.dataset_service.clone(),
@@ -691,6 +692,63 @@ async fn run_result_analysis_accepts_bounded_sources_and_freezes_mixed_input_sna
 }
 
 #[tokio::test]
+async fn active_analysis_reports_a_switch_after_workspace_inspection() {
+    let app = TestApp::spawn().await;
+    let user = principal("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "active switch", 1)
+        .await
+        .unwrap();
+    let historical = publish_active_version(
+        &app,
+        &user,
+        session.id,
+        "switch-historical",
+        b"id,name\n1,old\n",
+    )
+    .await;
+    let inspected = publish_active_version(
+        &app,
+        &user,
+        session.id,
+        "switch-inspected",
+        b"id,name\n1,new\n",
+    )
+    .await;
+    let services = services_for_session(&app, user, session.id);
+    services
+        .loaded_skills
+        .lock()
+        .await
+        .insert("result-analysis".into());
+    tools::inspect_workspace::InspectWorkspaceTool::new(services.clone())
+        .call(&mut ToolContext::new(), tools::inspect_workspace::Args {})
+        .await
+        .unwrap();
+    diesel::sql_query("UPDATE workspaces SET active_version_id=?1 WHERE session_id=?2")
+        .bind::<diesel::sql_types::Integer, _>(historical.version.id)
+        .bind::<diesel::sql_types::Integer, _>(session.id)
+        .execute(&mut app.pool.get().unwrap())
+        .unwrap();
+
+    let args = serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
+        "intent":"use inspected active model",
+        "script":"result = limit(1, model);",
+        "inputs":[{"modelDataframeId":inspected.dataframes[0].id,"alias":"model"}],
+        "expectedOutputs":["result"]
+    }))
+    .unwrap();
+    let error = tools::run_result_analysis::RunResultAnalysisTool::new(services)
+        .call(&mut ToolContext::new(), args)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "active_model_changed");
+}
+
+#[tokio::test]
 async fn analysis_repair_budget_allows_four_service_calls_and_rejects_the_fifth() {
     let engine = ScenarioEngine::default();
     for _ in 0..4 {
@@ -759,6 +817,7 @@ async fn read_result_dataset_is_bounded_projected_paginated_and_session_scoped()
             ("one".into(), 1.0),
             ("two".into(), 2.0),
             ("three".into(), 3.0),
+            ("x".repeat(70 * 1024), 4.0),
         ],
         value_unit: None,
     }]));
@@ -785,7 +844,7 @@ async fn read_result_dataset_is_bounded_projected_paginated_and_session_scoped()
             session_id: session.id,
             request_message_id: None,
             intent: serde_json::json!("read result"),
-            script: "result = limit(3, source);".into(),
+            script: "result = limit(4, source);".into(),
             inputs: vec![AnalysisInput {
                 source: AnalysisInputSource::DataResourceId(resource_id),
                 alias: "source".into(),
@@ -832,6 +891,21 @@ async fn read_result_dataset_is_bounded_projected_paginated_and_session_scoped()
         .await
         .unwrap();
     assert_eq!(second["page"]["rows"].as_array().unwrap().len(), 1);
+
+    let oversized = tool
+        .call(
+            &mut ToolContext::new(),
+            tools::read_result_dataset::Args {
+                dataset_id,
+                columns: vec!["key".into()],
+                limit: Some(4),
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(oversized.code, "dataset_read_failed");
+    assert!(oversized.message.contains("64 KiB"));
 
     for (columns, limit) in [(vec!["x".to_string(); 33], Some(1)), (vec![], Some(101))] {
         let error = tool

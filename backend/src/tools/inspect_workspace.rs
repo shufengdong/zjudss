@@ -34,6 +34,7 @@ impl Tool for InspectWorkspaceTool {
     }
     async fn call(&self, _: &mut ToolContext, _: Args) -> Result<Value, Self::Error> {
         *self.services.inspected_workspace.lock().await = false;
+        *self.services.inspected_workspace_active.lock().await = None;
         *self.services.inspected_workspace_draft.lock().await = None;
         let record = self
             .services
@@ -45,6 +46,8 @@ impl Tool for InspectWorkspaceTool {
                 id: draft.draft.id,
                 revision: draft.draft.revision,
             });
+        *self.services.inspected_workspace_active.lock().await =
+            record.active.as_ref().map(|version| version.version.id);
         *self.services.inspected_workspace.lock().await = true;
         let active=record.active.map(|version|json!({"id":version.version.id,"contentHash":version.version.content_hash,"tables":version.dataframes.into_iter().map(|table|json!({"modelDataframeId":table.id,"tableName":table.table_name,"rowCount":table.row_count,"contentHash":table.content_hash})).collect::<Vec<_>>() }));
         let draft=record.draft.map(|draft|json!({"id":draft.draft.id,"revision":draft.draft.revision,"baseVersionId":draft.draft.base_version_id,"diagnostics":serde_json::from_str::<Value>(&draft.draft.diagnostics_json).unwrap_or(Value::Null),"tables":draft.dataframes.into_iter().map(|table|json!({"modelDataframeId":table.id,"tableName":table.table_name,"rowCount":table.row_count,"contentHash":table.content_hash})).collect::<Vec<_>>() }));

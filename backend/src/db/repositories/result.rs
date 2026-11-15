@@ -1,5 +1,5 @@
 use diesel::prelude::*;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use diesel::sql_types::{BigInt, Bool, Integer, Nullable, Text};
 
@@ -229,22 +229,23 @@ impl ResultRepo {
                 return Err(RepoError::NotFound);
             }
             let mut visiting = HashSet::new();
-            let mut versions = BTreeSet::new();
-            if !collect_model_origins(
+            let mut memo = HashMap::new();
+            let Some(summary) = collect_model_origins(
                 &mut conn,
                 session_id,
                 dataset_id,
                 0,
                 max_depth,
                 &mut visiting,
-                &mut versions,
-            )? {
+                &mut memo,
+            )?
+            else {
                 return Ok(DatasetModelOrigin::Invalid);
-            }
-            Ok(match versions.len() {
+            };
+            Ok(match summary.versions.len() {
                 0 => DatasetModelOrigin::None,
-                1 => DatasetModelOrigin::Unique(*versions.first().expect("one origin")),
-                _ => DatasetModelOrigin::Multiple(versions.into_iter().collect()),
+                1 => DatasetModelOrigin::Unique(*summary.versions.first().expect("one origin")),
+                _ => DatasetModelOrigin::Multiple(summary.versions.into_iter().collect()),
             })
         })
         .await
@@ -347,6 +348,12 @@ struct OriginLineageRow {
     model_version_id: Option<i32>,
 }
 
+#[derive(Clone)]
+struct OriginSummary {
+    versions: BTreeSet<i32>,
+    max_descendant_depth: usize,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_model_origins(
     conn: &mut SqliteConnection,
@@ -355,10 +362,16 @@ fn collect_model_origins(
     depth: usize,
     max_depth: usize,
     visiting: &mut HashSet<i32>,
-    versions: &mut BTreeSet<i32>,
-) -> RepoResult<bool> {
-    if depth > max_depth || !visiting.insert(dataset_id) {
-        return Ok(false);
+    memo: &mut HashMap<i32, OriginSummary>,
+) -> RepoResult<Option<OriginSummary>> {
+    if depth > max_depth {
+        return Ok(None);
+    }
+    if let Some(summary) = memo.get(&dataset_id) {
+        return Ok((depth + summary.max_descendant_depth <= max_depth).then(|| summary.clone()));
+    }
+    if !visiting.insert(dataset_id) {
+        return Ok(None);
     }
     let dataset = diesel::sql_query("SELECT d.run_id,r.model_version_id FROM result_datasets d LEFT JOIN simulation_runs r ON r.id=d.run_id LEFT JOIN result_analysis_runs a ON a.id=d.analysis_run_id WHERE d.id=?1 AND COALESCE(r.session_id,a.session_id)=?2")
         .bind::<Integer, _>(dataset_id)
@@ -367,17 +380,25 @@ fn collect_model_origins(
         .optional()?;
     let Some(dataset) = dataset else {
         visiting.remove(&dataset_id);
-        return Ok(false);
+        return Ok(None);
     };
-    let valid = if dataset.run_id.is_some() {
+    let summary = if dataset.run_id.is_some() {
+        let mut versions = BTreeSet::new();
         if let Some(version_id) = dataset.model_version_id {
             versions.insert(version_id);
         }
-        true
+        Some(OriginSummary {
+            versions,
+            max_descendant_depth: 0,
+        })
     } else {
         let sources = diesel::sql_query("SELECT source_kind,source_dataset_id,model_version_id FROM dataset_lineage_snapshots WHERE derived_dataset_id=?1 ORDER BY id")
             .bind::<Integer, _>(dataset_id)
             .load::<OriginLineageRow>(conn)?;
+        let mut summary = OriginSummary {
+            versions: BTreeSet::new(),
+            max_descendant_depth: 0,
+        };
         let mut valid = true;
         for source in sources {
             match source.source_kind.as_str() {
@@ -386,25 +407,30 @@ fn collect_model_origins(
                         valid = false;
                         break;
                     };
-                    if !collect_model_origins(
+                    let Some(child) = collect_model_origins(
                         conn,
                         session_id,
                         source_id,
                         depth + 1,
                         max_depth,
                         visiting,
-                        versions,
-                    )? {
+                        memo,
+                    )?
+                    else {
                         valid = false;
                         break;
-                    }
+                    };
+                    summary.versions.extend(child.versions);
+                    summary.max_descendant_depth = summary
+                        .max_descendant_depth
+                        .max(child.max_descendant_depth + 1);
                 }
                 "active_model" => {
                     let Some(version_id) = source.model_version_id else {
                         valid = false;
                         break;
                     };
-                    versions.insert(version_id);
+                    summary.versions.insert(version_id);
                 }
                 "data_resource" => {}
                 _ => {
@@ -413,10 +439,13 @@ fn collect_model_origins(
                 }
             }
         }
-        valid
+        (valid && depth + summary.max_descendant_depth <= max_depth).then_some(summary)
     };
     visiting.remove(&dataset_id);
-    Ok(valid)
+    if let Some(summary) = &summary {
+        memo.insert(dataset_id, summary.clone());
+    }
+    Ok(summary)
 }
 
 fn live_dataset_query() -> diesel::query_builder::SqlQuery {

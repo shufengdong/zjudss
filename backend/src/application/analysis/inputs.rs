@@ -104,6 +104,7 @@ impl ResolvedAnalysisInputs {
         Self { entries }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn resolve(
         inputs: &[AnalysisInput],
         principal: &CurrentUser,
@@ -112,6 +113,7 @@ impl ResolvedAnalysisInputs {
         resources: &DataResourceRepo,
         results: &ResultRepo,
         versions: &VersionRepo,
+        expected_active_version_id: Option<i32>,
     ) -> Result<Self, AnalysisError> {
         let mut entries = Vec::with_capacity(inputs.len());
         let mut active_version_id = None;
@@ -173,15 +175,46 @@ impl ResolvedAnalysisInputs {
                     }
                 }
                 AnalysisInputSource::ActiveModelDataFrameId(dataframe_id) => {
-                    let source = versions
+                    let source = match versions
                         .find_active_version_dataframe(&principal.id, session_id, *dataframe_id)
                         .await
-                        .map_err(|error| match error {
-                            VersionRepoError::Repository(_) => {
-                                AnalysisError::new("analysis_input_not_found", "资源不存在")
+                    {
+                        Ok(source) => source,
+                        Err(error) => {
+                            if let Some(expected) = expected_active_version_id {
+                                let current = versions
+                                    .workspace(
+                                        &principal.id,
+                                        session_id,
+                                        crate::application::now_ms(),
+                                    )
+                                    .await
+                                    .map_err(|_| {
+                                        AnalysisError::new("analysis_input_not_found", "资源不存在")
+                                    })?;
+                                if current.workspace.active_version_id != Some(expected) {
+                                    return Err(AnalysisError::new(
+                                        "active_model_changed",
+                                        "当前激活模型已变化",
+                                    ));
+                                }
                             }
-                            _ => AnalysisError::new("analysis_input_not_found", "资源不存在"),
-                        })?;
+                            return Err(match error {
+                                VersionRepoError::Repository(_) => {
+                                    AnalysisError::new("analysis_input_not_found", "资源不存在")
+                                }
+                                _ => AnalysisError::new("analysis_input_not_found", "资源不存在"),
+                            });
+                        }
+                    };
+                    if expected_active_version_id
+                        .is_some_and(|expected| expected != source.version_id)
+                    {
+                        return Err(AnalysisError::new(
+                            "active_model_changed",
+                            "当前激活模型已变化",
+                        ));
+                    }
                     if active_version_id
                         .replace(source.version_id)
                         .is_some_and(|version_id| version_id != source.version_id)

@@ -7,6 +7,7 @@ import {
   expectDirectAnalysisTrace,
   expectDomainState,
   expectEngineReleaseEvidence,
+  expectPhaseVoltageRows,
   expectToolTrace,
   readAllMessages,
   type ToolTraceEntry,
@@ -340,6 +341,25 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
     expect(expectedPhaseRows).toBeGreaterThan(0)
     const activeBus = workspace.active.tables.find((table: any) => table.tableName === 'bus')
     expect(activeBus?.id).toMatch(/^\d+$/)
+    const busPage = await apiJson(api,
+      `/api/model-dataframes/${activeBus.id}/rows?limit=100&columns=id%2Cterminals%2Cvoltage_base_v`)
+    expect(busPage.columns).toEqual(['id', 'terminals', 'voltage_base_v'])
+    expect(busPage.nextCursor).toBeNull()
+    const busFacts = new Map<string, { terminals: string[]; voltageBase: number }>()
+    for (const row of busPage.rows as unknown[][]) {
+      expect(row).toHaveLength(3)
+      const [id, terminals, rawBase] = row
+      expect(typeof id).toBe('string')
+      expect(Array.isArray(terminals)).toBe(true)
+      expect((terminals as unknown[]).length).toBeGreaterThan(0)
+      expect((terminals as unknown[]).every(value => typeof value === 'string' && value.length > 0)).toBe(true)
+      expect(rawBase === null || rawBase === '').toBe(false)
+      const voltageBase = Number(rawBase)
+      expect(Number.isFinite(voltageBase) && voltageBase > 0).toBe(true)
+      expect(busFacts.has(id as string)).toBe(false)
+      busFacts.set(id as string, { terminals: terminals as string[], voltageBase })
+    }
+    expect(busFacts.size).toBeGreaterThan(0)
 
     trace = await sendAndCollect(page, api, sessionId,
       '分析当前 active 模型的 bus 表与当前结果中唯一的 bus_voltage DataFrame：先读取两者实际 schema 和必要样例，read_model_dataframe 只投影 id、terminals、voltage_base_v 且 equals 留空。查询当前引擎中 assert_all、explode、join、select 的精确文档；搜索命中后必须用 read_engine_doc_section 读取函数章节正文，在该工具成功前不得运行分析或猜测签名。以 bus_voltage 为左表，用 bus.id 对应结果 bus 进行左连接，连接后对完整数据断言 voltage_base_v 大于 0（null 也必须失败），严格用 explode([terminals,v_mag,v_ang], ...)锁步展开三列，计算每个时刻、母线、相位的标幺电压。这是一个不含 time 列的静态快照，结果列用 alias(0,time) 表示唯一快照；完整保留所有源结果分量，不筛选、不截断、不猜测基准，输出名为 phase_voltage_pu，列顺序严格为 time,bus,phase,v_pu。来源和合同明确后直接生成 RSS 并运行分析，不要创建或运行普通仿真脚本。',
@@ -398,14 +418,31 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
       modelVersionId: null, modelDataframeId: null, schemaHash: sourceMetadata.schemaHash, deleted: false,
     })
     const derivedRows = await readRows(derived.id)
-    expect(derivedRows).toHaveLength(expectedPhaseRows)
-    for (const row of derivedRows) {
-      expect(row).toHaveLength(4)
-      expect(row[0]).not.toBeNull()
-      expect(String(row[1]).length).toBeGreaterThan(0)
-      expect(String(row[2]).length).toBeGreaterThan(0)
-      expect(Number.isFinite(Number(row[3]))).toBe(true)
+    const busIndex = sourceMetadata.columns.findIndex((column: any) => column.name === 'bus')
+    expect(busIndex).toBeGreaterThanOrEqual(0)
+    const expectedRows: { time: number; bus: string; phase: string; vPu: number }[] = []
+    for (const row of sourceRows) {
+      const bus = row[busIndex]
+      const magnitudes = row[vMagIndex]
+      expect(typeof bus).toBe('string')
+      expect(Array.isArray(magnitudes)).toBe(true)
+      const facts = busFacts.get(bus as string)
+      expect(facts, `missing active bus ${String(bus)}`).toBeTruthy()
+      expect((magnitudes as unknown[]).length).toBe(facts!.terminals.length)
+      for (let index = 0; index < facts!.terminals.length; index += 1) {
+        const rawMagnitude = (magnitudes as unknown[])[index]
+        expect(rawMagnitude === null || rawMagnitude === '').toBe(false)
+        const magnitude = Number(rawMagnitude)
+        expect(Number.isFinite(magnitude)).toBe(true)
+        expectedRows.push({
+          time: 0,
+          bus: bus as string,
+          phase: facts!.terminals[index],
+          vPu: magnitude / facts!.voltageBase,
+        })
+      }
     }
+    expectPhaseVoltageRows(derivedRows, expectedRows)
 
     trace = await sendAndCollect(page, api, sessionId,
       `加载 comparison 技能，比较基准运行 ID ${baseline.id} 与候选运行 ID ${candidate.id}，并保存比较结果。`,

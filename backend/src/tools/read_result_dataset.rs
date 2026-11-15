@@ -11,6 +11,8 @@ use crate::tools::{
     support::{DomainToolError, object_schema},
 };
 
+const MAX_SUCCESS_BYTES: usize = 64 * 1024;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Args {
@@ -92,7 +94,20 @@ impl Tool for ReadResultDatasetTool {
             )
             .await
             .map_err(map_dataset_error)?;
-        Ok(json!({"metadata": metadata, "page": page}))
+        let output = json!({"metadata": metadata, "page": page});
+        let output_bytes = serde_json::to_vec(&output).map_err(|error| {
+            DomainToolError::new(
+                "dataset_read_failed",
+                format!("结果响应序列化失败: {error}"),
+            )
+        })?;
+        if output_bytes.len() > MAX_SUCCESS_BYTES {
+            return Err(DomainToolError::new(
+                "dataset_read_failed",
+                "结果读取响应超过 64 KiB，请减少列、行数或缩小单元格内容后重试",
+            ));
+        }
+        Ok(output)
     }
 }
 

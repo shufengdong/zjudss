@@ -17,10 +17,12 @@ schema 再执行分析时，Agent 必须在读取后继续调用 `run_result_ana
 `intent` 是去除首尾空白后 1 到 1000 个 Unicode 字符的审计说明字符串，不参与脚本执行；空白或越限返回
 `analysis_intent_invalid`，不会创建分析记录。skill 提供完整 JSON/RSS 参数示例并禁止 Python import。
 
-对话 Agent 是结果分析 RSS 的直接作者。它只按需调用 `read_result_dataset`（最多 100 行/32 列）、
+对话 Agent 是结果分析 RSS 的直接作者。它只按需调用 `read_result_dataset`（最多 100 行/32 列，完整成功 JSON 最多 64 KiB；
+超限时缩小行列投影）、
 `read_model_dataframe(scope=active)` 或 `read_data_resource` 理解实际列、List 分量、单位和稳定键；非基本函数或签名不确定时
 再查询并读取精确引擎文档。依赖完整数据条件时先用 `assert_all`，展开一个或多个 List/Array 列时用严格非空、等长、锁步的
-`explode`，不能靠过滤、默认值或截断掩盖异常。active 模型与 dataset 混用必须来自同一精确模型版本。
+`explode`，不能靠过滤、默认值或截断掩盖异常。active 模型与 dataset 混用必须来自同一精确模型版本；若检查后 active
+版本切换，工具返回 `active_model_changed`，不得用同名表或新版本代替。
 
 每轮对话还注入服务端生成的 `currentResultContext`。服务只在当前用户、当前会话最近 20 条运行中选择最新的
 `succeeded` 且仍有存活 dataset 的运行；摘要只含稳定 dataset ID、名称、行数、大小、schema hash 与持久化列元数据，

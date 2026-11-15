@@ -114,12 +114,14 @@ RUN-001 在 Rust 层验证创建、重放、列表和详情都返回绑定脚本
 和 succeeded-but-empty 运行不会遮蔽最近可用成功结果。上下文构造单元测试覆盖 64 KiB 总预算、32 列、256 字符与显式裁剪标志；
 Agent bundle/tool 合同测试锁定 `result-analysis@1.3.0`、24 个工具、三类互斥稳定来源、1 到 1000 字符审计 `intent`、
 四次 service 调用预算和 12 轮聊天上限；对象、空白和超长 intent 在分析写入前失败关闭。工具行为测试覆盖
-`read_result_dataset` 的 100 行/32 列/cursor 投影、active-only 模型读取、跨版本 `analysis_model_origin_mismatch`、
-`dataset_read_failed` 和第五次 `analysis_repair_budget_exhausted`。
+`read_result_dataset` 的 100 行/32 列/cursor 投影与 64 KiB 完整成功响应、active-only 模型读取、检查后版本切换的
+`active_model_changed`、共享祖先 DAG 的有界遍历、跨版本 `analysis_model_origin_mismatch`、数字后无空格嵌套函数的零写入预检、
+事务创建竞争后的脚本引用释放、`dataset_read_failed` 和第五次 `analysis_repair_budget_exhausted`。
 确定性 Playwright 使用 active `bus` 与同版本 `bus_voltage` 创建混合分析，打开结果并在刷新后恢复只读脚本/输入；切换 active
 版本后再次提交旧结果必须失败且不创建分析 run。真实依赖旅程要求 Agent 读取两类实际 schema、按需查询函数文档、直接生成
 含全量 `assert_all` 与严格锁步 `explode` 的 RSS；trace 不得加载 `model-intake` 或调用修改、发布、研究确认、普通脚本/运行工具。
-门禁逐页验证 `time,bus,phase,v_pu`、有限数值、由源 List 长度推导的完整行数、冻结脚本和精确两类血缘，删除结果来源后再验证
+门禁逐页验证 `time,bus,phase,v_pu`，并从 active bus 的 terminals/voltage_base_v 与源结果 v_mag 独立构造期望集合，逐行比较
+非空标量、相位身份和标幺值容差；同时验证完整行数、冻结脚本和精确两类血缘，删除结果来源后再验证
 tombstone 与派生数据可读。
 补充 scripted 场景覆盖不同用户/会话的较新结果不可见、最近 20 条的精确边界、全部来源删除后的 `null`，以及损坏持久化 schema
 触发 lookup error 后仍注入 `null` 并完成 Agent 回答。预算测试包含最终裁剪标志从 `true` 转为 `false` 的 65,536 字节边界。

@@ -85,8 +85,10 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
   64 KiB 的稳定 ID/schema 元数据；每个 dataset 最多 32 列、文本最多 256 个 Unicode 字符且显式标记裁剪。唯一匹配时
   默认只冻结一个 dataset，歧义或影响判断的裁剪必须查询/询问；显式多输入合同保持不变。纯图表请求仍进入结果工作台，
   筛选、聚合、越限和其他派生请求进入 `run_result_analysis`。该工具的审计 `intent` 使用 1 到 1000 字符的直接字符串，
-  与 RSS `script`、稳定输入和预期输出合同分离。`read_result_dataset` 只读最多 100 行/32 列；active 模型只接受当前
-  `modelDataframeId`，与 dataset 混用时 dataset 必须唯一归属于同一 active 版本。Agent 对完整数据使用 `assert_all`，
+  与 RSS `script`、稳定输入和预期输出合同分离。`read_result_dataset` 只读最多 100 行/32 列且完整成功 JSON 不超过 64 KiB；
+  active 模型只接受本次请求已检查的当前 `modelDataframeId`，检查后激活切换返回 `active_model_changed`；与 dataset 混用时 dataset
+  必须唯一归属于同一 active 版本，共享血缘祖先按完成节点缓存且仍拒绝超过 64 层。脚本预检的数字词法不会吞掉后续运算符或函数名；
+  创建事务竞争失败会释放尚未归属 run 的脚本引用。Agent 对完整数据使用 `assert_all`，
   对 List 列使用失败关闭的严格锁步 `explode`；每条用户消息最多四次 `run_result_analysis` 调用（含预检失败），第五次返回
   `analysis_repair_budget_exhausted`，对话总轮次为 12。分析详情返回实际冻结 RSS、hash、engine snapshot 和按 ordinal 排列的
   三类输入，不重新读取 live 来源。
@@ -260,8 +262,8 @@ Vite/Axum/SQLite/CAS 的身份、导入、分层案例目录与窄屏详情、�
 `para`、多资源不猜选、Struct 私有用户/selector 覆盖、source-less 默认值、revision/用户隔离、无提前 confirm 路由及受控列映射发布。
 
 当前代码确定性基线（不含下述真实相邻 eig-rs 资源树断言）通过 `cargo fmt --all -- --check`、
-`cargo clippy --all-targets --all-features -- -D warnings`、后端全量测试（143 条 library 用例及全部 integration target）、
-57 个文件/303 条 Vitest、生产构建、32 条 Playwright 旅程，以及 PR lane 360/360 功能证据、307/307 公共合同和
+`cargo clippy --all-targets --all-features -- -D warnings`、后端全量测试（145 条 library 用例及全部 integration target）、
+57 个文件/304 条 Vitest、生产构建、32 条 Playwright 旅程，以及 PR lane 360/360 功能证据、307/307 公共合同和
 release lane 337/337 功能证据、100% 功能追溯；候选门禁另以真实
 所选真实 LLM provider、当前 eig-rs/tensoreval、动态门面与案例快照完成规划、执行、分析、比较和删除全旅程。
 候选门禁中的 tensoreval 固定以 `--no-default-features --features tensoreval-cli,with_dsa_mumps` 构建，不使用

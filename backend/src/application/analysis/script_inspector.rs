@@ -558,10 +558,22 @@ mod tests {
     fn analysis_script_inspector_rejects_nested_io_and_dsa_calls() {
         for source in [
             "result = select(import_df_url(source), left);",
+            "result = select(alias(1+import_df_url(source), y), left);",
             "result = select(ds_power_flow(left, right), left);",
         ] {
             let forbidden = inspect(source, &["result"]).expect_err("forbidden function");
             assert_eq!(forbidden.code, "analysis_function_forbidden");
+        }
+    }
+
+    #[test]
+    fn analysis_script_inspector_rejects_unspaced_calls_after_numbers() {
+        for source in [
+            "result = select(alias(1+mystery(col(x)), y), left);",
+            "result = select(alias(1+col(x,y), z), left);",
+        ] {
+            let invalid = inspect(source, &["result"]).expect_err("call must be inspected");
+            assert_eq!(invalid.code, "analysis_script_invalid");
         }
     }
 }

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   agentTurnCompleted,
   expectEngineReleaseEvidence,
+  expectPhaseVoltageRows,
   expectToolTrace as expectManifestToolTrace,
   readAllMessages,
   type ExpectedToolDependencies,
@@ -17,6 +18,23 @@ const expectToolTrace = (trace: ToolTraceEntry[], expected: ExpectedToolDependen
 )
 
 describe('release semantic assertions', () => {
+  test('requires exact non-null phase-voltage values and identities', () => {
+    const expected = [
+      { time: 0, bus: 'b1', phase: 'A', vPu: 1.01 },
+      { time: 0, bus: 'b1', phase: 'B', vPu: 0.99 },
+    ]
+    expect(() => expectPhaseVoltageRows([
+      [0, 'b1', 'A', 1.01],
+      [0, 'b1', 'B', 0.99],
+    ], expected)).not.toThrow()
+    expect(() => expectPhaseVoltageRows([[0, 'b1', 'A', null], [0, 'b1', 'B', 0.99]], expected))
+      .toThrow(/finite number/)
+    expect(() => expectPhaseVoltageRows([[0, 'b1', 'A', 1], [0, 'b1', 'B', 1]], expected))
+      .toThrow(/value mismatch/)
+    expect(() => expectPhaseVoltageRows([[0, 'b1', 'A', 0.99], [0, 'b1', 'B', 1.01]], expected))
+      .toThrow(/value mismatch/)
+  })
+
   test('uses the supplied manifest policy instead of a baked-in tool registry', () => {
     expect(() => expectManifestToolTrace([
       call('manifest_only_tool', 'success'),

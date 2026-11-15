@@ -189,6 +189,39 @@ impl AnalysisService {
     }
 
     pub async fn run(&self, request: AnalysisRequest) -> Result<AnalysisOutcome, AnalysisError> {
+        self.run_internal(request, None, || {}).await
+    }
+
+    pub async fn run_with_expected_active(
+        &self,
+        request: AnalysisRequest,
+        expected_active_version_id: Option<i32>,
+    ) -> Result<AnalysisOutcome, AnalysisError> {
+        self.run_internal(request, expected_active_version_id, || {})
+            .await
+    }
+
+    #[cfg(feature = "e2e-test")]
+    pub async fn run_with_before_create<F>(
+        &self,
+        request: AnalysisRequest,
+        before_create: F,
+    ) -> Result<AnalysisOutcome, AnalysisError>
+    where
+        F: FnOnce() + Send,
+    {
+        self.run_internal(request, None, before_create).await
+    }
+
+    async fn run_internal<F>(
+        &self,
+        request: AnalysisRequest,
+        expected_active_version_id: Option<i32>,
+        before_create: F,
+    ) -> Result<AnalysisOutcome, AnalysisError>
+    where
+        F: FnOnce() + Send,
+    {
         validate_request(&request)?;
         let resolved_inputs = ResolvedAnalysisInputs::resolve(
             &request.inputs,
@@ -198,6 +231,7 @@ impl AnalysisService {
             &self.data_resources,
             &self.results,
             &self.versions,
+            expected_active_version_id,
         )
         .await?;
         let aliases = request
@@ -244,7 +278,8 @@ impl AnalysisService {
                     error.to_string(),
                 )
             })?;
-        let run = self
+        before_create();
+        let create_result = self
             .repo
             .create(
                 &request.principal.id,
@@ -268,14 +303,25 @@ impl AnalysisService {
                 },
                 resolved_inputs.snapshot_rows(),
             )
-            .await
-            .map_err(|error| {
-                if matches!(error, crate::db::repositories::RepoError::VersionConflict) {
-                    AnalysisError::new("active_model_changed", "当前激活模型已变化")
-                } else {
-                    AnalysisError::new("analysis_create_failed", error.to_string())
+            .await;
+        let run = match create_result {
+            Ok(run) => run,
+            Err(error) => {
+                if let Err(cleanup_error) = self.artifacts.release(scope.id, script.id).await {
+                    eprintln!(
+                        "analysis script cleanup failed: artifact_id={}, error={cleanup_error}",
+                        script.id
+                    );
                 }
-            })?;
+                return Err(
+                    if matches!(error, crate::db::repositories::RepoError::VersionConflict) {
+                        AnalysisError::new("active_model_changed", "当前激活模型已变化")
+                    } else {
+                        AnalysisError::new("analysis_create_failed", error.to_string())
+                    },
+                );
+            }
+        };
         let root = self.data_dir.join("analysis-work").join(run.id.to_string());
         let result = self
             .run_inner(
