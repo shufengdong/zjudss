@@ -4,10 +4,18 @@ export interface ResultColumn { name:string; dtype:string; nullable:boolean; uni
 export interface DatasetView {
   id:string; name:string; kind:VisualizationKind; createdAt:number
 }
+interface DatasetLineageBase {
+  name:string; schema:unknown; schemaHash:string; contentHash:string; producer:unknown
+  deleted:boolean; tombstone?:unknown
+}
+export type DatasetLineage =
+  | DatasetLineageBase & {sourceKind:'dataset';sourceDatasetId:string;sourceResourceId:null;modelVersionId:null;modelDataframeId:null}
+  | DatasetLineageBase & {sourceKind:'data_resource';sourceDatasetId:null;sourceResourceId:string;modelVersionId:null;modelDataframeId:null}
+  | DatasetLineageBase & {sourceKind:'active_model';sourceDatasetId:null;sourceResourceId:null;modelVersionId:string;modelDataframeId:string}
 export interface DatasetMetadata {
   id:string; runId:string|null; analysisRunId:string|null; name:string; rowCount:number
   sizeBytes:number; columns:ResultColumn[]; views:DatasetView[];schemaHash:string
-  lineage:{sourceDatasetId:string;name:string;schema:unknown;schemaHash:string;producer:unknown;deleted:boolean;tombstone?:unknown}[]
+  lineage:DatasetLineage[]
 }
 export interface DatasetPage {
   datasetId:string; columns:string[]; rows:unknown[][]; nextCursor:string|null; diagnostics:Record<string,number>

@@ -4,12 +4,13 @@
 
 use std::{
     collections::HashSet,
-    io::Cursor,
+    io::{Cursor, Read},
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::adapters::{ENGINE_CONTRACT_VERSION, RunMode, RunSpec, SimEngine};
 use crate::agent::knowledge::AgentKnowledge;
@@ -20,7 +21,8 @@ use crate::application::{
 use crate::auth::CurrentUser;
 use crate::db::models::{NewResultAnalysisRun, ResultAnalysisRun};
 use crate::db::repositories::{
-    AnalysisRepo, DataResourceRepo, MessageRepo, ResultRepo, RunDataset, VersionRepo,
+    AnalysisInputSnapshot, AnalysisRepo, DataResourceRepo, MessageRepo, ResultRepo, RunDataset,
+    VersionRepo,
 };
 use crate::engine_resources::EngineResourceSnapshot;
 use crate::storage::StageLimits;
@@ -65,6 +67,19 @@ pub struct AnalysisRequest {
 pub struct AnalysisOutcome {
     pub run: ResultAnalysisRun,
     pub datasets: Vec<RunDataset>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AnalysisScriptDetails {
+    pub content: String,
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AnalysisDetails {
+    pub run: ResultAnalysisRun,
+    pub script: AnalysisScriptDetails,
+    pub inputs: Vec<AnalysisInputSnapshot>,
 }
 
 #[derive(Debug)]
@@ -391,6 +406,78 @@ impl AnalysisService {
             .await
             .map_err(|error| AnalysisError::new("analysis_not_found", error.to_string()))?;
         Ok((run, datasets))
+    }
+
+    pub async fn details(
+        &self,
+        principal: &CurrentUser,
+        id: i32,
+    ) -> Result<AnalysisDetails, AnalysisError> {
+        const MAX_SCRIPT_BYTES: i64 = 2 * 1024 * 1024;
+
+        let run = self
+            .repo
+            .find(&principal.id, id)
+            .await
+            .map_err(|error| AnalysisError::new("analysis_not_found", error.to_string()))?;
+        let inputs = self
+            .repo
+            .inputs(&principal.id, id)
+            .await
+            .map_err(|error| AnalysisError::new("analysis_not_found", error.to_string()))?;
+        let scope = self
+            .artifacts
+            .resolve_scope(principal.storage_scope_id)
+            .await
+            .map_err(|error| AnalysisError::new("analysis_script_missing", error.to_string()))?;
+        let artifact = self
+            .artifacts
+            .find_owned(scope.id, run.script_artifact_id)
+            .await
+            .map_err(|error| AnalysisError::new("analysis_script_missing", error.to_string()))?;
+        if artifact.size_bytes < 0 || artifact.size_bytes > MAX_SCRIPT_BYTES {
+            return Err(AnalysisError::new(
+                "analysis_script_missing",
+                "分析脚本大小超出合同",
+            ));
+        }
+        let file = self
+            .artifacts
+            .open_owned(scope.id, run.script_artifact_id)
+            .await
+            .map_err(|error| AnalysisError::new("analysis_script_missing", error.to_string()))?;
+        let bytes = tokio::task::spawn_blocking(move || {
+            let mut bytes = Vec::with_capacity(usize::try_from(artifact.size_bytes).unwrap_or(0));
+            file.take((MAX_SCRIPT_BYTES + 1) as u64)
+                .read_to_end(&mut bytes)
+                .map(|_| bytes)
+        })
+        .await
+        .map_err(|error| AnalysisError::new("analysis_script_missing", error.to_string()))?
+        .map_err(|error| AnalysisError::new("analysis_script_missing", error.to_string()))?;
+        if bytes.len() as i64 != artifact.size_bytes || bytes.len() as i64 > MAX_SCRIPT_BYTES {
+            return Err(AnalysisError::new(
+                "analysis_script_missing",
+                "分析脚本大小校验失败",
+            ));
+        }
+        let content_hash = hex::encode(Sha256::digest(&bytes));
+        if content_hash != artifact.sha256 {
+            return Err(AnalysisError::new(
+                "analysis_script_missing",
+                "分析脚本 hash 校验失败",
+            ));
+        }
+        let content = String::from_utf8(bytes)
+            .map_err(|_| AnalysisError::new("analysis_script_missing", "分析脚本不是有效 UTF-8"))?;
+        Ok(AnalysisDetails {
+            run,
+            script: AnalysisScriptDetails {
+                content,
+                content_hash,
+            },
+            inputs,
+        })
     }
 
     async fn commit_bytes(

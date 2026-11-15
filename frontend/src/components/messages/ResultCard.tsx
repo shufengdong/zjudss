@@ -1,12 +1,15 @@
 import type { MessageHandlers, ResultMessage } from '../../types'
 import { ChartIcon } from '../icons'
+import AnalysisDetails from './AnalysisDetails'
+
+const ignoreNotification = () => {}
 
 export default function ResultCard({
   message,
   handlers,
 }: {
   message: ResultMessage
-  handlers: Pick<MessageHandlers, 'onOpenDataset'>
+  handlers: Pick<MessageHandlers, 'onOpenDataset'> & Partial<Pick<MessageHandlers, 'notify'>>
 }) {
   const producerId = message.runId ?? message.analysisRunId ?? ''
   return (
@@ -39,6 +42,7 @@ export default function ResultCard({
           </button>)}
         </div>
       )}
+      {message.analysisRunId && <AnalysisDetails analysisRunId={message.analysisRunId} notify={handlers.notify ?? ignoreNotification} />}
     </div>
   )
 }

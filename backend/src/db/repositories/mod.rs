@@ -31,7 +31,7 @@ use diesel::RunQueryDsl;
 use diesel::sql_types::Integer;
 use diesel::sqlite::SqliteConnection;
 
-pub use analysis::AnalysisRepo;
+pub use analysis::{AnalysisInputSnapshot, AnalysisRepo};
 pub use artifact::{ArtifactDraft, ArtifactRepo};
 pub use chart_view::{
     ChartViewDraft, ChartViewRecord, ChartViewRepo, ChartViewSummaryRow, DeletedChartView,

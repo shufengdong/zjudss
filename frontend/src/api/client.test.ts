@@ -5,6 +5,7 @@ import {
   downloadDataResource,
   downloadModelDataFrame,
   deleteSession,
+  getAnalysis,
   getModelDataFrame,
   getModelDataFrameRows,
   login,
@@ -19,6 +20,18 @@ import type { ModelDataFrameSource } from '../types'
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+})
+
+describe('analysis detail requests', () => {
+  it('passes an abort signal to the existing analysis details route', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: '9' }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const signal = new AbortController().signal
+
+    await getAnalysis('9', signal)
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/analysis-runs/9', expect.objectContaining({ signal }))
+  })
 })
 
 describe('session deletion requests', () => {

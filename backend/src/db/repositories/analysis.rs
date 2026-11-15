@@ -7,6 +7,23 @@ use crate::db::models::{
 };
 use crate::db::{DbPool, schema};
 
+#[derive(diesel::Queryable, Debug, Clone)]
+pub struct AnalysisInputSnapshot {
+    pub analysis_run_id: i32,
+    pub source_kind: String,
+    pub dataset_id: Option<i32>,
+    pub resource_id: Option<String>,
+    pub model_version_id: Option<i32>,
+    pub model_dataframe_id: Option<i32>,
+    pub alias: String,
+    pub ordinal: i32,
+    pub source_name: String,
+    pub source_schema_json: String,
+    pub source_schema_hash: String,
+    pub source_content_hash: String,
+    pub source_producer_json: String,
+}
+
 #[derive(Clone)]
 pub struct AnalysisRepo {
     pool: DbPool,
@@ -214,6 +231,36 @@ impl AnalysisRepo {
         tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(RepoError::Pool)?;
             owned_analysis(&mut conn, &user, id)
+        })
+        .await
+        .map_err(RepoError::Join)?
+    }
+
+    pub async fn inputs(&self, user: &UserId, id: i32) -> RepoResult<Vec<AnalysisInputSnapshot>> {
+        let pool = self.pool.clone();
+        let user = user.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(RepoError::Pool)?;
+            owned_analysis(&mut conn, &user, id)?;
+            Ok(schema::result_analysis_inputs::table
+                .filter(schema::result_analysis_inputs::analysis_run_id.eq(id))
+                .order(schema::result_analysis_inputs::ordinal.asc())
+                .select((
+                    schema::result_analysis_inputs::analysis_run_id,
+                    schema::result_analysis_inputs::source_kind,
+                    schema::result_analysis_inputs::dataset_id,
+                    schema::result_analysis_inputs::resource_id,
+                    schema::result_analysis_inputs::model_version_id,
+                    schema::result_analysis_inputs::model_dataframe_id,
+                    schema::result_analysis_inputs::alias,
+                    schema::result_analysis_inputs::ordinal,
+                    schema::result_analysis_inputs::source_name,
+                    schema::result_analysis_inputs::source_schema_json,
+                    schema::result_analysis_inputs::source_schema_hash,
+                    schema::result_analysis_inputs::source_content_hash,
+                    schema::result_analysis_inputs::source_producer_json,
+                ))
+                .load(&mut conn)?)
         })
         .await
         .map_err(RepoError::Join)?

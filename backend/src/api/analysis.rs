@@ -1,7 +1,8 @@
 //! 已持久化分析运行及其不可变输出的只读 HTTP 投影。
 //!
 //! 分析创建由受控 Agent/application 工具链拥有；本模块只按当前用户读取稳定 analysis ID，
-//! 组合冻结运行记录与仍存活的结果数据集，不执行脚本、SQL 或任意查询。
+//! 组合冻结运行记录、经 hash 校验的只读脚本、输入快照与仍存活的结果数据集，不执行脚本、
+//! SQL 或任意查询，也不重新读取 live 来源。
 
 use super::ApiError;
 use crate::{
@@ -26,22 +27,55 @@ pub struct AnalysisDto {
     agent_bundle_version: String,
     agent_skill_refs: Value,
     engine_contract_version: String,
+    engine_resource_snapshot_id: String,
+    script: AnalysisScriptDto,
+    inputs: Vec<AnalysisInputDto>,
     error: Option<Value>,
     created_at: String,
     started_at: Option<String>,
     finished_at: Option<String>,
     datasets: Vec<crate::application::datasets::DatasetMetadata>,
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisScriptDto {
+    content: String,
+    content_hash: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisInputDto {
+    source_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dataset_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resource_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_version_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_dataframe_id: Option<String>,
+    alias: String,
+    ordinal: i32,
+    source_name: String,
+    source_schema: Value,
+    source_schema_hash: String,
+    source_content_hash: String,
+    source_producer: Value,
+}
 /// `GET /api/analysis-runs/{id}`：读取当前用户的分析记录与输出。
 ///
-/// 成功返回 200、冻结 intent/provenance、状态、受控错误和存活数据集；读取不重跑分析，也不
-/// 依赖 live 来源。跨用户、已删除与不存在分析统一返回 404。
+/// 成功返回 200、冻结 intent/provenance、完整且经 hash 校验的只读 RSS、按 ordinal 排序的
+/// 三类输入快照、状态、受控错误和存活数据集；读取不重跑分析，也不查询 live 来源。响应不含
+/// artifact 或服务器物理路径。跨用户、已删除与不存在分析统一返回 404。
 pub async fn get(
     State(s): State<AppState>,
     p: CurrentUser,
     Path(id): Path<i32>,
 ) -> Result<Json<AnalysisDto>, ApiError> {
-    let (run, _) = s.analysis_service.find(&p, id).await?;
+    let details = s.analysis_service.details(&p, id).await?;
+    let run = details.run;
     let datasets = s.dataset_service.list_analysis(&p, id).await?;
     Ok(Json(AnalysisDto {
         id: run.id.to_string(),
@@ -54,6 +88,31 @@ pub async fn get(
         agent_skill_refs: serde_json::from_str(&run.agent_skill_refs_json)
             .unwrap_or_else(|_| serde_json::json!([])),
         engine_contract_version: run.engine_contract_version,
+        engine_resource_snapshot_id: run.engine_resource_snapshot_id,
+        script: AnalysisScriptDto {
+            content: details.script.content,
+            content_hash: details.script.content_hash,
+        },
+        inputs: details
+            .inputs
+            .into_iter()
+            .map(|input| AnalysisInputDto {
+                source_kind: input.source_kind,
+                dataset_id: input.dataset_id.map(|value| value.to_string()),
+                resource_id: input.resource_id,
+                model_version_id: input.model_version_id.map(|value| value.to_string()),
+                model_dataframe_id: input.model_dataframe_id.map(|value| value.to_string()),
+                alias: input.alias,
+                ordinal: input.ordinal,
+                source_name: input.source_name,
+                source_schema: serde_json::from_str(&input.source_schema_json)
+                    .unwrap_or(Value::Null),
+                source_schema_hash: input.source_schema_hash,
+                source_content_hash: input.source_content_hash,
+                source_producer: serde_json::from_str(&input.source_producer_json)
+                    .unwrap_or(Value::Null),
+            })
+            .collect(),
         error: run
             .error_json
             .as_deref()

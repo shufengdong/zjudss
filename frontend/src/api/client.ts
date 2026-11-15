@@ -129,7 +129,7 @@ export const getChartView=(id:string,signal?:AbortSignal)=>request<ChartViewMeta
 export const getChartViewData=(id:string,signal?:AbortSignal)=>request<ChartModel>(`/api/dataset-views/${id}/data`,{signal})
 export const listChartViews=(sessionId:string,q:{cursor?:string;limit?:number}={})=>request<ChartViewPage>(`/api/sessions/${sessionId}/dataset-views${params(q)}`)
 export const deleteChartView=(id:string)=>request<DeleteChartViewResponse>(`/api/dataset-views/${id}`,{method:'DELETE'})
-export const getAnalysis=(id:string)=>request<AnalysisRun>(`/api/analysis-runs/${id}`)
+export const getAnalysis=(id:string,signal?:AbortSignal)=>request<AnalysisRun>(`/api/analysis-runs/${id}`,{signal})
 export const getComparison=(id:string,signal?:AbortSignal)=>request<RunComparison>(`/api/run-comparisons/${id}`,{signal})
 export const deleteDataset=(id:string)=>request<{datasetId:string;tombstone:unknown}>(`/api/datasets/${id}`,{method:'DELETE'})
 export const getStorageUsage=()=>request<StorageUsage>('/api/storage-usage')

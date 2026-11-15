@@ -66,8 +66,8 @@ use crate::ingestion::ArchiveLimits;
 use crate::storage::ArtifactStore;
 
 pub use analysis::{
-    AnalysisError, AnalysisInput, AnalysisInputSource, AnalysisOutcome, AnalysisRequest,
-    AnalysisService,
+    AnalysisDetails, AnalysisError, AnalysisInput, AnalysisInputSource, AnalysisOutcome,
+    AnalysisRequest, AnalysisScriptDetails, AnalysisService,
 };
 pub use artifacts::{
     ArtifactError, ArtifactMetadata, ArtifactRef, ArtifactService, GcReport, StorageLimits,
