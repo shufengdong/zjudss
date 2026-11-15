@@ -30,10 +30,70 @@ pub(super) async fn response(
         .header(header::CONTENT_LENGTH, size.len().to_string())
         .header(
             header::CONTENT_DISPOSITION,
-            format!("attachment; filename=\"{}\"", file_name.into()),
+            content_disposition(&file_name.into()),
         )
         .body(Body::from_stream(stream))
         .map_err(|error| ApiError::internal(error.to_string()))
+}
+
+fn content_disposition(file_name: &str) -> String {
+    let ascii_name = ascii_fallback_file_name(file_name);
+    if ascii_name == file_name {
+        return format!("attachment; filename=\"{ascii_name}\"");
+    }
+
+    format!(
+        "attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{}",
+        encode_rfc5987(file_name)
+    )
+}
+
+fn ascii_fallback_file_name(file_name: &str) -> String {
+    let encoded = file_name
+        .chars()
+        .map(|character| match character {
+            character if character.is_ascii_alphanumeric() => character,
+            '-' | '_' | '.' | ' ' => character,
+            _ => '_',
+        })
+        .collect::<String>();
+    let stem = encoded
+        .rsplit_once('.')
+        .map_or(encoded.as_str(), |(stem, _)| stem);
+    if stem
+        .chars()
+        .any(|character| character.is_ascii_alphanumeric())
+    {
+        return encoded;
+    }
+
+    let extension = file_name.rsplit_once('.').map(|(_, extension)| extension);
+    match extension.filter(|extension| {
+        !extension.is_empty()
+            && extension.len() <= 16
+            && extension.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    }) {
+        Some(extension) => format!("download.{extension}"),
+        None => "download".into(),
+    }
+}
+
+fn encode_rfc5987(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'!' | b'#' | b'$' | b'&' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
+            )
+        {
+            encoded.push(char::from(byte));
+        } else {
+            use std::fmt::Write;
+            let _ = write!(encoded, "%{byte:02X}");
+        }
+    }
+    encoded
 }
 
 async fn read_chunk(
@@ -102,5 +162,18 @@ mod tests {
         assert_eq!(response.headers()[axum::http::header::CONTENT_LENGTH], "0");
         let mut chunks = response.into_body().into_data_stream();
         assert!(chunks.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn attachment_response_encodes_non_ascii_and_quoted_file_names() {
+        let file = tempfile::tempfile().expect("create attachment fixture");
+        let response = response(file, "application/octet-stream", "更新后的\"数据.csv")
+            .await
+            .unwrap_or_else(|_| panic!("build attachment response"));
+
+        assert_eq!(
+            response.headers()[axum::http::header::CONTENT_DISPOSITION],
+            "attachment; filename=\"download.csv\"; filename*=UTF-8''%E6%9B%B4%E6%96%B0%E5%90%8E%E7%9A%84%22%E6%95%B0%E6%8D%AE.csv"
+        );
     }
 }
