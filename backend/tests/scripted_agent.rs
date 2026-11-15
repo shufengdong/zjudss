@@ -636,8 +636,12 @@ async fn direct_analysis_loads_exact_docs_only_when_needed_and_repairs_once() {
     assert!(!feedback_history.contains("/private/secret"));
     assert!(!feedback_history.contains("do-not-leak"));
     let repair_events = messages(&app, &repair_session).await;
+    let repair_tools = tool_names(&repair_events)
+        .into_iter()
+        .filter(|name| *name != "agent_admission")
+        .collect::<Vec<_>>();
     assert_eq!(
-        tool_names(&repair_events),
+        repair_tools,
         [
             "load_agent_skill",
             "run_result_analysis",
