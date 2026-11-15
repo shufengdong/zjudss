@@ -165,6 +165,22 @@ describe('release semantic assertions', () => {
     })).toThrow(/publish_model_version succeeded 2 times/)
   })
 
+  test('binds skill ordering to the recovered successful side-effect attempt', () => {
+    const entry = (callId: string, toolName: string, status: ToolTraceEntry['status'], args = {}) => ({
+      callId, toolName, status, args,
+    })
+    expect(() => expectToolTrace([
+      entry('publish-before-skill', 'publish_model_version', 'running'),
+      entry('publish-before-skill', 'publish_model_version', 'failed'),
+      entry('load-model-intake', 'load_agent_skill', 'success', { skill_id: 'model-intake' }),
+      entry('publish-after-skill', 'publish_model_version', 'running'),
+      entry('publish-after-skill', 'publish_model_version', 'success'),
+    ], {
+      requiredTools: ['publish_model_version'],
+      gatedTools: { publish_model_version: ['model-intake'] },
+    })).not.toThrow()
+  })
+
   test('requires study result updates to be skill-gated and single-shot side effects', () => {
     const trace = [
       call('load_agent_skill', 'success', { skill_id: 'study-planning' }),
@@ -233,6 +249,16 @@ describe('release semantic assertions', () => {
     ], {
       requiredTools: ['run_result_analysis'],
       allowedTools: ['read_engine_doc_section', 'search_engine_docs', 'run_result_analysis'],
+    })).not.toThrow()
+  })
+
+  test('does not let an optional post-success read erase a completed side effect', () => {
+    expect(() => expectToolTrace([
+      call('load_agent_skill', 'success', { skill_id: 'comparison' }),
+      call('compare_simulations', 'success', { baselineRunId: 1, candidateRunId: 2 }),
+      call('list_result_datasets', 'failed', { runId: 3 }),
+    ], {
+      requiredTools: ['load_agent_skill', 'compare_simulations'],
     })).not.toThrow()
   })
 

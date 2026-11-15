@@ -102,12 +102,27 @@ trap finish EXIT INT TERM
 "$repo_root/scripts/test-release-engine" >"$raw_log" 2>&1
 
 cat > "$run_root/export-dataframes.rss" <<'EOF'
-[bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para] = import_dss("dss/models/4bus_daily_qsts/4bus_dy.dss");
+[discard_bus, line, linecode, load, transformer, voltage_source, motor, transformer_winding, transformer_impedance, current_source, generator, ibr, switch, shunt, capacitor, reactor, spectrum, control_profile, xy_curve, storage, para] = import_dss("dss/models/4bus_daily_qsts/4bus_dy.dss");
+EOF
+cat > "$run_root/export-bus.rss" <<'EOF'
+[raw_bus, raw_line, raw_linecode, raw_load, raw_transformer, raw_voltage_source, raw_motor, raw_transformer_winding, raw_transformer_impedance, raw_current_source, raw_generator, raw_ibr, raw_switch, raw_shunt, raw_capacitor, raw_reactor, raw_spectrum, raw_control_profile, raw_xy_curve, raw_storage, raw_para] = import_dss("dss/models/4bus_daily_qsts/4bus_dy.dss");
+bus_with_basis = assert_all(gt(col(voltage_base_v), 0), with_column(alias(when_then_otherwise(col(id) == "sourcebus" || col(id) == "n2", 7199.557856794634, 2401.7771198288433), voltage_base_v), raw_bus));
 EOF
 (
   cd "$SPARROWZZ_DIR"
   "$TENSOREVAL_BIN" --df --result-dir "$RELEASE_DATAFRAME_DIR" --output-format parquet "$run_root/export-dataframes.rss"
 ) >>"$raw_log" 2>&1
+rm "$RELEASE_DATAFRAME_DIR/discard_bus.parquet"
+(
+  cd "$SPARROWZZ_DIR"
+  "$TENSOREVAL_BIN" --df --result-dir "$RELEASE_DATAFRAME_DIR" --output-format parquet "$run_root/export-bus.rss"
+) >>"$raw_log" 2>&1
+(
+  cd "$repo_root/backend"
+  cargo run --quiet --features release-test --bin release-fixture-normalizer -- \
+    "$RELEASE_DATAFRAME_DIR/bus_with_basis.parquet" "$RELEASE_DATAFRAME_DIR/bus.parquet"
+) >>"$raw_log" 2>&1
+rm "$RELEASE_DATAFRAME_DIR/bus_with_basis.parquet"
 
 (
   cd "$repo_root/frontend"

@@ -38,6 +38,7 @@ fn tool_services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
         agent_knowledge: app.state.agent_knowledge.clone(),
         loaded_skills: Arc::new(Mutex::new(BTreeSet::new())),
         analysis_attempts: Arc::new(Mutex::new(0)),
+        inspected_workspace: Arc::new(Mutex::new(false)),
         inspected_workspace_draft: Arc::new(Mutex::new(None)),
         study_configurations: app.state.study_configuration_service.clone(),
         datasets: app.state.dataset_service.clone(),
@@ -478,6 +479,24 @@ async fn study_tools_search_explicit_functions_and_prepare_persisted_cards() {
         .unwrap();
     assert_eq!(search["enabled"][0]["id"], "static_power_flow_newton");
     let explanation = "您希望使用牛顿-拉夫逊法计算当前模型的静态潮流。该方法按您指定的求解方式处理网络；请在卡片中核对模型输入、para 参数和计划输出 bus_voltage。";
+    let error = tools::prepare_study::PrepareStudyTool::new(services.clone())
+        .call(
+            &mut context,
+            tools::prepare_study::Args {
+                facade_id: "static_power_flow_newton".into(),
+                intent: serde_json::json!({"request":"求解牛顿法潮流"}),
+                derived_from_workflow_id: None,
+                explanation: format!("  {explanation}  "),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "workspace_inspection_required");
+
+    tools::inspect_workspace::InspectWorkspaceTool::new(services.clone())
+        .call(&mut context, tools::inspect_workspace::Args {})
+        .await
+        .unwrap();
     let prepared = tools::prepare_study::PrepareStudyTool::new(services)
         .call(
             &mut context,

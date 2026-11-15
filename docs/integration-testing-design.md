@@ -177,9 +177,15 @@ manifest schema v2/v3 案例，要求不可导入案例为零，并对每个案�
 snapshot `ers_7d30a9cba13a8bf2ba4741e4fa2010df` 重新证明 150/150 成功、0 失败。每次候选仍必须以本次
 动态 snapshot 重新生成报告，并以 `projectedExamples`、
 `projectionFailures` 和逐案例 `caseProjections` 固化该门禁，任一案例失败都使候选发布失败。
+当前 2026-11-15 snapshot 发现 193 个 bundle，193 个均可导入，但真实 projector 仅 171 成功、22 失败；
+因此候选保持红灯，不能用历史 150/150 报告或当前 8/8 profile 代表运行替代。
+直接分析的发布 fixture 从当前 4bus 资源生成 21 张 Parquet，显式写入该案例 12.47/4.16 kV
+对应的相对地基准，并在上传前用 `assert_all` 验证正值。`release-test` 专用规范化器把 bus terminals
+限定为结果合同覆盖的 1/2/3 相；真实旅程反向断言脚本确实以
+`explode([terminals,v_mag,v_ang], ...)` 锁步展开，且最终 `phase` 为标量列。
 manifest `study.results` 是原生结果全集，`projection.results` 是受管结果的有序子集；selector 只映射后者，
 但 unknown、duplicate、reorder、target 或 binding 漂移仍使案例不可导入。随后对每个被案例引用的 profile 选择一个
-投影成功的代表，以其命名 Parquet 输入执行 `managed.rss`；当前证据为 6 个代表，
+投影成功的代表，以其命名 Parquet 输入执行 `managed.rss`；当前证据为 8 个代表，
 同时覆盖全部 study family。projector 输出缺失、重复、多余、顺序合同不一致或 manifest/profile 不一致均原子失败。
 schema v3 还由单元与当前资源树测试覆盖 stage 连续性、阶段结果来源、兼容 aggregate 的同目标约束、发布详情保真，
 以及 Data 型 `sequence_request` 不被 release wrapper 当成 Struct selector 覆盖。

@@ -215,7 +215,25 @@ export function expectToolTrace(
     invariant(actualCount === expectedCount, `${tool} succeeded ${actualCount} times; expected ${expectedCount}`)
   }
   for (const [tool, skills] of Object.entries(expectedDependencies.gatedTools ?? {})) {
-    const gatedIndex = trace.findIndex((call) => call.toolName === tool && call.status === 'running')
+    const successIndex = trace.findIndex((call) => call.toolName === tool && call.status === 'success')
+    const successCall = trace[successIndex]
+    let gatedIndex = -1
+    for (let index = successIndex - 1; index >= 0; index -= 1) {
+      const call = trace[index]
+      if (call.toolName === tool && call.status === 'running' && call.callId === successCall?.callId) {
+        gatedIndex = index
+        break
+      }
+    }
+    if (gatedIndex < 0) {
+      for (let index = successIndex - 1; index >= 0; index -= 1) {
+        const call = trace[index]
+        if (call.toolName === tool && call.status === 'running') {
+          gatedIndex = index
+          break
+        }
+      }
+    }
     invariant(gatedIndex >= 0, `gated tool ${tool} was not called`)
     for (const skill of skills) {
       const loadedIndex = trace.findIndex((call) =>
@@ -226,7 +244,17 @@ export function expectToolTrace(
       invariant(loadedIndex >= 0 && loadedIndex < gatedIndex, `${skill} was not loaded before ${tool}`)
     }
   }
+  const lastRequiredSuccessIndex = expectedDependencies.requiredTools.reduce((latest, tool) => {
+    for (let index = trace.length - 1; index >= 0; index -= 1) {
+      const call = trace[index]
+      if (call.toolName === tool && call.status === 'success') {
+        return Math.max(latest, index)
+      }
+    }
+    return latest
+  }, -1)
   const unrecovered = trace.find((call, index) => call.status === 'failed'
+    && (sideEffectTools.has(call.toolName) || index < lastRequiredSuccessIndex)
     && !trace.slice(index + 1).some((later) => later.status === 'success'
       && (!sideEffectTools.has(call.toolName) || later.toolName === call.toolName)))
   invariant(!unrecovered, `tool ${unrecovered?.toolName ?? 'unknown'} failed without recovery`)

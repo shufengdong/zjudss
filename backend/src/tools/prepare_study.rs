@@ -60,6 +60,12 @@ impl Tool for PrepareStudyTool {
                 "研究方案说明必须为 1 到 4000 个字符",
             ));
         }
+        if !*self.services.inspected_workspace.lock().await {
+            return Err(DomainToolError::new(
+                "workspace_inspection_required",
+                "请先调用 inspect_workspace 检查当前 active 模型，再准备研究配置",
+            ));
+        }
         let configuration = self
             .services
             .study_configurations

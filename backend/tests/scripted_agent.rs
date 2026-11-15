@@ -1624,6 +1624,11 @@ async fn prepared_configuration_survives_provider_finalization_failure() {
         expected_prompt: Some("求解牛顿法潮流".into()),
         turns: vec![
             ScriptTurn::ToolCall {
+                call_id: "inspect".into(),
+                name: "inspect_workspace".into(),
+                args: json!({}),
+            },
+            ScriptTurn::ToolCall {
                 call_id: "skill".into(),
                 name: "load_agent_skill".into(),
                 args: json!({"skill_id":"study-planning"}),

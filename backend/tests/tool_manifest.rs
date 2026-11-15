@@ -56,6 +56,7 @@ fn services_for_session(
         agent_knowledge: app.state.agent_knowledge.clone(),
         loaded_skills: Arc::new(Mutex::new(BTreeSet::new())),
         analysis_attempts: Arc::new(Mutex::new(0)),
+        inspected_workspace: Arc::new(Mutex::new(false)),
         inspected_workspace_draft: Arc::new(Mutex::new(None)),
         study_configurations: app.state.study_configuration_service.clone(),
         datasets: app.state.dataset_service.clone(),
@@ -480,6 +481,34 @@ async fn run_result_analysis_has_no_chart_creation_input() {
             "initialViews":{}
         }))
         .is_err()
+    );
+}
+
+#[tokio::test]
+async fn read_model_dataframe_does_not_require_a_draft_ref_for_active_scope() {
+    let app = TestApp::spawn().await;
+    let tool = tools::read_model_dataframe::ReadModelDataFrameTool::new(services(
+        &app,
+        principal("alice"),
+    ));
+    let parameters = tool.parameters();
+    let required = parameters["required"].as_array().unwrap();
+
+    assert!(required.iter().any(|value| value == "scope"));
+    assert!(required.iter().any(|value| value == "tableName"));
+    assert!(
+        !required.iter().any(|value| value == "expectedDraft"),
+        "expectedDraft is conditional: active omits it and draft is validated by the service"
+    );
+    assert!(
+        serde_json::from_value::<tools::read_model_dataframe::Args>(serde_json::json!({
+            "scope":"active",
+            "tableName":"bus",
+            "columns":["id"],
+            "equals":{},
+            "limit":20
+        }))
+        .is_ok()
     );
 }
 

@@ -49,3 +49,8 @@ nix = { version = "0.31", features = ["process", "signal"] }
 name = "e2e-server"
 path = "src/bin/e2e-server.rs"
 required-features = ["e2e-test"]
+
+[[bin]]
+name = "release-fixture-normalizer"
+path = "src/bin/release-fixture-normalizer.rs"
+required-features = ["release-test"]

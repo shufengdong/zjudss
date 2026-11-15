@@ -136,7 +136,7 @@ function summarizeTrace(label: string, trace: ToolTraceEntry[]): SegmentReport {
   }
 }
 
-async function sendAndCollect(page: Page, api: APIRequestContext, sessionId: string, text: string, requiredTools: string[]) {
+async function sendAndCollect(page: Page, api: APIRequestContext, sessionId: string, text: string, requiredTools: string[], timeoutMs = 120_000) {
   const before = (await apiJson(api, `/api/sessions/${sessionId}/messages?limit=100`)).messages as any[]
   const lastId = Math.max(0, ...before.map(message => Number(message.id)))
   let terminalCandidate: { key: string; since: number } | null = null
@@ -146,11 +146,17 @@ async function sendAndCollect(page: Page, api: APIRequestContext, sessionId: str
     const all = (await apiJson(api, `/api/sessions/${sessionId}/messages?limit=100`)).messages as any[]
     const current = all.filter(message => Number(message.id) > lastId)
     if (agentTurnCompleted(current, requiredTools)) return current
-    if (!agentTurnCompleted(current)) { terminalCandidate = null; return undefined }
+    const calls = current.filter(message => message.type === 'tool-call')
+    const running = new Set(calls.filter(message => message.status === 'running').map(message => message.callId))
+    const terminal = new Set(calls.filter(message => message.status !== 'running').map(message => message.callId))
+    const settled = [...running].every(callId => terminal.has(callId))
+      && requiredTools.every(tool => calls.some(call => call.toolName === tool && call.status === 'success'))
+      && current.some(message => message.type === 'assistant')
+    if (!settled) { terminalCandidate = null; return undefined }
     const key = current.map(message => `${message.id}:${message.status ?? ''}`).join('|')
     if (terminalCandidate?.key !== key) { terminalCandidate = { key, since: Date.now() }; return undefined }
     return Date.now() - terminalCandidate.since >= 5_000 ? current : undefined
-  })
+  }, timeoutMs)
   const trace = traceFrom(messages)
   const assistant = messages.filter((message: any) => message.type === 'assistant').at(-1)
   if (assistant?.content === 'agent 运行失败，请稍后重试' && !trace.some(call => call.status === 'failed')) {
@@ -177,7 +183,10 @@ async function importAndPublish(
   ])
   const files = (await readdir(directory)).filter(name => required.has(name)).sort().map(name => join(directory, name))
   expect(files.length).toBe(required.size)
-  await page.locator('input[type=file]').first().setInputFiles(files)
+  await page.getByLabel('上传文件').locator('..').locator('input[type=file]').first().setInputFiles(files)
+  const openBatch = page.getByRole('button', { name: /前往(?:模型工作区|数据文件)/ }).last()
+  await expect(openBatch).toBeVisible({ timeout: 120_000 })
+  await openBatch.click()
   const confirm = page.getByRole('button', { name: '确认用途并发布' }).last()
   await expect(confirm).toBeVisible({ timeout: 120_000 })
   const card = confirm.locator('xpath=ancestor::section[1]')
@@ -264,16 +273,16 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
       && /\/api\/study-configurations\/\d+\/results$/.test(new URL(response.url()).pathname))
     await configuration.getByRole('button', { name: '确认结果' }).click()
     expect((await selectResultsResponse).ok()).toBe(true)
-    const confirmParameters = configuration.getByRole('button', { name: '确认参数' })
-    if (await confirmParameters.isVisible()) {
-      const frequency = configuration.getByLabel(/base_frequency_hz/)
-      if (await frequency.isVisible() && await frequency.inputValue() === '') await frequency.fill('50')
-      const parameterResponse = page.waitForResponse(response => response.request().method() === 'PUT'
-        && /\/api\/study-configurations\/\d+\/structs\//.test(new URL(response.url()).pathname))
-      await confirmParameters.click()
-      const saved = await (await parameterResponse).json() as { status: string }
-      expect(['collecting_inputs', 'ready_to_confirm']).toContain(saved.status)
-    }
+    const confirmParameters = configuration.getByRole('button', { name: '应用参数' })
+    await expect(confirmParameters).toBeVisible({ timeout: 30_000 })
+    const frequency = configuration.getByLabel(/base_frequency_hz/)
+    await expect(frequency).toBeVisible()
+    if (await frequency.inputValue() === '') await frequency.fill('50')
+    const parameterResponse = page.waitForResponse(response => response.request().method() === 'PUT'
+      && /\/api\/study-configurations\/\d+\/structs\//.test(new URL(response.url()).pathname))
+    await confirmParameters.click()
+    const saved = await (await parameterResponse).json() as { status: string }
+    expect(['collecting_inputs', 'ready_to_confirm']).toContain(saved.status)
     const confirmStudy = configuration.getByRole('button', { name: '确认并生成脚本' })
     const confirmResults = configuration.getByRole('button', { name: '确认结果' })
     try {
@@ -333,8 +342,8 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
     expect(activeBus?.id).toMatch(/^\d+$/)
 
     trace = await sendAndCollect(page, api, sessionId,
-      '分析当前 active 模型的 bus 表与当前结果中唯一的 bus_voltage DataFrame：先读取两者实际 schema 和必要样例，并查询当前引擎中 assert_all、explode、join、select 的精确文档；用 bus.id、bus.terminals、bus.voltage_base_v 与结果关联，对完整数据断言电压基准非空且大于 0，严格锁步展开 terminals、v_mag、v_ang，计算每个时刻、母线、相位的标幺电压。完整保留所有源结果分量，不筛选、不截断、不猜测基准，输出名为 phase_voltage_pu，列顺序严格为 time,bus,phase,v_pu。来源和合同明确后直接生成 RSS 并运行分析，不要创建或运行普通仿真脚本。',
-      ['run_result_analysis'])
+      '分析当前 active 模型的 bus 表与当前结果中唯一的 bus_voltage DataFrame：先读取两者实际 schema 和必要样例，read_model_dataframe 只投影 id、terminals、voltage_base_v 且 equals 留空。查询当前引擎中 assert_all、explode、join、select 的精确文档；搜索命中后必须用 read_engine_doc_section 读取函数章节正文，在该工具成功前不得运行分析或猜测签名。以 bus_voltage 为左表，用 bus.id 对应结果 bus 进行左连接，连接后对完整数据断言 voltage_base_v 大于 0（null 也必须失败），严格用 explode([terminals,v_mag,v_ang], ...)锁步展开三列，计算每个时刻、母线、相位的标幺电压。这是一个不含 time 列的静态快照，结果列用 alias(0,time) 表示唯一快照；完整保留所有源结果分量，不筛选、不截断、不猜测基准，输出名为 phase_voltage_pu，列顺序严格为 time,bus,phase,v_pu。来源和合同明确后直接生成 RSS 并运行分析，不要创建或运行普通仿真脚本。',
+      ['run_result_analysis'], 5 * 60_000)
     expectDirectAnalysisTrace(trace, allowedTools)
     report.segments.push(summarizeTrace('direct_phase_voltage_analysis', trace))
     const analysisCall = trace.find(entry => entry.toolName === 'run_result_analysis' && entry.status === 'success')!
@@ -342,6 +351,7 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
     expect((analysisCall.args.intent as string).trim().length).toBeGreaterThan(0)
     expect(typeof analysisCall.args.script).toBe('string')
     expect(analysisCall.args.script).not.toMatch(/\bimport\b/)
+    expect(analysisCall.args.script).toMatch(/explode\(\[\s*terminals\s*,\s*v_mag\s*,\s*v_ang\s*\]/)
     expect(analysisCall.args.expectedOutputs).toEqual(['phase_voltage_pu'])
     expect(analysisCall.args.inputs).toHaveLength(2)
     const requestedInputs = analysisCall.args.inputs as any[]
@@ -376,6 +386,7 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
     const derived = analysis.datasets[0]
     expect(derived.name).toBe('phase_voltage_pu')
     expect(derived.columns.map((column: any) => column.name)).toEqual(['time', 'bus', 'phase', 'v_pu'])
+    expect(String(derived.columns[2].dtype)).not.toMatch(/List|Array/)
     expect(derived.rowCount).toBe(expectedPhaseRows)
     expect(derived.lineage).toHaveLength(2)
     expect(derived.lineage.find((input: any) => input.sourceKind === 'active_model')).toMatchObject({
@@ -450,6 +461,8 @@ test('real DeepSeek and tensoreval complete the V4 semantic release journey', as
   let finalState: unknown = null
   let managedWorkflow: unknown = null
   let success = false
+  let journeyError: unknown = null
+  let engineReport: any = null
   const agentBundle = await agentBundleEvidence()
   try {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -473,11 +486,12 @@ test('real DeepSeek and tensoreval complete the V4 semantic release journey', as
       }
     }
     expect(success, 'provider retries exhausted').toBe(true)
+  } catch (error) {
+    journeyError = error
   } finally {
     await mkdir(dirname(reportPath), { recursive: true })
     const engineReportPath = process.env.RELEASE_ENGINE_REPORT
-    const engineReport = engineReportPath ? JSON.parse(await readFile(engineReportPath, 'utf8')) : null
-    expectEngineReleaseEvidence(engineReport)
+    engineReport = engineReportPath ? JSON.parse(await readFile(engineReportPath, 'utf8')) : null
     const seed = await fixedUserSeed()
     const llm = resolveLlmEvidence(process.env)
     await writeFile(reportPath, JSON.stringify({
@@ -519,4 +533,6 @@ test('real DeepSeek and tensoreval complete the V4 semantic release journey', as
       success,
     }, null, 2))
   }
+  if (journeyError) throw journeyError
+  expectEngineReleaseEvidence(engineReport)
 })

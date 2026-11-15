@@ -202,7 +202,8 @@ ECharts option，不执行后端 formatter、JavaScript 或任意 option。默�
 
 `search_study_facades` 只查询本次 engine snapshot 的有效门面，显式函数名优先，返回目录中的方法差异和禁用诊断；
 `prepare_study` 参数包含目录 `facadeId`、结构化 `intent`、必填 `explanation` 与可选来源 workflow ID；`explanation` 去除首尾空白后必须为 1..=4000 个 Unicode 字符，否则返回
-`invalid_study_explanation`，并且不执行领域写入。成功时工具持久化模型说明和服务端生成的实际研究标题/配置 ID 页脚，再持久化配置卡；不生成脚本或运行。状态为
+`invalid_study_explanation`，并且不执行领域写入。每次 Agent 请求必须先成功调用 `inspect_workspace`；未检查当前 active
+模型时 `prepare_study` 返回 `workspace_inspection_required` 且不创建配置。成功时工具持久化模型说明和服务端生成的实际研究标题/配置 ID 页脚，再持久化配置卡；不生成脚本或运行。状态为
 `choosing_facade|collecting_inputs|ready_to_confirm|confirmed|invalidated|cancelled`，所有卡片写入都必须提交
 `expectedRevision`。跨用户和不存在配置统一 404，revision、资源或 snapshot 竞争返回
 `configuration_stale`。

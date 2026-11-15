@@ -238,6 +238,12 @@ Agent bundle 报告版本与工具轨迹权限都必须读取本次 `backend/res
 集合写入指定 Struct 字段；因此真实门禁同时覆盖每个当前 study family、案例结果选择和实际输出数量，而不写死
 门面数、profile 数或案例数。
 
+2026-11-15 当前 binary SHA-256 为
+`5e9cadcee2f805fa159645749a79c1b024e8ce65640a0e59ca8b633514204c03`，snapshot 为
+`ers_e55e78361140561635c393a41c4f5010`。真实百炼旅程已通过：逐相分析产生 12 行、标量 `phase`、
+完整脚本与精确两源 lineage，后续比较和 tombstone 恢复也通过。但全案例引擎门禁为
+193 可导入、171 成功投影、22 失败，故本 snapshot 仍不是可发布候选；不得删除失败案例或放宽零失败断言。
+
 ## Opt-in all-case semantic journey
 
 候选发布门禁的全案例 projector 通过只证明该次 snapshot 的 projector 与目录合同可用，不证明后续对话发布、提示词、

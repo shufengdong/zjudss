@@ -116,6 +116,7 @@ impl ChatService {
             agent_knowledge: self.agent_knowledge.clone(),
             loaded_skills: Arc::new(tokio::sync::Mutex::new(BTreeSet::new())),
             analysis_attempts: Arc::new(tokio::sync::Mutex::new(0)),
+            inspected_workspace: Arc::new(tokio::sync::Mutex::new(false)),
             inspected_workspace_draft: Arc::new(tokio::sync::Mutex::new(None)),
             study_configurations: self.study_configurations.clone(),
             datasets: self.datasets.clone(),

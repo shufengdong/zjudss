@@ -67,6 +67,7 @@ pub struct ToolServices {
     pub agent_knowledge: Arc<AgentKnowledge>,
     pub loaded_skills: Arc<Mutex<BTreeSet<String>>>,
     pub analysis_attempts: Arc<Mutex<u8>>,
+    pub inspected_workspace: Arc<Mutex<bool>>,
     pub inspected_workspace_draft: Arc<Mutex<Option<DraftRef>>>,
     pub study_configurations: StudyConfigurationService,
     pub datasets: DatasetService,

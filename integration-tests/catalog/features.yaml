@@ -574,6 +574,9 @@
       file: backend/tests/workspace_tools.rs
       name: read_model_dataframe_rejects_stale_draft_complex_predicates_and_oversized_output
     - runner: rust
+      file: backend/tests/tool_manifest.rs
+      name: read_model_dataframe_does_not_require_a_draft_ref_for_active_scope
+    - runner: rust
       file: backend/tests/workspace_tools.rs
       name: agent_reads_unique_old_value_before_modify_model_advances_only_the_draft
     - runner: vitest
@@ -627,7 +630,7 @@
     - runner: playwright
       file: integration-tests/e2e/responsive-accessibility.spec.ts
       name: responsive narrow drawers and model tables remain keyboard reachable without horizontal overflow
-  assertions: [model rows are read-only and user-scoped, historical reads do not activate versions, draft reads bind the exact revision, paging and projection preserve resource identity, agent predicates and output are bounded]
+  assertions: [model rows are read-only and user-scoped, historical reads do not activate versions, active tool reads omit expectedDraft while draft tool reads bind the exact revision, paging and projection preserve resource identity, agent predicates and output are bounded]
   fixtures: [published and historical model versions, mutable draft, zero-row and list-valued Parquet tables, two fixed users]
   contracts:
     - "route:GET /api/model-dataframes/{id}"
@@ -921,7 +924,7 @@
     - runner: rust
       file: backend/tests/scripted_agent.rs
       name: agent_history_uses_the_latest_owned_mutable_configuration
-  assertions: [explicit functions are never topology-rewritten, prepare_study requires a bounded nonblank model explanation and persists it before the durable configuration card, model inputs come only from active tables declared by the selected facade, para remains an independent Struct template, exactly one compatible resource binds automatically while real ambiguity requires user selection, result selector fields are server-owned and hidden from Struct editing, all editable Struct changes are run-private and need no replacement action, source-less Struct values come from catalog defaults, selector-only legacy children fold only with a valid live source, resolved inputs render compactly without redundant confirmation, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, mutable cards start expanded and remember their collapsed state per configuration in the current browser session while mutation errors force them open, terminal cards stay compact and consume same-revision terminal events without accepting delayed regressions, ready-to-confirm cards label Struct differences as run overrides and keep result editing beside the final confirmation gate, natural-language result updates require the planning skill and exact current card revision, result updates revise the same durable card without creating scripts workflows or runs, Agent history selects only the latest owned mutable configuration, final confirmation remains a fixed UI action]
+  assertions: [explicit functions are never topology-rewritten, prepare_study requires the current request to inspect the active workspace first, prepare_study requires a bounded nonblank model explanation and persists it before the durable configuration card, model inputs come only from active tables declared by the selected facade, para remains an independent Struct template, exactly one compatible resource binds automatically while real ambiguity requires user selection, result selector fields are server-owned and hidden from Struct editing, all editable Struct changes are run-private and need no replacement action, source-less Struct values come from catalog defaults, selector-only legacy children fold only with a valid live source, resolved inputs render compactly without redundant confirmation, mappings publish immutable Parquet resources with lineage, every edit checks revision and ownership, mutable cards start expanded and remember their collapsed state per configuration in the current browser session while mutation errors force them open, terminal cards stay compact and consume same-revision terminal events without accepting delayed regressions, ready-to-confirm cards label Struct differences as run overrides and keep result editing beside the final confirmation gate, natural-language result updates require the planning skill and exact current card revision, result updates revise the same durable card without creating scripts workflows or runs, Agent history selects only the latest owned mutable configuration, final confirmation remains a fixed UI action]
   fixtures: [current engine facade catalog, imported active model plus independent para resource, ambiguous compatible resources]
   contracts:
     - "route:GET /api/study-configurations/{id}"
@@ -937,6 +940,7 @@
     - "skill:study-planning"
     - "error:configuration_stale"
     - "error:invalid_study_explanation"
+    - "error:workspace_inspection_required"
     - "error:configuration_incomplete"
     - "error:result_selection_invalid"
     - "error:study_facade_unavailable"
@@ -1121,6 +1125,9 @@
       name: accepts_ordered_stage_result_selection_contract
     - runner: rust
       file: backend/tests/engine_resources.rs
+      name: searches_unsegmented_chinese_facade_queries_by_meaningful_ngrams
+    - runner: rust
+      file: backend/tests/engine_resources.rs
       name: snapshot_hash_includes_case_projection_catalog
     - runner: rust
       file: backend/tests/engine_resources.rs
@@ -1143,7 +1150,7 @@
     - runner: rust
       file: backend/tests/engine_resources.rs
       name: current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count
-  assertions: [catalog versions are validated independently, every valid DataFrame facade is published, case projection schema v2 preserves ordered projector outputs and enabled or disabled diagnostics, ordered stage result selectors preserve their minimum count binding and stage field, invalid entries are isolated with stable diagnostics, transitive executable schemas and projection bytes determine snapshot identity, presentation text does not, one persisted snapshot is current while referenced history remains]
+  assertions: [catalog versions are validated independently, every valid DataFrame facade is published, unsegmented Chinese study requests search by deterministic two-character terms, case projection schema v2 preserves ordered projector outputs and enabled or disabled diagnostics, ordered stage result selectors preserve their minimum count binding and stage field, invalid entries are isolated with stable diagnostics, transitive executable schemas and projection bytes determine snapshot identity, presentation text does not, one persisted snapshot is current while referenced history remains]
   fixtures: [frozen eig-rs catalog, current SPARROWZZ_DIR catalog, temporary V4 database]
   contracts:
     - "error:study_facades_missing"
@@ -1543,7 +1550,10 @@
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
       name: analysis and comparisons survive source-result deletion with tombstone lineage
-  assertions: [comparison remains readable after source deletion]
+    - runner: vitest
+      file: frontend/src/release/semantic-assertions.test.ts
+      name: does not let an optional post-success read erase a completed side effect
+  assertions: [comparison remains readable after source deletion, an optional failed read after the unique successful comparison cannot erase the already validated side effect]
   fixtures: [two compatible runs]
   contracts:
     - "route:GET /api/run-comparisons/{id}"
@@ -1664,6 +1674,9 @@
     - runner: rust
       file: backend/tests/process_engine_v4.rs
       name: process_case_projection_builds_a_controlled_script_and_enforces_exact_outputs
+    - runner: rust
+      file: backend/src/engine_resources/knowledge.rs
+      name: exact_function_title_outranks_generic_query_vocabulary
     - runner: release
       file: scripts/test-release-engine
       name: real_engine_projects_all_examples_and_runs_representative_studies

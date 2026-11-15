@@ -60,7 +60,7 @@ impl Tool for ReadModelDataFrameTool {
                     {"type":"null"}
                 ]}
             }),
-            &["scope", "tableName", "columns", "equals", "expectedDraft"],
+            &["scope", "tableName", "columns", "equals"],
         )
     }
 

@@ -435,6 +435,14 @@ fn invalid_facade_is_disabled_without_disabling_neighbors() {
 }
 
 #[test]
+fn searches_unsegmented_chinese_facade_queries_by_meaningful_ngrams() {
+    let snapshot = fixture().load();
+    let result = snapshot.facades.search("牛顿法潮流", None);
+    assert_eq!(result.enabled.len(), 1);
+    assert_eq!(result.enabled[0].id, "static_power_flow_newton");
+}
+
+#[test]
 fn incomplete_transitive_schema_disables_only_affected_facades() {
     let fixture = fixture();
     rewrite_catalog(&fixture, "dataframes.json", |root| {

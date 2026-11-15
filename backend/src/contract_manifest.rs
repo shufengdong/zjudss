@@ -120,6 +120,7 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "table_not_found",
     "unit_incompatible",
     "workspace_error",
+    "workspace_inspection_required",
     "skill_required",
     "study_catalog_invalid",
     "study_model_read_failed",

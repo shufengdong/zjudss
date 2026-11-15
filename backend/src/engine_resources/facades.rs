@@ -217,10 +217,7 @@ impl FacadeRegistry {
                 .collect();
             return FacadeSearchResult { enabled, disabled };
         }
-        let terms = query
-            .split_whitespace()
-            .map(|term| term.to_lowercase())
-            .collect::<Vec<_>>();
+        let terms = search_terms(query);
         let scored = self
             .enabled
             .values()
@@ -258,6 +255,24 @@ impl FacadeRegistry {
             disabled: Vec::new(),
         }
     }
+}
+
+fn search_terms(query: &str) -> Vec<String> {
+    let mut terms = BTreeSet::new();
+    for raw in query.split_whitespace() {
+        let term = raw.to_lowercase();
+        if term.is_empty() {
+            continue;
+        }
+        terms.insert(term.clone());
+        let characters = term.chars().collect::<Vec<_>>();
+        if characters.len() > 2 && characters.iter().any(|character| !character.is_ascii()) {
+            for pair in characters.windows(2) {
+                terms.insert(pair.iter().collect());
+            }
+        }
+    }
+    terms.into_iter().collect()
 }
 
 fn parse_facade(

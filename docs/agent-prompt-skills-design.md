@@ -91,13 +91,15 @@ draft、读取运行/结果并创建派生分析或比较。图表不是模型�
 研究请求遵循 `load study-planning -> inspect_workspace -> search_study_facades -> prepare_study`。只有用户原文包含完整
 `ds_...` 标识时才传 `explicitFunction`；Newton/牛顿法等算法名称保留在自然语言 `query`，目录搜索按核心字段与差异
 相关度返回最匹配门面，不会根据网络拓扑改写用户选择。候选不唯一时 Agent 展示 `differences`，禁用门面显示合同诊断。
-`prepare_study` 使用目录 facade ID、结构化原始意图和上述详细 `explanation` 创建持久化配置卡，由服务端按门面动态展开实际 model/Data/Struct/结果输入。多个兼容资源不能猜选，
+`prepare_study` 还会验证当前请求已成功调用 `inspect_workspace`；未检查 active 模型时稳定返回
+`workspace_inspection_required`，不创建配置。通过后它使用目录 facade ID、结构化原始意图和上述详细 `explanation` 创建持久化配置卡，由服务端按门面动态展开实际 model/Data/Struct/结果输入。多个兼容资源不能猜选，
 同门面历史 Struct 只形成复用建议。用户明确指定当前配置的结果时，链路为
 `load study-planning -> update_study_results(exact configurationId/revision/results)`，成功后仍等待固定 UI 的“确认并生成脚本”。
 配置卡未最终确认前，Agent 不得生成或运行受管脚本；运行时不存在绕过配置卡的旧规划或聊天脚本创建权限。
 
-模型修改遵循 `inspect_workspace -> read_model_dataframe -> modify_model`。`read_model_dataframe` 只在加载
-`model-intake` skill 后可用，scope 只能是 active 或携带准确 expected draft 的 draft；查询只允许表名、最多
+模型修改遵循 `inspect_workspace -> read_model_dataframe -> modify_model`。`read_model_dataframe(scope=active)` 在加载
+`result-analysis` 或 `model-intake` 后可用，JSON 参数省略 `expectedDraft`；`scope=draft` 仅允许 `model-intake`，并必须携带
+准确 expected draft。查询只允许表名、最多
 32 个输出列、最多 8 个标量等值条件和 `1..=100` 行。服务端完整扫描得到准确 `matchCount`，序列化结果上限为
 64 KiB。Agent 必须确认目标唯一并使用读取到的旧值，不能猜测 row key 或把截断结果当作唯一匹配。
 
@@ -105,7 +107,7 @@ draft、读取运行/结果并创建派生分析或比较。图表不是模型�
 
 工具只接收 session 上下文内的稳定资源 ID、expected draft、受控 patch/spec 和文本。禁止路径、URL、SQL、
 shell 命令和任意图表 option。用户配置图表不进入 Agent prompt 或工具链。`modify_model` 使用 `tableName + rowKey + changes + expectedDraft`；
-`read_model_dataframe` 使用 `scope + tableName + columns + equals + limit + expectedDraft?`；
+`read_model_dataframe` 使用 `scope + tableName + columns + equals + limit + expectedDraft?`，其中 active 省略该字段，draft 由服务强制要求；
 `publish_model_version` 使用 `expectedDraft + description?`，服务端从当前消息 ID 生成幂等键，不接受 session/version/path；
 `search_study_facades` 只接收查询词和可选显式函数名；`prepare_study` 只接收目录 facade ID、结构化原始意图、必填 `explanation` 和可选来源 workflow ID；空白或超过 4000 个 Unicode 字符的说明返回 `invalid_study_explanation`，且不产生领域写入；
 `update_study_results` 只接收十进制字符串 `configurationId`、正整数 `expectedRevision` 和有序唯一 `results`；比较使用两个 run ID。模型范围不存在、查询无效、输出过大、草稿 revision
@@ -123,7 +125,8 @@ ScriptAuthor 合同明确单结果使用 `name = function(...)`，多结果必�
 snapshot 由本次实际读取的字节计算，不比较 eig-rs/sparrowzz commit，也不要求固定案例数量；更新资源后需重启。
 资源 loader 不接收也不推断 tensoreval binary feature 集合；binary capability probe 与资源 snapshot 校验是独立门禁，
 启动仍先完成 probe，再 load/publish snapshot，任一失败都不开放服务。
-Agent 先 `search_engine_docs`，再凭 section ID 读取需要的片段。案例 search/inspect 只读；应用由固定 UI 完成。
+Agent 先 `search_engine_docs`，再凭 section ID 读取需要的片段。文档检索把与查询词完全相同的函数章节标题排在包含泛化
+词汇的索引页之前，保证 `join` 等精确签名先被发现；案例 search/inspect 只读，应用由固定 UI 完成。
 
 V4 动态目录基础已经实现：`functions.json=2`、`study_facades.json=1`、`dataframes.json=4` 和
 `dtype_grammar=1` 分别校验，不要求版本号相等。`study_facades.json` 是研究门面的唯一入口；输入种类、参数位置、

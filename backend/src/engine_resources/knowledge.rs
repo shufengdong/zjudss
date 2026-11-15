@@ -66,27 +66,43 @@ impl EngineKnowledge {
         if terms.is_empty() || max_chars == 0 {
             return Vec::new();
         }
-        let mut ranked: Vec<(usize, &DocSection)> = self
+        let mut ranked: Vec<(bool, usize, &DocSection)> = self
             .sections
             .iter()
             .filter_map(|section| {
                 let haystack = format!("{}\n{}", section.title, section.content).to_lowercase();
+                let normalized_title = section
+                    .title
+                    .trim_matches(|character: char| {
+                        !character.is_alphanumeric() && character != '_'
+                    })
+                    .to_lowercase();
+                let exact_title = terms.iter().any(|term| {
+                    normalized_title
+                        == term
+                            .trim_matches(|character: char| {
+                                !character.is_alphanumeric() && character != '_'
+                            })
+                            .to_lowercase()
+                });
                 let score = terms
                     .iter()
                     .filter(|term| haystack.contains(term.as_str()))
                     .count();
-                (score > 0).then_some((score, section))
+                (score > 0).then_some((exact_title, score, section))
             })
             .collect();
         ranked.sort_by(|left, right| {
-            right
-                .0
-                .cmp(&left.0)
-                .then_with(|| left.1.section_id.cmp(&right.1.section_id))
+            right.0.cmp(&left.0).then_with(|| {
+                right
+                    .1
+                    .cmp(&left.1)
+                    .then_with(|| left.2.section_id.cmp(&right.2.section_id))
+            })
         });
         let mut remaining = max_chars;
         let mut hits = Vec::new();
-        for (_, section) in ranked {
+        for (_, _, section) in ranked {
             if remaining == 0 {
                 break;
             }
@@ -226,5 +242,24 @@ mod tests {
                 <= max_chars
         );
         assert!(hits.iter().any(|hit| hit.title == "solve"));
+    }
+
+    #[test]
+    fn exact_function_title_outranks_generic_query_vocabulary() {
+        let knowledge = EngineKnowledge::from_documents(&[
+            (
+                "docs/index.md".into(),
+                "# Index\nRSS function signature reference and general engine guide.\n".into(),
+            ),
+            (
+                "docs/functions.md".into(),
+                "# Functions\n### `join`\njoined = join(left, right, left_columns, right_columns, how);\n"
+                    .into(),
+            ),
+        ]);
+
+        let hits = knowledge.search("join tensoreval rss function signature", 1_000);
+
+        assert_eq!(hits.first().map(|hit| hit.title.as_str()), Some("`join`"));
     }
 }
