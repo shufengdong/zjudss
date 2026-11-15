@@ -13,12 +13,13 @@ pub(super) fn validate_output_names(
 ) -> Result<(), AnalysisError> {
     let names = outputs
         .iter()
-        .map(|dataset| dataset.name.as_str())
-        .collect::<HashSet<_>>();
-    if names.len() != expected.len() || expected.iter().any(|name| !names.contains(name.as_str())) {
-        return Err(AnalysisError::new(
-            "analysis_output_mismatch",
-            "实际输出与声明输出不一致",
+        .map(|dataset| dataset.name.clone())
+        .collect::<Vec<_>>();
+    let actual = names.iter().map(String::as_str).collect::<HashSet<_>>();
+    if actual.len() != expected.len() || expected.iter().any(|name| !actual.contains(name.as_str()))
+    {
+        return Err(super::diagnostics::output_contract_failure(
+            expected, &names,
         ));
     }
     Ok(())
@@ -54,16 +55,20 @@ pub(super) async fn collect_outputs(
             Ok(metadata) => metadata,
             Err(error) => {
                 release_ids(artifacts, scope_id, &artifact_ids).await;
-                return Err(AnalysisError::new(
+                return Err(super::diagnostics::nonrepairable(
                     "analysis_output_invalid",
+                    "分析输出不是有效的 Parquet",
+                    "collect",
                     error.to_string(),
                 ));
             }
         };
         if !metadata.snappy {
             release_ids(artifacts, scope_id, &artifact_ids).await;
-            return Err(AnalysisError::new(
+            return Err(super::diagnostics::nonrepairable(
                 "analysis_output_invalid",
+                "输出必须为 Snappy Parquet",
+                "collect",
                 "输出必须为 Snappy Parquet",
             ));
         }
@@ -71,8 +76,10 @@ pub(super) async fn collect_outputs(
             Ok(file) => file,
             Err(error) => {
                 release_ids(artifacts, scope_id, &artifact_ids).await;
-                return Err(AnalysisError::new(
+                return Err(super::diagnostics::nonrepairable(
                     "analysis_output_invalid",
+                    "分析输出文件无法读取",
+                    "collect",
                     error.to_string(),
                 ));
             }
@@ -86,8 +93,10 @@ pub(super) async fn collect_outputs(
             Ok(staged) => staged,
             Err(error) => {
                 release_ids(artifacts, scope_id, &artifact_ids).await;
-                return Err(AnalysisError::new(
+                return Err(super::diagnostics::nonrepairable(
                     "analysis_output_invalid",
+                    "分析输出超过存储限制或无法暂存",
+                    "collect",
                     error.to_string(),
                 ));
             }
@@ -99,8 +108,10 @@ pub(super) async fn collect_outputs(
             Ok(artifact) => artifact,
             Err(error) => {
                 release_ids(artifacts, scope_id, &artifact_ids).await;
-                return Err(AnalysisError::new(
+                return Err(super::diagnostics::nonrepairable(
                     "analysis_output_commit_failed",
+                    "分析输出无法提交到存储",
+                    "collect",
                     error.to_string(),
                 ));
             }

@@ -2012,7 +2012,7 @@ async fn ordinary_resource_can_feed_existing_analysis_pipeline_with_frozen_linea
             session_id,
             request_message_id: None,
             intent: serde_json::json!({"goal":"copy"}),
-            script: "result = source".into(),
+            script: "result = limit(1, source);".into(),
             inputs: vec![zjudss::application::AnalysisInput {
                 source: zjudss::application::AnalysisInputSource::DataResourceId(
                     resource.id.clone(),

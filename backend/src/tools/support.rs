@@ -3,11 +3,15 @@
 use rig::completion::ToolAnnotations;
 use rig::tool::{Tool, ToolContext, ToolErrorKind, ToolExecutionError};
 
+const MAX_MODEL_FEEDBACK_BYTES: usize = 64 * 1024;
+const FEEDBACK_TRUNCATION_MARKER: &str = "…[工具反馈已截断]…";
+
 #[derive(Debug)]
 /// 向模型返回稳定 code 与可读反馈的领域工具错误。
 pub struct DomainToolError {
     pub code: &'static str,
     pub message: String,
+    pub details: Option<serde_json::Value>,
 }
 
 impl DomainToolError {
@@ -15,7 +19,13 @@ impl DomainToolError {
         Self {
             code,
             message: message.into(),
+            details: None,
         }
+    }
+
+    pub fn with_details(mut self, details: serde_json::Value) -> Self {
+        self.details = Some(details);
+        self
     }
 }
 impl std::fmt::Display for DomainToolError {
@@ -59,7 +69,7 @@ where
     }
 
     fn map_error(&self, error: Self::Error) -> ToolExecutionError {
-        let feedback = format!("{}: {}", error.code, error.message);
+        let feedback = bounded_model_feedback(&error);
         ToolExecutionError::new(ToolErrorKind::Other, error.to_string())
             .with_model_feedback(feedback)
             .with_retryable(false)
@@ -74,6 +84,60 @@ where
     ) -> Result<Self::Output, Self::Error> {
         self.inner.call(context, args).await
     }
+}
+
+fn bounded_model_feedback(error: &DomainToolError) -> String {
+    let prefix = format!("{}: {}", error.code, error.message);
+    let Some(mut details) = error.details.clone() else {
+        return truncate_utf8(prefix, MAX_MODEL_FEEDBACK_BYTES);
+    };
+    for _ in 0..4 {
+        let serialized = serde_json::to_string(&details).expect("tool error details serialize");
+        let feedback = format!("{prefix}\n{serialized}");
+        if feedback.len() <= MAX_MODEL_FEEDBACK_BYTES {
+            return feedback;
+        }
+        let excess = feedback.len() - MAX_MODEL_FEEDBACK_BYTES;
+        let Some(text) = details
+            .pointer_mut("/diagnostic/text")
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+        else {
+            break;
+        };
+        let target = text
+            .len()
+            .saturating_sub(excess + FEEDBACK_TRUNCATION_MARKER.len() + 32);
+        let shortened = truncate_utf8(text, target);
+        details["diagnostic"]["text"] =
+            serde_json::Value::String(format!("{shortened}{FEEDBACK_TRUNCATION_MARKER}"));
+        details["diagnostic"]["truncated"] = serde_json::Value::Bool(true);
+    }
+    let summary = serde_json::json!({
+        "code": details.get("code"),
+        "repairable": details.get("repairable"),
+        "stage": details.get("stage"),
+        "diagnostic": {"truncated": true},
+    });
+    truncate_utf8(
+        format!(
+            "{prefix}\n{}",
+            serde_json::to_string(&summary).expect("tool error summary serializes")
+        ),
+        MAX_MODEL_FEEDBACK_BYTES,
+    )
+}
+
+fn truncate_utf8(mut value: String, limit: usize) -> String {
+    if value.len() <= limit {
+        return value;
+    }
+    let mut end = limit;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
+    value
 }
 
 impl From<crate::application::VersionError> for DomainToolError {
@@ -93,7 +157,15 @@ impl From<crate::application::ScriptError> for DomainToolError {
 }
 impl From<crate::application::AnalysisError> for DomainToolError {
     fn from(value: crate::application::AnalysisError) -> Self {
-        Self::new(value.code, value.to_string())
+        let details = value.details.clone();
+        let error = Self::new(
+            value.code,
+            crate::application::diagnostics::sanitize_text(&value.to_string()),
+        );
+        match details {
+            Some(details) => error.with_details(details),
+            None => error,
+        }
     }
 }
 impl From<crate::application::ComparisonError> for DomainToolError {

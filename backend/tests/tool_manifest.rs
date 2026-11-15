@@ -15,6 +15,7 @@ use zjudss::application::{
 };
 use zjudss::auth::CurrentUser;
 use zjudss::storage::StageLimits;
+use zjudss::testing::{EngineScenario, ScenarioEngine};
 use zjudss::tools::{self, ToolServices};
 
 use common::TestApp;
@@ -62,6 +63,52 @@ fn services_for_session(
         artifact_service: app.state.artifact_service.clone(),
         data_resources: app.state.data_resource_service.clone(),
     })
+}
+
+async fn publish_tool_resource(app: &TestApp, user: &CurrentUser, session_id: i32) -> String {
+    let staged = app
+        .state
+        .artifact_service
+        .store()
+        .stage(Cursor::new(b"id,value\n1,2\n"), StageLimits::default())
+        .unwrap();
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            user,
+            session_id,
+            "diagnostic-resource".into(),
+            UploadSourceKind::Upload,
+            vec![UploadFile {
+                client_file_id: "diagnostic-resource".into(),
+                file_name: "diagnostic.csv".into(),
+                relative_path: Some("diagnostic.csv".into()),
+                media_type: Some("text/csv".into()),
+                staged,
+            }],
+        )
+        .await
+        .unwrap();
+    app.state
+        .upload_confirmation_service
+        .publish_candidates(
+            user,
+            batch.id.parse().unwrap(),
+            vec![CandidateDecision {
+                candidate_id: batch.candidates[0].id.clone(),
+                purpose: CandidatePurpose::DataResource,
+                selected: true,
+                table_name: None,
+                display_name: None,
+                alias: Some("diagnostic_resource".into()),
+            }],
+        )
+        .await
+        .unwrap()
+        .resources
+        .remove(0)
+        .id
 }
 
 #[tokio::test]
@@ -388,6 +435,73 @@ async fn registered_tools_preserve_domain_error_feedback_and_metadata() {
             .model_feedback()
             .is_some_and(|feedback| feedback.contains("skill_required"))
     );
+}
+
+#[tokio::test]
+async fn registered_analysis_tool_returns_sanitized_structured_repair_feedback() {
+    let engine = ScenarioEngine::default();
+    let mut stderr = b"parse failed at /private/secret/input.rss TOKEN=do-not-leak".to_vec();
+    stderr.extend(vec![b'\n'; 70 * 1024]);
+    engine.enqueue(EngineScenario::Failure {
+        code: "model_error".into(),
+        stderr,
+        exit_code: 7,
+    });
+    let app = TestApp::builder().engine(Arc::new(engine)).spawn().await;
+    let user = principal("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "diagnostic tool", 1)
+        .await
+        .unwrap();
+    let resource_id = publish_tool_resource(&app, &user, session.id).await;
+    let mut conn = app.pool.get().unwrap();
+    diesel::sql_query("INSERT INTO messages(session_id,role,kind,content,created_at_ms) VALUES(?1,'assistant','tool_call','analysis',1)")
+        .bind::<diesel::sql_types::Integer, _>(session.id)
+        .execute(&mut conn)
+        .unwrap();
+    let request_message_id = diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
+        "last_insert_rowid()",
+    ))
+    .get_result::<i32>(&mut conn)
+    .unwrap();
+    drop(conn);
+    let mut services = services_for_session(&app, user, session.id);
+    Arc::get_mut(&mut services).unwrap().request_message_id = request_message_id;
+    services
+        .loaded_skills
+        .lock()
+        .await
+        .insert("result-analysis".into());
+    let registered = tools::build_tools(services);
+    let tool = registered
+        .iter()
+        .find(|tool| tool.name() == "run_result_analysis")
+        .unwrap();
+
+    let result = tool
+        .execute(
+            serde_json::json!({
+                "intent": "read resource",
+                "script": "result = limit(1, source);",
+                "inputs": [{"resourceId": resource_id, "alias": "source"}],
+                "expectedOutputs": ["result"]
+            })
+            .to_string(),
+            &mut ToolContext::new(),
+        )
+        .await;
+    let error = result
+        .error()
+        .expect("analysis engine failure must surface");
+    let feedback = error.model_feedback().expect("structured model feedback");
+    assert_eq!(error.code(), Some("analysis_engine_failed"));
+    assert!(feedback.contains("\"repairable\":true"));
+    assert!(feedback.contains("\"stage\":\"run\""));
+    assert!(!feedback.contains("/private/secret"));
+    assert!(!feedback.contains("do-not-leak"));
+    assert!(feedback.len() <= 64 * 1024);
 }
 
 #[tokio::test]

@@ -1,9 +1,13 @@
 mod common;
 
+use std::io::Cursor;
+use std::sync::Arc;
+
 use common::TestApp;
 use diesel::prelude::*;
 use zjudss::application::{
-    AnalysisInput, AnalysisInputSource, AnalysisRequest, PublishDraftRequest,
+    AnalysisInput, AnalysisInputSource, AnalysisRequest, CandidateDecision, CandidatePurpose,
+    PublishDraftRequest, UploadFile, UploadSourceKind,
 };
 use zjudss::auth::CurrentUser;
 use zjudss::db::models::ResultAnalysisInput;
@@ -11,6 +15,8 @@ use zjudss::db::repositories::{
     AnalysisRepo, DatasetModelOrigin, RepoError, ResultRepo, VersionRepo, VersionRepoError,
     VersionSnapshot,
 };
+use zjudss::storage::StageLimits;
+use zjudss::testing::{DatasetFixture, EngineScenario, ScenarioEngine};
 
 async fn publish_version(
     app: &TestApp,
@@ -45,6 +51,65 @@ async fn publish_version(
         .await
         .unwrap()
         .version
+}
+
+async fn publish_resource(
+    app: &TestApp,
+    user: &CurrentUser,
+    session_id: i32,
+    client_id: &str,
+) -> String {
+    let staged = app
+        .state
+        .artifact_service
+        .store()
+        .stage(Cursor::new(b"id,value\n1,2\n"), StageLimits::default())
+        .unwrap();
+    let batch = app
+        .state
+        .upload_batch_service
+        .accept(
+            user,
+            session_id,
+            client_id.into(),
+            UploadSourceKind::Upload,
+            vec![UploadFile {
+                client_file_id: client_id.into(),
+                file_name: "resource.csv".into(),
+                relative_path: Some("resource.csv".into()),
+                media_type: Some("text/csv".into()),
+                staged,
+            }],
+        )
+        .await
+        .unwrap();
+    app.state
+        .upload_confirmation_service
+        .publish_candidates(
+            user,
+            batch.id.parse().unwrap(),
+            vec![CandidateDecision {
+                candidate_id: batch.candidates[0].id.clone(),
+                purpose: CandidatePurpose::DataResource,
+                selected: true,
+                table_name: None,
+                display_name: None,
+                alias: Some(format!("resource_{}", client_id.replace('-', "_"))),
+            }],
+        )
+        .await
+        .unwrap()
+        .resources
+        .remove(0)
+        .id
+}
+
+fn count_rows(app: &TestApp, sql: &str, session_id: i32) -> i64 {
+    diesel::sql_query(sql)
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .get_result::<common::CountRow>(&mut app.pool.get().unwrap())
+        .unwrap()
+        .count
 }
 
 fn insert_raw_dataset(
@@ -420,4 +485,287 @@ async fn active_dataframe_lookup_is_exactly_scoped_and_create_rejects_switch_rac
         .await,
         Err(VersionRepoError::Repository(RepoError::NotFound))
     ));
+}
+
+#[tokio::test]
+async fn analysis_service_preflight_failure_writes_nothing() {
+    let app = TestApp::spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "preflight", 1)
+        .await
+        .unwrap();
+    let active = publish_version(&app, &user, session.id, "preflight", b"id,name\n1,bus\n").await;
+    let artifacts_before = count_rows(
+        &app,
+        "SELECT count(*) count FROM artifacts a JOIN storage_scope_artifacts ssa ON ssa.artifact_id=a.id JOIN users u ON u.storage_scope_id=ssa.storage_scope_id WHERE u.id=(SELECT user_id FROM sessions WHERE id=?1)",
+        session.id,
+    );
+
+    let error = app
+        .state
+        .analysis_service
+        .run(AnalysisRequest {
+            principal: user,
+            session_id: session.id,
+            request_message_id: None,
+            intent: serde_json::json!("forbidden"),
+            script: "result = read_csv(model);".into(),
+            inputs: vec![AnalysisInput {
+                source: AnalysisInputSource::ActiveModelDataFrameId(active.dataframes[0].id),
+                alias: "model".into(),
+            }],
+            expected_outputs: vec!["result".into()],
+            skill_refs: vec![],
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "analysis_function_forbidden");
+    assert_eq!(
+        count_rows(
+            &app,
+            "SELECT count(*) count FROM result_analysis_runs WHERE session_id=?1",
+            session.id,
+        ),
+        0
+    );
+    assert_eq!(
+        count_rows(
+            &app,
+            "SELECT count(*) count FROM artifacts a JOIN storage_scope_artifacts ssa ON ssa.artifact_id=a.id JOIN users u ON u.storage_scope_id=ssa.storage_scope_id WHERE u.id=(SELECT user_id FROM sessions WHERE id=?1)",
+            session.id,
+        ),
+        artifacts_before
+    );
+
+    diesel::sql_query("UPDATE storage_scopes SET artifact_limit=used_artifacts WHERE id=?1")
+        .bind::<diesel::sql_types::Integer, _>(
+            common::test_user("alice@example.com").storage_scope_id,
+        )
+        .execute(&mut app.pool.get().unwrap())
+        .unwrap();
+    let quota = app
+        .state
+        .analysis_service
+        .run(AnalysisRequest {
+            principal: common::test_user("alice@example.com"),
+            session_id: session.id,
+            request_message_id: None,
+            intent: serde_json::json!("quota"),
+            script: "result = limit(1, model);".into(),
+            inputs: vec![AnalysisInput {
+                source: AnalysisInputSource::ActiveModelDataFrameId(active.dataframes[0].id),
+                alias: "model".into(),
+            }],
+            expected_outputs: vec!["result".into()],
+            skill_refs: vec![],
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(quota.code, "analysis_script_commit_failed");
+    assert_eq!(quota.details.unwrap()["repairable"], false);
+    assert_eq!(
+        count_rows(
+            &app,
+            "SELECT count(*) count FROM result_analysis_runs WHERE session_id=?1",
+            session.id,
+        ),
+        0
+    );
+}
+
+#[tokio::test]
+async fn analysis_service_returns_bounded_repairable_diagnostics_and_persists_one_failed_run() {
+    let engine = ScenarioEngine::default();
+    let mut stderr = b"unknown column at /private/secret/model.rss API_KEY=top-secret ".to_vec();
+    stderr.extend(vec![b'x'; 70 * 1024]);
+    engine.enqueue(EngineScenario::Failure {
+        code: "engine_error".into(),
+        stderr,
+        exit_code: 7,
+    });
+    let app = TestApp::builder().engine(Arc::new(engine)).spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "repairable", 1)
+        .await
+        .unwrap();
+    let active = publish_version(&app, &user, session.id, "repairable", b"id,name\n1,bus\n").await;
+
+    let error = app
+        .state
+        .analysis_service
+        .run(AnalysisRequest {
+            principal: user,
+            session_id: session.id,
+            request_message_id: None,
+            intent: serde_json::json!("repair"),
+            script: "result = limit(1, model);".into(),
+            inputs: vec![AnalysisInput {
+                source: AnalysisInputSource::ActiveModelDataFrameId(active.dataframes[0].id),
+                alias: "model".into(),
+            }],
+            expected_outputs: vec!["result".into()],
+            skill_refs: vec![],
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "analysis_engine_failed");
+    let details = error.details.unwrap();
+    assert_eq!(details["repairable"], true);
+    assert_eq!(details["stage"], "run");
+    let feedback = serde_json::to_string(&details).unwrap();
+    assert!(!feedback.contains("/private/secret"));
+    assert!(!feedback.contains("top-secret"));
+    assert!(feedback.len() <= 64 * 1024 + 1024);
+    assert_eq!(
+        count_rows(
+            &app,
+            "SELECT count(*) count FROM result_analysis_runs WHERE session_id=?1 AND status='failed'",
+            session.id,
+        ),
+        1
+    );
+    #[derive(diesel::QueryableByName)]
+    struct StoredError {
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        error_json: String,
+    }
+    let stored = diesel::sql_query(
+        "SELECT error_json FROM result_analysis_runs WHERE session_id=?1 ORDER BY id DESC LIMIT 1",
+    )
+    .bind::<diesel::sql_types::Integer, _>(session.id)
+    .get_result::<StoredError>(&mut app.pool.get().unwrap())
+    .unwrap();
+    let stored: serde_json::Value = serde_json::from_str(&stored.error_json).unwrap();
+    assert_eq!(stored["details"]["repairable"], true);
+}
+
+#[tokio::test]
+async fn analysis_service_marks_monitor_and_output_name_failures_correctly() {
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::MonitorError);
+    engine.enqueue(EngineScenario::Symlink);
+    engine.enqueue(EngineScenario::Success(vec![DatasetFixture {
+        name: "unexpected".into(),
+        rows: vec![("one".into(), 1.0)],
+        value_unit: None,
+    }]));
+    let app = TestApp::builder().engine(Arc::new(engine)).spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "classification", 1)
+        .await
+        .unwrap();
+    let active = publish_version(
+        &app,
+        &user,
+        session.id,
+        "classification",
+        b"id,name\n1,bus\n",
+    )
+    .await;
+    let request = || AnalysisRequest {
+        principal: user.clone(),
+        session_id: session.id,
+        request_message_id: None,
+        intent: serde_json::json!("classify"),
+        script: "result = limit(1, model);".into(),
+        inputs: vec![AnalysisInput {
+            source: AnalysisInputSource::ActiveModelDataFrameId(active.dataframes[0].id),
+            alias: "model".into(),
+        }],
+        expected_outputs: vec!["result".into()],
+        skill_refs: vec![],
+    };
+
+    let monitor = app.state.analysis_service.run(request()).await.unwrap_err();
+    assert_eq!(monitor.code, "result_monitor_failed");
+    assert_eq!(monitor.details.unwrap()["repairable"], false);
+
+    let path = app.state.analysis_service.run(request()).await.unwrap_err();
+    assert_eq!(path.code, "result_symlink_rejected");
+    assert_eq!(path.details.unwrap()["repairable"], false);
+
+    let output = app.state.analysis_service.run(request()).await.unwrap_err();
+    assert_eq!(output.code, "analysis_result_contract_invalid");
+    assert_eq!(output.details.unwrap()["repairable"], true);
+    assert_eq!(
+        count_rows(
+            &app,
+            "SELECT count(*) count FROM result_datasets d JOIN result_analysis_runs a ON a.id=d.analysis_run_id WHERE a.session_id=?1",
+            session.id,
+        ),
+        0
+    );
+}
+
+#[tokio::test]
+async fn analysis_service_atomically_publishes_three_frozen_lineage_kinds() {
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::Success(vec![DatasetFixture {
+        name: "result".into(),
+        rows: vec![("one".into(), 1.0)],
+        value_unit: None,
+    }]));
+    let app = TestApp::builder().engine(Arc::new(engine)).spawn().await;
+    let user = common::test_user("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "three inputs", 1)
+        .await
+        .unwrap();
+    let active =
+        publish_version(&app, &user, session.id, "three-inputs", b"id,name\n1,bus\n").await;
+    let dataset_id = insert_raw_dataset(&app, session.id, &active, "three-inputs");
+    let resource_id = publish_resource(&app, &user, session.id, "three-inputs-resource").await;
+
+    let outcome = app
+        .state
+        .analysis_service
+        .run(AnalysisRequest {
+            principal: user.clone(),
+            session_id: session.id,
+            request_message_id: None,
+            intent: serde_json::json!("combine"),
+            script: "result = limit(1, model);".into(),
+            inputs: vec![
+                AnalysisInput {
+                    source: AnalysisInputSource::ActiveModelDataFrameId(active.dataframes[0].id),
+                    alias: "model".into(),
+                },
+                AnalysisInput {
+                    source: AnalysisInputSource::DatasetId(dataset_id),
+                    alias: "dataset".into(),
+                },
+                AnalysisInput {
+                    source: AnalysisInputSource::DataResourceId(resource_id),
+                    alias: "resource".into(),
+                },
+            ],
+            expected_outputs: vec!["result".into()],
+            skill_refs: vec![],
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.datasets.len(), 1);
+    let lineage = ResultRepo::new(app.pool.clone())
+        .lineage(&user.id, outcome.datasets[0].id)
+        .await
+        .unwrap();
+    let kinds = lineage
+        .iter()
+        .map(|row| row.source_kind.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(kinds, ["active_model", "dataset", "data_resource"]);
 }

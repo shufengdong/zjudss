@@ -25,6 +25,7 @@ use crate::db::repositories::{
 use crate::engine_resources::EngineResourceSnapshot;
 use crate::storage::StageLimits;
 
+mod diagnostics;
 mod inputs;
 mod model_origin;
 mod outputs;
@@ -86,6 +87,34 @@ impl AnalysisError {
     fn run(mut self, id: i32) -> Self {
         self.run_id = Some(id);
         self
+    }
+
+    fn failure(
+        code: &'static str,
+        message: impl Into<String>,
+        repairable: bool,
+        stage: &'static str,
+        diagnostic: Value,
+    ) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            details: Some(json!({
+                "code": code,
+                "repairable": repairable,
+                "stage": stage,
+                "diagnostic": diagnostic,
+            })),
+            run_id: None,
+        }
+    }
+
+    fn failure_stage(&self) -> &str {
+        self.details
+            .as_ref()
+            .and_then(|details| details.get("stage"))
+            .and_then(Value::as_str)
+            .unwrap_or("present")
     }
 }
 impl std::fmt::Display for AnalysisError {
@@ -181,12 +210,24 @@ impl AnalysisService {
             .artifacts
             .resolve_scope(request.principal.storage_scope_id)
             .await
-            .map_err(|error| AnalysisError::new("storage_unavailable", error.to_string()))?;
+            .map_err(|error| {
+                diagnostics::nonrepairable(
+                    "storage_unavailable",
+                    "分析存储当前不可用",
+                    "script",
+                    error.to_string(),
+                )
+            })?;
         let script = self
             .commit_bytes(scope.id, request.script.as_bytes(), "rss", "text/plain")
             .await
             .map_err(|error| {
-                AnalysisError::new("analysis_script_commit_failed", error.to_string())
+                diagnostics::nonrepairable(
+                    "analysis_script_commit_failed",
+                    "分析脚本无法提交到存储",
+                    "script",
+                    error.to_string(),
+                )
             })?;
         let run = self
             .repo
@@ -235,15 +276,12 @@ impl AnalysisService {
         match result {
             Ok((run, datasets)) => Ok(AnalysisOutcome { run, datasets }),
             Err(error) => {
+                let stage = error.failure_stage().to_string();
+                let stored =
+                    crate::application::canonical_json(&diagnostics::stored_failure(&error));
                 let _ = self
                     .repo
-                    .fail(
-                        &request.principal.id,
-                        run.id,
-                        "present",
-                        json!({"code":error.code,"message":error.message}).to_string(),
-                        now_ms(),
-                    )
+                    .fail(&request.principal.id, run.id, &stage, stored, now_ms())
                     .await;
                 Err(error.run(run.id))
             }
@@ -295,7 +333,7 @@ impl AnalysisService {
                 result_dir: output_dir,
             })
             .await
-            .map_err(|error| AnalysisError::new("analysis_engine_failed", error.to_string()))?;
+            .map_err(|error| diagnostics::adapter_failure(&error, &self.snapshot))?;
         validate_output_names(&output.datasets, &request.expected_outputs)?;
         self.stage(&request.principal, run.id, "collect", &writer)
             .await?;
