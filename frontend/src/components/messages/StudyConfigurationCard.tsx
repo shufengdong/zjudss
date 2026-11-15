@@ -48,7 +48,7 @@ export default function StudyConfigurationCard({ message, onWorkflowStarted, not
   const { configuration, busy, error, mutate } = useStudyConfiguration(message.card.actionCard)
   const configId = String(configuration.id), collapseKey = `study-configuration:${message.card.configurationId}:collapsed`
   const [collapsed, setCollapsed] = useState(() => readCollapsed(collapseKey))
-  const run = async (action: Parameters<typeof mutate>[0]) => { const result = await mutate(action); if (result === null && error) notify(error) }
+  const run = async (action: Parameters<typeof mutate>[0], successText?: string) => { const result = await mutate(action); if (result === null && error) notify(error); else if (successText) notify(successText) }
   useEffect(() => { if (error) { writeCollapsed(collapseKey, false); setCollapsed(false) } }, [collapseKey, error])
   const toggle = () => setCollapsed((current) => { const next = !current; writeCollapsed(collapseKey, next); return next })
   if (['confirmed', 'cancelled'].includes(configuration.status)) return <article className="mx-auto my-3 max-w-3xl rounded-xl border bg-white p-3 text-sm">研究配置 #{configuration.id}：{configuration.status === 'confirmed' ? '已确认' : '已取消'}</article>
@@ -59,16 +59,16 @@ export default function StudyConfigurationCard({ message, onWorkflowStarted, not
     </header>
     {collapsed ? <p className="rounded bg-slate-50 p-2 text-xs text-slate-500">已收起，展开后可继续配置或确认</p> : <>
       {error && <p role="alert" className="rounded bg-red-50 p-2 text-xs text-red-700">{error}</p>}
-      {configuration.status === 'choosing_facade' && <FacadeChoiceCard facade={configuration.facade} busy={busy} onSelect={() => void run((current) => selectStudyFacade(configId, current.revision, current.facade.id))} />}
+      {configuration.status === 'choosing_facade' && <FacadeChoiceCard facade={configuration.facade} busy={busy} onSelect={() => void run((current) => selectStudyFacade(configId, current.revision, current.facade.id), '方法已选定 ✓')} />}
       {configuration.status === 'collecting_inputs' && configuration.inputs.map((input) => <StudyInputSection
         key={input.inputId}
         input={input}
         busy={busy}
-        onBind={(resourceId) => void run((current) => bindStudyResource(configId, input.inputId, current.revision, resourceId))}
-        onStruct={(values) => void run((current) => updateStudyStruct(configId, input.inputId, { expectedRevision: current.revision, values }))}
-        onMap={(sourceResourceId, mappings) => void run((current) => mapStudyResource(configId, input.inputId, { expectedRevision: current.revision, sourceResourceId, displayName: `${input.alias} 映射`, alias: `${input.alias}_mapped`, mappings }))}
+        onBind={(resourceId) => void run((current) => bindStudyResource(configId, input.inputId, current.revision, resourceId), '资源已绑定 ✓')}
+        onStruct={(values) => void run((current) => updateStudyStruct(configId, input.inputId, { expectedRevision: current.revision, values }), '参数已保存 ✓')}
+        onMap={(sourceResourceId, mappings) => void run((current) => mapStudyResource(configId, input.inputId, { expectedRevision: current.revision, sourceResourceId, displayName: `${input.alias} 映射`, alias: `${input.alias}_mapped`, mappings }), '映射已生成 ✓')}
       />)}
-      {['collecting_inputs', 'ready_to_confirm'].includes(configuration.status) && <ResultSelectionCard card={configuration.results} busy={busy} onSave={(results) => void run((current) => selectStudyResults(configId, current.revision, results))} />}
+      {['collecting_inputs', 'ready_to_confirm'].includes(configuration.status) && <ResultSelectionCard card={configuration.results} busy={busy} onSave={(results) => void run((current) => selectStudyResults(configId, current.revision, results), '结果已更新 ✓')} />}
       {configuration.status === 'ready_to_confirm' && <ConfigurationSummaryCard configuration={configuration} busy={busy} onConfirm={() => void (async () => { try { await confirmStudyConfiguration(configId, configuration.revision, id()); notify('已确认，正在生成并执行脚本'); onWorkflowStarted?.() } catch (cause) { notify(cause instanceof Error ? cause.message : '确认失败') } })()} />}
     </>}
   </article>

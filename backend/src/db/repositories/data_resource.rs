@@ -123,7 +123,11 @@ impl DataResourceRepo {
             schema::data_resources::table
                 .filter(schema::data_resources::session_id.eq(session_id))
                 .filter(schema::data_resources::status.eq("live"))
-                .filter(schema::data_resources::declared_schema_ref.eq(Some(schema_ref)))
+                .filter(
+                    schema::data_resources::declared_schema_ref
+                        .eq(Some(schema_ref.clone()))
+                        .or(schema::data_resources::declared_schema_ref.is_null()),
+                )
                 .order((
                     schema::data_resources::created_at_ms.desc(),
                     schema::data_resources::id.desc(),

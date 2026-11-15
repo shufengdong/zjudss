@@ -82,9 +82,8 @@ impl StudyConfigurationService {
                 .ok_or_else(|| Self::invalid("configuration_stale", "研究输入绑定缺失"))?;
             if let Some(resource_id) = binding.resource_id.as_deref() {
                 let resource = self.resources.find(&user.id, resource_id, false).await?;
-                if resource.resource.status != "live"
-                    || resource.resource.declared_schema_ref.as_deref()
-                        != Some(input.schema_ref.as_str())
+                let schema_ok = resource.resource.declared_schema_ref.as_deref().map_or(true, |declared| declared == input.schema_ref.as_str());
+                if resource.resource.status != "live" || !schema_ok
                 {
                     return Err(Self::invalid(
                         "configuration_stale",
