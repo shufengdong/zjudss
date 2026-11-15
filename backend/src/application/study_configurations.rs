@@ -388,7 +388,7 @@ impl StudyConfigurationService {
                 .ok_or_else(|| Self::invalid("configuration_stale", "研究输入绑定缺失"))?;
             let mut resource_options = Vec::new();
             if input.kind != FacadeInputKind::Model {
-                let compatible = self
+                let mut compatible = self
                     .resources
                     .compatible_for_session(
                         &user.id,
@@ -396,6 +396,11 @@ impl StudyConfigurationService {
                         &input.schema_ref,
                     )
                     .await?;
+                let unclaimed = self
+                    .resources
+                    .unclaimed_for_session(&user.id, aggregate.configuration.session_id)
+                    .await?;
+                compatible.extend(unclaimed);
                 for resource in fold_selector_only_resources(
                     compatible,
                     &result_selector_fields(&facade, input)?,
