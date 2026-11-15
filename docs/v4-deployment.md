@@ -150,8 +150,8 @@ git diff --check
 
 ## Published case facade coverage
 
-2026-10-30 起以 `dss/docs/catalog/case_projections.json` schema v2 和 rssbundle manifest schema v2
-为唯一合同，不保留 schema v1 兼容。目录中的 profile、manifest 和引用数量都由本次资源 snapshot 动态发现；正式接收
+2026-10-30 起以 `dss/docs/catalog/case_projections.json` schema v2，以及 rssbundle manifest schema v2 单研究和
+schema v3 有序多阶段研究为唯一合同，不保留 schema v1 兼容。目录中的 profile、manifest 和引用数量都由本次资源 snapshot 动态发现；正式接收
 不固定 profile 或案例数量，只要求目录计数自洽、所有 manifest 引用启用 profile 且本次真实 projector 零失败。
 
 2026-10-30 当次已接受的候选证据中有 9 个投影 profile（7 个启用、2 个以稳定诊断禁用）和 144 个
@@ -180,6 +180,11 @@ manifest 的 `study.results` 是原生 bundle 结果全集，`projection.results
 后端要求子集中的每个 source 按原生顺序出现，并精确匹配 profile 的 `bundleResultMap`、target 和
 `result_<source>` binding；未知、重复、重排或错误映射仍失败关闭。Dynamic V13 GFL 案例因此以 16 个原生结果和
 15 个受管结果通过，代表运行也实际返回 15 个 dataset。
+
+schema v3 的 `study_sequence` 额外发布零基连续 stages、阶段状态和 compatibility aggregates；projection source
+可以引用 `stageIndex.result`、`study_status` 或只合并同一目标结果的兼容 aggregate，binding 可以保留资源发布时的
+稳定别名。其 Data 型 `sequence_request` 已由 projector 生成，release 代表运行不再按 Struct selector 重写该输入；
+门面的 `ordered_stage_selection` 仍对用户选择的最少结果数量和阶段字段执行服务端约束。
 
 启动时后端同时校验 projection profile 与目标 facade 的输入、结果、schema kind、顺序及映射；每个 manifest
 还必须逐字段匹配 profile 的 source/projector/target/managed entry/结果映射。案例应用时，后端在私有 staging 树内

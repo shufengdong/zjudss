@@ -522,6 +522,9 @@ async fn inject_manifest_result_selector(
         .iter()
         .find(|input| input.id == selector.input)
         .expect("validated result selector input");
+    if selector_input.kind == FacadeInputKind::Data {
+        return Ok(());
+    }
     let selected = manifest
         .projection
         .results
@@ -887,15 +890,6 @@ async fn real_engine_projects_all_examples_and_runs_representative_studies() {
         .iter()
         .map(|projection| projection.example_id.as_str())
         .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(
-        report.projected_examples, importable_examples,
-        "release_engine_projected_inventory_incomplete"
-    );
-    assert_eq!(
-        projection_ids.len(),
-        importable_examples,
-        "release_engine_projection_evidence_incomplete"
-    );
     let failed_projections = report
         .case_projections
         .iter()
@@ -916,6 +910,15 @@ async fn real_engine_projects_all_examples_and_runs_representative_studies() {
         failed_projections.is_empty() && report.projection_failures == 0,
         "release_engine_projection_failed:{}",
         failed_projections.join(",")
+    );
+    assert_eq!(
+        report.projected_examples, importable_examples,
+        "release_engine_projected_inventory_incomplete"
+    );
+    assert_eq!(
+        projection_ids.len(),
+        importable_examples,
+        "release_engine_projection_evidence_incomplete"
     );
 
     let failed: Vec<_> = report

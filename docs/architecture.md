@@ -75,8 +75,10 @@ artifact 引用。
 浏览器继续只提交 `ChartConfig`，并由按图表类型分离的 adapters 将服务端 `chart-model-v1` 确定性映射为本地
 `EChartsOption`；后端、DTO 和持久化都不接收任意 ECharts option。
 
-案例扫描显式解析 manifest schema v2 的 schema/artifact、入口、study、source、projection、files 和 inputs，并把
-projection 逐字段绑定到同一 snapshot 的 `case_projections.json` schema v2。单个无效 manifest 仍形成
+案例扫描显式解析 manifest schema v2 单研究和 schema v3 有序多阶段研究的 schema/artifact、入口、study、source、
+projection、files 和 inputs，并把 projection 逐字段绑定到同一 snapshot 的 `case_projections.json` schema v2。
+schema v3 还要求零基连续 stage、唯一稳定标识、合法状态衔接、有效 `stage.result` 来源，以及只聚合到同一目标结果的
+兼容结果；发布详情保留 stages 与 compatibility aggregates，不把它们压回单研究。单个无效 manifest 仍形成
 带脱敏诊断的不可导入叶节点，不阻断其他案例。应用案例时先验证不可变快照中 `manifest.json` 和
 `manifest.files` 全部哈希，再由 adapter 在私有树内执行已发布 projector；有序输出按目录角色成为 Model/Data/Struct
 候选，diagnostic 只进入批次诊断，然后进入统一上传用途确认。bundle 内未声明文件不会被读取或暂存。HTTP、前端与

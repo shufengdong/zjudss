@@ -49,6 +49,12 @@ pub enum ResultSelectionRule {
         minimum: u32,
         binding_count: String,
     },
+    OrderedStageSelection {
+        selector: String,
+        minimum: u32,
+        binding_count: String,
+        stage_field: String,
+    },
     DefaultResults {
         results: Vec<String>,
     },
@@ -437,6 +443,12 @@ fn parse_result_constraint(
             selector: required_string(value, "selector")?,
             minimum: required_u32(value, "minimum")?,
             binding_count: required_string(value, "bindingCount")?,
+        }),
+        "ordered_stage_selection" => Ok(ResultSelectionRule::OrderedStageSelection {
+            selector: required_string(value, "selector")?,
+            minimum: required_u32(value, "minimum")?,
+            binding_count: required_string(value, "bindingCount")?,
+            stage_field: required_string(value, "stageField")?,
         }),
         "default_results" => {
             let selected = required_string_array(value, "results")?;

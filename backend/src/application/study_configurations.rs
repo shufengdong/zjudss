@@ -778,6 +778,14 @@ fn validate_results(
                     "结果数量不满足门面约束",
                 ));
             }
+            ResultSelectionRule::OrderedStageSelection { minimum, .. }
+                if selected.len() < *minimum as usize =>
+            {
+                return Err(StudyConfigurationService::invalid(
+                    "result_selection_invalid",
+                    "结果数量不满足门面约束",
+                ));
+            }
             _ => {}
         }
     }

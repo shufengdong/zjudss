@@ -45,7 +45,7 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 | 统一上传 | complete | DSS/ZIP/CSV/Excel/Parquet/案例的可恢复候选、解析设置/用途确认、model/resource 双发布、部分成功重试与确认幂等 |
 | 独立数据资源 | complete | 会话唯一 alias、原文件/规范 Parquet、Struct 覆盖预览、重新上传替换、删除影响、结果提升和分析输入 |
 | 草稿与版本 | complete | expected revision、整表覆盖、显式发布/激活、影响预览删除 |
-| 案例库 | complete | schema v2 manifest 与 projection profile 严格匹配；2026-11-06 当前候选 150/150 案例通过受控 projector 转成目录声明的 Model/Data/Struct 候选，diagnostic 不进入输入；原生结果允许包含未进入受管有序子集的附加结果 |
+| 案例库 | complete | schema v2 单研究与 schema v3 有序多阶段 manifest 均与 projection profile 严格匹配；2026-11-06 已接受候选 150/150 案例通过受控 projector 转成目录声明的 Model/Data/Struct 候选，diagnostic 不进入输入；原生结果允许包含未进入受管有序子集的附加结果 |
 | 脚本与运行 | complete | 受管 Agent 脚本已实现候选持久化、直接执行、自动修正和冻结结果合同；所有生产 tensoreval 调用默认运行到完成，普通运行与工作流可由用户取消并终止进程组；两者共用脱敏日志/失败分析器，失败进度卡可恢复展示诊断；成功脚本单次运行读取最新所需输入，失败脚本可比较输入后派生“重新尝试”，手写/上传脚本开放结果合同且不修正；终态 run 支持影响预览和原子删除 |
 | 结果与派生 | complete | 单结果删除、active 模型/结果/本地数据混合分析、完整 RSS 与冻结输入详情、用户配置图表、比较和 tombstone 血缘；跨 active 版本结果失败关闭，图表冻结来源快照与自己的 Plot Data |
 | 前端 | complete | 三列/窄屏、模型详细说明先于研究配置卡、配置卡按浏览器会话记忆收起状态且错误自动展开、Struct 参数显示只读模板身份与本次运行覆盖、运行摘要与失败原因/耗时/全结果选择、排队/运行中取消入口及中性“已取消”终态、普通运行与研究工作流共用失败诊断面板、成功研究的脚本/运行结果成果归组与脚本锚定、pending-only 轮询、结果数据表、用户配置图表工作台、active/draft/历史模型表只读工作台、登录用户菜单 |
@@ -59,7 +59,7 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 - Agent bundle：`v4.5.0`，目录 `backend/resources/agent/v4`；研究规划 skill 为 `study-planning@1.5.0`，结果分析 skill 为 `result-analysis@1.3.0`。
 - LLM provider：缺省为 DeepSeek；也可通过 `LLM_PROVIDER=bailian`、显式模型、同地域 API Key 和 OpenAI-compatible endpoint 使用百炼。两者共用同一 Agent、工具和 ScriptAuthor 合同。
 - Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `SPARROWZZ_DIR` 动态发现并验证
-  `dss/docs/catalog`（含 case projection schema v2）与 `dss/rssbundle` manifest schema v2，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
+  `dss/docs/catalog`（含 case projection schema v2）与 `dss/rssbundle` manifest schema v2/v3，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
 - 每次 tensoreval 调用均由统一 adapter 流式排空 stdout/stderr；每流按 `ENGINE_PROCESS_OUTPUT_MAX_BYTES` 保留等额首尾并
   记录完整 hash/总字节数。生产调用没有墙钟执行上限，默认等待引擎完成；运行中和退出后都检查结果数量、单文件/总量、
   普通文件和路径边界；默认单文件上限为 2 GiB、单次执行全部结果上限为 8 GiB，超限结果不会截断或部分发布。实际失败、

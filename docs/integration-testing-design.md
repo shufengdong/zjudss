@@ -172,7 +172,7 @@ contract、当前 binary hash、动态资源 snapshot 与案例分类数量；ha
 Agent bundle 版本和完整工具权限只从 `backend/resources/agent/v4/manifest.json` 读取：真实与手工旅程把该次
 `allowedTools` 传给语义轨迹断言，发布 shell 直接比较报告版本与同一 manifest，不维护第二份工具全集或版本常量。
 真实门禁必须覆盖模型导入/发布、目录驱动的研究门面检索、配置卡准备与最终确认、Agent 创建受管研究脚本、自动执行、结果分析/比较和只使用稳定 ID。门禁扫描全部
-manifest schema v2 案例，要求不可导入案例为零，并对每个案例真实执行其 projector，逐项验证有序 Snappy Parquet
+manifest schema v2/v3 案例，要求不可导入案例为零，并对每个案例真实执行其 projector，逐项验证有序 Snappy Parquet
 输出及 Model/Data/Struct/diagnostic 分类。2026-10-30 历史候选证据为 144/144 成功；2026-11-06 当前候选以
 snapshot `ers_7d30a9cba13a8bf2ba4741e4fa2010df` 重新证明 150/150 成功、0 失败。每次候选仍必须以本次
 动态 snapshot 重新生成报告，并以 `projectedExamples`、
@@ -181,6 +181,8 @@ manifest `study.results` 是原生结果全集，`projection.results` 是受管�
 但 unknown、duplicate、reorder、target 或 binding 漂移仍使案例不可导入。随后对每个被案例引用的 profile 选择一个
 投影成功的代表，以其命名 Parquet 输入执行 `managed.rss`；当前证据为 6 个代表，
 同时覆盖全部 study family。projector 输出缺失、重复、多余、顺序合同不一致或 manifest/profile 不一致均原子失败。
+schema v3 还由单元与当前资源树测试覆盖 stage 连续性、阶段结果来源、兼容 aggregate 的同目标约束、发布详情保真，
+以及 Data 型 `sequence_request` 不被 release wrapper 当成 Struct selector 覆盖。
 没有案例引用的 disabled profile 可以保留稳定诊断，但不能被 manifest 使用。历史证据分布见 `docs/v4-deployment.md`；
 数量不是未来 snapshot 的固定接收条件。
 

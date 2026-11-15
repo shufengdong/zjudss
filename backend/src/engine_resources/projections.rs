@@ -67,6 +67,8 @@ pub struct CaseProjectionProfile {
 pub struct ProjectionResultSelector {
     pub input: String,
     pub field: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage_field: Option<String>,
     pub value_source: String,
 }
 
@@ -343,22 +345,37 @@ fn parse_profile(
         .iter()
         .find(|input| input.id == result_selector.input)
         .ok_or("resultSelector 引用未知输入")?;
-    if selector_input.kind != FacadeInputKind::Struct
-        || !safe_symbol(&result_selector.field)
-        || result_selector.value_source != "profile.resultMap(manifest.projection.results)"
-    {
+    if !safe_symbol(&result_selector.field) {
         return Err("resultSelector 合同无效".to_string());
     }
     let selector = format!("{}.{}", selector_input.alias, result_selector.field);
-    if !facade.result_constraints.iter().any(|constraint| {
-        matches!(
-            constraint,
+    let matches_selector = facade
+        .result_constraints
+        .iter()
+        .any(|constraint| match constraint {
             ResultSelectionRule::OrderedUniqueSelection {
+                selector: target, ..
+            } => {
+                selector_input.kind == FacadeInputKind::Struct
+                    && target == &selector
+                    && result_selector.stage_field.is_none()
+                    && result_selector.value_source
+                        == "profile.resultMap(manifest.projection.results)"
+            }
+            ResultSelectionRule::OrderedStageSelection {
                 selector: target,
+                stage_field,
                 ..
-            } if target == &selector
-        )
-    }) {
+            } => {
+                selector_input.kind == FacadeInputKind::Data
+                    && target == &selector
+                    && result_selector.stage_field.as_deref() == Some(stage_field)
+                    && safe_symbol(stage_field)
+                    && result_selector.value_source == "manifest.study_sequence.results"
+            }
+            _ => false,
+        });
+    if !matches_selector {
         return Err("resultSelector 与目标门面不一致".to_string());
     }
     Ok(CaseProjectionProfile {

@@ -5,9 +5,10 @@ use sha2::{Digest, Sha256};
 use zjudss::db;
 use zjudss::db::repositories::EngineResourceSnapshotRepo;
 use zjudss::engine_resources::{
-    EngineResourceRegistry, ResourceLimits, SUPPORTED_CASE_PROJECTIONS_SCHEMA_VERSION,
-    SUPPORTED_DATAFRAMES_SCHEMA_VERSION, SUPPORTED_DTYPE_GRAMMAR_VERSION,
-    SUPPORTED_FUNCTIONS_SCHEMA_VERSION, SUPPORTED_STUDY_FACADES_SCHEMA_VERSION,
+    EngineResourceRegistry, ResourceLimits, ResultSelectionRule,
+    SUPPORTED_CASE_PROJECTIONS_SCHEMA_VERSION, SUPPORTED_DATAFRAMES_SCHEMA_VERSION,
+    SUPPORTED_DTYPE_GRAMMAR_VERSION, SUPPORTED_FUNCTIONS_SCHEMA_VERSION,
+    SUPPORTED_STUDY_FACADES_SCHEMA_VERSION,
 };
 
 const DATAFRAMES: &[u8] = include_bytes!("fixtures/engine_resources/catalog/dataframes.json");
@@ -154,6 +155,43 @@ fn accepts_paired_presence_as_an_executable_dataframe_rule() {
         snapshot.facades.catalog_entry_count()
     );
     assert!(snapshot.facades.diagnostics().is_empty());
+}
+
+#[test]
+fn accepts_ordered_stage_result_selection_contract() {
+    let fixture = fixture();
+    rewrite_catalog(&fixture, "study_facades.json", |root| {
+        root["facades"][0]["resultConstraints"]
+            .as_array_mut()
+            .unwrap()
+            .insert(
+                0,
+                json!({
+                    "type": "ordered_stage_selection",
+                    "selector": "sequence_request.result",
+                    "minimum": 1,
+                    "bindingCount": "selected_result_count",
+                    "stageField": "study_index"
+                }),
+            );
+    });
+
+    let snapshot = fixture.load();
+    let facade = snapshot
+        .facades
+        .get_enabled("static_power_flow_radial")
+        .expect("facade with ordered stage selection must stay enabled");
+    assert!(matches!(
+        &facade.result_constraints[0],
+        ResultSelectionRule::OrderedStageSelection {
+            selector,
+            minimum: 1,
+            binding_count,
+            stage_field,
+        } if selector == "sequence_request.result"
+            && binding_count == "selected_result_count"
+            && stage_field == "study_index"
+    ));
 }
 
 #[test]

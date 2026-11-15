@@ -726,13 +726,19 @@
       file: backend/tests/engine_resources.rs
       name: supported_manifest_unknown_fields_are_ignored_but_contract_mismatches_are_invalid
     - runner: rust
+      file: backend/src/engine_resources/examples.rs
+      name: schema_three_accepts_only_valid_ordered_study_sequences
+    - runner: rust
+      file: backend/src/engine_resources/examples.rs
+      name: schema_three_preserves_stage_contract_in_the_published_manifest
+    - runner: rust
       file: backend/tests/model_import_adapter.rs
       name: stub_case_projection_preserves_contract_order_and_splits_diagnostics
     - runner: rust
       file: backend/tests/workspace_tools.rs
       name: example_tools_return_manifest_metadata_and_never_physical_paths
-  assertions: [rssbundle directories and invalid leaves remain visible, schema v2 manifest projection metadata and relative paths are readable without physical paths, manifests must exactly match an enabled snapshot projection profile, apply executes only the controlled projector, projector outputs become catalog-driven Model Data or Struct candidates in declared order, diagnostic outputs stay out of candidates, no model or resource is published before confirmation, confirmed case switching atomically replaces the whole model and case resources and activates a deduplicated version, ordinary user resources and history are preserved, stale previews and resource failures preserve the previous case]
-  fixtures: [nested rssbundle categories, valid schema v2 manifest-backed example, disabled and mismatched projection examples, diagnostic projector output, invalid manifest sibling, undeclared bundle file]
+  assertions: [rssbundle directories and invalid leaves remain visible, schema v2 single-study and schema v3 ordered-stage manifest projection metadata and relative paths are readable without physical paths, manifests must exactly match an enabled snapshot projection profile, schema v3 stages and compatible same-target aggregates remain visible, apply executes only the controlled projector, projector outputs become catalog-driven Model Data or Struct candidates in declared order, diagnostic outputs stay out of candidates, no model or resource is published before confirmation, confirmed case switching atomically replaces the whole model and case resources and activates a deduplicated version, ordinary user resources and history are preserved, stale previews and resource failures preserve the previous case]
+  fixtures: [nested rssbundle categories, valid schema v2 manifest-backed example, valid schema v3 ordered-stage manifest, disabled and mismatched projection examples, diagnostic projector output, invalid manifest sibling, undeclared bundle file]
   contracts:
     - "route:GET /api/examples"
     - "route:GET /api/examples/{id}"
@@ -1112,6 +1118,9 @@
       name: publishes_enabled_case_projection_with_ordered_outputs
     - runner: rust
       file: backend/tests/engine_resources.rs
+      name: accepts_ordered_stage_result_selection_contract
+    - runner: rust
+      file: backend/tests/engine_resources.rs
       name: snapshot_hash_includes_case_projection_catalog
     - runner: rust
       file: backend/tests/engine_resources.rs
@@ -1134,7 +1143,7 @@
     - runner: rust
       file: backend/tests/engine_resources.rs
       name: current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count
-  assertions: [catalog versions are validated independently, every valid DataFrame facade is published, case projection schema v2 preserves ordered projector outputs and enabled or disabled diagnostics, invalid entries are isolated with stable diagnostics, transitive executable schemas and projection bytes determine snapshot identity, presentation text does not, one persisted snapshot is current while referenced history remains]
+  assertions: [catalog versions are validated independently, every valid DataFrame facade is published, case projection schema v2 preserves ordered projector outputs and enabled or disabled diagnostics, ordered stage result selectors preserve their minimum count binding and stage field, invalid entries are isolated with stable diagnostics, transitive executable schemas and projection bytes determine snapshot identity, presentation text does not, one persisted snapshot is current while referenced history remains]
   fixtures: [frozen eig-rs catalog, current SPARROWZZ_DIR catalog, temporary V4 database]
   contracts:
     - "error:study_facades_missing"

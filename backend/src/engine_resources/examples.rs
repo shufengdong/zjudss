@@ -12,7 +12,7 @@ use super::projections::{CaseProjectionProfile, CaseProjectionRegistry};
 use super::snapshot::{ResourceLimits, SourceFileSpec};
 use super::tree::{hash_bounded_file_with_size, limit_error, read_bounded_file, safe_file};
 
-const SUPPORTED_BUNDLE_SCHEMA_VERSION: u32 = 2;
+const SUPPORTED_BUNDLE_SCHEMA_VERSIONS: [u32; 2] = [2, 3];
 const SUPPORTED_BUNDLE_ARTIFACT: &str = "mems.dss-rss-bundle";
 
 #[derive(Debug, Clone, Serialize)]
@@ -105,6 +105,29 @@ pub struct ExampleStudy {
     pub compatibility: String,
     pub solver: Option<String>,
     pub results: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stages: Vec<ExampleStudyStage>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub compatibility_aggregates: Vec<ExampleCompatibilityAggregate>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExampleStudyStage {
+    pub index: u32,
+    pub id: String,
+    pub kind: String,
+    pub compatibility: String,
+    pub results: Vec<String>,
+    pub input_state: String,
+    pub output_state: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExampleCompatibilityAggregate {
+    pub name: String,
+    pub sources: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -173,6 +196,28 @@ struct RawStudy {
     solver: Option<String>,
     #[serde(default)]
     results: Vec<String>,
+    #[serde(default)]
+    stages: Vec<RawStudyStage>,
+    #[serde(default)]
+    compatibility_aggregates: Vec<RawCompatibilityAggregate>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawStudyStage {
+    index: u32,
+    id: String,
+    kind: String,
+    compatibility: String,
+    #[serde(default)]
+    results: Vec<String>,
+    input_state: String,
+    output_state: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawCompatibilityAggregate {
+    name: String,
+    sources: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,6 +251,29 @@ impl From<RawManifest> for ExampleManifest {
                 compatibility: raw.study.compatibility,
                 solver: raw.study.solver,
                 results: raw.study.results,
+                stages: raw
+                    .study
+                    .stages
+                    .into_iter()
+                    .map(|stage| ExampleStudyStage {
+                        index: stage.index,
+                        id: stage.id,
+                        kind: stage.kind,
+                        compatibility: stage.compatibility,
+                        results: stage.results,
+                        input_state: stage.input_state,
+                        output_state: stage.output_state,
+                    })
+                    .collect(),
+                compatibility_aggregates: raw
+                    .study
+                    .compatibility_aggregates
+                    .into_iter()
+                    .map(|aggregate| ExampleCompatibilityAggregate {
+                        name: aggregate.name,
+                        sources: aggregate.sources,
+                    })
+                    .collect(),
             },
             source: ExampleSource {
                 entry: raw.source.entry,
@@ -292,13 +360,23 @@ pub(crate) fn load_examples(
                 continue;
             }
         };
-        if raw.schema_version != SUPPORTED_BUNDLE_SCHEMA_VERSION {
+        if !SUPPORTED_BUNDLE_SCHEMA_VERSIONS.contains(&raw.schema_version) {
             examples.push(invalid_example(
                 &bundle_path,
                 id,
                 manifest_source,
                 &bytes,
                 "manifest_schema_unsupported",
+            ));
+            continue;
+        }
+        if !valid_bundle_schema(&raw) {
+            examples.push(invalid_example(
+                &bundle_path,
+                id,
+                manifest_source,
+                &bytes,
+                "manifest_schema_invalid",
             ));
             continue;
         }
@@ -477,6 +555,9 @@ fn projection_matches(manifest: &ExampleManifest, profile: &CaseProjectionProfil
     {
         return false;
     }
+    if manifest.schema_version == 3 {
+        return projection_matches_sequence(manifest, profile);
+    }
     let mut native_sources = HashSet::new();
     if !manifest.study.results.iter().all(|source| {
         native_sources.insert(source.as_str()) && profile.bundle_result_map.contains_key(source)
@@ -495,6 +576,163 @@ fn projection_matches(manifest: &ExampleManifest, profile: &CaseProjectionProfil
         profile.bundle_result_map.get(source) == Some(&result.target)
             && result.binding == format!("result_{source}")
     })
+}
+
+fn projection_matches_sequence(
+    manifest: &ExampleManifest,
+    profile: &CaseProjectionProfile,
+) -> bool {
+    if profile.id != "dss_study_sequence_v1"
+        || manifest.projection.results.len() != manifest.study.results.len()
+    {
+        return false;
+    }
+    manifest.projection.results.iter().all(|result| {
+        sequence_target_name(manifest, &result.source).is_some_and(|name| name == result.target)
+    })
+}
+
+fn valid_bundle_schema(raw: &RawManifest) -> bool {
+    if raw.schema_version == 2 {
+        return raw.study.kind != "study_sequence"
+            && raw.projection.profile != "dss_study_sequence_v1"
+            && raw.study.stages.is_empty()
+            && raw.study.compatibility_aggregates.is_empty();
+    }
+    if raw.schema_version != 3
+        || raw.study.kind != "study_sequence"
+        || raw.study.compatibility != "opendss-native"
+        || raw.projection.profile != "dss_study_sequence_v1"
+        || raw.study.results.is_empty()
+        || !unique_identifiers(&raw.study.results)
+        || raw.study.stages.is_empty()
+    {
+        return false;
+    }
+    let mut stage_ids = HashSet::new();
+    for (index, stage) in raw.study.stages.iter().enumerate() {
+        if stage.index as usize != index
+            || !safe_identifier(&stage.id)
+            || !stage_ids.insert(stage.id.as_str())
+            || !matches!(
+                stage.kind.as_str(),
+                "snapshot" | "direct" | "fault_study" | "harmonic"
+            )
+            || stage.compatibility != "opendss-native"
+            || !unique_identifiers(&stage.results)
+            || stage.input_state.is_empty()
+            || stage.output_state.is_empty()
+        {
+            return false;
+        }
+    }
+    let mut aggregate_names = HashSet::new();
+    for aggregate in &raw.study.compatibility_aggregates {
+        if !safe_identifier(&aggregate.name)
+            || !aggregate_names.insert(aggregate.name.as_str())
+            || aggregate.sources.is_empty()
+            || aggregate
+                .sources
+                .iter()
+                .any(|source| !valid_stage_source(&raw.study.stages, source))
+        {
+            return false;
+        }
+    }
+    if raw.projection.results.len() != raw.study.results.len() {
+        return false;
+    }
+    let mut sources = HashSet::new();
+    let mut bindings = HashSet::new();
+    raw.study
+        .results
+        .iter()
+        .zip(&raw.projection.results)
+        .all(|(public, result)| {
+            safe_identifier(&result.binding)
+                && bindings.insert(result.binding.as_str())
+                && !result.source.is_empty()
+                && sources.insert(result.source.as_str())
+                && if result.source == "study_status" {
+                    result.target == "study_status" && result.binding == "study_status"
+                } else if aggregate_names.contains(result.source.as_str()) {
+                    result.source == *public
+                        && raw_aggregate_target(&raw.study, &result.source)
+                            .is_some_and(|target| target == result.target)
+                } else {
+                    valid_stage_source(&raw.study.stages, &result.source)
+                        && stage_source_result(&result.source)
+                            .is_some_and(|name| name == result.target)
+                }
+        })
+}
+
+fn unique_identifiers(values: &[String]) -> bool {
+    let mut unique = HashSet::new();
+    values
+        .iter()
+        .all(|value| safe_identifier(value) && unique.insert(value.as_str()))
+}
+
+fn safe_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
+}
+
+fn stage_source_result(source: &str) -> Option<&str> {
+    let (index, result) = source.split_once('.')?;
+    index.parse::<usize>().ok()?;
+    safe_identifier(result).then_some(result)
+}
+
+fn valid_stage_source(stages: &[RawStudyStage], source: &str) -> bool {
+    let Some((index, result)) = source.split_once('.') else {
+        return false;
+    };
+    index
+        .parse::<usize>()
+        .ok()
+        .and_then(|index| stages.get(index))
+        .is_some_and(|stage| stage.results.iter().any(|candidate| candidate == result))
+}
+
+fn sequence_target_name<'a>(manifest: &'a ExampleManifest, source: &'a str) -> Option<&'a str> {
+    if source == "study_status" {
+        return Some("study_status");
+    }
+    if let Some(aggregate) = manifest
+        .study
+        .compatibility_aggregates
+        .iter()
+        .find(|aggregate| aggregate.name == source)
+    {
+        return aggregate_target(&aggregate.sources);
+    }
+    let (index, result) = source.split_once('.')?;
+    let stage = manifest.study.stages.get(index.parse::<usize>().ok()?)?;
+    stage
+        .results
+        .iter()
+        .any(|name| name == result)
+        .then_some(result)
+}
+
+fn raw_aggregate_target<'a>(study: &'a RawStudy, name: &str) -> Option<&'a str> {
+    let aggregate = study
+        .compatibility_aggregates
+        .iter()
+        .find(|aggregate| aggregate.name == name)?;
+    aggregate_target(&aggregate.sources)
+}
+
+fn aggregate_target(sources: &[String]) -> Option<&str> {
+    let mut sources = sources.iter();
+    let target = stage_source_result(sources.next()?)?;
+    sources
+        .all(|source| stage_source_result(source) == Some(target))
+        .then_some(target)
 }
 
 fn invalid_example(
@@ -581,4 +819,109 @@ fn example_id(kind: &str, path: &str) -> String {
     let normalized = path.replace('\\', "/").to_ascii_lowercase();
     let hash = hex::encode(Sha256::digest(format!("{kind}:{normalized}").as_bytes()));
     format!("ex_{}", &hash[..26])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sequence_manifest() -> RawManifest {
+        RawManifest {
+            schema_version: 3,
+            artifact: SUPPORTED_BUNDLE_ARTIFACT.into(),
+            generator: "test".into(),
+            psa_contract_version: "test".into(),
+            entry: "main.rss".into(),
+            study: RawStudy {
+                kind: "study_sequence".into(),
+                compatibility: "opendss-native".into(),
+                solver: None,
+                results: vec!["bus_voltage".into()],
+                stages: vec![RawStudyStage {
+                    index: 0,
+                    id: "snapshot".into(),
+                    kind: "snapshot".into(),
+                    compatibility: "opendss-native".into(),
+                    results: vec!["bus_voltage".into()],
+                    input_state: "source".into(),
+                    output_state: "fundamental".into(),
+                }],
+                compatibility_aggregates: vec![],
+            },
+            source: RawSource {
+                entry: "dss/model.dss".into(),
+                root: "dss".into(),
+                tree_sha256: "0".repeat(64),
+            },
+            projection: RawProjection {
+                source_function: "ds_dss_study_sequence".into(),
+                profile: "dss_study_sequence_v1".into(),
+                projector: "project_dss_study_sequence".into(),
+                target_function: "ds_study_sequence".into(),
+                managed_entry: "managed.rss".into(),
+                status: "enabled".into(),
+                stable_diagnostic: "PSA.DSS.PROJECTION.INVALID".into(),
+                results: vec![RawProjectionResult {
+                    source: "0.bus_voltage".into(),
+                    target: "bus_voltage".into(),
+                    binding: "bus_voltage".into(),
+                }],
+            },
+            files: vec![],
+            inputs: Value::Array(vec![]),
+        }
+    }
+
+    #[test]
+    fn schema_three_accepts_only_valid_ordered_study_sequences() {
+        let manifest = sequence_manifest();
+        assert!(valid_bundle_schema(&manifest));
+
+        let mut invalid = sequence_manifest();
+        invalid.study.stages[0].index = 1;
+        assert!(!valid_bundle_schema(&invalid));
+
+        let mut reserved = sequence_manifest();
+        reserved.study.kind = "static_power_flow".into();
+        assert!(!valid_bundle_schema(&reserved));
+
+        let mut legacy_binding = sequence_manifest();
+        legacy_binding.study.results[0] = "voltage".into();
+        legacy_binding.projection.results[0].binding = "result_voltage".into();
+        assert!(valid_bundle_schema(&legacy_binding));
+
+        let mut aggregate = sequence_manifest();
+        aggregate.study.results[0] = "voltage".into();
+        aggregate.study.stages.push(RawStudyStage {
+            index: 1,
+            id: "direct".into(),
+            kind: "direct".into(),
+            compatibility: "opendss-native".into(),
+            results: vec!["bus_voltage".into()],
+            input_state: "fundamental".into(),
+            output_state: "direct".into(),
+        });
+        aggregate.study.compatibility_aggregates = vec![RawCompatibilityAggregate {
+            name: "voltage".into(),
+            sources: vec!["0.bus_voltage".into(), "1.bus_voltage".into()],
+        }];
+        aggregate.projection.results[0] = RawProjectionResult {
+            source: "voltage".into(),
+            target: "bus_voltage".into(),
+            binding: "voltage".into(),
+        };
+        assert!(valid_bundle_schema(&aggregate));
+
+        aggregate.study.stages[1].results[0] = "branch_flow".into();
+        aggregate.study.compatibility_aggregates[0].sources[1] = "1.branch_flow".into();
+        assert!(!valid_bundle_schema(&aggregate));
+    }
+
+    #[test]
+    fn schema_three_preserves_stage_contract_in_the_published_manifest() {
+        let manifest = ExampleManifest::from(sequence_manifest());
+        assert_eq!(manifest.study.stages.len(), 1);
+        assert_eq!(manifest.study.stages[0].id, "snapshot");
+        assert_eq!(manifest.study.stages[0].results, ["bus_voltage"]);
+    }
 }
