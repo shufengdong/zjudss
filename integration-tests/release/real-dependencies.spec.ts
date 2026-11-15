@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import {
   agentTurnCompleted,
+  expectDirectAnalysisTrace,
   expectDomainState,
   expectEngineReleaseEvidence,
   expectToolTrace,
@@ -52,9 +53,19 @@ async function agentBundleEvidence() {
     agentBundleVersion: string
     allowedTools: string[]
   }
+  const skillIndex = JSON.parse(await readFile(join(root, 'skill-index.json'), 'utf8')) as {
+    skills: { id: string; version: string; sha256: string }[]
+  }
+  const resultAnalysis = skillIndex.skills.find(skill => skill.id === 'result-analysis')
+  expect(resultAnalysis).toBeTruthy()
   expect(manifest.allowedTools.length).toBeGreaterThan(0)
   expect(new Set(manifest.allowedTools).size).toBe(manifest.allowedTools.length)
-  return { version: manifest.agentBundleVersion, sha256: hash.digest('hex'), allowedTools: manifest.allowedTools }
+  return {
+    version: manifest.agentBundleVersion,
+    sha256: hash.digest('hex'),
+    allowedTools: manifest.allowedTools,
+    resultAnalysis: resultAnalysis!,
+  }
 }
 
 function parseCsvRecords(text: string): string[][] {
@@ -311,23 +322,34 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
     }
     const sourceRows = await readRows(voltage.id)
     expect(sourceRows).toHaveLength(sourceMetadata.rowCount)
+    const vMagIndex = sourceMetadata.columns.findIndex((column: any) => column.name === 'v_mag')
+    expect(vMagIndex).toBeGreaterThanOrEqual(0)
+    const expectedPhaseRows = sourceRows.reduce((total: number, row: any[]) => {
+      expect(Array.isArray(row[vMagIndex])).toBe(true)
+      return total + row[vMagIndex].length
+    }, 0)
+    expect(expectedPhaseRows).toBeGreaterThan(0)
+    const activeBus = workspace.active.tables.find((table: any) => table.tableName === 'bus')
+    expect(activeBus?.id).toMatch(/^\d+$/)
 
     trace = await sendAndCollect(page, api, sessionId,
-      '分析当前结果中唯一名为 bus_voltage 的 DataFrame：不筛选、不聚合、不改变任何列，请根据实际 schema 生成合法 RSS，派生完整副本并输出为名为 derived 的 DataFrame。',
+      '分析当前 active 模型的 bus 表与当前结果中唯一的 bus_voltage DataFrame：先读取两者实际 schema 和必要样例，并查询当前引擎中 assert_all、explode、join、select 的精确文档；用 bus.id、bus.terminals、bus.voltage_base_v 与结果关联，对完整数据断言电压基准非空且大于 0，严格锁步展开 terminals、v_mag、v_ang，计算每个时刻、母线、相位的标幺电压。完整保留所有源结果分量，不筛选、不截断、不猜测基准，输出名为 phase_voltage_pu，列顺序严格为 time,bus,phase,v_pu。来源和合同明确后直接生成 RSS 并运行分析，不要创建或运行普通仿真脚本。',
       ['run_result_analysis'])
-    expectToolTrace(trace, {
-      requiredTools: ['load_agent_skill', 'run_result_analysis'],
-      gatedTools: { run_result_analysis: ['result-analysis'] },
-    }, allowedTools)
-    report.segments.push(summarizeTrace('result_analysis', trace))
+    expectDirectAnalysisTrace(trace, allowedTools)
+    report.segments.push(summarizeTrace('direct_phase_voltage_analysis', trace))
     const analysisCall = trace.find(entry => entry.toolName === 'run_result_analysis' && entry.status === 'success')!
     expect(typeof analysisCall.args.intent).toBe('string')
     expect((analysisCall.args.intent as string).trim().length).toBeGreaterThan(0)
     expect(typeof analysisCall.args.script).toBe('string')
     expect(analysisCall.args.script).not.toMatch(/\bimport\b/)
-    expect(analysisCall.args.expectedOutputs).toEqual(['derived'])
-    expect(analysisCall.args.inputs).toHaveLength(1)
-    expect(String((analysisCall.args.inputs as any[])[0].datasetId)).toBe(voltage.id)
+    expect(analysisCall.args.expectedOutputs).toEqual(['phase_voltage_pu'])
+    expect(analysisCall.args.inputs).toHaveLength(2)
+    const requestedInputs = analysisCall.args.inputs as any[]
+    const requestedModel = requestedInputs.find(input => input.modelDataframeId !== undefined)
+    const requestedDataset = requestedInputs.find(input => input.datasetId !== undefined)
+    expect(requestedModel).toEqual({ modelDataframeId: Number(activeBus.id), alias: expect.any(String) })
+    expect(requestedDataset).toEqual({ datasetId: Number(voltage.id), alias: expect.any(String) })
+    expect(requestedModel.alias).not.toBe(requestedDataset.alias)
     const analysisIds = [...new Set((await readAllMessages(api, sessionId))
       .map(message => message.analysisRunId).filter(Boolean))]
     expect(analysisIds).toHaveLength(1)
@@ -335,17 +357,44 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
     const analysis = await apiJson(api, `/api/analysis-runs/${analysisId}`)
     expect(analysis.status).toBe('succeeded')
     expect(analysis.intent).toBe(analysisCall.args.intent)
+    expect(analysis.script.content).toBe(analysisCall.args.script)
+    expect(analysis.script.contentHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(analysis.inputs).toHaveLength(2)
+    expect(analysis.inputs.map((input: any) => input.ordinal)).toEqual([0, 1])
+    expect(analysis.inputs.find((input: any) => input.sourceKind === 'active_model')).toMatchObject({
+      sourceKind: 'active_model',
+      modelVersionId: versionId,
+      modelDataframeId: String(activeBus.id),
+      sourceName: 'bus',
+    })
+    expect(analysis.inputs.find((input: any) => input.sourceKind === 'dataset')).toMatchObject({
+      sourceKind: 'dataset',
+      datasetId: voltage.id,
+      sourceName: 'bus_voltage',
+    })
     expect(analysis.datasets).toHaveLength(1)
     const derived = analysis.datasets[0]
-    expect(derived.name).toBe('derived')
-    expect(derived.columns).toEqual(sourceMetadata.columns)
-    expect(derived.rowCount).toBe(sourceMetadata.rowCount)
-    // Output lineage is the public projection of the persisted frozen inputs.
-    expect(derived.lineage).toHaveLength(1)
-    expect(derived.lineage[0].sourceDatasetId).toBe(voltage.id)
-    expect(derived.lineage[0].schemaHash).toBe(sourceMetadata.schemaHash)
-    expect(derived.lineage[0].deleted).toBe(false)
-    expect(await readRows(derived.id)).toEqual(sourceRows)
+    expect(derived.name).toBe('phase_voltage_pu')
+    expect(derived.columns.map((column: any) => column.name)).toEqual(['time', 'bus', 'phase', 'v_pu'])
+    expect(derived.rowCount).toBe(expectedPhaseRows)
+    expect(derived.lineage).toHaveLength(2)
+    expect(derived.lineage.find((input: any) => input.sourceKind === 'active_model')).toMatchObject({
+      sourceKind: 'active_model', sourceDatasetId: null, sourceResourceId: null,
+      modelVersionId: versionId, modelDataframeId: String(activeBus.id), deleted: false,
+    })
+    expect(derived.lineage.find((input: any) => input.sourceKind === 'dataset')).toMatchObject({
+      sourceKind: 'dataset', sourceDatasetId: voltage.id, sourceResourceId: null,
+      modelVersionId: null, modelDataframeId: null, schemaHash: sourceMetadata.schemaHash, deleted: false,
+    })
+    const derivedRows = await readRows(derived.id)
+    expect(derivedRows).toHaveLength(expectedPhaseRows)
+    for (const row of derivedRows) {
+      expect(row).toHaveLength(4)
+      expect(row[0]).not.toBeNull()
+      expect(String(row[1]).length).toBeGreaterThan(0)
+      expect(String(row[2]).length).toBeGreaterThan(0)
+      expect(Number.isFinite(Number(row[3]))).toBe(true)
+    }
 
     trace = await sendAndCollect(page, api, sessionId,
       `加载 comparison 技能，比较基准运行 ID ${baseline.id} 与候选运行 ID ${candidate.id}，并保存比较结果。`,
@@ -362,10 +411,13 @@ async function runJourney(browser: Browser, baseURL: string, report: AttemptRepo
     const restoredAnalysis = await apiJson(api, `/api/analysis-runs/${analysisId}`)
     expect(restoredAnalysis.status).toBe('succeeded')
     const restoredDerived = await apiJson(api, `/api/datasets/${derived.id}`)
-    expect(restoredDerived.lineage).toHaveLength(1)
-    expect(restoredDerived.lineage[0].deleted).toBe(true)
-    expect(restoredDerived.lineage[0].tombstone.datasetId).toBe(voltage.id)
-    expect(await readRows(derived.id)).toEqual(sourceRows)
+    expect(restoredDerived.lineage).toHaveLength(2)
+    const restoredModelInput = restoredDerived.lineage.find((input: any) => input.sourceKind === 'active_model')
+    const restoredDatasetInput = restoredDerived.lineage.find((input: any) => input.sourceKind === 'dataset')
+    expect(restoredModelInput.deleted).toBe(false)
+    expect(restoredDatasetInput.deleted).toBe(true)
+    expect(restoredDatasetInput.tombstone.datasetId).toBe(voltage.id)
+    expect(await readRows(derived.id)).toEqual(derivedRows)
     expect((await api.get(`/api/runs/${baseline.id}`)).status()).toBe(200)
 
     const finalState = await expectDomainState(api, {
@@ -430,11 +482,13 @@ test('real DeepSeek and tensoreval complete the V4 semantic release journey', as
     const llm = resolveLlmEvidence(process.env)
     await writeFile(reportPath, JSON.stringify({
       schemaVersion: 1,
-      testIds: ['ENGINE-RELEASE-001', 'REAL-RELEASE-001', 'AGENT-STUDY-PLANNING-001'],
+      testIds: ['ENGINE-RELEASE-001', 'REAL-RELEASE-001', 'AGENT-STUDY-PLANNING-001', 'AGENT-DIRECT-ANALYSIS-001'],
       provider: llm.provider,
       model: llm.model,
       agentBundleVersion: agentBundle.version,
       agentBundleSha256: agentBundle.sha256,
+      resultAnalysisSkillVersion: agentBundle.resultAnalysis.version,
+      resultAnalysisSkillSha256: agentBundle.resultAnalysis.sha256,
       userSeedSha256: seed.sha256,
       userCount: seed.userCount,
       engineContract: engineReport?.engineContract ?? null,

@@ -24,7 +24,7 @@
 | Task 10：脚本生成、执行与自动修正 | complete | RSS 必需语法章节优先注入 generation/repair、结构合同强制多结果方括号解构、冻结输入树、共享调度与会话取消、tensoreval 立即执行、3 次修正/4 次执行上限、原样修复只审计不重跑、64 KiB 脱敏 stdout/stderr、带日志引用的结构化失败分析、精确结果合同、独占原子结果发布与崩溃孤儿回收 |
 | Task 11：脚本重跑、失败重试与运行删除 | complete | 最新所需输入冻结、用户/selector overlay 按显式 replacement 血缘跨 retry/rerun 重建、source-less 与旧 snapshot 兼容、开放/精确结果合同、派生 retry workflow、输入差异确认、普通 run 持久失败日志/智能分析、run/result 原子 tombstone、artifact 引用释放 |
 | Task 7：durable 消息、历史锚定与会话删除 | complete | 3 种 revisioned 操作卡、`messageId:revision` SSE、连续 around window、影响 token 删除与统一取消 |
-| Task 8：V4 Agent bundle 与受控工具 | complete | `v4.4.0`、5 个按需 skills（`study-planning@1.5.0`、`result-analysis@1.2.1`）、23 个对话工具；每轮注入有界当前结果元数据，唯一匹配后可执行自然语言派生分析；研究配置包含模型生成的详细说明和服务端权威页脚；明确自然语言可发布精确草稿并自动激活，也可按当前卡片精确 revision 修改结果；无聊天脚本创建、图表创建、自动确认或旧规划权限 |
+| Task 8：V4 Agent bundle 与受控工具 | complete | `v4.5.0`、5 个按需 skills（`study-planning@1.5.0`、`result-analysis@1.3.0`）、24 个对话工具；对话 Agent 可按需读取 active 模型、当前结果和本地 DataFrame 后直接生成受控 RSS，最多四次分析调用、12 轮对话；无聊天普通脚本创建、图表创建、自动确认或旧规划权限 |
 | Task 12：统一上传与数据文件工作台 | complete | 旧模型导入前端已移除、durable batch 摘要恢复、用途/隐藏 sheet/双子事务确认；案例完整卡归入模型工作区，普通上传完整卡归入数据文件页；资源分页预览/下载/删除/replacement、模型版本描述 |
 | Task 13：研究确认与受管执行前端 | complete | 对话内上传摘要与可按配置记忆收起状态的研究配置卡、只呈现待处理输入、参数模板只读与运行覆盖提示、server-owned selector 隐藏、错误自动展开、目录类型参数、revision stale 刷新、attempt/取消/失败重试、精确脚本定位、run 删除影响确认 |
 | Task 14：确定性全链路测试与功能追溯 | complete | 32 条 Playwright 旅程；当前门禁定义 352 项功能证据与 299 个公共合同，运行证据状态见下方验证记录 |
@@ -47,16 +47,16 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
 | 草稿与版本 | complete | expected revision、整表覆盖、显式发布/激活、影响预览删除 |
 | 案例库 | complete | schema v2 manifest 与 projection profile 严格匹配；2026-11-06 当前候选 150/150 案例通过受控 projector 转成目录声明的 Model/Data/Struct 候选，diagnostic 不进入输入；原生结果允许包含未进入受管有序子集的附加结果 |
 | 脚本与运行 | complete | 受管 Agent 脚本已实现候选持久化、直接执行、自动修正和冻结结果合同；所有生产 tensoreval 调用默认运行到完成，普通运行与工作流可由用户取消并终止进程组；两者共用脱敏日志/失败分析器，失败进度卡可恢复展示诊断；成功脚本单次运行读取最新所需输入，失败脚本可比较输入后派生“重新尝试”，手写/上传脚本开放结果合同且不修正；终态 run 支持影响预览和原子删除 |
-| 结果与派生 | complete | 单结果删除、分析、用户配置图表、比较、tombstone 血缘；图表冻结来源快照与自己的 Plot Data，来源删除后仍可发现和读取 |
+| 结果与派生 | complete | 单结果删除、active 模型/结果/本地数据混合分析、完整 RSS 与冻结输入详情、用户配置图表、比较和 tombstone 血缘；跨 active 版本结果失败关闭，图表冻结来源快照与自己的 Plot Data |
 | 前端 | complete | 三列/窄屏、模型详细说明先于研究配置卡、配置卡按浏览器会话记忆收起状态且错误自动展开、Struct 参数显示只读模板身份与本次运行覆盖、运行摘要与失败原因/耗时/全结果选择、排队/运行中取消入口及中性“已取消”终态、普通运行与研究工作流共用失败诊断面板、成功研究的脚本/运行结果成果归组与脚本锚定、pending-only 轮询、结果数据表、用户配置图表工作台、active/draft/历史模型表只读工作台、登录用户菜单 |
-| Agent bundle | complete | V4 `v4.4.0`、`study-planning@1.5.0`、23 个受控工具；DeepSeek/百炼 provider；`publish_model_version` 只响应明确发布意图并发布精确草稿 revision；`search_study_facades`/`prepare_study` 要求模型详细说明，并以服务端权威页脚先于配置卡完成准备；`update_study_results` 只修改当前未确认卡片结果，对话 Agent 无通用脚本、图表创建或最终确认权限 |
+| Agent bundle | complete | V4 `v4.5.0`、`study-planning@1.5.0`、`result-analysis@1.3.0`、24 个受控工具；DeepSeek/百炼 provider；结果分析可读取有界实际数据并直接生成 RSS，普通仿真脚本仍由隔离 ScriptAuthor/固定入口管理；发布、研究结果修改与最终确认权限保持原边界 |
 | 发布门禁 | complete | deterministic Rust/Vitest/build/Playwright/coverage；真实 eig-rs/tensoreval 与所选 LLM provider 候选门禁 |
 
 ## Runtime contracts
 
 - 后端 Cargo package 与 library crate 均为 `zjudss`；`backend/` 只是仓库目录名，Rust 调用点使用
   `zjudss::`。
-- Agent bundle：`v4.4.0`，目录 `backend/resources/agent/v4`；研究规划 skill 为 `study-planning@1.5.0`，结果分析 skill 为 `result-analysis@1.2.1`。
+- Agent bundle：`v4.5.0`，目录 `backend/resources/agent/v4`；研究规划 skill 为 `study-planning@1.5.0`，结果分析 skill 为 `result-analysis@1.3.0`。
 - LLM provider：缺省为 DeepSeek；也可通过 `LLM_PROVIDER=bailian`、显式模型、同地域 API Key 和 OpenAI-compatible endpoint 使用百炼。两者共用同一 Agent、工具和 ScriptAuthor 合同。
 - Engine contract：`tensoreval-parquet-v3`；每次启动从当前 `SPARROWZZ_DIR` 动态发现并验证
   `dss/docs/catalog`（含 case projection schema v2）与 `dss/rssbundle` manifest schema v2，按实际读取字节计算不可变 snapshot 并发布到 DATA_DIR。
@@ -65,7 +65,7 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
   普通文件和路径边界；默认单文件上限为 2 GiB、单次执行全部结果上限为 8 GiB，超限结果不会截断或部分发布。实际失败、
   结果监控/安全拒绝或调用 future 被取消时会终止整个进程组并清理未发布目录。
   普通运行与受管工作流提供用户取消；导入、案例投影和派生分析没有用户取消入口，只会因完成、实际失败、结果安全拒绝或服务停止结束。
-- 公共合同：82 条唯一 method/path 路由、12 类消息、23 个工具、5 个 skills、8 个上传来源、6 类图表。
+- 公共合同：82 条唯一 method/path 路由、12 类消息、24 个工具、5 个 skills、8 个上传来源、6 类图表。
 - 静态 DSS adapter profile 固定输出 21 张规范 DataFrame；统一上传把其中 20 张网络表作为模型候选，把 `para`
   作为普通 Data resource 候选。其他模型表完全由当前 engine snapshot 的有效 model schema 和实际表头推断。
 - 研究配置：`search_study_facades` 按当前 snapshot 返回目录门面、方法差异和禁用诊断，显式函数不会被拓扑改写；
@@ -85,7 +85,11 @@ V4 已直接替换未上线的旧版本。当前产品合同是模型版本、�
   64 KiB 的稳定 ID/schema 元数据；每个 dataset 最多 32 列、文本最多 256 个 Unicode 字符且显式标记裁剪。唯一匹配时
   默认只冻结一个 dataset，歧义或影响判断的裁剪必须查询/询问；显式多输入合同保持不变。纯图表请求仍进入结果工作台，
   筛选、聚合、越限和其他派生请求进入 `run_result_analysis`。该工具的审计 `intent` 使用 1 到 1000 字符的直接字符串，
-  与 RSS `script`、稳定输入和预期输出合同分离，避免 provider 生成无属性对象或裸文本造成参数解析循环。
+  与 RSS `script`、稳定输入和预期输出合同分离。`read_result_dataset` 只读最多 100 行/32 列；active 模型只接受当前
+  `modelDataframeId`，与 dataset 混用时 dataset 必须唯一归属于同一 active 版本。Agent 对完整数据使用 `assert_all`，
+  对 List 列使用失败关闭的严格锁步 `explode`；每条用户消息最多四次 `run_result_analysis` 调用（含预检失败），第五次返回
+  `analysis_repair_budget_exhausted`，对话总轮次为 12。分析详情返回实际冻结 RSS、hash、engine snapshot 和按 ordinal 排列的
+  三类输入，不重新读取 live 来源。
 
 ## Backend dependency baseline
 
@@ -240,7 +244,7 @@ DataFrame 命名输入的 `managed.rss`，当前为 6 个代表。当前 profile
 
 ## Reset and operation
 
-`init_users.csv` 是编译输入，密码初始等于 ID。CSV 字节变化或从 v4.4.0 之前的开发 schema 切换后启动会返回或要求
+`init_users.csv` 是编译输入，密码初始等于 ID。CSV 字节变化或从 v4.5.0 之前的开发 schema 切换后启动会返回或要求
 空库重建；必须同时重置 SQLite 与 `DATA_DIR`，不能复用其中任一侧。公网可访问配置见
 `docs/v4-deployment.md`，当前用户密码策略是已接受的试用风险。
 

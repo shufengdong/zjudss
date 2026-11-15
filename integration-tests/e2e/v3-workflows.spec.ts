@@ -303,7 +303,7 @@ test('analysis and comparisons survive source-result deletion with tombstone lin
   await control.enqueueLlm({ id: 'v3-analysis', expectedPrompt: '分析并物化结果', turns: [
     { kind: 'tool_call', call_id: 'analysis-skill', name: 'load_agent_skill', args: { skill_id: 'result-analysis' } },
     { kind: 'tool_call', call_id: 'analysis', name: 'run_result_analysis', args: {
-      intent: { goal: 'derive' }, script: 'derived = source', inputs: [{ datasetId: Number(source.id), alias: 'source' }], expectedOutputs: ['derived'],
+      intent: 'derive and persist a result dataframe', script: 'derived = limit(1, source);', inputs: [{ datasetId: Number(source.id), alias: 'source' }], expectedOutputs: ['derived'],
     } },
     { kind: 'text', text: '派生结果已保存' },
   ] })

@@ -232,6 +232,34 @@ export function expectToolTrace(
   invariant(!unrecovered, `tool ${unrecovered?.toolName ?? 'unknown'} failed without recovery`)
 }
 
+export function expectDirectAnalysisTrace(
+  trace: ToolTraceEntry[],
+  runtimeAllowedTools: readonly string[],
+) {
+  const directTools = [
+    'load_agent_skill',
+    'inspect_workspace',
+    'read_model_dataframe',
+    'read_result_dataset',
+    'search_engine_docs',
+    'read_engine_doc_section',
+    'run_result_analysis',
+  ]
+  expectToolTrace(trace, {
+    requiredTools: directTools,
+    allowedTools: directTools,
+    gatedTools: { run_result_analysis: ['result-analysis'] },
+  }, runtimeAllowedTools)
+  invariant(!trace.some(call => call.toolName === 'load_agent_skill'
+    && call.args.skill_id !== 'result-analysis'), 'direct analysis loaded an unrelated skill')
+  const forbidden = new Set([
+    'modify_model', 'publish_model_version', 'prepare_study', 'update_study_results',
+    'create_script', 'update_script', 'run_script', 'run_simulation',
+  ])
+  invariant(!trace.some(call => forbidden.has(call.toolName)),
+    'direct analysis invoked a modification, publication, study-confirmation, script, or run tool')
+}
+
 async function json(api: SemanticApiContext, path: string) {
   const response = await api.get(path)
   invariant(response.ok(), `${path} returned ${response.status()}`)

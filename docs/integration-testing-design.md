@@ -112,10 +112,15 @@ RUN-001 在 Rust 层验证创建、重放、列表和详情都返回绑定脚本
 `currentResultContext` 只提供有界稳定元数据、Agent 加载 `result-analysis`、实际调用 `run_result_analysis`，且数据库只冻结
 选中的一个 dataset ID；两个名称/列均可能匹配的结果则只要求选择，不产生分析记录。另一个场景证明较新的 running、failed
 和 succeeded-but-empty 运行不会遮蔽最近可用成功结果。上下文构造单元测试覆盖 64 KiB 总预算、32 列、256 字符与显式裁剪标志；
-Agent bundle/tool 合同测试锁定 `result-analysis@1.2.1`、23 个工具、不变的显式多输入参数，以及 1 到 1000 字符的
-审计 `intent` 字符串；对象、空白和超长 intent 在分析写入前失败关闭。
-唯一结果 scripted 场景请求复制指定列，不声称模拟引擎验证了阈值筛选语义；真实依赖旅程通过 trace 与输出血缘确认恰好冻结当前候选运行的
-`bus_voltage`，并逐页比较派生副本的全部行及 schema，删除同一来源后再验证 tombstone 血缘与派生数据可读。
+Agent bundle/tool 合同测试锁定 `result-analysis@1.3.0`、24 个工具、三类互斥稳定来源、1 到 1000 字符审计 `intent`、
+四次 service 调用预算和 12 轮聊天上限；对象、空白和超长 intent 在分析写入前失败关闭。工具行为测试覆盖
+`read_result_dataset` 的 100 行/32 列/cursor 投影、active-only 模型读取、跨版本 `analysis_model_origin_mismatch`、
+`dataset_read_failed` 和第五次 `analysis_repair_budget_exhausted`。
+确定性 Playwright 使用 active `bus` 与同版本 `bus_voltage` 创建混合分析，打开结果并在刷新后恢复只读脚本/输入；切换 active
+版本后再次提交旧结果必须失败且不创建分析 run。真实依赖旅程要求 Agent 读取两类实际 schema、按需查询函数文档、直接生成
+含全量 `assert_all` 与严格锁步 `explode` 的 RSS；trace 不得加载 `model-intake` 或调用修改、发布、研究确认、普通脚本/运行工具。
+门禁逐页验证 `time,bus,phase,v_pu`、有限数值、由源 List 长度推导的完整行数、冻结脚本和精确两类血缘，删除结果来源后再验证
+tombstone 与派生数据可读。
 补充 scripted 场景覆盖不同用户/会话的较新结果不可见、最近 20 条的精确边界、全部来源删除后的 `null`，以及损坏持久化 schema
 触发 lookup error 后仍注入 `null` 并完成 Agent 回答。预算测试包含最终裁剪标志从 `true` 转为 `false` 的 65,536 字节边界。
 研究结果选择同时覆盖两个入口：Vitest 验证 `ready_to_confirm` 状态下结果编辑器与最终确认按钮共存并使用当前 revision；

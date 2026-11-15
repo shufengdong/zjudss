@@ -8,7 +8,7 @@
 V4 不迁移或兼容任何旧数据库。切换前停止服务，备份后同时移走旧 SQLite 文件和整个 `DATA_DIR`，再从空目录
 执行唯一 initial migration；只删除其中一项会留下无法解释的 artifact 或元数据，禁止启动。确认新版本稳定前保留备份，
 但不能把旧库或旧 artifact 混入 V4 目录。`backend/resources/init_users.csv` 必须为 `ID,NAME`；初始密码等于 ID。
-种子 SHA-256 变化会让已有库启动失败，此时也必须再次同时重置数据库和 `DATA_DIR`。v4.4.0 的用户配置图表工作台改变
+种子 SHA-256 变化会让已有库启动失败，此时也必须再次同时重置数据库和 `DATA_DIR`。v4.5.0 的直接结果分析合同改变
 唯一 initial schema；从更早的开发库切换时同样必须执行这套空库重置，不能只替换二进制或只清空其中一侧。
 
 ## Required configuration
@@ -32,7 +32,7 @@ publish。binary capability 与资源目录合同分别失败关闭；资源 loa
 | `DATABASE_URL` | `sqlite://backend.db` |
 | `DATA_DIR` | `data` |
 | `LLM_PROVIDER` / `LLM_MODEL` | `deepseek` / `deepseek-v4-pro` |
-| `AGENT_BUNDLE_VERSION` | `v4.4.0` |
+| `AGENT_BUNDLE_VERSION` | `v4.5.0` |
 | `SESSION_TTL_DAYS` / `SESSION_COOKIE_SECURE` | `30` / `false` |
 | `AGENT_MAX_CONCURRENT_RUNS` / `AGENT_MAX_USER_RUNS` / `AGENT_QUEUE_CAPACITY` | `8` / `2` / `32` |
 | `AGENT_MODEL_RETRY_MAX` | `2` |
@@ -211,10 +211,12 @@ eig-rs 默认 features 代替这组显式合同。Cargo 参数的正式拼写是
 
 真实旅程从固定用户登录开始，上传 21 个静态导入 DataFrame 并确认拆分为 20 张模型表和一个 `para` 普通资源，
 通过明确自然语言让 Agent 发布精确草稿并自动激活，让对话 Agent 通过动态目录建立研究配置，用户确认后由 ScriptAuthor 生成、执行并在需要时修正脚本；
-成功后再次点击脚本“运行”，对 list 型 `bus_voltage` 做真实 `select` 结果分析，并用带稳定键和标量数值列的
+成功后再次点击脚本“运行”，让真实对话 Agent 读取 active `bus` 和 list 型 `bus_voltage`，按当前引擎文档使用
+`assert_all` 与严格锁步 `explode` 生成 `time,bus,phase,v_pu` 的逐相标幺结果；门禁逐页读取全部派生行，校验完整行数、有限值、
+精确 active-model/dataset 血缘和冻结脚本。随后用带稳定键和标量数值列的
 `load_state` 验证运行比较，再删除一个来源结果并验证运行及物化派生仍可读取。引擎门禁
 另外真实执行两种 import profile、命名 input、多个 Snappy Parquet 输出和失败诊断。报告保存测试 ID、Agent
-bundle hash、用户 seed hash/数量、engine contract/checks 和 binary hash，不保存用户 ID、密码、Cookie、secret
+bundle hash、`result-analysis@1.3.0` 版本/hash、用户 seed hash/数量、engine contract/checks 和 binary hash，不保存用户 ID、密码、Cookie、secret
 或物理路径；同时记录动态 `engineResourceSnapshot`、rssbundle 发现/manifest 有效/受管研究可导入/不可导入数量、
 发现的 study 类型、案例函数到门面的覆盖及代表运行。报告中的 `projectedExamples` 必须等于可导入和发现的 bundle 数，
 `projectionFailures` 必须为零，`caseProjections` 必须为每个稳定案例 ID 保存唯一的 Model/Data/Struct/diagnostic 数量摘要；

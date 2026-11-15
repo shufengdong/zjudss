@@ -763,10 +763,10 @@
       name: agent_history_uses_the_latest_owned_mutable_configuration
     - runner: rust
       file: backend/tests/scripted_agent.rs
-      name: natural_language_analysis_uses_the_unique_current_result_dataset
+      name: direct_analysis_uses_the_unique_current_result_without_model_intake_or_question
     - runner: rust
       file: backend/tests/scripted_agent.rs
-      name: ambiguous_current_results_require_selection_without_analysis
+      name: direct_analysis_asks_one_necessary_question_for_ambiguous_results
     - runner: rust
       file: backend/tests/scripted_agent.rs
       name: current_result_context_is_scoped_to_owner_and_session
@@ -1419,25 +1419,59 @@
 
 - id: ANALYSIS-001
   source: docs/integration-testing-design.md#coverage-matrix
-  title: Analysis consumes dataset snapshots and publishes immutable outputs
-  layers: [api, application, adapter]
-  lanes: [pr]
+  title: Conversational analysis authors RSS from bounded active-model and result snapshots
+  layers: [database, api, application, adapter, agent, browser]
+  lanes: [pr, release]
   tests:
+    - runner: playwright
+      file: integration-tests/e2e/resilience.spec.ts
+      name: analysis details and committed results survive restart while cross-version input is rejected
     - runner: playwright
       file: integration-tests/e2e/v3-workflows.spec.ts
       name: analysis and comparisons survive source-result deletion with tombstone lineage
     - runner: rust
       file: backend/tests/scripted_agent.rs
-      name: natural_language_analysis_uses_the_unique_current_result_dataset
+      name: direct_analysis_uses_the_unique_current_result_without_model_intake_or_question
     - runner: rust
       file: backend/tests/scripted_agent.rs
-      name: ambiguous_current_results_require_selection_without_analysis
-  assertions: [analysis is readable after source deletion, lineage retains tombstones, bounded string intent is stored as audit metadata without controlling execution, bounded current-result metadata freezes only the uniquely selected dataset as the default analysis input, ambiguous candidates produce no analysis write, explicit multi-input analysis remains supported by the unchanged input contract]
-  fixtures: [completed run, scripted analysis, unique bus_voltage result, two plausible voltage results]
+      name: direct_analysis_asks_one_necessary_question_for_ambiguous_results
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: direct_analysis_loads_exact_docs_only_when_needed_and_repairs_once
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: direct_analysis_stops_on_nonrepairable_failure
+    - runner: rust
+      file: backend/tests/scripted_agent.rs
+      name: direct_analysis_reports_budget_exhaustion_without_a_fifth_engine_call
+    - runner: rust
+      file: backend/tests/tool_manifest.rs
+      name: run_result_analysis_accepts_bounded_sources_and_freezes_mixed_input_snapshots
+    - runner: rust
+      file: backend/tests/tool_manifest.rs
+      name: read_result_dataset_is_bounded_projected_paginated_and_session_scoped
+    - runner: rust
+      file: backend/tests/tool_manifest.rs
+      name: analysis_repair_budget_allows_four_service_calls_and_rejects_the_fifth
+    - runner: rust
+      file: backend/tests/analysis_api.rs
+      name: analysis_details_return_immutable_script_and_ordered_three_source_snapshots
+    - runner: release
+      file: scripts/test-release-integration
+      name: real LLM provider and tensoreval complete the V4 semantic release journey
+  assertions: [the v4.5.0 conversational Agent loads result-analysis 1.3.0 and directly authors strict RSS without model-intake or ordinary script authority, read_result_dataset exposes only owned bounded 100-row 32-column cursor projections, active model reads accept only the exact active dataframe and mixed result inputs require the same unique model origin, full-data assert_all and strict nonempty lockstep explode fail closed, each user request permits four analysis service calls within twelve Agent turns and rejects the fifth, analysis details add immutable script hash engine snapshot and ordered discriminated input snapshots without exposing paths, refresh restores the read-only details while cross-version failure creates no analysis run, the real release journey pages every time bus phase v_pu row and verifies finite values complete source-derived row count and exact two-source lineage, source deletion retains tombstone lineage and the materialized output]
+  fixtures: [active bus model table, same-version list-valued bus_voltage result, cross-version result, scripted repairable and nonrepairable failures, real eig-rs phase voltage analysis]
   contracts:
     - "route:GET /api/analysis-runs/{id}"
+    - "tool:read_result_dataset"
     - "tool:run_result_analysis"
+    - "error:analysis_function_forbidden"
     - "error:analysis_intent_invalid"
+    - "error:analysis_model_origin_mismatch"
+    - "error:analysis_repair_budget_exhausted"
+    - "error:analysis_result_contract_invalid"
+    - "error:analysis_script_invalid"
+    - "error:dataset_read_failed"
 
 - id: VIEW-001
   source: docs/integration-testing-design.md#coverage-matrix
@@ -1575,8 +1609,8 @@
       name: a blocked managed workflow can be cancelled, recovered after refresh, and remains user scoped
     - runner: playwright
       file: integration-tests/e2e/resilience.spec.ts
-      name: committed sessions and results survive restart while a running script converges and FTS fails locally
-  assertions: [committed resources survive restart, local search failure does not corrupt other reads]
+      name: analysis details and committed results survive restart while cross-version input is rejected
+  assertions: [committed resources and immutable analysis details survive restart, local search failure does not corrupt other reads]
   fixtures: [restartable E2E server]
 
 - id: ENGINE-001
@@ -1624,7 +1658,7 @@
     - runner: release
       file: scripts/test-release-engine
       name: real_engine_projects_all_examples_and_runs_representative_studies
-  assertions: [process commands are controlled, stdout and stderr are drained with bounded retained bytes and full hashes, production execution remains pending without a wall-clock deadline, future cancellation and monitor failures terminate the process group, result limits and path safety are enforced during execution and after exit without partial datasets, test watchdogs remain outside production engine specs, case projectors use one-shot internal scripts and exact ordered Parquet output contracts, current resources are published immutably, binary replacement takes effect on the next call, release gate executes the real projector for every published manifest case and validates its Model Data Struct and diagnostic outputs, then runs managed.rss for one successful representative of every referenced profile]
+  assertions: [process commands are controlled, stdout and stderr are drained with bounded retained bytes and full hashes, production execution remains pending without a wall-clock deadline, future cancellation and monitor failures terminate the process group, the unchanged result limits enforce 2 GiB per file and 8 GiB total plus path safety during execution and after exit without partial datasets, test watchdogs remain outside production engine specs, case projectors use one-shot internal scripts and exact ordered Parquet output contracts, current resources are published immutably, binary replacement takes effect on the next call, release gate executes the real projector for every published manifest case and validates its Model Data Struct and diagnostic outputs, then runs managed.rss for one successful representative of every referenced profile]
   fixtures: [fake process engine, dynamic rssbundle resource tree, current real eig-rs rssbundle catalog]
   contracts:
     - "tool:search_engine_docs"

@@ -2,12 +2,12 @@
 
 ## Bundle
 
-生产 bundle 位于 `backend/resources/agent/v4/`，版本 `v4.4.0`。manifest 固定 system prompt、skill index、
+生产 bundle 位于 `backend/resources/agent/v4/`，版本 `v4.5.0`。manifest 固定 system prompt、skill index、
 engine contract、允许工具和文件 SHA-256；启动时完整验证。Agent prompt 只常驻策略，不常驻整套引擎文档。
 
 ## Skills
 
-按需 skill 为 `model-intake`、`study-planning@1.5.0`、`result-analysis@1.2.1`、`comparison` 和
+按需 skill 为 `model-intake`、`study-planning@1.5.0`、`result-analysis@1.3.0`、`comparison` 和
 `troubleshooting`。结果分析和比较要求先加载对应 skill；实际引用保存在资源/运行/
 分析快照中。
 
@@ -16,6 +16,11 @@ schema 使用 `select(col(...), source)`，不能生成 `derived = source` 这�
 schema 再执行分析时，Agent 必须在读取后继续调用 `run_result_analysis`，不能只汇报 schema 后结束本轮。工具的
 `intent` 是去除首尾空白后 1 到 1000 个 Unicode 字符的审计说明字符串，不参与脚本执行；空白或越限返回
 `analysis_intent_invalid`，不会创建分析记录。skill 提供完整 JSON/RSS 参数示例并禁止 Python import。
+
+对话 Agent 是结果分析 RSS 的直接作者。它只按需调用 `read_result_dataset`（最多 100 行/32 列）、
+`read_model_dataframe(scope=active)` 或 `read_data_resource` 理解实际列、List 分量、单位和稳定键；非基本函数或签名不确定时
+再查询并读取精确引擎文档。依赖完整数据条件时先用 `assert_all`，展开一个或多个 List/Array 列时用严格非空、等长、锁步的
+`explode`，不能靠过滤、默认值或截断掩盖异常。active 模型与 dataset 混用必须来自同一精确模型版本。
 
 每轮对话还注入服务端生成的 `currentResultContext`。服务只在当前用户、当前会话最近 20 条运行中选择最新的
 `succeeded` 且仍有存活 dataset 的运行；摘要只含稳定 dataset ID、名称、行数、大小、schema hash 与持久化列元数据，
@@ -30,13 +35,14 @@ Agent 不得声称图表支持合同中不存在的阈值线或点标记。
 
 ## Tool authority
 
-当前运行时允许工具共 23 个：
+当前运行时允许工具共 24 个：
 
 ```text
 inspect_workspace       read_model_dataframe     search_study_facades
 prepare_study           update_study_results     search_examples
 inspect_example
 modify_model            publish_model_version    list_result_datasets
+read_result_dataset
 run_result_analysis     compare_simulations
 list_simulation_history search_chat_history      read_chat_context
 get_storage_usage       load_agent_skill         search_engine_docs
@@ -44,6 +50,10 @@ read_engine_doc_section
 list_data_resources     read_data_resource       update_data_resource_alias
 promote_result_dataset
 ```
+
+每个用户请求共享一个分析调用计数器：首次执行和可修正重试合计最多四次，预检失败也消耗预算，第五次稳定返回
+`analysis_repair_budget_exhausted`。聊天循环 `MAX_TURNS=12`，只为容纳 skill、来源/文档读取和最多四次完整修正；轮次上限不能
+绕过分析预算。`analysis_model_origin_mismatch`、`dataset_read_failed` 等非可修正来源/读取错误立即停止自动重试。
 
 `backend/resources/agent/v4/manifest.json` 的 `allowedTools` 是工具暴露集合与注册顺序的唯一权威来源。服务先校验
 bundle version、system/skill hash、skill requiredTools、工具名非空且唯一，再把 manifest 与 Rust 私有实现 catalog

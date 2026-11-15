@@ -97,7 +97,7 @@ application 调用与响应语义，但不替代路由注册表。公共错误�
 | GET | `/api/datasets/{id}/chart-capabilities` | 返回可用字段、List 分量和图表预算 |
 | POST | `/api/datasets/{id}/chart-previews` | 校验受控配置并返回非持久化 `ChartModel` 预览 |
 | POST | `/api/datasets/{id}/views` | 以幂等操作 ID 保存不可变图表与 Plot Data |
-| GET | `/api/analysis-runs/{id}` | 分析记录与结果 |
+| GET | `/api/analysis-runs/{id}` | 分析记录、结果、冻结 RSS 与输入快照 |
 | GET | `/api/dataset-views/{id}` | 已保存图表元数据、冻结配置和 `ChartModel` |
 | GET | `/api/dataset-views/{id}/data` | 已保存图表的物化 Plot Data |
 | DELETE | `/api/dataset-views/{id}` | tombstone 图表并释放自身 artifact |
@@ -149,6 +149,17 @@ engine snapshot 中 manifest v2 绑定的 projection profile 动态执行，`pro
 `run_result_analysis.intent` 是必填的审计说明字符串，去除首尾空白后必须为 1 到 1000 个 Unicode 字符；它不参与
 `script` 执行、`inputs` 解析或 `expectedOutputs` 校验。空白或越限返回 `analysis_intent_invalid` 且不创建分析记录，
 成功后仍以 JSON 字符串保存到既有 `intent_json` 并由分析详情的 `intent` 字段返回。
+
+`run_result_analysis.inputs` 为 1..=20 项；每项只能提供 `modelDataframeId`、`datasetId` 或 `resourceId` 之一并带唯一 alias。
+模型 ID 只解析当前会话唯一 active 版本；混合 dataset 时其冻结模型来源必须唯一等于该 active 版本，否则返回
+`analysis_model_origin_mismatch` 且不创建分析记录。`read_result_dataset` 只接受稳定 dataset ID、cursor 和受控列投影，
+单次最多 100 行/32 列；读取失败统一为 `dataset_read_failed`，不暴露 artifact 路径。每个用户请求最多进入分析 service
+四次，第五次返回 `analysis_repair_budget_exhausted`。
+
+`GET /api/analysis-runs/{id}` 是既有路由的加法扩展：除 run 和 datasets 外，返回
+`script:{content,contentHash}`、按 ordinal 排列的 `inputs` 与 `engineResourceSnapshotId`。输入是执行时冻结的
+`active_model|dataset|data_resource` 判别联合，包含对应稳定 ID、schema/content hash 和 producer；读取详情不依赖 live 来源，
+脚本按 owned artifact、2 MiB 上限、字节数、SHA-256 和 UTF-8 重新校验。不存在与跨用户仍统一 404。
 
 重新上传与独立 Struct 资源工作台覆盖会创建新 artifact。重新上传确认必须显式提交 Replace、SaveAsNew 或 Cancel；Replace
 原子转移当前 alias、使依赖旧资源的未确认研究配置失效，并把旧资源保留为历史 replacement；

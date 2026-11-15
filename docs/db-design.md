@@ -141,8 +141,11 @@ normalized/source artifact 和 replacement/lineage。`live|needs_rename` 参与�
 待用 artifact；同一用户、同一资源的新 preview 会删除并释放被取代 preview 的 artifact；服务启动及每分钟后台任务
 批量删除过期 preview 并按用户 storage scope 释放 artifact，过期确认也会同步回收。重新上传和独立 Struct 资源工作台的 Replace
 都会使引用旧资源的未确认研究配置失效，并在新资源 lineage 中记录 action、源资源 ID、被替换资源 ID
-及原 schema/content hash。`result_analysis_inputs` 和 `dataset_lineage_snapshots` 使用 dataset/resource 二选一来源，始终保存
-来源 schema hash 与 content hash，源资源后续替换或删除不会改变既有派生血缘。
+及原 schema/content hash。`result_analysis_inputs` 和 `dataset_lineage_snapshots` 使用
+`active_model`/`dataset`/`data_resource` 三选一来源：对应稳定 ID 字段互斥，active 模型额外冻结
+`model_version_id + model_dataframe_id`。所有来源始终保存 alias/ordinal、名称、完整 schema、schema hash、content hash
+和 producer；源版本、结果或资源后续删除不会改写既有分析输入和派生血缘。分析 run 同时冻结不可变 RSS artifact、bundle/skill
+refs、engine contract 与 resource snapshot；详情只读取这些冻结记录，不回查 live 来源。
 
 `study_configurations` 保存门面 ID/hash、engine snapshot、状态、单调 revision、原始意图和可选来源 workflow；
 `study_input_bindings` 只保存门面声明的 model table 或可空普通资源 ID，Struct 草稿的 `baselineValues` 和 Data mapping 摘要放在
