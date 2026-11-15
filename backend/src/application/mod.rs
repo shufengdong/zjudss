@@ -366,6 +366,7 @@ impl AppState {
             events.clone(),
             engine.clone(),
             agent_knowledge.clone(),
+            engine_snapshot.clone(),
             data_dir.clone(),
             DataResourceRepo::new(pool.clone()),
         );

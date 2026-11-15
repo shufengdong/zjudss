@@ -22,14 +22,17 @@ use crate::db::models::{NewResultAnalysisRun, ResultAnalysisRun};
 use crate::db::repositories::{
     AnalysisRepo, DataResourceRepo, MessageRepo, ResultRepo, RunDataset,
 };
+use crate::engine_resources::EngineResourceSnapshot;
 use crate::storage::StageLimits;
 
 mod inputs;
 mod outputs;
+mod script_inspector;
 
 use crate::application::result_sources::ResultSourceService;
 use inputs::ResolvedAnalysisInputs;
 use outputs::{collect_outputs, validate_output_names};
+use script_inspector::inspect_analysis_script;
 
 #[derive(Debug, Clone)]
 pub struct AnalysisInput {
@@ -100,6 +103,7 @@ pub struct AnalysisService {
     events: EventBus,
     engine: Arc<dyn SimEngine>,
     knowledge: Arc<AgentKnowledge>,
+    snapshot: Arc<EngineResourceSnapshot>,
     data_dir: PathBuf,
     data_resources: DataResourceRepo,
     sources: ResultSourceService,
@@ -115,6 +119,7 @@ impl AnalysisService {
         events: EventBus,
         engine: Arc<dyn SimEngine>,
         knowledge: Arc<AgentKnowledge>,
+        snapshot: Arc<EngineResourceSnapshot>,
         data_dir: PathBuf,
         data_resources: DataResourceRepo,
     ) -> Self {
@@ -127,6 +132,7 @@ impl AnalysisService {
             events,
             engine,
             knowledge,
+            snapshot,
             data_dir,
             data_resources,
             sources,
@@ -135,6 +141,27 @@ impl AnalysisService {
 
     pub async fn run(&self, request: AnalysisRequest) -> Result<AnalysisOutcome, AnalysisError> {
         validate_request(&request)?;
+        let aliases = request
+            .inputs
+            .iter()
+            .map(|input| input.alias.clone())
+            .collect::<Vec<_>>();
+        inspect_analysis_script(
+            &request.script,
+            &aliases,
+            &request.expected_outputs,
+            &self.snapshot.functions_json,
+        )
+        .map_err(|violation| AnalysisError {
+            code: violation.code,
+            message: "分析脚本未通过当前引擎合同预检".into(),
+            details: Some(json!({
+                "fields": violation.fields,
+                "diagnostic": violation.diagnostic,
+                "engineSnapshotId": self.snapshot.id,
+            })),
+            run_id: None,
+        })?;
         let resolved_inputs = ResolvedAnalysisInputs::resolve(
             &request.inputs,
             &request.principal,
