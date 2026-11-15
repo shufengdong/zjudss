@@ -1,5 +1,5 @@
 {
-  "bundleVersion": "v4.4.0",
+  "bundleVersion": "v4.5.0",
   "skills": [
     {
       "id": "model-intake",
@@ -59,13 +59,36 @@
     },
     {
       "id": "result-analysis",
-      "version": "1.2.1",
+      "version": "1.3.0",
       "description": "从 Parquet dataset 生成受控筛选、聚合和派生结果",
       "triggers": [
+        "analysis",
+        "分析",
+        "筛选",
+        "排序",
+        "聚合",
+        "统计",
+        "透视",
+        "关联",
+        "展开",
+        "越限",
+        "派生",
         "query-result",
-        "aggregate"
+        "aggregate",
+        "filter",
+        "join",
+        "explode"
       ],
       "requiredTools": [
+        "inspect_workspace",
+        "read_model_dataframe",
+        "list_simulation_history",
+        "list_result_datasets",
+        "read_result_dataset",
+        "list_data_resources",
+        "read_data_resource",
+        "search_engine_docs",
+        "read_engine_doc_section",
         "run_result_analysis"
       ],
       "engineContractVersion": "tensoreval-parquet-v3",
@@ -74,7 +97,7 @@
         "docs/rsdss_function_reference.md"
       ],
       "path": "skills/result-analysis.md",
-      "sha256": "6297cef6b50e9fca8b2953800306e8cf7225227376cac7e53a2a825a99c429a2"
+      "sha256": "5e24969ab09d2c8208669f8edb6dfa0e680cba433cb9490fe07be44a5fc44024"
     },
     {
       "id": "comparison",

@@ -36,8 +36,8 @@ fn skill(id: &str, path: &str, tool: &str, content: &str) -> Value {
 
 #[test]
 fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
-    let knowledge = AgentKnowledge::load_embedded("v4.4.0").expect("embedded knowledge");
-    assert_eq!(knowledge.manifest.agent_bundle_version, "v4.4.0");
+    let knowledge = AgentKnowledge::load_embedded("v4.5.0").expect("embedded knowledge");
+    assert_eq!(knowledge.manifest.agent_bundle_version, "v4.5.0");
     assert_eq!(
         knowledge.manifest.engine_contract_version,
         "tensoreval-parquet-v3"
@@ -74,10 +74,21 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     assert!(study_planning.contains("只有用户原文包含目录中的完整函数标识"));
     assert!(study_planning.contains("算法名称（如 Newton/牛顿法）"));
     let result_skill = knowledge.skill("result-analysis").unwrap();
-    assert_eq!(result_skill.metadata.version, "1.2.1");
+    assert_eq!(result_skill.metadata.version, "1.3.0");
     assert_eq!(
         result_skill.metadata.required_tools,
-        ["run_result_analysis"]
+        [
+            "inspect_workspace",
+            "read_model_dataframe",
+            "list_simulation_history",
+            "list_result_datasets",
+            "read_result_dataset",
+            "list_data_resources",
+            "read_data_resource",
+            "search_engine_docs",
+            "read_engine_doc_section",
+            "run_result_analysis"
+        ]
     );
     let result_analysis = result_skill.content.as_str();
     assert!(knowledge.system_prompt.contains("currentResultContext"));
@@ -93,6 +104,36 @@ fn embedded_bundle_is_hash_verified_and_contains_only_compact_policy() {
     assert!(result_analysis.contains("必须继续调用 `run_result_analysis`"));
     assert!(result_analysis.contains(r#""intent": "复制当前电压结果的 time 和 v_mag 列""#));
     assert!(result_analysis.contains("不得使用 Python import"));
+    assert!(
+        knowledge
+            .system_prompt
+            .starts_with("你是配电网仿真智能体。先理解用户意图；只有请求实际需要时")
+    );
+    for required in [
+        "对话 Agent 是最终 RSS 脚本作者",
+        "modelDataframeId",
+        "datasetId",
+        "resourceId",
+        "scope=active",
+        "search_engine_docs",
+        "read_engine_doc_section",
+        "assert_all",
+        "explode",
+        "repairable: true",
+        "analysis_repair_budget_exhausted",
+    ] {
+        assert!(
+            result_analysis.contains(required),
+            "result-analysis policy missing {required}"
+        );
+    }
+    assert!(
+        knowledge
+            .manifest
+            .allowed_tools
+            .iter()
+            .any(|tool| tool == "read_result_dataset")
+    );
     assert!(!result_analysis.contains("VisualizationSpec"));
     assert!(!knowledge.system_prompt.contains("create_dataset_view"));
     assert!(

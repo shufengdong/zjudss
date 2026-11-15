@@ -55,7 +55,7 @@ pub fn build_e2e_app(
 ) -> AppState {
     let (engine_snapshot, _) = prepare_engine_fixture(&data_dir, options.catalog_mode);
     let agent_knowledge = Arc::new(
-        AgentKnowledge::load_embedded("v4.4.0").expect("load embedded agent knowledge for E2E"),
+        AgentKnowledge::load_embedded("v4.5.0").expect("load embedded agent knowledge for E2E"),
     );
     crate::tools::validate_tool_catalog(&agent_knowledge.manifest)
         .expect("validate embedded agent tool catalog for E2E");

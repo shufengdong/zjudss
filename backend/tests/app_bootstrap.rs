@@ -139,7 +139,7 @@ fn runtime_config_uses_v4_defaults_and_rejects_zero_or_inconsistent_limits() {
     assert_eq!(config.script_repair_stderr_max_bytes, 64 * 1024);
     assert_eq!(config.script_repair_max_attempts, 3);
     assert_eq!(config.agent_model_retry_max, 2);
-    assert_eq!(config.agent_bundle_version, "v4.4.0");
+    assert_eq!(config.agent_bundle_version, "v4.5.0");
 
     for name in ["RESULT_MAX_FILES", "SCRIPT_REPAIR_MAX_ATTEMPTS"] {
         let error = RuntimeConfig::from_values(

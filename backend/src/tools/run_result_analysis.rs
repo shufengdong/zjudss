@@ -95,6 +95,7 @@ impl Tool for RunResultAnalysisTool {
                 })
             })
             .collect::<Result<Vec<_>, DomainToolError>>()?;
+        self.services.claim_analysis_attempt(4).await?;
         let out=self.services.analysis.run(AnalysisRequest{principal:self.services.principal.clone(),session_id:self.services.session_id,request_message_id:Some(self.services.request_message_id),intent:Value::String(intent),script:args.script,inputs,expected_outputs:args.expected_outputs,skill_refs:vec![json!({"id":skill.metadata.id,"version":skill.metadata.version,"sha256":skill.metadata.sha256})]}).await?;
         Ok(
             json!({"analysisRunId":out.run.id.to_string(),"status":out.run.status,"datasets":out.datasets.into_iter().map(|d|json!({"datasetId":d.id.to_string(),"name":d.result_name})).collect::<Vec<_>>() }),

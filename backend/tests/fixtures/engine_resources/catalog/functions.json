@@ -73,6 +73,8 @@
     {"name": "concat", "arity": ">=2", "signature": ["mode", "frame..."], "behavior": "concatenate frames vertically, diagonally, or horizontally", "recommended_modes": ["vertical", "diagonal", "horizontal"], "compatibility_forms": ["concat()", "concat(mode)"], "note": "Compatibility forms concatenate every context frame in name order. Only diagonal and horizontal have special branches; all other mode tokens use ordinary vertical concatenation."},
     {"name": "pivot", "arity": 7, "signature": ["on", "index", "values", "aggregate", "maintain_order", "separator", "frame"], "behavior": "reshape a frame from long to wide form"},
     {"name": "unpivot", "arity": 3, "signature": ["on", "index", "frame"], "behavior": "reshape selected value columns from wide to long form", "compatibility_note": "An implicit column-list form exists only when the evaluation context contains exactly one DataFrame; new scripts should use the explicit three-argument form."},
+    {"name": "assert_all", "arity": 2, "signature": ["predicate", "frame"], "behavior": "evaluate an equal-length Boolean predicate over the complete frame and return the frame unchanged only when every value is true; false or null values fail with row, false, and null counts, while an empty frame succeeds"},
+    {"name": "explode", "arity": 2, "signature": ["columns", "frame"], "behavior": "expand one or more List or Array columns in lockstep after rejecting empty, duplicate, missing, non-list, null-list, empty-list, or unequal-length selections"},
     {"name": "import_df_url", "arity": 1, "signature": ["url"], "behavior": "download and parse a DataFrame source"}
   ],
   "expression_functions_by_arity": {

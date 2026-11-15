@@ -122,7 +122,7 @@ async fn chat_builds_one_agent_per_user_message() {
             *tool_count,
             app.state.agent_knowledge.manifest.allowed_tools.len()
         );
-        assert_eq!(*tool_count, 23);
+        assert_eq!(*tool_count, 24);
         assert!(prompt.contains("# Skill index"));
         assert!(prompt.contains("model-intake"));
         assert!(prompt.contains("# Engine resources"));

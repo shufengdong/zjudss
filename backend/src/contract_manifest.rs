@@ -99,6 +99,7 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "analysis_result_contract_invalid",
     "analysis_outputs_required",
     "analysis_publish_failed",
+    "analysis_repair_budget_exhausted",
     "analysis_script_commit_failed",
     "analysis_script_invalid",
     "analysis_script_missing",
@@ -205,7 +206,7 @@ pub struct ContractManifest {
 
 /// 从权威注册表构造合同 manifest，并验证嵌入式 Agent 工具清单。
 pub fn contract_manifest() -> Result<ContractManifest, KnowledgeError> {
-    let knowledge = AgentKnowledge::load_embedded("v4.4.0")?;
+    let knowledge = AgentKnowledge::load_embedded("v4.5.0")?;
     let mut skill_ids = knowledge
         .skill_index()
         .map(|skill| skill.id.clone())

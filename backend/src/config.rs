@@ -199,7 +199,7 @@ impl RuntimeConfig {
             )?,
             script_repair_max_attempts: positive_usize(&values, "SCRIPT_REPAIR_MAX_ATTEMPTS", 3)?,
             agent_model_retry_max: positive_usize(&values, "AGENT_MODEL_RETRY_MAX", 2)?,
-            agent_bundle_version: get("AGENT_BUNDLE_VERSION").unwrap_or("v4.4.0").to_string(),
+            agent_bundle_version: get("AGENT_BUNDLE_VERSION").unwrap_or("v4.5.0").to_string(),
         })
     }
 }

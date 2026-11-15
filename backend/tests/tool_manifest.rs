@@ -55,6 +55,7 @@ fn services_for_session(
         engine_snapshot: app.state.engine_snapshot.clone(),
         agent_knowledge: app.state.agent_knowledge.clone(),
         loaded_skills: Arc::new(Mutex::new(BTreeSet::new())),
+        analysis_attempts: Arc::new(Mutex::new(0)),
         inspected_workspace_draft: Arc::new(Mutex::new(None)),
         study_configurations: app.state.study_configuration_service.clone(),
         datasets: app.state.dataset_service.clone(),
@@ -359,7 +360,7 @@ async fn data_resource_tools_list_read_rename_and_promote_owned_session_resource
 
 #[test]
 fn manifest_allowed_tools_equal_runtime_registry() {
-    let knowledge = AgentKnowledge::load_embedded("v4.4.0").unwrap();
+    let knowledge = AgentKnowledge::load_embedded("v4.5.0").unwrap();
     let mut manifest = knowledge.manifest.allowed_tools.clone();
     let mut runtime = tools::tool_implementation_names()
         .iter()
@@ -370,11 +371,11 @@ fn manifest_allowed_tools_equal_runtime_registry() {
 
     assert_eq!(
         runtime.len(),
-        23,
-        "runtime registry must contain 23 unique tools"
+        24,
+        "runtime registry must contain 24 unique tools"
     );
     runtime.dedup();
-    assert_eq!(runtime.len(), 23, "runtime tool names must be unique");
+    assert_eq!(runtime.len(), 24, "runtime tool names must be unique");
     assert!(!runtime.iter().any(|tool| tool == "create_dataset_view"));
     assert!(runtime.iter().any(|tool| tool == "publish_model_version"));
     assert!(runtime.iter().any(|tool| tool == "update_study_results"));
@@ -387,7 +388,7 @@ fn manifest_allowed_tools_equal_runtime_registry() {
 
 #[test]
 fn tool_catalog_rejects_a_manifest_tool_without_an_implementation() {
-    let mut knowledge = AgentKnowledge::load_embedded("v4.4.0").unwrap();
+    let mut knowledge = AgentKnowledge::load_embedded("v4.5.0").unwrap();
     knowledge
         .manifest
         .allowed_tools
@@ -527,6 +528,7 @@ async fn run_result_analysis_accepts_bounded_sources_and_freezes_mixed_input_sna
         .lock()
         .await
         .insert("result-analysis".into());
+    let analysis_attempts = tool_services.analysis_attempts.clone();
     let tool = tools::run_result_analysis::RunResultAnalysisTool::new(tool_services);
 
     for input in [
@@ -534,6 +536,7 @@ async fn run_result_analysis_accepts_bounded_sources_and_freezes_mixed_input_sna
         serde_json::json!({"datasetId": dataset_id, "alias": "source"}),
         serde_json::json!({"resourceId": resource_id, "alias": "local"}),
     ] {
+        *analysis_attempts.lock().await = 0;
         let args = serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
             "intent": "single bounded source",
             "script": format!("result = limit(1, {});", input["alias"].as_str().unwrap()),
@@ -596,6 +599,7 @@ async fn run_result_analysis_accepts_bounded_sources_and_freezes_mixed_input_sna
             "analysis_alias_invalid",
         ),
     ] {
+        *analysis_attempts.lock().await = 0;
         let args = serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
             "intent":"reject invalid bounded inputs",
             "script":"result = limit(1, select);",
@@ -607,6 +611,7 @@ async fn run_result_analysis_accepts_bounded_sources_and_freezes_mixed_input_sna
         assert_eq!(error.code, expected_code);
     }
 
+    *analysis_attempts.lock().await = 0;
     let mixed = serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
         "intent":"combine active model, result dataset, and local resource",
         "script":"result = limit(1, model);",
@@ -654,6 +659,66 @@ async fn run_result_analysis_accepts_bounded_sources_and_freezes_mixed_input_sna
     );
     assert!(!snapshots[2].source_schema_hash.is_empty());
     assert!(!snapshots[2].source_content_hash.is_empty());
+}
+
+#[tokio::test]
+async fn analysis_repair_budget_allows_four_service_calls_and_rejects_the_fifth() {
+    let engine = ScenarioEngine::default();
+    for _ in 0..4 {
+        engine.enqueue(EngineScenario::Failure {
+            code: "model_error".into(),
+            stderr: b"repairable parse failure".to_vec(),
+            exit_code: 7,
+        });
+    }
+    let app = TestApp::builder()
+        .engine(Arc::new(engine.clone()))
+        .spawn()
+        .await;
+    let user = principal("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "analysis budget", 1)
+        .await
+        .unwrap();
+    let resource_id = publish_tool_resource(&app, &user, session.id).await;
+    let mut tool_services = services_for_session(&app, user, session.id);
+    Arc::get_mut(&mut tool_services).unwrap().request_message_id =
+        insert_request_message(&app, session.id);
+    tool_services
+        .loaded_skills
+        .lock()
+        .await
+        .insert("result-analysis".into());
+    let tool = tools::run_result_analysis::RunResultAnalysisTool::new(tool_services);
+
+    for attempt in 1..=5 {
+        let args = serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
+            "intent":format!("repair attempt {attempt}"),
+            "script":"result = limit(1, source);",
+            "inputs":[{"resourceId":resource_id,"alias":"source"}],
+            "expectedOutputs":["result"]
+        }))
+        .unwrap();
+        let error = tool.call(&mut ToolContext::new(), args).await.unwrap_err();
+        assert_eq!(
+            error.code,
+            if attempt <= 4 {
+                "analysis_engine_failed"
+            } else {
+                "analysis_repair_budget_exhausted"
+            }
+        );
+    }
+
+    assert_eq!(engine.calls().len(), 4);
+    let runs =
+        diesel::sql_query("SELECT count(*) count FROM result_analysis_runs WHERE session_id=?1")
+            .bind::<diesel::sql_types::Integer, _>(session.id)
+            .get_result::<common::CountRow>(&mut app.pool.get().unwrap())
+            .unwrap();
+    assert_eq!(runs.count, 4);
 }
 
 #[tokio::test]

@@ -22,8 +22,8 @@ use crate::tools::{self, ToolServices};
 use tokio::sync::Semaphore;
 
 /// 单次对话允许的最大模型调用轮数（防死循环）。
-const MAX_TURNS: usize = 8;
-const TURN_LIMIT_REPLY: &str = "本轮工具调用已达到上限，尚未完成研究配置，请重新发送请求";
+const MAX_TURNS: usize = 12;
+const TURN_LIMIT_REPLY: &str = "本轮工具调用已达到上限，操作尚未完成，请重新发送请求";
 const AGENT_FAILED_REPLY: &str = "agent 运行失败，请稍后重试";
 
 #[derive(Default)]
@@ -115,6 +115,7 @@ impl ChatService {
             engine_snapshot: self.engine_snapshot.clone(),
             agent_knowledge: self.agent_knowledge.clone(),
             loaded_skills: Arc::new(tokio::sync::Mutex::new(BTreeSet::new())),
+            analysis_attempts: Arc::new(tokio::sync::Mutex::new(0)),
             inspected_workspace_draft: Arc::new(tokio::sync::Mutex::new(None)),
             study_configurations: self.study_configurations.clone(),
             datasets: self.datasets.clone(),

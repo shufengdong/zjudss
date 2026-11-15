@@ -37,6 +37,7 @@ fn tool_services(app: &TestApp, principal: CurrentUser) -> Arc<ToolServices> {
         engine_snapshot: app.state.engine_snapshot.clone(),
         agent_knowledge: app.state.agent_knowledge.clone(),
         loaded_skills: Arc::new(Mutex::new(BTreeSet::new())),
+        analysis_attempts: Arc::new(Mutex::new(0)),
         inspected_workspace_draft: Arc::new(Mutex::new(None)),
         study_configurations: app.state.study_configuration_service.clone(),
         datasets: app.state.dataset_service.clone(),

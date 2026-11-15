@@ -332,7 +332,7 @@ struct AnalysisIntentRow {
 }
 
 #[tokio::test]
-async fn natural_language_analysis_uses_the_unique_current_result_dataset() {
+async fn direct_analysis_uses_the_unique_current_result_without_model_intake_or_question() {
     let factory = Arc::new(ScriptedAgentFactory::default());
     let engine = ScenarioEngine::default();
     engine.enqueue(EngineScenario::BusVoltageSuccess);
@@ -421,7 +421,7 @@ async fn natural_language_analysis_uses_the_unique_current_result_dataset() {
 }
 
 #[tokio::test]
-async fn ambiguous_current_results_require_selection_without_analysis() {
+async fn direct_analysis_asks_one_necessary_question_for_ambiguous_results() {
     let factory = Arc::new(ScriptedAgentFactory::default());
     let engine = ScenarioEngine::default();
     engine.enqueue(EngineScenario::Success(vec![
@@ -476,6 +476,332 @@ async fn ambiguous_current_results_require_selection_without_analysis() {
         .get_result::<common::CountRow>(&mut connection)
         .unwrap();
     assert_eq!(analyses.count, 0);
+}
+
+#[tokio::test]
+async fn direct_analysis_loads_exact_docs_only_when_needed_and_repairs_once() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::BusVoltageSuccess);
+    let app = TestApp::builder()
+        .engine(Arc::new(engine.clone()))
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
+    let session = create_session(&app).await;
+    let (_, datasets) =
+        seed_successful_result_run(&app, session.parse().unwrap(), "documented-analysis").await;
+    let source = datasets
+        .iter()
+        .find(|dataset| dataset.result_name == "bus_voltage")
+        .unwrap();
+    let section = app
+        .state
+        .engine_snapshot
+        .knowledge
+        .sections
+        .iter()
+        .find(|section| section.title.contains("多结果声明"))
+        .unwrap();
+    engine.enqueue(EngineScenario::Success(vec![DatasetFixture {
+        name: "documented".into(),
+        rows: vec![("one".into(), 1.0)],
+        value_unit: None,
+    }]));
+    factory.enqueue(ScriptScenario {
+        id: "direct-analysis-exact-docs".into(),
+        expected_prompt: Some("按引擎文档确认多结果声明后分析当前电压结果".into()),
+        turns: vec![
+            ScriptTurn::ToolCall {
+                call_id: "load-analysis-docs".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"result-analysis"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "search-analysis-docs".into(),
+                name: "search_engine_docs".into(),
+                args: json!({"query":"多结果声明"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "read-analysis-docs".into(),
+                name: "read_engine_doc_section".into(),
+                args: json!({"doc_id":section.doc_id,"section_id":section.section_id}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "run-documented-analysis".into(),
+                name: "run_result_analysis".into(),
+                args: json!({
+                    "intent":"按当前引擎文档分析唯一电压结果",
+                    "script":"documented = limit(1, source);",
+                    "inputs":[{"datasetId":source.id,"alias":"source"}],
+                    "expectedOutputs":["documented"]
+                }),
+            },
+            ScriptTurn::Text {
+                text: "已按当前引擎文档完成分析。".into(),
+            },
+        ],
+    });
+    assert_eq!(
+        post_and_wait(&app, &session, "按引擎文档确认多结果声明后分析当前电压结果").await,
+        StatusCode::ACCEPTED
+    );
+    let events = messages(&app, &session).await;
+    let tools = tool_names(&events)
+        .into_iter()
+        .filter(|name| *name != "agent_admission")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tools,
+        [
+            "load_agent_skill",
+            "search_engine_docs",
+            "read_engine_doc_section",
+            "run_result_analysis"
+        ]
+    );
+
+    let repair_session = create_session(&app).await;
+    engine.enqueue(EngineScenario::BusVoltageSuccess);
+    let (_, repair_datasets) =
+        seed_successful_result_run(&app, repair_session.parse().unwrap(), "repairable-analysis")
+            .await;
+    let repair_source = repair_datasets
+        .iter()
+        .find(|dataset| dataset.result_name == "bus_voltage")
+        .unwrap();
+    engine.enqueue(EngineScenario::Failure {
+        code: "model_error".into(),
+        stderr: b"parse failed at /private/secret/input.rss TOKEN=do-not-leak".to_vec(),
+        exit_code: 7,
+    });
+    engine.enqueue(EngineScenario::Success(vec![DatasetFixture {
+        name: "repaired".into(),
+        rows: vec![("one".into(), 1.0)],
+        value_unit: None,
+    }]));
+    factory.enqueue(ScriptScenario {
+        id: "direct-analysis-single-repair".into(),
+        expected_prompt: Some("分析当前结果并在可修复错误后修正一次".into()),
+        turns: vec![
+            ScriptTurn::ToolCall {
+                call_id: "load-repair".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"result-analysis"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "run-before-repair".into(),
+                name: "run_result_analysis".into(),
+                args: json!({
+                    "intent":"分析唯一当前结果",
+                    "script":"repaired = limit(1, source);",
+                    "inputs":[{"datasetId":repair_source.id,"alias":"source"}],
+                    "expectedOutputs":["repaired"]
+                }),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "run-after-repair".into(),
+                name: "run_result_analysis".into(),
+                args: json!({
+                    "intent":"根据结构化诊断修复并重试唯一当前结果",
+                    "script":"repaired = limit(1, source);",
+                    "inputs":[{"datasetId":repair_source.id,"alias":"source"}],
+                    "expectedOutputs":["repaired"]
+                }),
+            },
+            ScriptTurn::Text {
+                text: "已根据安全诊断修复并完成分析。".into(),
+            },
+        ],
+    });
+    assert_eq!(
+        post_and_wait(
+            &app,
+            &repair_session,
+            "分析当前结果并在可修复错误后修正一次"
+        )
+        .await,
+        StatusCode::ACCEPTED
+    );
+    let repair_trace = factory.trace();
+    let feedback_history = format!(
+        "{} {}",
+        repair_trace[1].calls[2].prompt, repair_trace[1].calls[2].history
+    );
+    assert!(
+        feedback_history.contains("repairable"),
+        "{feedback_history}"
+    );
+    assert!(feedback_history.contains("true"), "{feedback_history}");
+    assert!(!feedback_history.contains("/private/secret"));
+    assert!(!feedback_history.contains("do-not-leak"));
+    let repair_events = messages(&app, &repair_session).await;
+    assert_eq!(
+        tool_names(&repair_events),
+        [
+            "load_agent_skill",
+            "run_result_analysis",
+            "run_result_analysis"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn direct_analysis_stops_on_nonrepairable_failure() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::BusVoltageSuccess);
+    let app = TestApp::builder()
+        .engine(Arc::new(engine.clone()))
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
+    let session = create_session(&app).await;
+    let (_, datasets) =
+        seed_successful_result_run(&app, session.parse().unwrap(), "nonrepairable-analysis").await;
+    let source = datasets
+        .iter()
+        .find(|dataset| dataset.result_name == "bus_voltage")
+        .unwrap();
+    engine.enqueue(EngineScenario::MonitorError);
+    factory.enqueue(ScriptScenario {
+        id: "direct-analysis-nonrepairable".into(),
+        expected_prompt: Some("分析当前结果，遇到不可修复错误就停止".into()),
+        turns: vec![
+            ScriptTurn::ToolCall {
+                call_id: "load-nonrepairable".into(),
+                name: "load_agent_skill".into(),
+                args: json!({"skill_id":"result-analysis"}),
+            },
+            ScriptTurn::ToolCall {
+                call_id: "run-nonrepairable".into(),
+                name: "run_result_analysis".into(),
+                args: json!({
+                    "intent":"分析唯一当前结果",
+                    "script":"result = limit(1, source);",
+                    "inputs":[{"datasetId":source.id,"alias":"source"}],
+                    "expectedOutputs":["result"]
+                }),
+            },
+            ScriptTurn::Text {
+                text: "分析运行遇到不可修复错误，已停止自动重试。".into(),
+            },
+        ],
+    });
+    assert_eq!(
+        post_and_wait(&app, &session, "分析当前结果，遇到不可修复错误就停止").await,
+        StatusCode::ACCEPTED
+    );
+    let trace = factory.trace();
+    let feedback_history = format!("{} {}", trace[0].calls[2].prompt, trace[0].calls[2].history);
+    assert!(
+        feedback_history.contains("repairable"),
+        "{feedback_history}"
+    );
+    assert!(feedback_history.contains("false"), "{feedback_history}");
+    let events = messages(&app, &session).await;
+    let tools = tool_names(&events)
+        .into_iter()
+        .filter(|name| *name != "agent_admission")
+        .collect::<Vec<_>>();
+    assert_eq!(tools, ["load_agent_skill", "run_result_analysis"]);
+    assert_eq!(
+        engine
+            .calls()
+            .iter()
+            .filter(|call| call.mode.as_deref() == Some("analysis"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn direct_analysis_reports_budget_exhaustion_without_a_fifth_engine_call() {
+    let factory = Arc::new(ScriptedAgentFactory::default());
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::BusVoltageSuccess);
+    let app = TestApp::builder()
+        .engine(Arc::new(engine.clone()))
+        .agent_factory(factory.clone())
+        .spawn()
+        .await;
+    let session = create_session(&app).await;
+    let session_id = session.parse().unwrap();
+    let (_, datasets) = seed_successful_result_run(&app, session_id, "budget-analysis").await;
+    let source = datasets
+        .iter()
+        .find(|dataset| dataset.result_name == "bus_voltage")
+        .unwrap();
+    for _ in 0..4 {
+        engine.enqueue(EngineScenario::Failure {
+            code: "model_error".into(),
+            stderr: b"repairable parse failure".to_vec(),
+            exit_code: 7,
+        });
+    }
+    let mut turns = vec![ScriptTurn::ToolCall {
+        call_id: "load-budget".into(),
+        name: "load_agent_skill".into(),
+        args: json!({"skill_id":"result-analysis"}),
+    }];
+    for (index, columns) in [vec!["time"], vec!["v_mag"], vec!["time", "v_mag"]]
+        .into_iter()
+        .enumerate()
+    {
+        turns.push(ScriptTurn::ToolCall {
+            call_id: format!("read-budget-{index}"),
+            name: "read_result_dataset".into(),
+            args: json!({"datasetId":source.id,"columns":columns,"limit":1}),
+        });
+    }
+    for attempt in 1..=5 {
+        turns.push(ScriptTurn::ToolCall {
+            call_id: format!("run-budget-{attempt}"),
+            name: "run_result_analysis".into(),
+            args: json!({
+                "intent":format!("自动修复尝试 {attempt}"),
+                "script":"result = limit(1, source);",
+                "inputs":[{"datasetId":source.id,"alias":"source"}],
+                "expectedOutputs":["result"]
+            }),
+        });
+    }
+    turns.push(ScriptTurn::Text {
+        text: "已达到本轮分析尝试上限，未进行第五次引擎调用。".into(),
+    });
+    factory.enqueue(ScriptScenario {
+        id: "direct-analysis-budget".into(),
+        expected_prompt: Some("检查当前结果并在修复预算内分析".into()),
+        turns,
+    });
+    assert_eq!(
+        post_and_wait(&app, &session, "检查当前结果并在修复预算内分析").await,
+        StatusCode::ACCEPTED
+    );
+    let trace = factory.trace();
+    assert_eq!(
+        trace[0].calls.len(),
+        10,
+        "MAX_TURNS must allow final report"
+    );
+    let final_history = format!("{} {}", trace[0].calls[9].prompt, trace[0].calls[9].history);
+    assert!(
+        final_history.contains("analysis_repair_budget_exhausted"),
+        "{final_history}"
+    );
+    assert_eq!(
+        engine
+            .calls()
+            .iter()
+            .filter(|call| call.mode.as_deref() == Some("analysis"))
+            .count(),
+        4
+    );
+    let analyses = sql_query("SELECT count(*) count FROM result_analysis_runs WHERE session_id=?1")
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .get_result::<common::CountRow>(&mut app.pool.get().unwrap())
+        .unwrap();
+    assert_eq!(analyses.count, 4);
 }
 
 #[tokio::test]

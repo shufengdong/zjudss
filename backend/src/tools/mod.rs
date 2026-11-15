@@ -66,6 +66,7 @@ pub struct ToolServices {
     pub engine_snapshot: Arc<EngineResourceSnapshot>,
     pub agent_knowledge: Arc<AgentKnowledge>,
     pub loaded_skills: Arc<Mutex<BTreeSet<String>>>,
+    pub analysis_attempts: Arc<Mutex<u8>>,
     pub inspected_workspace_draft: Arc<Mutex<Option<DraftRef>>>,
     pub study_configurations: StudyConfigurationService,
     pub datasets: DatasetService,
@@ -283,6 +284,21 @@ impl ToolServices {
             ))
         }
     }
+
+    pub(crate) async fn claim_analysis_attempt(
+        &self,
+        max_attempts: u8,
+    ) -> Result<(), support::DomainToolError> {
+        let mut attempts = self.analysis_attempts.lock().await;
+        if *attempts >= max_attempts {
+            return Err(support::DomainToolError::new(
+                "analysis_repair_budget_exhausted",
+                "本轮结果分析最多允许 4 次执行尝试，请根据已有诊断向用户说明未完成原因",
+            ));
+        }
+        *attempts += 1;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -401,6 +417,7 @@ define_tool_catalog!(
     modify_model::ModifyModelTool,
     publish_model_version::PublishModelVersionTool,
     list_result_datasets::ListResultDatasetsTool,
+    read_result_dataset::ReadResultDatasetTool,
     run_result_analysis::RunResultAnalysisTool,
     compare_simulations::CompareSimulationsTool,
     list_simulation_history::ListSimulationHistoryTool,
