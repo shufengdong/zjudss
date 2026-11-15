@@ -43,7 +43,7 @@ impl Tool for ReadModelDataFrameTool {
     type Error = DomainToolError;
 
     fn description(&self) -> String {
-        "按当前会话的 active 或精确 draft revision 读取模型 DataFrame 行；只支持受控列投影和 AND 等值条件。调用前必须加载 model-intake。"
+        "按当前会话的 active 或精确 draft revision 读取模型 DataFrame 行；active 可在加载 result-analysis 或 model-intake 后读取，draft 仅允许 model-intake。"
             .into()
     }
 
@@ -69,7 +69,14 @@ impl Tool for ReadModelDataFrameTool {
     }
 
     async fn call(&self, _: &mut ToolContext, args: Args) -> Result<Value, Self::Error> {
-        self.services.require_skill("model-intake").await?;
+        match args.scope {
+            ModelReadScope::Active => {
+                self.services
+                    .require_any_skill(&["result-analysis", "model-intake"])
+                    .await?;
+            }
+            ModelReadScope::Draft => self.services.require_skill("model-intake").await?,
+        }
         let result = self
             .services
             .model_dataframes

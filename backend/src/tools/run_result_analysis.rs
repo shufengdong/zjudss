@@ -16,6 +16,7 @@ const MAX_INTENT_CHARS: usize = 1_000;
 pub struct InputArg {
     dataset_id: Option<i32>,
     resource_id: Option<String>,
+    model_dataframe_id: Option<i32>,
     alias: String,
 }
 #[derive(Deserialize)]
@@ -56,7 +57,7 @@ impl Tool for RunResultAnalysisTool {
     }
     fn parameters(&self) -> Value {
         object_schema(
-            json!({"intent":{"type":"string","minLength":1,"maxLength":MAX_INTENT_CHARS,"description":"简洁复述用户要求执行的结果分析目标，仅用于审计"},"script":{"type":"string"},"inputs":{"type":"array","items":{"type":"object","properties":{"datasetId":{"type":["integer","null"]},"resourceId":{"type":["string","null"]},"alias":{"type":"string"}},"required":["alias"],"oneOf":[{"required":["datasetId"]},{"required":["resourceId"]}]}},"expectedOutputs":{"type":"array","items":{"type":"string"}}}),
+            json!({"intent":{"type":"string","minLength":1,"maxLength":MAX_INTENT_CHARS,"description":"简洁复述用户要求执行的结果分析目标，仅用于审计"},"script":{"type":"string"},"inputs":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","properties":{"datasetId":{"type":["integer","null"]},"resourceId":{"type":["string","null"]},"modelDataframeId":{"type":["integer","null"]},"alias":{"type":"string"}},"required":["alias"],"oneOf":[{"required":["datasetId"],"properties":{"datasetId":{"type":"integer"}},"not":{"anyOf":[{"required":["resourceId"]},{"required":["modelDataframeId"]}]}},{"required":["resourceId"],"properties":{"resourceId":{"type":"string"}},"not":{"anyOf":[{"required":["datasetId"]},{"required":["modelDataframeId"]}]}},{"required":["modelDataframeId"],"properties":{"modelDataframeId":{"type":"integer"}},"not":{"anyOf":[{"required":["datasetId"]},{"required":["resourceId"]}]}}],"additionalProperties":false}},"expectedOutputs":{"type":"array","items":{"type":"string"}}}),
             &["intent", "script", "inputs", "expectedOutputs"],
         )
     }
@@ -75,12 +76,17 @@ impl Tool for RunResultAnalysisTool {
             .inputs
             .into_iter()
             .map(|value| {
-                let source = match (value.dataset_id, value.resource_id) {
-                    (Some(id), None) => Ok(AnalysisInputSource::DatasetId(id)),
-                    (None, Some(id)) => Ok(AnalysisInputSource::DataResourceId(id)),
+                let source = match (
+                    value.dataset_id,
+                    value.resource_id,
+                    value.model_dataframe_id,
+                ) {
+                    (Some(id), None, None) => Ok(AnalysisInputSource::DatasetId(id)),
+                    (None, Some(id), None) => Ok(AnalysisInputSource::DataResourceId(id)),
+                    (None, None, Some(id)) => Ok(AnalysisInputSource::ActiveModelDataFrameId(id)),
                     _ => Err(DomainToolError::new(
                         "analysis_inputs_invalid",
-                        "每个输入必须且只能提供 datasetId 或 resourceId",
+                        "每个输入必须且只能提供 modelDataframeId、datasetId 或 resourceId",
                     )),
                 }?;
                 Ok(AnalysisInput {

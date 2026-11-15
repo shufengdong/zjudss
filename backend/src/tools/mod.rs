@@ -19,6 +19,7 @@ pub mod read_chat_context;
 pub mod read_data_resource;
 pub mod read_engine_doc_section;
 pub mod read_model_dataframe;
+pub mod read_result_dataset;
 pub mod run_result_analysis;
 pub mod search_chat_history;
 pub mod search_engine_docs;
@@ -261,6 +262,24 @@ impl ToolServices {
             Err(support::DomainToolError::new(
                 "skill_required",
                 format!("请先调用 load_agent_skill 加载 {skill_id}"),
+            ))
+        }
+    }
+
+    pub(crate) async fn require_any_skill(
+        &self,
+        skill_ids: &[&str],
+    ) -> Result<(), support::DomainToolError> {
+        let loaded = self.loaded_skills.lock().await;
+        if skill_ids.iter().any(|skill_id| loaded.contains(*skill_id)) {
+            Ok(())
+        } else {
+            Err(support::DomainToolError::new(
+                "skill_required",
+                format!(
+                    "请先调用 load_agent_skill 加载以下任一 skill：{}",
+                    skill_ids.join("、")
+                ),
             ))
         }
     }

@@ -26,6 +26,23 @@ pub(super) fn inspect_analysis_script(
         ));
     }
     let catalog = FunctionCatalog::parse(functions)?;
+    for alias in input_aliases {
+        let normalized = alias.to_ascii_lowercase();
+        if catalog.names.contains(&normalized)
+            || expected_outputs.iter().any(|output| output == alias)
+            || alias.starts_with("__")
+        {
+            return Err(AnalysisScriptViolation {
+                code: "analysis_alias_invalid",
+                fields: vec!["alias".into()],
+                diagnostic: json!({
+                    "stage": "aliases",
+                    "alias": alias,
+                    "message": "input alias conflicts with a reserved function, output, or server namespace",
+                }),
+            });
+        }
+    }
     validate_calls(&tokens, &catalog)?;
     let statements = statements(&tokens)?;
     let inputs = input_aliases

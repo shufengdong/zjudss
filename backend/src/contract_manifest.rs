@@ -106,6 +106,7 @@ pub const STABLE_ERROR_CODES: &[&str] = &[
     "analysis_staging_failed",
     "analysis_update_failed",
     "dataset_not_found",
+    "dataset_read_failed",
     "dataset_view_read_failed",
     "storage_unavailable",
     "comparison_event_failed",

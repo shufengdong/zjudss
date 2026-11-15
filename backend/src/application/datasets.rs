@@ -192,6 +192,9 @@ impl DatasetService {
         let d = self.repo.find_live(&p.id, id).await?;
         self.metadata_from(p, d).await
     }
+    pub async fn session_id(&self, p: &CurrentUser, id: i32) -> Result<i32, DatasetError> {
+        self.repo.session_id(&p.id, id).await.map_err(Into::into)
+    }
     async fn metadata_from(
         &self,
         p: &CurrentUser,

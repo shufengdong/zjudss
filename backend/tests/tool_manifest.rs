@@ -11,11 +11,12 @@ use zjudss::adapters::StubEngine;
 use zjudss::agent::knowledge::AgentKnowledge;
 use zjudss::application::{
     AnalysisInput, AnalysisInputSource, AnalysisRequest, ArtifactMetadata, CandidateDecision,
-    CandidatePurpose, EventWriter, UploadFile, UploadSourceKind,
+    CandidatePurpose, EventWriter, PublishDraftRequest, UploadFile, UploadSourceKind,
 };
 use zjudss::auth::CurrentUser;
+use zjudss::db::repositories::VersionSnapshot;
 use zjudss::storage::StageLimits;
-use zjudss::testing::{EngineScenario, ScenarioEngine};
+use zjudss::testing::{DatasetFixture, EngineScenario, ScenarioEngine};
 use zjudss::tools::{self, ToolServices};
 
 use common::TestApp;
@@ -109,6 +110,122 @@ async fn publish_tool_resource(app: &TestApp, user: &CurrentUser, session_id: i3
         .resources
         .remove(0)
         .id
+}
+
+async fn publish_active_version(
+    app: &TestApp,
+    user: &CurrentUser,
+    session_id: i32,
+    client_id: &str,
+    bytes: &[u8],
+) -> VersionSnapshot {
+    let draft = common::publish_model_bytes(
+        app,
+        user,
+        session_id,
+        client_id,
+        "bus.csv",
+        bytes,
+        None,
+        Some("bus"),
+    )
+    .await;
+    app.state
+        .version_service
+        .publish(
+            user,
+            session_id,
+            PublishDraftRequest {
+                expected_draft_id: draft.id,
+                expected_draft_revision: draft.revision,
+                client_publish_id: format!("publish-{client_id}"),
+                description: Some(format!("version {client_id}")),
+            },
+        )
+        .await
+        .unwrap()
+        .version
+}
+
+fn insert_direct_dataset(
+    app: &TestApp,
+    session_id: i32,
+    version: &VersionSnapshot,
+    suffix: &str,
+) -> i32 {
+    let frame = version.dataframes.first().unwrap();
+    let mut conn = app.pool.get().unwrap();
+    diesel::sql_query("INSERT INTO script_resources(session_id,artifact_id,name,source_kind,content_hash,validation_status,required_aliases_json,outputs_json,diagnostics_json,agent_skill_refs_json,created_at_ms) VALUES(?1,?2,?3,'manual',?4,'valid','[]','[]','{}','[]',1)")
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .bind::<diesel::sql_types::Integer, _>(frame.artifact_id)
+        .bind::<diesel::sql_types::Text, _>(format!("{suffix}.rss"))
+        .bind::<diesel::sql_types::Text, _>(&frame.content_hash)
+        .execute(&mut conn)
+        .unwrap();
+    let script_id = diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
+        "last_insert_rowid()",
+    ))
+    .get_result::<i32>(&mut conn)
+    .unwrap();
+    diesel::sql_query("INSERT INTO simulation_runs(session_id,model_version_id,model_content_hash,script_resource_id,script_artifact_id,script_content_hash,client_run_id,status,stage,engine_contract_version,agent_skill_refs_json,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,'succeeded','completed','test','[]',2)")
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .bind::<diesel::sql_types::Integer, _>(version.version.id)
+        .bind::<diesel::sql_types::Text, _>(&version.version.content_hash)
+        .bind::<diesel::sql_types::Integer, _>(script_id)
+        .bind::<diesel::sql_types::Integer, _>(frame.artifact_id)
+        .bind::<diesel::sql_types::Text, _>(&frame.content_hash)
+        .bind::<diesel::sql_types::Text, _>(format!("run-{suffix}"))
+        .execute(&mut conn)
+        .unwrap();
+    let run_id = diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
+        "last_insert_rowid()",
+    ))
+    .get_result::<i32>(&mut conn)
+    .unwrap();
+    diesel::sql_query("INSERT INTO result_datasets(run_id,artifact_id,result_name,schema_json,schema_hash,row_count,size_bytes,created_at_ms) VALUES(?1,?2,?3,?4,?5,1,1,3)")
+        .bind::<diesel::sql_types::Integer, _>(run_id)
+        .bind::<diesel::sql_types::Integer, _>(frame.artifact_id)
+        .bind::<diesel::sql_types::Text, _>(format!("result-{suffix}"))
+        .bind::<diesel::sql_types::Text, _>(&frame.schema_json)
+        .bind::<diesel::sql_types::Text, _>(&frame.content_hash)
+        .execute(&mut conn)
+        .unwrap();
+    diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
+        "last_insert_rowid()",
+    ))
+    .get_result(&mut conn)
+    .unwrap()
+}
+
+fn insert_request_message(app: &TestApp, session_id: i32) -> i32 {
+    let mut conn = app.pool.get().unwrap();
+    diesel::sql_query("INSERT INTO messages(session_id,role,kind,content,created_at_ms) VALUES(?1,'assistant','tool_call','analysis',1)")
+        .bind::<diesel::sql_types::Integer, _>(session_id)
+        .execute(&mut conn)
+        .unwrap();
+    diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
+        "last_insert_rowid()",
+    ))
+    .get_result(&mut conn)
+    .unwrap()
+}
+
+#[derive(diesel::QueryableByName)]
+struct AnalysisInputSnapshotRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    source_kind: String,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
+    dataset_id: Option<i32>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    resource_id: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
+    model_dataframe_id: Option<i32>,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    source_schema_json: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    source_schema_hash: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    source_content_hash: String,
 }
 
 #[tokio::test]
@@ -211,7 +328,7 @@ async fn data_resource_tools_list_read_rename_and_promote_owned_session_resource
             session_id: session.id,
             request_message_id: None,
             intent: serde_json::json!({"goal":"copy"}),
-            script: "result = source".into(),
+            script: "result = limit(1, source);".into(),
             inputs: vec![AnalysisInput {
                 source: AnalysisInputSource::DataResourceId(resource_id),
                 alias: "source".into(),
@@ -317,7 +434,12 @@ async fn run_result_analysis_has_no_chart_creation_input() {
             .as_array()
             .unwrap()
             .len(),
-        2
+        3
+    );
+    assert!(
+        parameters["properties"]["inputs"]["items"]["properties"]
+            .get("modelDataframeId")
+            .is_some()
     );
     assert_eq!(parameters["properties"]["intent"]["type"], "string");
     assert_eq!(parameters["properties"]["intent"]["minLength"], 1);
@@ -358,6 +480,304 @@ async fn run_result_analysis_has_no_chart_creation_input() {
         }))
         .is_err()
     );
+}
+
+#[tokio::test]
+async fn run_result_analysis_accepts_bounded_sources_and_freezes_mixed_input_snapshots() {
+    let engine = ScenarioEngine::default();
+    for _ in 0..4 {
+        engine.enqueue(EngineScenario::Success(vec![DatasetFixture {
+            name: "result".into(),
+            rows: vec![("one".into(), 1.0)],
+            value_unit: None,
+        }]));
+    }
+    let app = TestApp::builder().engine(Arc::new(engine)).spawn().await;
+    let user = principal("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "analysis source tool", 1)
+        .await
+        .unwrap();
+    let historical = publish_active_version(
+        &app,
+        &user,
+        session.id,
+        "historical-source",
+        b"id,name\n1,old\n",
+    )
+    .await;
+    let active = publish_active_version(
+        &app,
+        &user,
+        session.id,
+        "active-source",
+        b"id,name\n1,new\n",
+    )
+    .await;
+    let model_dataframe_id = active.dataframes[0].id;
+    let dataset_id = insert_direct_dataset(&app, session.id, &active, "active-source");
+    let resource_id = publish_tool_resource(&app, &user, session.id).await;
+    let mut tool_services = services_for_session(&app, user, session.id);
+    Arc::get_mut(&mut tool_services).unwrap().request_message_id =
+        insert_request_message(&app, session.id);
+    tool_services
+        .loaded_skills
+        .lock()
+        .await
+        .insert("result-analysis".into());
+    let tool = tools::run_result_analysis::RunResultAnalysisTool::new(tool_services);
+
+    for input in [
+        serde_json::json!({"modelDataframeId": model_dataframe_id, "alias": "model"}),
+        serde_json::json!({"datasetId": dataset_id, "alias": "source"}),
+        serde_json::json!({"resourceId": resource_id, "alias": "local"}),
+    ] {
+        let args = serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
+            "intent": "single bounded source",
+            "script": format!("result = limit(1, {});", input["alias"].as_str().unwrap()),
+            "inputs": [input],
+            "expectedOutputs": ["result"]
+        }))
+        .unwrap();
+        let value = tool.call(&mut ToolContext::new(), args).await.unwrap();
+        assert_eq!(value["status"], "succeeded");
+    }
+
+    for invalid_inputs in [
+        serde_json::json!([{"alias":"missing"}]),
+        serde_json::json!([{
+            "datasetId": dataset_id,
+            "resourceId": resource_id,
+            "alias":"ambiguous"
+        }]),
+    ] {
+        let args = serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
+            "intent":"invalid source selection",
+            "script":"result = limit(1, missing);",
+            "inputs":invalid_inputs,
+            "expectedOutputs":["result"]
+        }))
+        .unwrap();
+        let error = tool.call(&mut ToolContext::new(), args).await.unwrap_err();
+        assert_eq!(error.code, "analysis_inputs_invalid");
+    }
+
+    let too_many = (0..21)
+        .map(|index| {
+            serde_json::json!({
+                "modelDataframeId": model_dataframe_id,
+                "alias": format!("model_{index}")
+            })
+        })
+        .collect::<Vec<_>>();
+    for (inputs, expected_code) in [
+        (too_many, "analysis_inputs_invalid"),
+        (
+            vec![
+                serde_json::json!({"modelDataframeId":model_dataframe_id,"alias":"same"}),
+                serde_json::json!({"resourceId":resource_id,"alias":"same"}),
+            ],
+            "analysis_alias_invalid",
+        ),
+        (
+            vec![serde_json::json!({
+                "modelDataframeId": historical.dataframes[0].id,
+                "alias":"stale"
+            })],
+            "analysis_input_not_found",
+        ),
+        (
+            vec![serde_json::json!({
+                "modelDataframeId":model_dataframe_id,
+                "alias":"select"
+            })],
+            "analysis_alias_invalid",
+        ),
+    ] {
+        let args = serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
+            "intent":"reject invalid bounded inputs",
+            "script":"result = limit(1, select);",
+            "inputs":inputs,
+            "expectedOutputs":["result"]
+        }))
+        .unwrap();
+        let error = tool.call(&mut ToolContext::new(), args).await.unwrap_err();
+        assert_eq!(error.code, expected_code);
+    }
+
+    let mixed = serde_json::from_value::<tools::run_result_analysis::Args>(serde_json::json!({
+        "intent":"combine active model, result dataset, and local resource",
+        "script":"result = limit(1, model);",
+        "inputs":[
+            {"modelDataframeId":model_dataframe_id,"alias":"model"},
+            {"datasetId":dataset_id,"alias":"simulation"},
+            {"resourceId":resource_id,"alias":"local"}
+        ],
+        "expectedOutputs":["result"]
+    }))
+    .unwrap();
+    let value = tool
+        .call(&mut ToolContext::new(), mixed)
+        .await
+        .expect("matching mixed sources must run");
+    assert_eq!(value["status"], "succeeded");
+    let analysis_run_id = value["analysisRunId"]
+        .as_str()
+        .unwrap()
+        .parse::<i32>()
+        .unwrap();
+    let snapshots = diesel::sql_query("SELECT source_kind,dataset_id,resource_id,model_dataframe_id,source_schema_json,source_schema_hash,source_content_hash FROM result_analysis_inputs WHERE analysis_run_id=?1 ORDER BY ordinal")
+        .bind::<diesel::sql_types::Integer, _>(analysis_run_id)
+        .load::<AnalysisInputSnapshotRow>(&mut app.pool.get().unwrap())
+        .unwrap();
+    assert_eq!(snapshots.len(), 3);
+    assert_eq!(snapshots[0].source_kind, "active_model");
+    assert_eq!(snapshots[0].model_dataframe_id, Some(model_dataframe_id));
+    assert_eq!(
+        snapshots[0].source_schema_json,
+        active.dataframes[0].schema_json
+    );
+    assert_eq!(
+        snapshots[0].source_content_hash,
+        active.dataframes[0].content_hash
+    );
+    assert_eq!(snapshots[1].source_kind, "dataset");
+    assert_eq!(snapshots[1].dataset_id, Some(dataset_id));
+    assert!(!snapshots[1].source_schema_hash.is_empty());
+    assert!(!snapshots[1].source_content_hash.is_empty());
+    assert_eq!(snapshots[2].source_kind, "data_resource");
+    assert_eq!(
+        snapshots[2].resource_id.as_deref(),
+        Some(resource_id.as_str())
+    );
+    assert!(!snapshots[2].source_schema_hash.is_empty());
+    assert!(!snapshots[2].source_content_hash.is_empty());
+}
+
+#[tokio::test]
+async fn read_result_dataset_is_bounded_projected_paginated_and_session_scoped() {
+    let engine = ScenarioEngine::default();
+    engine.enqueue(EngineScenario::Success(vec![DatasetFixture {
+        name: "result".into(),
+        rows: vec![
+            ("one".into(), 1.0),
+            ("two".into(), 2.0),
+            ("three".into(), 3.0),
+        ],
+        value_unit: None,
+    }]));
+    let app = TestApp::builder().engine(Arc::new(engine)).spawn().await;
+    let user = principal("alice@example.com");
+    let session = app
+        .state
+        .session_repo
+        .create(&user.id, "result read", 1)
+        .await
+        .unwrap();
+    let other_session = app
+        .state
+        .session_repo
+        .create(&user.id, "other result read", 1)
+        .await
+        .unwrap();
+    let resource_id = publish_tool_resource(&app, &user, session.id).await;
+    let analysis = app
+        .state
+        .analysis_service
+        .run(AnalysisRequest {
+            principal: user.clone(),
+            session_id: session.id,
+            request_message_id: None,
+            intent: serde_json::json!("read result"),
+            script: "result = limit(3, source);".into(),
+            inputs: vec![AnalysisInput {
+                source: AnalysisInputSource::DataResourceId(resource_id),
+                alias: "source".into(),
+            }],
+            expected_outputs: vec!["result".into()],
+            skill_refs: vec![],
+        })
+        .await
+        .unwrap();
+    let dataset_id = analysis.datasets[0].id;
+    let services = services_for_session(&app, user.clone(), session.id);
+    services
+        .loaded_skills
+        .lock()
+        .await
+        .insert("result-analysis".into());
+    let tool = tools::read_result_dataset::ReadResultDatasetTool::new(services);
+    let first = tool
+        .call(
+            &mut ToolContext::new(),
+            tools::read_result_dataset::Args {
+                dataset_id,
+                columns: vec!["value".into()],
+                limit: Some(1),
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(first["metadata"]["id"], dataset_id.to_string());
+    assert_eq!(first["page"]["columns"], serde_json::json!(["value"]));
+    assert_eq!(first["page"]["rows"].as_array().unwrap().len(), 1);
+    let cursor = first["page"]["nextCursor"].as_str().unwrap().to_string();
+    let second = tool
+        .call(
+            &mut ToolContext::new(),
+            tools::read_result_dataset::Args {
+                dataset_id,
+                columns: vec!["value".into()],
+                limit: Some(1),
+                cursor: Some(cursor),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(second["page"]["rows"].as_array().unwrap().len(), 1);
+
+    for (columns, limit) in [(vec!["x".to_string(); 33], Some(1)), (vec![], Some(101))] {
+        let error = tool
+            .call(
+                &mut ToolContext::new(),
+                tools::read_result_dataset::Args {
+                    dataset_id,
+                    columns,
+                    limit,
+                    cursor: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "invalid_dataset_page");
+    }
+
+    for isolated in [
+        services_for_session(&app, user, other_session.id),
+        services_for_session(&app, principal("bob@example.com"), session.id),
+    ] {
+        isolated
+            .loaded_skills
+            .lock()
+            .await
+            .insert("result-analysis".into());
+        let error = tools::read_result_dataset::ReadResultDatasetTool::new(isolated)
+            .call(
+                &mut ToolContext::new(),
+                tools::read_result_dataset::Args {
+                    dataset_id,
+                    columns: vec![],
+                    limit: Some(1),
+                    cursor: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "dataset_not_found");
+    }
 }
 
 #[tokio::test]

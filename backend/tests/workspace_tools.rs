@@ -932,7 +932,8 @@ async fn read_model_dataframe_reads_active_and_exact_draft_without_paths() {
         None,
     )
     .await;
-    app.state
+    let published = app
+        .state
         .version_service
         .publish(
             &user,
@@ -947,6 +948,20 @@ async fn read_model_dataframe_reads_active_and_exact_draft_without_paths() {
         .await
         .unwrap();
     let services = tool_services_for_session(&app, user.clone(), session.id);
+    let inspected = tools::inspect_workspace::InspectWorkspaceTool::new(services.clone())
+        .call(&mut ToolContext::new(), tools::inspect_workspace::Args {})
+        .await
+        .unwrap();
+    assert_eq!(
+        inspected["active"]["tables"][0]["modelDataframeId"],
+        published.version.dataframes[0].id
+    );
+    services.loaded_skills.lock().await.clear();
+    services
+        .loaded_skills
+        .lock()
+        .await
+        .insert("result-analysis".into());
     let mut context = ToolContext::new();
     let active = tools::read_model_dataframe::ReadModelDataFrameTool::new(services.clone())
         .call(
@@ -975,6 +990,26 @@ async fn read_model_dataframe_reads_active_and_exact_draft_without_paths() {
         None,
     )
     .await;
+    let draft_error = tools::read_model_dataframe::ReadModelDataFrameTool::new(services.clone())
+        .call(
+            &mut context,
+            tools::read_model_dataframe::Args {
+                scope: zjudss::application::ModelReadScope::Draft,
+                table_name: "bus".into(),
+                columns: vec!["id".into(), "p".into()],
+                equals: BTreeMap::from([("id".into(), serde_json::json!("b1"))]),
+                limit: None,
+                expected_draft: Some(draft),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(draft_error.code, "skill_required");
+    services
+        .loaded_skills
+        .lock()
+        .await
+        .insert("model-intake".into());
     let draft_result = tools::read_model_dataframe::ReadModelDataFrameTool::new(services)
         .call(
             &mut context,
