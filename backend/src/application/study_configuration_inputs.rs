@@ -306,6 +306,6 @@ impl StudyConfigurationService {
                 now_ms(),
             )
             .await?;
-        self.view(user, updated).await
+        self.view(user, updated, Vec::new()).await
     }
 }

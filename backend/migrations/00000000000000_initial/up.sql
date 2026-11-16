@@ -522,11 +522,8 @@ CREATE INDEX idx_result_datasets_analysis ON result_datasets(analysis_run_id,id)
 CREATE TABLE result_analysis_inputs (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  analysis_run_id INTEGER NOT NULL REFERENCES result_analysis_runs(id) ON DELETE CASCADE,
- source_kind TEXT NOT NULL CHECK(source_kind IN ('dataset','data_resource','active_model')),
  dataset_id INTEGER REFERENCES result_datasets(id) ON DELETE RESTRICT,
  resource_id TEXT REFERENCES data_resources(id) ON DELETE RESTRICT,
- model_version_id INTEGER,
- model_dataframe_id INTEGER,
  alias TEXT NOT NULL,
  ordinal INTEGER NOT NULL,
  source_name TEXT NOT NULL,
@@ -534,35 +531,20 @@ CREATE TABLE result_analysis_inputs (
  source_schema_hash TEXT NOT NULL,
  source_content_hash TEXT NOT NULL,
  source_producer_json TEXT NOT NULL,
- CHECK((source_kind='dataset' AND dataset_id IS NOT NULL AND resource_id IS NULL AND model_version_id IS NULL AND model_dataframe_id IS NULL)
-    OR (source_kind='data_resource' AND dataset_id IS NULL AND resource_id IS NOT NULL AND model_version_id IS NULL AND model_dataframe_id IS NULL)
-    OR (source_kind='active_model' AND dataset_id IS NULL AND resource_id IS NULL AND model_version_id IS NOT NULL AND model_dataframe_id IS NOT NULL)),
- UNIQUE(analysis_run_id,dataset_id),
- UNIQUE(analysis_run_id,resource_id),
- UNIQUE(analysis_run_id,model_dataframe_id),
- UNIQUE(analysis_run_id,alias),
- UNIQUE(analysis_run_id,ordinal)
+ CHECK((dataset_id IS NOT NULL AND resource_id IS NULL) OR (dataset_id IS NULL AND resource_id IS NOT NULL))
 );
 CREATE TABLE dataset_lineage_snapshots (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  derived_dataset_id INTEGER NOT NULL REFERENCES result_datasets(id) ON DELETE CASCADE,
- source_kind TEXT NOT NULL CHECK(source_kind IN ('dataset','data_resource','active_model')),
  source_dataset_id INTEGER REFERENCES result_datasets(id) ON DELETE RESTRICT,
  source_resource_id TEXT REFERENCES data_resources(id) ON DELETE RESTRICT,
- model_version_id INTEGER,
- model_dataframe_id INTEGER,
  source_name TEXT NOT NULL,
  source_schema_json TEXT NOT NULL,
  source_schema_hash TEXT NOT NULL,
  source_content_hash TEXT NOT NULL,
  source_producer_json TEXT NOT NULL,
  created_at_ms INTEGER NOT NULL,
- CHECK((source_kind='dataset' AND source_dataset_id IS NOT NULL AND source_resource_id IS NULL AND model_version_id IS NULL AND model_dataframe_id IS NULL)
-    OR (source_kind='data_resource' AND source_dataset_id IS NULL AND source_resource_id IS NOT NULL AND model_version_id IS NULL AND model_dataframe_id IS NULL)
-    OR (source_kind='active_model' AND source_dataset_id IS NULL AND source_resource_id IS NULL AND model_version_id IS NOT NULL AND model_dataframe_id IS NOT NULL)),
- UNIQUE(derived_dataset_id,source_dataset_id),
- UNIQUE(derived_dataset_id,source_resource_id),
- UNIQUE(derived_dataset_id,model_dataframe_id)
+ CHECK((source_dataset_id IS NOT NULL AND source_resource_id IS NULL) OR (source_dataset_id IS NULL AND source_resource_id IS NOT NULL))
 );
 CREATE TABLE dataset_views (
  id INTEGER PRIMARY KEY AUTOINCREMENT,

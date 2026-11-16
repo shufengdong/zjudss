@@ -184,6 +184,61 @@ fn family_candidates<'a>(
         .collect()
 }
 
+fn is_topology_radial(facts: &ModelStudyFacts) -> bool {
+    facts.voltage_source_count == 1
+        && facts.is_connected
+        && !facts.has_loops
+        && !facts.has_pv_generator
+        && !facts.has_gfm
+}
+
+pub fn coerce_facade_id_for_topology<'a>(
+    facade_id: &'a str,
+    facts: &ModelStudyFacts,
+) -> (&'a str, Option<String>) {
+    let id_lower = facade_id.to_ascii_lowercase();
+    let is_newton = id_lower.contains("newton");
+    let is_radial_facade = id_lower.contains("radial");
+    if !is_newton && !is_radial_facade {
+        return (facade_id, None);
+    }
+    let actually_radial = is_topology_radial(facts);
+    if is_newton && actually_radial {
+        let msg = format!(
+            "当前 active 模型是单电源连通辐射状配电网（{} 母线、无环路），牛顿-拉夫逊法无法收敛，已自动切换为径向潮流（前推回代）求解器。",
+            facts.bus_count
+        );
+        return ("static_power_flow_radial", Some(msg));
+    }
+    if is_radial_facade && !actually_radial {
+        let reason = if facts.has_loops {
+            "存在环路"
+        } else if !facts.is_connected {
+            "网络不连通"
+        } else if facts.voltage_source_count > 1 {
+            return (
+                "static_power_flow_newton",
+                Some(format!(
+                    "当前 active 模型含 {} 个电压源，径向潮流前推回代法不适用，已自动切换为牛顿-拉夫逊求解器。",
+                    facts.voltage_source_count
+                )),
+            );
+        } else if facts.has_pv_generator {
+            "含 PV 发电机"
+        } else if facts.has_gfm {
+            "含 GFM 变流器"
+        } else {
+            "拓扑不匹配"
+        };
+        let msg = format!(
+            "当前 active 模型不是辐射状配电网（{}），径向潮流前推回代法不适用，已自动切换为牛顿-拉夫逊求解器。",
+            reason
+        );
+        return ("static_power_flow_newton", Some(msg));
+    }
+    (facade_id, None)
+}
+
 fn select_candidate<'a>(
     request: &StudyRequest,
     facts: &ModelStudyFacts,
@@ -201,17 +256,24 @@ fn select_candidate<'a>(
         } => Some(*solver_preference),
         _ => None,
     }?;
+    let actually_radial = is_topology_radial(facts);
     let preference = match preference {
-        SolverPreference::Radial => "radial",
-        SolverPreference::Newton => "newton",
+        SolverPreference::Radial => {
+            if actually_radial {
+                "radial"
+            } else {
+                "newton"
+            }
+        }
+        SolverPreference::Newton => {
+            if actually_radial {
+                "radial"
+            } else {
+                "newton"
+            }
+        }
         SolverPreference::Auto => {
-            if facts.voltage_source_count == 1
-                && facts.is_connected
-                && !facts.has_loops
-                && !facts.has_parallel_branches
-                && !facts.has_pv_generator
-                && !facts.has_gfm
-            {
+            if actually_radial {
                 "radial"
             } else {
                 "newton"

@@ -391,6 +391,7 @@ impl AppState {
             DataResourceRepo::new(pool.clone()),
             data_resource_service.clone(),
             data_mapping_service.clone(),
+            artifact_service.clone(),
             engine_snapshot.clone(),
         );
         let managed_workflow_service =

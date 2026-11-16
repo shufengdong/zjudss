@@ -81,10 +81,18 @@ impl Tool for PrepareStudyTool {
             .await?;
         let value = serde_json::to_value(&configuration)
             .map_err(|error| DomainToolError::new("serialization_error", error.to_string()))?;
+        let topology_note = if !configuration.warnings.is_empty() {
+            format!(
+                "【拓扑兼容提示】{}\n\n",
+                configuration.warnings.join(" ")
+            )
+        } else {
+            String::new()
+        };
         self.services
             .writer
             .assistant(&format!(
-                "{explanation}\n\n已创建“{}”研究配置卡（ID: {}）。请在卡片中检查并确认输入、参数和结果；只有点击“确认并生成脚本”后才会开始执行。",
+                "{topology_note}{explanation}\n\n已创建\"{}\"研究配置卡（ID: {}）。请在卡片中检查并确认输入、参数和结果；只有点击\"确认并生成脚本\"后才会开始执行。",
                 configuration.facade.title, configuration.id,
             ))
             .await

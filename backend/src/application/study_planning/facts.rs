@@ -31,7 +31,7 @@ struct FactAccumulator {
     has_gfm: bool,
 }
 
-pub(super) fn empty_model_facts(engine_snapshot_id: &str) -> ModelStudyFacts {
+pub fn empty_model_facts(engine_snapshot_id: &str) -> ModelStudyFacts {
     ModelStudyFacts {
         available_aliases: BTreeSet::new(),
         active_version_id: None,
@@ -56,7 +56,7 @@ pub(super) fn empty_model_facts(engine_snapshot_id: &str) -> ModelStudyFacts {
     }
 }
 
-pub(super) async fn extract_active_model_facts(
+pub async fn extract_active_model_facts(
     user: &CurrentUser,
     active: &VersionSnapshot,
     artifacts: &ArtifactService,
@@ -737,7 +737,9 @@ fn analyze_topology(
             (to_index, from_index)
         };
         *pairs.entry(pair).or_default() += 1;
-        if !union.join(from_index, to_index) {
+    }
+    for (&pair, _) in pairs.iter() {
+        if !union.join(pair.0, pair.1) {
             has_loops = true;
         }
     }

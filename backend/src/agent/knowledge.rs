@@ -126,7 +126,10 @@ impl AgentKnowledge {
         {
             return Err(KnowledgeError::new(
                 "agent_bundle_mismatch",
-                "请求版本与资源版本不一致",
+                format!(
+                    "请求版本({bundle_version})与资源版本不一致 manifest={} index={}",
+                    manifest.agent_bundle_version, index.bundle_version
+                ),
             ));
         }
         verify_hash(

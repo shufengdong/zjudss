@@ -27,7 +27,8 @@ use super::study_configuration_policy::{
     apply_result_selector_overrides, json_values_equivalent, preserve_protected_fields,
     result_selector_fields, validate_struct_values,
 };
-use super::{ColumnMapping, CreateMappedResourceRequest, DataMappingService};
+use super::study_planning::{facts, policy};
+use super::{ArtifactService, ColumnMapping, CreateMappedResourceRequest, DataMappingService};
 use super::{DataResourceError, DataResourceService};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,6 +174,8 @@ pub struct StudyConfigurationView {
     pub intent: Value,
     pub inputs: Vec<StudyInputCard>,
     pub results: StudyResultCard,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -311,6 +314,7 @@ pub struct StudyConfigurationService {
     resources: DataResourceRepo,
     data_resources: DataResourceService,
     data_mapping: DataMappingService,
+    artifacts: ArtifactService,
     snapshot: Arc<EngineResourceSnapshot>,
 }
 
@@ -325,6 +329,7 @@ impl StudyConfigurationService {
         resources: DataResourceRepo,
         data_resources: DataResourceService,
         data_mapping: DataMappingService,
+        artifacts: ArtifactService,
         snapshot: Arc<EngineResourceSnapshot>,
     ) -> Self {
         Self {
@@ -333,6 +338,7 @@ impl StudyConfigurationService {
             resources,
             data_resources,
             data_mapping,
+            artifacts,
             snapshot,
         }
     }
@@ -346,7 +352,7 @@ impl StudyConfigurationService {
         user: &CurrentUser,
         id: i32,
     ) -> Result<StudyConfigurationView, StudyConfigurationError> {
-        self.view(user, self.repo.find(&user.id, id).await?).await
+        self.view(user, self.repo.find(&user.id, id).await?, Vec::new()).await
     }
 
     pub(crate) async fn latest_mutable_id(
@@ -370,13 +376,14 @@ impl StudyConfigurationService {
             .repo
             .cancel(&user.id, id, expected_revision, now_ms())
             .await?;
-        self.view(user, aggregate).await
+        self.view(user, aggregate, Vec::new()).await
     }
 
     async fn view(
         &self,
         user: &CurrentUser,
         aggregate: StudyConfigurationAggregate,
+        warnings: Vec<String>,
     ) -> Result<StudyConfigurationView, StudyConfigurationError> {
         let facade = self.facade(&aggregate.configuration.facade_id)?;
         let mut inputs = Vec::new();
@@ -490,6 +497,7 @@ impl StudyConfigurationService {
                     .collect(),
                 constraints: facade.result_constraints.clone(),
             },
+            warnings,
         })
     }
 

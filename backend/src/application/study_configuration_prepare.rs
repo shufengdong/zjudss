@@ -1,11 +1,44 @@
 impl StudyConfigurationService {
+    async fn coerce_facade_for_topology(
+        &self,
+        user: &CurrentUser,
+        session_id: i32,
+        facade_id: &str,
+    ) -> (String, Option<String>) {
+        let Ok(workspace) = self
+            .versions
+            .workspace(&user.id, session_id, now_ms())
+            .await
+        else {
+            return (facade_id.to_string(), None);
+        };
+        let Some(active) = workspace.active.as_ref() else {
+            return (facade_id.to_string(), None);
+        };
+        let facts = facts::extract_active_model_facts(
+            user,
+            active,
+            &self.artifacts,
+            &self.snapshot.id,
+        )
+        .await;
+        let Ok(facts) = facts else {
+            return (facade_id.to_string(), None);
+        };
+        let (id, warning) = policy::coerce_facade_id_for_topology(facade_id, &facts);
+        (id.to_string(), warning)
+    }
+
     pub async fn prepare(
         &self,
         user: &CurrentUser,
         session_id: i32,
         request: PrepareStudyRequest,
     ) -> Result<StudyConfigurationView, StudyConfigurationError> {
-        let facade = self.facade(&request.facade_id)?;
+        let (coerced_id, topology_warning) = self
+            .coerce_facade_for_topology(user, session_id, &request.facade_id)
+            .await;
+        let facade = self.facade(&coerced_id)?;
         let (bindings, structs, results, status) =
             self.initial_contents(user, session_id, &facade).await?;
         let intent = serde_json::json!({
@@ -30,7 +63,10 @@ impl StudyConfigurationService {
                 },
             )
             .await?;
-        self.view(user, aggregate).await
+        let warnings = topology_warning
+            .map(|w| vec![w])
+            .unwrap_or_default();
+        self.view(user, aggregate, warnings).await
     }
 
     pub async fn select_facade(
@@ -40,11 +76,14 @@ impl StudyConfigurationService {
         request: SelectFacadeRequest,
     ) -> Result<StudyConfigurationView, StudyConfigurationError> {
         let current = self.repo.find(&user.id, id).await?;
-        let facade = self.facade(&request.facade_id)?;
+        let (coerced_id, topology_warning) = self
+            .coerce_facade_for_topology(user, current.configuration.session_id, &request.facade_id)
+            .await;
+        let facade = self.facade(&coerced_id)?;
         let (bindings, structs, results, status) = self
             .initial_contents(user, current.configuration.session_id, &facade)
             .await?;
-        self.replace_and_view(
+        let mut view = self.replace_and_view(
             user,
             current,
             request.expected_revision,
@@ -54,7 +93,11 @@ impl StudyConfigurationService {
             results,
             status,
         )
-        .await
+        .await?;
+        if let Some(w) = topology_warning {
+            view.warnings.push(w);
+        }
+        Ok(view)
     }
 
     async fn initial_contents(

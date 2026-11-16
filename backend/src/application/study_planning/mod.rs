@@ -1,6 +1,6 @@
-mod contracts;
-mod facts;
-mod policy;
+pub mod contracts;
+pub mod facts;
+pub mod policy;
 
 use std::sync::Arc;
 
