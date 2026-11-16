@@ -21,10 +21,14 @@ impl StudyConfigurationService {
         }
         if let Some(resource_id) = request.resource_id.as_deref() {
             let resource = self.resources.find(&user.id, resource_id, false).await?;
+            let schema_ok = resource
+                .resource
+                .declared_schema_ref
+                .as_deref()
+                .is_none_or(|declared| declared == input.schema_ref.as_str());
             if resource.resource.session_id != aggregate.configuration.session_id
                 || resource.resource.status != "live"
-                || resource.resource.declared_schema_ref.as_deref()
-                    != Some(input.schema_ref.as_str())
+                || !schema_ok
             {
                 return Err(Self::invalid(
                     "study_binding_incompatible",

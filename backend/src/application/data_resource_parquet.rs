@@ -4,7 +4,7 @@ use std::sync::Arc;
 use arrow_array::types::Float64Type;
 use arrow_array::{
     Array, ArrayRef, BooleanArray, Float64Array, Int64Array, ListArray, RecordBatch, StringArray,
-    UInt32Array,
+    UInt32Array, UInt64Array,
 };
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
@@ -125,7 +125,22 @@ fn struct_array(
             Ok((DataType::Float64, Arc::new(Float64Array::from(vec![item]))))
         }
         DataTypeContract::Primitive { name: kind } | DataTypeContract::Semantic { name: kind }
-            if kind == "u32" || kind.contains("u32") =>
+            if matches_u64_kind(kind) =>
+        {
+            let item = if null {
+                None
+            } else {
+                Some(value.unwrap().as_u64().ok_or_else(|| {
+                    DataResourceService::invalid(
+                        "structured_values_invalid",
+                        &format!("字段 {name} 必须是非负整数"),
+                    )
+                })?)
+            };
+            Ok((DataType::UInt64, Arc::new(UInt64Array::from(vec![item]))))
+        }
+        DataTypeContract::Primitive { name: kind } | DataTypeContract::Semantic { name: kind }
+            if matches_uint_kind(kind) =>
         {
             let item = if null {
                 None
@@ -148,7 +163,7 @@ fn struct_array(
             Ok((DataType::UInt32, Arc::new(UInt32Array::from(vec![item]))))
         }
         DataTypeContract::Primitive { name: kind } | DataTypeContract::Semantic { name: kind }
-            if kind == "i64" || kind.contains("int") =>
+            if matches_int_kind(kind) =>
         {
             let item = if null {
                 None
@@ -204,6 +219,26 @@ fn struct_array(
         )),
     }
 }
+pub(super) fn matches_int_kind(kind: &str) -> bool {
+    matches!(kind, "i8" | "i16" | "i32" | "i64")
+        || kind.starts_with("i8_")
+        || kind.starts_with("i16_")
+        || kind.starts_with("i32_")
+        || kind.starts_with("i64_")
+        || kind.contains("int")
+}
+
+pub(super) fn matches_uint_kind(kind: &str) -> bool {
+    matches!(kind, "u8" | "u16" | "u32")
+        || kind.starts_with("u8_")
+        || kind.starts_with("u16_")
+        || kind.starts_with("u32_")
+}
+
+fn matches_u64_kind(kind: &str) -> bool {
+    kind == "u64" || kind.starts_with("u64_")
+}
+
 pub(super) fn dtype_label(dtype: &DataTypeContract) -> String {
     match dtype {
         DataTypeContract::Primitive { name } | DataTypeContract::Semantic { name } => name.clone(),

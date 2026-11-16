@@ -24,12 +24,14 @@ test('directory and ZIP bundles publish equivalent immutable model content',asyn
   expect((await (await api.get(`/api/sessions/${direct}/data-resources`)).json()).resources.map((item:any)=>item.alias)).toContain('para')
   await openMutableDraft(page)
   await page.getByRole('button',{name:'生成版本'}).click()
+  await expect.poll(async()=>(await workspace(api,direct)).active?.contentHash).toBeTruthy()
   const directHash=(await workspace(api,direct)).active.contentHash
   const zipped=await createSessionFromPage(page,'ZIP bundle')
   await upload(page,resolve(fixtures,'bundle/demo.zip'))
   await expect.poll(async()=>(await workspace(api,zipped)).draft?.tables?.length).toBe(20)
   await openMutableDraft(page)
   await page.getByRole('button',{name:'生成版本'}).click()
+  await expect.poll(async()=>(await workspace(api,zipped)).active?.contentHash).toBeTruthy()
   const zippedVersion=(await workspace(api,zipped)).active
   expect(zippedVersion.contentHash).toBe(directHash)
 })

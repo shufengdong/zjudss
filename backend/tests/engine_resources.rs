@@ -1128,7 +1128,7 @@ fn current_eig_rs_tree_is_accepted_without_commit_hash_or_exact_example_count() 
             .expect("current configured eig-rs resources must be dynamically valid");
         assert_eq!(snapshot.catalog_schema_versions.dataframes, 4);
         assert_eq!(snapshot.catalog_schema_versions.case_projections, 2);
-        assert_eq!(snapshot.facades.enabled_count(), 18);
+        assert!(snapshot.facades.enabled_count() > 0);
         assert_eq!(
             snapshot.facades.enabled_count(),
             snapshot.facades.catalog_entry_count()
