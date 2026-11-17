@@ -15,6 +15,25 @@ function isNumeric(field: SchemaFieldContract): boolean {
     || name.endsWith('_semantics')
 }
 
+function isListOfStr(field: SchemaFieldContract): boolean {
+  const dtype = field.dtype
+  return dtype.kind === 'constructor'
+    && dtype.name === 'list'
+    && dtype.element.kind === 'primitive'
+    && dtype.element.name === 'str'
+}
+
+function stringListToString(value: unknown): string {
+  if (Array.isArray(value)) return value.join(', ')
+  if (value == null) return ''
+  return String(value)
+}
+
+function parseStringList(raw: string): string[] | undefined {
+  const items = raw.split(/[,;\n]/).map((item) => item.trim()).filter((item) => item.length > 0)
+  return items.length > 0 ? items : undefined
+}
+
 function defaultValues(fields: SchemaFieldContract[]): Record<string, unknown> {
   return Object.fromEntries(fields.flatMap((field) => (
     field.card?.default.state === 'value' ? [[field.name, field.card.default.value]] : []
@@ -95,13 +114,15 @@ export default function StructParameterCard({ input, busy, onSave }: {
             ? <select value={String(value)} disabled={disabled} onChange={(event) => set(field.name, event.target.value)} className="min-w-0 rounded border px-2 py-1.5">
               {enumValues.map((option) => <option key={String(option)} value={String(option)}>{String(option)}</option>)}
             </select>
-            : name.includes('bool')
-              ? <input type="checkbox" disabled={disabled} checked={Boolean(value)} onChange={(event) => set(field.name, event.target.checked)} />
-              : name.includes('date') || name.includes('time')
-                ? <input type="datetime-local" disabled={disabled} value={String(value)} onChange={(event) => set(field.name, event.target.value || undefined)} className="min-w-0 rounded border px-2 py-1.5" />
-                : isNumeric(field)
-                  ? <input type="number" disabled={disabled} value={String(value)} min={field.card?.range.minimum as number | undefined} max={field.card?.range.maximum as number | undefined} onChange={(event) => set(field.name, event.target.value === '' ? undefined : event.target.valueAsNumber)} className="min-w-0 rounded border px-2 py-1.5" />
-                  : <input type="text" disabled={disabled} value={String(value)} onChange={(event) => set(field.name, event.target.value)} className="min-w-0 rounded border px-2 py-1.5" />}
+            : isListOfStr(field)
+              ? <input type="text" disabled={disabled} value={stringListToString(value)} placeholder="用逗号、分号或换行分隔" onChange={(event) => set(field.name, parseStringList(event.target.value))} className="min-w-0 rounded border px-2 py-1.5" />
+              : name.includes('bool')
+                ? <input type="checkbox" disabled={disabled} checked={Boolean(value)} onChange={(event) => set(field.name, event.target.checked)} />
+                : name.includes('date') || name.includes('time')
+                  ? <input type="datetime-local" disabled={disabled} value={String(value)} onChange={(event) => set(field.name, event.target.value || undefined)} className="min-w-0 rounded border px-2 py-1.5" />
+                  : isNumeric(field)
+                    ? <input type="number" disabled={disabled} value={String(value)} min={field.card?.range.minimum as number | undefined} max={field.card?.range.maximum as number | undefined} onChange={(event) => set(field.name, event.target.value === '' ? undefined : event.target.valueAsNumber)} className="min-w-0 rounded border px-2 py-1.5" />
+                    : <input type="text" disabled={disabled} value={String(value)} onChange={(event) => set(field.name, event.target.value)} className="min-w-0 rounded border px-2 py-1.5" />}
         </label>
       })}
     </div>

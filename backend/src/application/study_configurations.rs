@@ -712,7 +712,7 @@ fn configuration_status(
                 StudyConfigurationService::invalid("configuration_stale", "研究输入绑定缺失")
             })?;
         let complete = match input.kind {
-            FacadeInputKind::Model => binding.model_table_name.is_some(),
+            FacadeInputKind::Model => binding.model_table_name.is_some() || !input.required,
             FacadeInputKind::Data => binding.resource_id.is_some() || !input.required,
             FacadeInputKind::Struct => {
                 let selector_fields = result_selector_fields(facade, input)?;

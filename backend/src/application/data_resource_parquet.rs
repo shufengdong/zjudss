@@ -6,6 +6,7 @@ use arrow_array::{
     Array, ArrayRef, BooleanArray, Float64Array, Int64Array, ListArray, RecordBatch, StringArray,
     UInt32Array, UInt64Array,
 };
+use arrow_buffer::{OffsetBuffer, ScalarBuffer};
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
@@ -40,6 +41,11 @@ pub(crate) fn struct_parquet(
                 "structured_values_invalid",
                 &format!("缺少必填字段 {}", field.name),
             ));
+        }
+        let is_null = value.is_none_or(Value::is_null);
+        let is_list = matches!(&field.dtype, DataTypeContract::Constructor { .. });
+        if !field.required && field.nullable && is_null && is_list {
+            continue;
         }
         let (dtype, array) = struct_array(&field.dtype, value, field.nullable, &field.name)?;
         fields.push(Field::new(&field.name, dtype, field.nullable));
@@ -211,6 +217,53 @@ fn struct_array(
             let array = ListArray::from_iter_primitive::<Float64Type, _, _>(vec![
                 items.map(|row| row.into_iter().map(Some).collect::<Vec<_>>()),
             ]);
+            Ok((array.data_type().clone(), Arc::new(array)))
+        }
+        DataTypeContract::Constructor {
+            name: kind,
+            element,
+        } if kind == "list"
+            && matches!(element.as_ref(),DataTypeContract::Primitive{name} if name=="str") =>
+        {
+            let items = if null {
+                None
+            } else {
+                Some(
+                    value
+                        .unwrap()
+                        .as_array()
+                        .ok_or_else(|| {
+                            DataResourceService::invalid(
+                                "structured_values_invalid",
+                                &format!("字段 {name} 必须是数组"),
+                            )
+                        })?
+                        .iter()
+                        .map(|item| {
+                            item.as_str().ok_or_else(|| {
+                                DataResourceService::invalid(
+                                    "structured_values_invalid",
+                                    &format!("字段 {name} 包含非字符串项"),
+                                )
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            };
+            let inner_values = items.clone().unwrap_or_default();
+            let inner = StringArray::from(
+                inner_values.iter().map(|s| Some(*s)).collect::<Vec<_>>(),
+            );
+            let inner_len = inner.len();
+            let scalar = ScalarBuffer::<i32>::from(vec![0i32, inner_len as i32]);
+            let offsets = OffsetBuffer::<i32>::new(scalar);
+            let list_field = Arc::new(Field::new("item", DataType::Utf8, true));
+            let array = ListArray::new(
+                list_field,
+                offsets,
+                Arc::new(inner),
+                if items.is_none() { Some(arrow_buffer::NullBuffer::from(vec![false])) } else { None },
+            );
             Ok((array.data_type().clone(), Arc::new(array)))
         }
         _ => Err(DataResourceService::invalid(

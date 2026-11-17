@@ -1972,7 +1972,7 @@
           "alias": "monitor",
           "inputKind": "model",
           "schemaRef": "frames.monitor",
-          "required": true,
+          "required": false,
           "position": 21,
           "description": "持久 Monitor 定义和被测元件引用；零行表示不配置。"
         },

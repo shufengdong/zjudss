@@ -16,6 +16,7 @@ release-test = ["e2e-test"]
 async-trait = "0.1"
 argon2 = "0.6"
 arrow-array = "60.1"
+arrow-buffer = "60.1"
 arrow-schema = "60.1"
 axum = { version = "0.8", features = ["multipart"] }
 chrono = "0.4"

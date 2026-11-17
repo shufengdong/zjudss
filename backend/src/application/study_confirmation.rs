@@ -36,6 +36,7 @@ impl StudyConfigurationService {
             .bindings
             .iter()
             .filter(|binding| binding.input_kind == "model")
+            .filter(|binding| binding.model_table_name.is_some())
             .collect::<Vec<_>>();
         let model = if model_bindings.is_empty() {
             None
@@ -45,16 +46,14 @@ impl StudyConfigurationService {
             })?;
             let expected = model_bindings
                 .iter()
-                .filter_map(|binding| binding.model_table_name.clone())
+                .map(|binding| binding.model_table_name.clone().expect("已过滤"))
                 .collect::<Vec<_>>();
-            if expected.len() != model_bindings.len()
-                || expected.iter().any(|name| {
-                    !active
-                        .dataframes
-                        .iter()
-                        .any(|frame| frame.table_name == *name)
-                })
-            {
+            if expected.iter().any(|name| {
+                !active
+                    .dataframes
+                    .iter()
+                    .any(|frame| frame.table_name == *name)
+            }) {
                 return Err(Self::invalid(
                     "configuration_stale",
                     "当前 active 模型不再满足研究门面",
