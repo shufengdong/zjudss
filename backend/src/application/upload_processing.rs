@@ -3,6 +3,11 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use arrow_array::{Array, BooleanArray, Float64Array, LargeListArray, RecordBatch, RecordBatchReader, StringArray};
+use arrow_schema::{DataType, Field, Schema};
+use parquet::arrow::ArrowWriter;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::file::properties::WriterProperties;
 use sha2::{Digest, Sha256};
 
 use crate::adapters::{
@@ -10,7 +15,9 @@ use crate::adapters::{
     ProjectionOutputSpec, SimEngine,
 };
 use crate::auth::CurrentUser;
-use crate::catalog::DataFrameContractKind;
+use crate::catalog::{
+    DataFrameContractKind, DataFrameSchemaContract, DataTypeContract, UploadConversion,
+};
 use crate::db::repositories::{NewUploadCandidate, UploadBatchRecordSet, UploadRepo};
 use crate::engine_resources::{
     EngineExample, EngineResourceSnapshot, FacadeInputKind, ProjectorOutputDisposition,
@@ -532,7 +539,19 @@ impl UploadProcessor {
                         .collect::<BTreeSet<_>>(),
                 );
                 let (alias, purpose, schema_ref) = match inferred {
-                    Some((a, s)) => (Some(a), Some(CandidatePurpose::ModelTable), Some(s)),
+                    Some((a, s)) => {
+                        let contract_kind = self
+                            .snapshot
+                            .schemas
+                            .resolve(&s)
+                            .ok()
+                            .map(|c| c.kind.clone());
+                        let purpose = match contract_kind {
+                            Some(DataFrameContractKind::Model) => CandidatePurpose::ModelTable,
+                            _ => CandidatePurpose::DataResource,
+                        };
+                        (Some(a), Some(purpose), Some(s))
+                    }
                     None => {
                         needs_purpose = true;
                         (None, None, None)
@@ -554,7 +573,28 @@ impl UploadProcessor {
         let mut candidates = Vec::new();
         let mut committed = Vec::new();
         for parsed in parsed {
-            let artifact = match self.commit_path(user.storage_scope_id, &parsed.path).await {
+            let artifact_path = if let Some(ref schema_ref) = parsed.schema_ref {
+                if let Ok(contract) = self.snapshot.schemas.resolve(schema_ref) {
+                    let work_dir = self
+                        .data_dir
+                        .join("upload-work")
+                        .join(record.batch.id.to_string())
+                        .join("contracts");
+                    std::fs::create_dir_all(&work_dir).ok();
+                    let coerced =
+                        work_dir.join(format!("{}.parquet", parsed.file_id.replace(':', "_")));
+                    match Self::materialize_parquet_with_contract(&parsed.path, &coerced, &contract)
+                    {
+                        Ok(()) => coerced,
+                        Err(_) => parsed.path.clone(),
+                    }
+                } else {
+                    parsed.path.clone()
+                }
+            } else {
+                parsed.path.clone()
+            };
+            let artifact = match self.commit_path(user.storage_scope_id, &artifact_path).await {
                 Ok(value) => value,
                 Err(error) => {
                     self.release_ids(user.storage_scope_id, &committed).await;
@@ -594,12 +634,10 @@ impl UploadProcessor {
         let mut matches = BTreeMap::<(usize, usize), (String, String)>::new();
         for facade in self.snapshot.facades.enabled() {
             for input in &facade.inputs {
-                if input.kind != FacadeInputKind::Model {
+                if matches!(input.kind, FacadeInputKind::Struct) {
                     continue;
                 }
-                if let Ok(schema) = self.snapshot.schemas.resolve(&input.schema_ref)
-                    && schema.kind == DataFrameContractKind::Model
-                {
+                if let Ok(schema) = self.snapshot.schemas.resolve(&input.schema_ref) {
                     let required = schema
                         .fields
                         .iter()
@@ -625,6 +663,250 @@ impl UploadProcessor {
             }
         }
         matches.into_iter().next_back().map(|(_, value)| value)
+    }
+
+    fn materialize_parquet_with_contract(
+        raw_path: &Path,
+        output_path: &Path,
+        contract: &DataFrameSchemaContract,
+    ) -> Result<(), UploadBatchError> {
+        let file = std::fs::File::open(raw_path)
+            .map_err(|e| UploadBatchError::Invalid("contract_apply_failed".into(), e.to_string()))?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+            .map_err(|e| UploadBatchError::Invalid("contract_apply_failed".into(), e.to_string()))?;
+        let mut reader = builder
+            .build()
+            .map_err(|e| UploadBatchError::Invalid("contract_apply_failed".into(), e.to_string()))?;
+        let raw_schema = reader.schema();
+        let first_batch = reader
+            .next()
+            .ok_or_else(|| UploadBatchError::Invalid("contract_apply_failed".into(), "空 parquet".into()))?
+            .map_err(|e| UploadBatchError::Invalid("contract_apply_failed".into(), e.to_string()))?;
+
+        let contract_field_map = contract
+            .fields
+            .iter()
+            .map(|f| (f.name.as_str(), f))
+            .collect::<BTreeMap<_, _>>();
+
+        let raw_name_to_index = raw_schema
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.name().as_str(), i))
+            .collect::<BTreeMap<_, _>>();
+
+        let num_rows = first_batch.num_rows();
+        let batch_names = raw_schema
+            .fields()
+            .iter()
+            .map(|f| f.name().clone())
+            .collect::<Vec<_>>();
+        let batch_columns = batch_names
+            .iter()
+            .map(|name| {
+                let raw_idx = raw_name_to_index[name.as_str()];
+                let raw_array = first_batch.column(raw_idx).clone();
+                match contract_field_map.get(name.as_str()) {
+                    Some(contract_field) => {
+                        Self::coerce_column(raw_array, contract_field, &contract.allowed_conversions, num_rows)
+                    }
+                    None => Ok(raw_array),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let coerced_fields = raw_schema
+            .fields()
+            .iter()
+            .zip(batch_columns.iter())
+            .map(|(f, col)| Arc::new(Field::new(f.name(), col.data_type().clone(), f.is_nullable())))
+            .collect::<Vec<_>>();
+        let coerced_schema = Arc::new(Schema::new(coerced_fields));
+
+        let coerced_batch = RecordBatch::try_new(coerced_schema.clone(), batch_columns)
+            .map_err(|e| UploadBatchError::Invalid("contract_apply_failed".into(), e.to_string()))?;
+
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| UploadBatchError::Invalid("contract_apply_failed".into(), e.to_string()))?;
+        }
+        let file = std::fs::File::create(output_path)
+            .map_err(|e| UploadBatchError::Invalid("contract_apply_failed".into(), e.to_string()))?;
+        let props = WriterProperties::builder()
+            .set_compression(parquet::basic::Compression::SNAPPY)
+            .build();
+        let mut writer = ArrowWriter::try_new(file, coerced_schema, Some(props))
+            .map_err(|e| UploadBatchError::Invalid("contract_apply_failed".into(), e.to_string()))?;
+        writer
+            .write(&coerced_batch)
+            .and_then(|_| writer.close().map(|_| ()))
+            .map_err(|e| UploadBatchError::Invalid("contract_apply_failed".into(), e.to_string()))?;
+        Ok(())
+    }
+
+    fn coerce_column(
+        raw_array: arrow_array::ArrayRef,
+        contract_field: &crate::catalog::SchemaFieldContract,
+        allowed_conversions: &[UploadConversion],
+        num_rows: usize,
+    ) -> Result<arrow_array::ArrayRef, UploadBatchError> {
+        let has_scalar_to_string_list =
+            allowed_conversions.contains(&UploadConversion::ScalarToStringList);
+        let has_scalar_to_f64_list =
+            allowed_conversions.contains(&UploadConversion::ScalarToF64List);
+        let raw_is_string = raw_array.data_type() == &DataType::Utf8
+            || raw_array.data_type() == &DataType::LargeUtf8;
+
+        match &contract_field.dtype {
+            DataTypeContract::Primitive { name } if name == "f64" => {
+                if let Some(str_arr) = raw_array.as_any().downcast_ref::<StringArray>() {
+                    let converted = (0..num_rows)
+                        .map(|i| {
+                            if str_arr.is_null(i) {
+                                None
+                            } else {
+                                str_arr.value(i).trim().parse::<f64>().ok()
+                            }
+                        })
+                        .collect::<Float64Array>();
+                    Ok(Arc::new(converted) as arrow_array::ArrayRef)
+                } else {
+                    Ok(raw_array)
+                }
+            }
+            DataTypeContract::Primitive { name } if name == "bool" => {
+                if let Some(str_arr) = raw_array.as_any().downcast_ref::<StringArray>() {
+                    let converted = (0..num_rows)
+                        .map(|i| {
+                            if str_arr.is_null(i) {
+                                None
+                            } else {
+                                let v = str_arr.value(i).trim().to_lowercase();
+                                Some(matches!(v.as_str(), "true" | "1" | "yes" | "y" | "on"))
+                            }
+                        })
+                        .collect::<BooleanArray>();
+                    Ok(Arc::new(converted) as arrow_array::ArrayRef)
+                } else {
+                    Ok(raw_array)
+                }
+            }
+            DataTypeContract::Constructor { name, element } if name == "list" => match element.as_ref() {
+                DataTypeContract::Primitive { name: elem_name } if elem_name == "str" => {
+                    if has_scalar_to_string_list && raw_is_string {
+                        Self::build_string_list_array(&raw_array, num_rows, &contract_field.name)
+                    } else {
+                        Ok(raw_array)
+                    }
+                }
+                DataTypeContract::Primitive { name: elem_name } if elem_name == "f64" => {
+                    if has_scalar_to_f64_list && raw_is_string {
+                        Self::build_f64_list_array(&raw_array, num_rows, &contract_field.name)
+                    } else {
+                        Ok(raw_array)
+                    }
+                }
+                _ => Ok(raw_array),
+            },
+            _ => Ok(raw_array),
+        }
+    }
+
+    fn build_string_list_array(
+        raw_array: &arrow_array::ArrayRef,
+        num_rows: usize,
+        field_name: &str,
+    ) -> Result<arrow_array::ArrayRef, UploadBatchError> {
+        let str_arr = raw_array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| {
+                UploadBatchError::Invalid(
+                    "contract_apply_failed".into(),
+                    format!("列 '{field_name}' 期望 Utf8 标量以拆分为 list<str>"),
+                )
+            })?;
+        let values: Vec<Option<Vec<Option<String>>>> = (0..num_rows)
+            .map(|i| {
+                if (*str_arr).is_null(i) {
+                    None
+                } else {
+                    let parts = str_arr
+                        .value(i)
+                        .split(',')
+                        .map(|s| Some(s.trim().to_string()))
+                        .collect::<Vec<_>>();
+                    Some(parts)
+                }
+            })
+            .collect();
+        let lengths = values
+            .iter()
+            .map(|v| v.as_ref().map(|l| l.len()).unwrap_or(0));
+        let offsets = arrow_buffer::OffsetBuffer::<i64>::from_lengths(lengths);
+        let list_values: Vec<Option<String>> = values
+            .iter()
+            .flat_map(|v| match v {
+                Some(list) => list.iter().cloned().collect::<Vec<_>>(),
+                None => vec![],
+            })
+            .collect();
+        let inner = StringArray::from(list_values);
+        let nulls = arrow_buffer::NullBuffer::from(
+            values.iter().map(|v| v.is_some()).collect::<Vec<_>>(),
+        );
+        let field = Arc::new(Field::new_list_field(DataType::Utf8, true));
+        let list = LargeListArray::new(field, offsets, Arc::new(inner), Some(nulls));
+        Ok(Arc::new(list) as arrow_array::ArrayRef)
+    }
+
+    fn build_f64_list_array(
+        raw_array: &arrow_array::ArrayRef,
+        num_rows: usize,
+        field_name: &str,
+    ) -> Result<arrow_array::ArrayRef, UploadBatchError> {
+        let str_arr = raw_array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| {
+                UploadBatchError::Invalid(
+                    "contract_apply_failed".into(),
+                    format!("列 '{field_name}' 期望 Utf8 标量以拆分为 list<f64>"),
+                )
+            })?;
+        let values: Vec<Option<Vec<Option<f64>>>> = (0..num_rows)
+            .map(|i| {
+                if (*str_arr).is_null(i) {
+                    None
+                } else {
+                    let parts = str_arr
+                        .value(i)
+                        .split(',')
+                        .map(|s| s.trim().parse::<f64>().ok())
+                        .collect::<Vec<_>>();
+                    Some(parts)
+                }
+            })
+            .collect();
+        let lengths = values
+            .iter()
+            .map(|v| v.as_ref().map(|l| l.len()).unwrap_or(0));
+        let offsets = arrow_buffer::OffsetBuffer::<i64>::from_lengths(lengths);
+        let list_values: Vec<Option<f64>> = values
+            .iter()
+            .flat_map(|v| match v {
+                Some(list) => list.iter().copied().collect::<Vec<_>>(),
+                None => vec![],
+            })
+            .collect();
+        let inner = Float64Array::from(list_values);
+        let nulls = arrow_buffer::NullBuffer::from(
+            values.iter().map(|v| v.is_some()).collect::<Vec<_>>(),
+        );
+        let field = Arc::new(Field::new_list_field(DataType::Float64, true));
+        let list = LargeListArray::new(field, offsets, Arc::new(inner), Some(nulls));
+        Ok(Arc::new(list) as arrow_array::ArrayRef)
     }
 
     fn materialize_tree(&self, record: &UploadBatchRecordSet) -> Result<PathBuf, UploadBatchError> {

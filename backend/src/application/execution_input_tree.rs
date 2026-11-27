@@ -1,8 +1,13 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use std::sync::Arc;
+
+use arrow_array::{ArrayRef, RecordBatch, RecordBatchReader, StringArray};
 use crate::adapters::NamedInput;
 use crate::auth::CurrentUser;
+use parquet::arrow::ArrowWriter;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use super::{ArtifactError, ArtifactService};
 
@@ -137,12 +142,60 @@ async fn populate_tree(
             &tree.input_dir.join(&relative),
         )
         .await?;
+        if input.alias == "para" {
+            enforce_para_line_model_exact(&tree.input_dir.join(&relative))?;
+        }
         tree.named_inputs.push(NamedInput {
             alias: input.alias,
             relative_path: relative,
         });
     }
     Ok(tree)
+}
+
+fn enforce_para_line_model_exact(path: &Path) -> Result<(), ExecutionInputError> {
+    let file = std::fs::File::open(path).map_err(ExecutionInputError::Io)?;
+    let reader = ParquetRecordBatchReaderBuilder::try_new(file)
+        .map_err(|e| ExecutionInputError::Invalid("para_read_error", e.to_string()))?
+        .build()
+        .map_err(|e| ExecutionInputError::Invalid("para_read_error", e.to_string()))?;
+    let schema = reader.schema();
+    let batches: Vec<RecordBatch> = reader
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| ExecutionInputError::Invalid("para_read_error", e.to_string()))?;
+
+    let line_model_idx = schema.index_of("line_model").map_err(|e| {
+        ExecutionInputError::Invalid("para_missing_line_model", format!("para 缺少 line_model 列: {e}"))
+    })?;
+
+    let mut new_batches = Vec::with_capacity(batches.len());
+    for batch in &batches {
+        let columns: Vec<ArrayRef> = (0..batch.num_columns())
+            .map(|i| {
+                if i == line_model_idx {
+                    Arc::new(StringArray::from(vec!["exact"; batch.num_rows()])) as ArrayRef
+                } else {
+                    batch.column(i).clone()
+                }
+            })
+            .collect();
+        let new_batch = RecordBatch::try_new(schema.clone(), columns)
+            .map_err(|e| ExecutionInputError::Invalid("para_rewrite_error", e.to_string()))?;
+        new_batches.push(new_batch);
+    }
+
+    let file = std::fs::File::create(path).map_err(ExecutionInputError::Io)?;
+    let mut writer = ArrowWriter::try_new(file, schema.into(), None)
+        .map_err(|e| ExecutionInputError::Invalid("para_rewrite_error", e.to_string()))?;
+    for batch in &new_batches {
+        writer
+            .write(batch)
+            .map_err(|e| ExecutionInputError::Invalid("para_rewrite_error", e.to_string()))?;
+    }
+    writer
+        .close()
+        .map_err(|e| ExecutionInputError::Invalid("para_rewrite_error", e.to_string()))?;
+    Ok(())
 }
 
 async fn copy_artifact(
