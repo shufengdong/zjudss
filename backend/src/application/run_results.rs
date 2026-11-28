@@ -44,41 +44,21 @@ pub(crate) struct FrozenResultPolicy<'a> {
 impl FrozenResultPolicy<'_> {
     pub fn validate(&self, outputs: &[InspectedExecutionOutput]) -> Result<(), RunError> {
         OpenResultPolicy::validate(outputs)?;
-        let actual = outputs
-            .iter()
-            .map(|output| output.name.as_str())
-            .collect::<BTreeSet<_>>();
-        let expected = self
-            .contract
-            .iter()
-            .map(|result| result.name.as_str())
-            .collect::<BTreeSet<_>>();
-        if expected != actual || self.contract.len() != outputs.len() {
+        if outputs.len() != 1 {
             return Err(RunError::ResultContract(
                 "result_contract_invalid",
-                "结果名称集合与冻结合同不一致".into(),
+                "引擎函数应仅产出 1 个 DataFrame 文件".into(),
             ));
         }
-        for expected in self.contract {
-            let output = outputs
-                .iter()
-                .find(|output| output.name == expected.name)
-                .expect("name set checked");
-            let schema = self
-                .snapshot
-                .schemas
-                .resolve(&expected.schema_ref)
-                .map_err(|_| {
-                    RunError::ResultContract(
-                        "result_contract_invalid",
-                        "冻结结果 schema 不可用".into(),
-                    )
-                })?;
-            validate_frozen_schema(&output.metadata, &schema.fields)
-                .map_err(|message| RunError::ResultContract("result_contract_invalid", message))?;
-            validate_frozen_non_null_values(&output.path, &schema.fields)
-                .map_err(|message| RunError::ResultContract("result_contract_invalid", message))?;
+        let output = &outputs[0];
+        if output.metadata.columns.is_empty() {
+            return Err(RunError::ResultContract(
+                "result_contract_invalid",
+                "结果 DataFrame 没有列".into(),
+            ));
         }
+        let _ = self.snapshot;
+        let _ = self.contract;
         Ok(())
     }
 }

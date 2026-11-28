@@ -27,6 +27,9 @@ impl ProcessEngine {
         let built = build_command(&self.config.bin, &spec)?;
         prepare_result_dir(&spec.result_dir)?;
         self.ensure_binary_available()?;
+        eprintln!("[engine] program={}", built.program.display());
+        eprintln!("[engine] cwd={}", built.cwd.display());
+        eprintln!("[engine] args: {:?}", built.args);
         let mut command = Command::new(&built.program);
         command.args(&built.args).current_dir(&built.cwd);
         let outcome = control::run_command(

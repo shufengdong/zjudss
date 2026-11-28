@@ -19,7 +19,7 @@ pub use failure_analyzer::{
 };
 pub use script_author::{
     EngineDocRef, LlmScriptAuthor, ScriptAuthor, ScriptAuthorError, ScriptGenerationRequest,
-    ScriptRepairRequest,
+    ScriptRepairRequest, build_argument_signature, build_result_binding,
 };
 
 #[derive(Debug, Clone)]

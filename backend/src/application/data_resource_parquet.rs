@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use arrow_array::types::Float64Type;
 use arrow_array::{
-    Array, ArrayRef, BooleanArray, Float64Array, Int64Array, ListArray, RecordBatch, StringArray,
-    UInt32Array, UInt64Array,
+    Array, ArrayRef, BooleanArray, Float64Array, Int64Array, ListArray, RecordBatch,
+    StringViewArray, UInt32Array, UInt64Array,
 };
 use arrow_buffer::{OffsetBuffer, ScalarBuffer};
 use arrow_schema::{DataType, Field, Schema};
@@ -98,7 +98,7 @@ fn struct_array(
                     )
                 })?)
             };
-            Ok((DataType::Utf8, Arc::new(StringArray::from(vec![item]))))
+            Ok((DataType::Utf8View, Arc::new(StringViewArray::from(vec![item]))))
         }
         DataTypeContract::Primitive { name: kind } | DataTypeContract::Semantic { name: kind }
             if kind == "bool" =>
@@ -251,13 +251,13 @@ fn struct_array(
                 )
             };
             let inner_values = items.clone().unwrap_or_default();
-            let inner = StringArray::from(
+            let inner = StringViewArray::from(
                 inner_values.iter().map(|s| Some(*s)).collect::<Vec<_>>(),
             );
             let inner_len = inner.len();
             let scalar = ScalarBuffer::<i32>::from(vec![0i32, inner_len as i32]);
             let offsets = OffsetBuffer::<i32>::new(scalar);
-            let list_field = Arc::new(Field::new("item", DataType::Utf8, true));
+            let list_field = Arc::new(Field::new("item", DataType::Utf8View, true));
             let array = ListArray::new(
                 list_field,
                 offsets,

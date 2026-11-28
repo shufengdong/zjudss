@@ -80,6 +80,10 @@ impl UploadConfirmationRepo {
                 let published = publish_on(conn, &user, batch.session_id, PublishCommand {
                     expected: DraftRef { id:draft.id, revision:draft.revision }, client_publish_id:format!("case-batch-{batch_id}"),
                     description:diagnostics["caseProjection"]["title"].as_str().unwrap_or("切换应用案例").chars().take(200).collect(), engine_contract:"tensoreval-parquet-v3".into(), now_ms,
+                    projection: crate::db::repositories::version::ProjectionSummary {
+                        profile: diagnostics["caseProjection"]["profile"].as_str().map(String::from),
+                        target_function: diagnostics["caseProjection"]["targetFunction"].as_str().map(String::from),
+                    },
                 }).map_err(|error| match error { VersionRepoError::Repository(error) => error, _ => RepoError::InvalidState("案例模型版本发布失败".into()) })?;
                 super::artifact_refs::release_refs(
                     conn,

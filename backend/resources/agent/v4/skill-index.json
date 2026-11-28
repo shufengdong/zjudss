@@ -26,7 +26,7 @@
     },
     {
       "id": "study-planning",
-      "version": "1.5.0",
+      "version": "1.6.0",
       "description": "结合 active 模型规划潮流、QSTS、短路、谐波与暂态研究",
       "triggers": [
         "simulate",
@@ -55,7 +55,7 @@
         "docs/dsa_function_reference.md"
       ],
       "path": "skills/study-planning.md",
-      "sha256": "a91cba6d610a3b772e966d8a7889f0cb2925fbafd44323ebb5920a9472a037de"
+      "sha256": "8057ee72ba0d624bfde849d8109d1d670749c0adb6f2e09557b478f370668cef"
     },
     {
       "id": "result-analysis",

@@ -271,6 +271,7 @@ impl VersionService {
                     description,
                     engine_contract: ENGINE_CONTRACT_VERSION.into(),
                     now_ms: now_ms(),
+                    projection: Default::default(),
                 },
             )
             .await?;

@@ -9,6 +9,7 @@ use tokio::sync::watch;
 use crate::adapters::{AdapterError, RunMode, RunSpec, SimEngine};
 use crate::agent::{
     EngineDocRef, FailureAnalyzer, ScriptAuthor, ScriptGenerationRequest, ScriptRepairRequest,
+    build_argument_signature, build_result_binding,
 };
 use crate::auth::CurrentUser;
 use crate::db::repositories::{
@@ -186,6 +187,10 @@ impl WorkflowWorker {
         let mut repair_stderr = String::new();
         let mut phase = "generation";
 
+        let arg_sig = build_argument_signature(&locked.input_aliases);
+        let res_names = locked.results.iter().map(|r| r.name.clone()).collect::<Vec<_>>();
+        let res_binding = build_result_binding(&res_names);
+
         loop {
             if cancelled(cancel, &aggregate) {
                 return Ok(());
@@ -208,7 +213,9 @@ impl WorkflowWorker {
                     locked: locked.clone(),
                     inputs: inputs.clone(),
                     engine_docs: self.engine_docs(&locked.function),
-                    instruction: "所有冻结 alias 已由运行环境注入。只写一条直接结果绑定，严格按冻结结果名、函数名和输入顺序调用；不要读取或重新赋值任何输入。只输出完整 RSS 脚本，不要解释。".into(),
+                    instruction: "所有冻结 alias 已由运行环境注入。原样复制 argumentSignature 和 resultBinding 字段；左侧写 resultBinding，右侧写 locked.function 并在括号内原样复制 argumentSignature。不要读取或重新赋值任何输入。只输出完整 RSS 脚本，不要解释。".into(),
+                    argument_signature: arg_sig.clone(),
+                    result_binding: res_binding.clone(),
                 };
                 tokio::select! {
                     result = self.author.generate(request) => result,
@@ -225,7 +232,9 @@ impl WorkflowWorker {
                     locked_contract: locked.clone(),
                     inputs: inputs.clone(),
                     engine_docs: self.engine_docs(&locked.function),
-                    instruction: "必须依据 diagnostic 和 sanitizedStderr 修改 currentScript；冻结 alias 已由运行环境注入，不得读取、构造或重新赋值。只输出修改后的完整脚本，不要解释".into(),
+                    instruction: "必须依据 diagnostic 和 sanitizedStderr 修改 currentScript；冻结 alias 已由运行环境注入，不得读取、构造或重新赋值。原样复制 argumentSignature 和 resultBinding；左侧写 resultBinding，右侧写 locked.function 并在括号内原样复制 argumentSignature。只输出修改后的完整脚本，不要解释".into(),
+                    argument_signature: arg_sig.clone(),
+                    result_binding: res_binding.clone(),
                 };
                 tokio::select! {
                     result = self.author.repair(request) => result,
@@ -254,6 +263,13 @@ impl WorkflowWorker {
                     return Ok(());
                 }
             };
+            eprintln!("[script_{}] function={} arg_sig_len={} res_binding_len={}", phase, locked.function, arg_sig.len(), res_binding.len());
+            eprintln!("[script_{}] source:\n{}", phase, script);
+            eprintln!("[script_{}] expected args: {}", phase, arg_sig);
+            eprintln!("[script_{}] expected binding: {}", phase, res_binding);
+            let bytes = script.as_bytes();
+            eprintln!("[script_{}] first 24 bytes: {:02x?}", phase, &bytes[..bytes.len().min(24)]);
+            eprintln!("[script_{}] total bytes={}", phase, bytes.len());
             if *cancel.borrow() {
                 return Ok(());
             }
@@ -726,6 +742,12 @@ impl WorkflowWorker {
                 ExecutionFailure::Local("input_stage_failed", error.to_string())
             }
         })?;
+        let disk_script_path = tree.input_dir.join(&tree.script_path);
+        if let Ok(disk_bytes) = std::fs::read(&disk_script_path) {
+            eprintln!("[run] disk script path={}", disk_script_path.display());
+            eprintln!("[run] disk script first 24 bytes: {:02x?}", &disk_bytes[..disk_bytes.len().min(24)]);
+            eprintln!("[run] disk script total bytes={}", disk_bytes.len());
+        }
         let run = self.engine.run_dataframe(RunSpec {
             mode: RunMode::Dataframe,
             input_tree: tree.input_dir.clone(),
@@ -755,55 +777,29 @@ impl WorkflowWorker {
         let inspected = inspect_engine_outputs(outputs, self.result_max_file_bytes).map_err(
             |error| json!({"code":"result_contract_invalid","message":error.to_string()}),
         )?;
-        let expected = locked
-            .results
-            .iter()
-            .map(|result| result.name.as_str())
-            .collect::<BTreeSet<_>>();
-        let actual = inspected
-            .iter()
-            .map(|output| output.name.as_str())
-            .collect::<BTreeSet<_>>();
-        if expected != actual || inspected.len() != expected.len() {
+        if inspected.len() != 1 {
             return Err(json!({
                 "code":"result_contract_invalid",
-                "message":"结果名称集合与冻结合同不一致",
-                "expected":expected,
-                "actual":actual,
+                "message":"引擎函数应仅产出 1 个 DataFrame 文件",
+                "actual_count": inspected.len(),
             }));
         }
-        for result in &locked.results {
-            let output = inspected
-                .iter()
-                .find(|output| output.name == result.name)
-                .expect("result name set checked");
-            let contract = self.snapshot.schemas.resolve(&result.schema_ref).map_err(
-                |error| json!({"code":"result_contract_invalid","message":error.to_string()}),
-            )?;
-            validate_schema(&output.metadata, &contract.fields).map_err(|message| {
-                json!({
-                    "code":"result_contract_invalid",
-                    "message":message,
-                    "resultName":result.name,
-                    "schemaRef":result.schema_ref,
-                })
-            })?;
-            validate_non_null_values(&output.path, &contract.fields).map_err(|message| {
-                json!({
-                    "code":"result_contract_invalid",
-                    "message":message,
-                    "resultName":result.name,
-                    "schemaRef":result.schema_ref,
-                })
-            })?;
-            if !output.metadata.snappy {
-                return Err(json!({
-                    "code":"result_contract_invalid",
-                    "message":"结果必须使用 Snappy Parquet",
-                    "resultName":result.name,
-                }));
-            }
+        let output = &inspected[0];
+        if !output.metadata.snappy {
+            return Err(json!({
+                "code":"result_contract_invalid",
+                "message":"结果必须使用 Snappy Parquet",
+                "resultName": output.name,
+            }));
         }
+        if output.metadata.columns.is_empty() {
+            return Err(json!({
+                "code":"result_contract_invalid",
+                "message":"结果 DataFrame 没有列",
+                "resultName": output.name,
+            }));
+        }
+        let _ = locked;
         Ok(())
     }
 

@@ -49,7 +49,18 @@ impl Tool for InspectWorkspaceTool {
         *self.services.inspected_workspace_active.lock().await =
             record.active.as_ref().map(|version| version.version.id);
         *self.services.inspected_workspace.lock().await = true;
-        let active=record.active.map(|version|json!({"id":version.version.id,"contentHash":version.version.content_hash,"tables":version.dataframes.into_iter().map(|table|json!({"modelDataframeId":table.id,"tableName":table.table_name,"rowCount":table.row_count,"contentHash":table.content_hash})).collect::<Vec<_>>() }));
+        let active = record.active.map(|version| {
+            let summary: Value = serde_json::from_str(&version.version.source_summary_json).unwrap_or(Value::Null);
+            let mut obj = json!({"id":version.version.id,"contentHash":version.version.content_hash});
+            if let Some(profile) = summary["projectionProfile"].as_str() {
+                obj["projectionProfile"] = Value::String(profile.to_string());
+            }
+            if let Some(target) = summary["projectionTargetFunction"].as_str() {
+                obj["projectionTargetFunction"] = Value::String(target.to_string());
+            }
+            obj["tables"] = json!(version.dataframes.into_iter().map(|table|json!({"modelDataframeId":table.id,"tableName":table.table_name,"rowCount":table.row_count,"contentHash":table.content_hash})).collect::<Vec<_>>());
+            obj
+        });
         let draft=record.draft.map(|draft|json!({"id":draft.draft.id,"revision":draft.draft.revision,"baseVersionId":draft.draft.base_version_id,"diagnostics":serde_json::from_str::<Value>(&draft.draft.diagnostics_json).unwrap_or(Value::Null),"tables":draft.dataframes.into_iter().map(|table|json!({"modelDataframeId":table.id,"tableName":table.table_name,"rowCount":table.row_count,"contentHash":table.content_hash})).collect::<Vec<_>>() }));
         Ok(json!({"workspaceId":record.workspace.id,"active":active,"draft":draft}))
     }

@@ -246,15 +246,37 @@ fn parse_ident_list(tokens: &[Token]) -> Option<Vec<String>> {
         return Some(Vec::new());
     }
     let mut names = Vec::new();
-    for (index, token) in tokens.iter().enumerate() {
-        if index % 2 == 0 {
-            let Token::Ident(name) = token else {
+    let mut expect_name = true;
+    let mut index = 0;
+    while index < tokens.len() {
+        if expect_name {
+            let Token::Ident(first) = &tokens[index] else {
                 return None;
             };
-            names.push(name.clone());
-        } else if token != &Token::Comma {
-            return None;
+            let mut name = first.clone();
+            while index + 2 < tokens.len()
+                && tokens[index + 1] == Token::Other('.')
+                && matches!(&tokens[index + 2], Token::Ident(_))
+            {
+                if let Token::Ident(next) = &tokens[index + 2] {
+                    name.push('.');
+                    name.push_str(next);
+                }
+                index += 2;
+            }
+            names.push(name);
+            expect_name = false;
+            index += 1;
+        } else {
+            if tokens[index] != Token::Comma {
+                return None;
+            }
+            expect_name = true;
+            index += 1;
         }
+    }
+    if expect_name {
+        return None;
     }
     Some(names)
 }
@@ -274,6 +296,23 @@ mod tests {
                 targets_bracketed: true,
                 callee: "solve".into(),
                 arguments: vec!["table".into(), "para".into()],
+            }]
+        );
+    }
+
+    #[test]
+    fn extracts_dotted_targets_and_arguments() {
+        let tokens = tokenize(
+            "[execution.bus_voltage, fault_study.fault_result] = ds_study_sequence(bus, transformer, monitor_input);"
+        ).unwrap();
+        assert_eq!(called_functions(&tokens), vec!["ds_study_sequence"]);
+        assert_eq!(
+            direct_assignment_calls(&tokens),
+            vec![AssignmentCall {
+                targets: vec!["execution.bus_voltage".into(), "fault_study.fault_result".into()],
+                targets_bracketed: true,
+                callee: "ds_study_sequence".into(),
+                arguments: vec!["bus".into(), "transformer".into(), "monitor_input".into()],
             }]
         );
     }

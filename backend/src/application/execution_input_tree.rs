@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use std::sync::Arc;
 
-use arrow_array::{ArrayRef, RecordBatch, RecordBatchReader, StringArray};
+use arrow_array::{ArrayRef, RecordBatch, RecordBatchReader, StringViewArray};
 use crate::adapters::NamedInput;
 use crate::auth::CurrentUser;
 use parquet::arrow::ArrowWriter;
@@ -173,7 +173,7 @@ fn enforce_para_line_model_exact(path: &Path) -> Result<(), ExecutionInputError>
         let columns: Vec<ArrayRef> = (0..batch.num_columns())
             .map(|i| {
                 if i == line_model_idx {
-                    Arc::new(StringArray::from(vec!["exact"; batch.num_rows()])) as ArrayRef
+                    Arc::new(StringViewArray::from(vec!["exact"; batch.num_rows()])) as ArrayRef
                 } else {
                     batch.column(i).clone()
                 }

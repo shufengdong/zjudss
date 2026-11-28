@@ -2,7 +2,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use arrow_array::{
-    ArrayRef, BooleanArray, Float64Array, Int64Array, RecordBatch, StringArray, UInt32Array,
+    ArrayRef, BooleanArray, Float64Array, Int64Array, RecordBatch, StringViewArray, UInt32Array,
 };
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
@@ -288,7 +288,7 @@ fn mapped_array(
             .into_iter()
             .map(|value| value.filter(|value| !value.is_null()).map(value_as_string))
             .collect::<Vec<_>>();
-        return Ok((DataType::Utf8, Arc::new(StringArray::from(values))));
+        return Ok((DataType::Utf8View, Arc::new(StringViewArray::from(values))));
     }
     if kind == "bool" {
         let values = values

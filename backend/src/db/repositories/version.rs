@@ -142,6 +142,12 @@ pub struct PublishResult {
     pub release_artifact_ids: Vec<i32>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ProjectionSummary {
+    pub profile: Option<String>,
+    pub target_function: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct PublishCommand {
     pub expected: DraftRef,
@@ -149,6 +155,7 @@ pub struct PublishCommand {
     pub description: String,
     pub engine_contract: String,
     pub now_ms: i64,
+    pub projection: ProjectionSummary,
 }
 
 #[derive(Debug)]
@@ -741,6 +748,7 @@ pub(super) fn publish_on(
         description,
         engine_contract,
         now_ms,
+        projection,
     } = command;
     let workspace = load_workspace_by_session(conn, user, session_id)?;
     #[derive(QueryableByName)]
@@ -783,9 +791,16 @@ pub(super) fn publish_on(
             frames.iter().map(|frame| frame.artifact_id).collect(),
         )
     } else {
-        let summary = serde_json::json!({"draftId":draft.id,"draftRevision":draft.revision,"tables":frames.iter().map(|frame| &frame.table_name).collect::<Vec<_>>()}).to_string();
+        let mut summary = serde_json::json!({"draftId":draft.id,"draftRevision":draft.revision,"tables":frames.iter().map(|frame| &frame.table_name).collect::<Vec<_>>()});
+        if let Some(profile) = &projection.profile {
+            summary["projectionProfile"] = serde_json::Value::String(profile.clone());
+        }
+        if let Some(target) = &projection.target_function {
+            summary["projectionTargetFunction"] = serde_json::Value::String(target.clone());
+        }
+        let summary_str = summary.to_string();
         diesel::sql_query("INSERT INTO model_versions(workspace_id,description,content_hash,source_summary_json,engine_contract_version,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6)")
-                        .bind::<Integer,_>(workspace.id).bind::<Text,_>(&description).bind::<Text,_>(&content_hash).bind::<Text,_>(summary).bind::<Text,_>(&engine_contract).bind::<BigInt,_>(now_ms).execute(conn)?;
+                        .bind::<Integer,_>(workspace.id).bind::<Text,_>(&description).bind::<Text,_>(&content_hash).bind::<Text,_>(&summary_str).bind::<Text,_>(&engine_contract).bind::<BigInt,_>(now_ms).execute(conn)?;
         let version_id = last_insert_rowid(conn)?;
         for frame in &frames {
             diesel::sql_query("INSERT INTO model_dataframes(version_id,table_name,artifact_id,schema_json,row_count,content_hash,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7)")

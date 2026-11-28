@@ -20,5 +20,11 @@
 ## 禁止推断
 不得仅根据案例名选择方法，不得把历史参数静默带入新请求，不得在 Prompt 或 skill 中假定固定输入表清单，也不得绕过配置确认或自动生成、运行脚本。
 
+## 案例投影约束
+`inspect_workspace` 返回的 active 模型若包含 `projectionTargetFunction` 字段，说明当前案例通过 case projection 机制预先投影到了特定 DataFrame 函数，bundle 产出的 DataFrame schema 与该 targetFunction 的合同严格匹配，与其他同领域门面（例如投影到 `ds_study_sequence` 时的 `ds_harmonic_study`）存在字段类型差异，强行调用会导致引擎执行失败。因此：
+- search_study_facades 时，如果 active 模型携带 projection 约束，优先把 projectionTargetFunction 作为匹配标准；用户的研究意图（如"谐波"）应映射到该 targetFunction 内部对应的研究阶段或参数，而不是另寻独立门面。
+- 如果 search_study_facades 返回的 enabled 候选中没有匹配 targetFunction 的门面，同时 disabled 候选中存在看似相关但不匹配的门面，向用户说明当前案例的兼容边界："此案例通过投影机制固定使用 {projectionTargetFunction}，不支持直接调用 {其他门面}，因为 DataFrame schema 不兼容"。
+- 不得忽略 projection 约束或尝试兼容函数之外的门面。
+
 ## 验收
 门面候选分支只产生一次完整选择说明；配置卡必须与选定门面、当前 engine snapshot 和用户会话一致。

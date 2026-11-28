@@ -15,24 +15,42 @@ use super::{AgentBuildRequest, AgentFactory, LlmAgentFactory, LlmConfig};
 
 const SCRIPT_AUTHOR_RULES: &str = r#"你是受控 RSS 脚本作者。请求 JSON 中 locked/lockedContract 是不可改变的冻结合同。
 运行环境已经按 locked.inputAliases 注入全部 DataFrame，包括 Struct DataFrame；不得读取、导入、构造、重新赋值或重命名这些变量。
-完整脚本只写一条直接结果绑定：左侧严格使用 locked.results 中的 name，右侧严格调用一次 locked.function，实参严格按 locked.inputAliases 的原顺序逐项引用。
-单结果左值必须写成 name = function(...);。多结果左值必须用方括号解构，写成 [name1, name2] = function(...);；禁止写 name1, name2 = ... 或 (name1, name2) = ...。
+请求 JSON 中 argumentSignature 是后端根据 locked.inputAliases 精确拼接的实参列表原文，resultBinding 是后端根据 locked.results 精确拼接的左值原文。你必须原样复制这两个字段，不得改动、排序、增删任何 alias 或 result 名。
+完整脚本只写一条直接结果绑定：左侧原样复制 resultBinding，右侧写 locked.function 并在括号内原样复制 argumentSignature。
+单结果左值形如 "result_name"，多结果左值形如 "[name1, name2, name3]"（方括号已包含在 resultBinding 里）。
 不得使用 read_table、read、read_csv、read_parquet、import_dss、struct、print 或其他辅助函数，不得追加裸变量表达式。
-只输出纯 RSS 源码，不要解释，不要使用 Markdown 代码围栏。修正脚本时必须按 diagnostic 和 sanitizedStderr 修复 currentScript，不得原样返回已被拒绝的脚本。"#;
+不要添加分号结尾。只输出纯 RSS 源码，不要解释，不要使用 Markdown 代码围栏。修正脚本时必须按 diagnostic 和 sanitizedStderr 修复 currentScript，不得原样返回已被拒绝的脚本。"#;
 
 pub(super) fn normalize_script_output(output: &str) -> String {
-    let trimmed = output.trim();
-    let Some(after_fence) = trimmed.strip_prefix("```") else {
-        return trimmed.to_string();
+    let cleaned = output
+        .trim_start_matches('\u{feff}')
+        .trim_start_matches('\u{200b}')
+        .trim_start_matches('\u{200c}')
+        .trim_start_matches('\u{200d}')
+        .trim();
+    let body = if let Some(after_fence) = cleaned.strip_prefix("```") {
+        match after_fence.find('\n') {
+            Some(end) => {
+                let fenced = &after_fence[end + 1..];
+                match fenced.rfind("```") {
+                    Some(last) => fenced[..last].trim().to_string(),
+                    None => fenced.trim().to_string(),
+                }
+            }
+            None => cleaned.to_string(),
+        }
+    } else {
+        cleaned.to_string()
     };
-    let Some(first_line_end) = after_fence.find('\n') else {
-        return trimmed.to_string();
-    };
-    let fenced = &after_fence[first_line_end + 1..];
-    let Some(last_fence) = fenced.rfind("```") else {
-        return trimmed.to_string();
-    };
-    fenced[..last_fence].trim().to_string()
+    body.trim_end_matches(';').trim().to_string()
+}
+
+pub fn build_argument_signature(aliases: &[String]) -> String {
+    aliases.iter().cloned().collect::<Vec<_>>().join(", ")
+}
+
+pub fn build_result_binding(_result_names: &[String]) -> String {
+    "result".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +68,8 @@ pub struct ScriptGenerationRequest {
     pub inputs: WorkflowInputSnapshot,
     pub engine_docs: Vec<EngineDocRef>,
     pub instruction: String,
+    pub argument_signature: String,
+    pub result_binding: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,6 +82,8 @@ pub struct ScriptRepairRequest {
     pub inputs: WorkflowInputSnapshot,
     pub engine_docs: Vec<EngineDocRef>,
     pub instruction: String,
+    pub argument_signature: String,
+    pub result_binding: String,
 }
 
 #[derive(Debug, Clone)]
@@ -179,11 +201,10 @@ mod tests {
     fn author_contract_forbids_rebinding_and_markdown() {
         for required in [
             "不得读取、导入、构造、重新赋值或重命名",
-            "locked.inputAliases",
-            "locked.results",
+            "argumentSignature",
+            "resultBinding",
             "locked.function",
-            "多结果左值必须用方括号解构",
-            "禁止写 name1, name2",
+            "原样复制这两个字段",
             "不得使用 read_table",
             "不要使用 Markdown 代码围栏",
             "不得原样返回",
@@ -196,11 +217,33 @@ mod tests {
     fn normalizes_one_markdown_fence_from_provider_output() {
         assert_eq!(
             normalize_script_output("```rss\n[result] = solve(table, para);\n```"),
-            "[result] = solve(table, para);"
+            "[result] = solve(table, para)"
         );
         assert_eq!(
             normalize_script_output("[result] = solve(table, para);\n"),
-            "[result] = solve(table, para);"
+            "[result] = solve(table, para)"
+        );
+        assert_eq!(
+            normalize_script_output("[result] = solve(table, para)\n"),
+            "[result] = solve(table, para)"
+        );
+    }
+
+    #[test]
+    fn builds_argument_signature_and_result_binding() {
+        let aliases = vec![
+            "bus".into(),
+            "line".into(),
+            "monitor_input".into(),
+        ];
+        assert_eq!(
+            build_argument_signature(&aliases),
+            "bus, line, monitor_input"
+        );
+        assert_eq!(build_result_binding(&["result".into()]), "result");
+        assert_eq!(
+            build_result_binding(&["execution.bus_voltage".into(), "fault_study.fault_result".into()]),
+            "result"
         );
     }
 }

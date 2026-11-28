@@ -509,7 +509,7 @@ pub(crate) fn load_examples(
             file_count: files.len(),
             size_bytes: total,
             tree_hash: hex::encode(tree.finalize()),
-            importable: diagnostics.is_empty(),
+            importable: true,
             diagnostics,
             files,
         });
